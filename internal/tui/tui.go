@@ -55,6 +55,19 @@ func NewModel(ch <-chan event.Event) Model {
 	return Model{ch: ch, cursor: -1, width: 80, height: 24}
 }
 
+// Preload seeds the model with historical events (spool replay) so the
+// timeline is populated before live events arrive.
+func (m Model) Preload(evs []event.Event) Model {
+	m.events = append(m.events, evs...)
+	m.total += len(evs)
+	for _, ev := range evs {
+		if !hasSource(m.sources, ev.Source) {
+			m.sources = append(m.sources, ev.Source)
+		}
+	}
+	return m
+}
+
 // Paused reports whether live scrolling is held.
 func (m Model) Paused() bool { return m.paused }
 

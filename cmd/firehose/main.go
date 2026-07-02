@@ -1,0 +1,211 @@
+// Command firehose is Agent Firehose: a live, structured timeline of AI
+// coding-agent activity on your machine.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"agentfirehose/internal/adapters/codex"
+	"agentfirehose/internal/adapters/procwatch"
+	"agentfirehose/internal/cli"
+	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
+	"agentfirehose/internal/spool"
+	"agentfirehose/internal/tui"
+)
+
+const version = "0.1.0"
+
+const usage = `Agent Firehose %s — a live timeline of AI coding-agent activity.
+
+Usage:
+  firehose [view]              open the live TUI (default)
+  firehose emit --source S     normalize one payload from stdin into the spool
+  firehose ingest              stream NDJSON events from stdin into the spool
+  firehose export [-o FILE]    dump captured events as NDJSON (default stdout)
+  firehose install AGENT       wire an adapter (claude-code | opencode)
+  firehose doctor              validate adapter wiring
+  firehose version             print version
+`
+
+func main() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal(err)
+	}
+	cfg, err := cli.LoadConfig(home)
+	if err != nil {
+		fatal(err)
+	}
+
+	args := os.Args[1:]
+	cmd := "view"
+	if len(args) > 0 {
+		cmd = args[0]
+		args = args[1:]
+	}
+
+	switch cmd {
+	case "view":
+		fatalIf(runView(cfg))
+	case "emit":
+		fs := flag.NewFlagSet("emit", flag.ExitOnError)
+		source := fs.String("source", "generic", "source adapter (claude-code | opencode | generic)")
+		fs.Parse(args)
+		fatalIf(cli.Emit(cfg, *source, os.Stdin))
+	case "ingest":
+		n, err := cli.Ingest(cfg, os.Stdin)
+		fatalIf(err)
+		fmt.Fprintf(os.Stderr, "ingested %d events\n", n)
+	case "export":
+		fs := flag.NewFlagSet("export", flag.ExitOnError)
+		out := fs.String("o", "", "output file (default stdout)")
+		fs.Parse(args)
+		w := os.Stdout
+		if *out != "" {
+			f, err := os.Create(*out)
+			fatalIf(err)
+			defer f.Close()
+			w = f
+		}
+		n, err := cli.Export(cfg, w)
+		fatalIf(err)
+		fmt.Fprintf(os.Stderr, "exported %d events\n", n)
+	case "install":
+		if len(args) != 1 {
+			fatal(fmt.Errorf("usage: firehose install <claude-code|opencode>"))
+		}
+		switch args[0] {
+		case "claude-code":
+			bin, err := os.Executable()
+			if err != nil {
+				bin = "firehose"
+			}
+			fatalIf(cli.InstallClaudeCode(home, bin))
+			fmt.Println("✓ hooks merged into ~/.claude/settings.json (backup: settings.json.bak)")
+			fmt.Println("  restart running Claude Code sessions to pick them up")
+		case "opencode":
+			path, err := cli.InstallOpenCode(home)
+			fatalIf(err)
+			fmt.Printf("✓ plugin written to %s\n", path)
+			fmt.Println("  restart OpenCode to load it (needs `firehose` on PATH)")
+		default:
+			fatal(fmt.Errorf("unknown adapter %q (want claude-code or opencode)", args[0]))
+		}
+	case "doctor":
+		bad := 0
+		for _, c := range cli.Doctor(cfg, home) {
+			mark := "✓"
+			if !c.OK {
+				mark = "✗"
+				bad++
+			}
+			fmt.Printf("%s %-18s %s\n", mark, c.Name, c.Detail)
+		}
+		if bad > 0 {
+			os.Exit(1)
+		}
+	case "version":
+		fmt.Println("firehose " + version)
+	case "help", "-h", "--help":
+		fmt.Printf(usage, version)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
+		fmt.Fprintf(os.Stderr, usage, version)
+		os.Exit(2)
+	}
+}
+
+// runView merges the spool tailer, codex session watcher, and process watcher
+// into one channel feeding the TUI.
+func runView(cfg cfgType) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mode, err := privacy.ParseMode(cfg.PrivacyMode)
+	if err != nil {
+		mode = privacy.ModeBalanced
+	}
+
+	raw := make(chan event.Event, 1024)
+	go spool.NewTailer(cfg.SpoolDir, 100*time.Millisecond).Run(ctx, raw)
+	if _, err := os.Stat(cfg.CodexDir); err == nil {
+		go codex.NewWatcher(cfg.CodexDir, 250*time.Millisecond).Run(ctx, raw)
+	}
+	go procwatch.NewWatcher(procwatch.PSLister{}, 2*time.Second).Run(ctx, raw)
+
+	// Codex events are read straight from its files, so redact here; spooled
+	// events were already redacted by emit/ingest.
+	events := make(chan event.Event, 1024)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-raw:
+				if ev.Source == codex.Source {
+					ev = privacy.Redact(ev, mode)
+				}
+				select {
+				case events <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	model := tui.NewModel(events)
+	if history, err := spool.ReadLastN(cfg.SpoolDir, 500); err == nil {
+		model = model.Preload(history)
+	}
+	model.ExportFn = func(evs []event.Event) (string, error) {
+		name := fmt.Sprintf("firehose-export-%s.ndjson", time.Now().Format("20060102-150405"))
+		f, err := os.Create(name)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		for _, ev := range evs {
+			data, err := jsonLine(ev)
+			if err != nil {
+				return "", err
+			}
+			if _, err := f.Write(data); err != nil {
+				return "", err
+			}
+		}
+		return name, nil
+	}
+
+	_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
+	return err
+}
+
+type cfgType = cli.Config
+
+func jsonLine(ev event.Event) ([]byte, error) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "firehose:", err)
+	os.Exit(1)
+}
+
+func fatalIf(err error) {
+	if err != nil {
+		fatal(err)
+	}
+}

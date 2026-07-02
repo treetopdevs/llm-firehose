@@ -151,6 +151,14 @@ func TestBurstCoalescesInView(t *testing.T) {
 	}
 }
 
+func TestPreloadShowsHistory(t *testing.T) {
+	m := newTestModel()
+	m = m.Preload([]event.Event{mkEv(1, event.CategoryShell, "historic event")})
+	if !strings.Contains(m.View(), "historic event") {
+		t.Error("preloaded history should render")
+	}
+}
+
 func TestQuitKey(t *testing.T) {
 	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
