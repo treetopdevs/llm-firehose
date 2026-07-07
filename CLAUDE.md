@@ -1,36 +1,112 @@
-# CLAUDE.md — Lattice
+# CLAUDE.md
 
-Least-authority process plane on the BEAM (V1, proven) + durable self-certifying Replica substrate (2.0). Core thesis: zero implicit authority; the log is the truth; the connection is the cache.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**State:** branch `claude/beautiful-gould-6b25d2` — M1 (Lattice 2.0 core) is GREEN: all 19 behaviors, 9 properties/67 tests across seeds 1/7/99/555/2024/12345, demo narrates. Current work: M1 close-out (countersign, D-A1 agility note, merge proposal) and M2 (carrier) per `docs/agent/register.md` W-series.
+This is **Agent Firehose**, a Go project — not an Elixir/`mix` project (an earlier
+misplaced "Lattice" doc tree has been removed).
 
-**Before any work: read `docs/agent/HANDOFF.md`; confirm `docs/agent/reconciliation_report.md` §5 is countersigned for your tree.**
+## What this is
+
+Agent Firehose is a local-first developer tool that shows a live, structured timeline of
+what AI coding agents (Claude Code, Codex, OpenCode, …) are doing on your machine — a
+Bubble Tea TUI over an on-device capture engine. Everything runs on-device: no backend,
+no accounts, no sync, no telemetry. A Tauri v2 desktop shell (`apps/tauri-desktop`) wraps
+the same engine for non-terminal users.
 
 ## Commands
+
+```sh
+go test ./...                         # full suite (fast — keep it that way)
+go test ./internal/adapters/codex     # single package
+go test -run TestName ./internal/tui  # single test
+go vet ./...
+gofmt -l .                            # list unformatted files (must be empty)
+go build ./cmd/firehose               # the CLI+TUI binary
+go build ./cmd/firehosed              # the dedicated daemon binary (desktop sidecar)
 ```
-mix deps.get
-mix format --check-formatted
-mix test                              # expect 0 failures, 0 skipped
-mix run scripts/lattice2_demo.exs     # 2.0 narrated demo (also: elixir scripts/lattice2_demo.exs)
-scripts/lattice_poc_demo.sh           # V1 demo
-mix lattice.stress --tabs 500 --caps 2000 --calls 50000 --bridges 1000
-npm install && npm run browser:e2e    # Playwright evidence
-mix lattice.browser_carrier.proof     # carrier spike proof artifact
+
+Validation loop before marking work complete: `gofmt -l .` → `go vet ./...` → `go test ./...`.
+
+Desktop app (`apps/tauri-desktop`, uses **pnpm**):
+
+```sh
+scripts/build-sidecar.sh                    # compile firehosed into the sidecar slot first
+pnpm -C apps/tauri-desktop install
+pnpm -C apps/tauri-desktop test             # vitest (frontend state/client)
+pnpm -C apps/tauri-desktop build            # tsc + vite build
+pnpm -C apps/tauri-desktop tauri dev        # run the shell
+cargo test --manifest-path apps/tauri-desktop/src-tauri/Cargo.toml   # Rust side
 ```
-Validation loop (never weaken without human sign-off): `mix format` → `mix test` → `mix run scripts/lattice2_demo.exs`. Carrier work adds the conformance oracle: real carrier ≡ `Lattice.Sim` final logs/state for the same op set.
 
-## Hard rules
-- Toolchain: Elixir on **OTP 28** (ADR 0001 verifies `:deterministic` there). Core = plain OTP. Dep whitelist: `cowboy`, `jason` (boundary), `stream_data` (test), `@playwright/test` (e2e). **New dep = escalate.**
-- DO NOT IMPLEMENT (full list HANDOFF §3): encryption, key rotation, recovery, ZKP/accumulators, consensus, receipt-freeness machinery, full compaction, PQC code, DID registries, federation. Seeming necessary → question the requirement, escalate.
-- Canonical encoding is ADR 0001's pinned `term_to_binary [:deterministic, minor_version: 2]`; the CBOR migration is ADR-P08 — an ADR'd migration with golden vectors, never a hot swap.
-- No wall clocks in semantics (`Lattice.Clock` only; ticks in op bodies — invariant 5). No folds over bare maps in reduce/merge/authority paths.
-- All authority verdicts flow through `Authority.analyze/2`; `Live.authorize/2` consults the same in-log revokes. No second path.
-- Non-holder writes to authoritative fields use the inbox `:request` pattern (behavior 6). Do not rebind v1 facade names (`Lattice.call/grant/cast`).
-- Tests are the spec: failing test first; never edit expectations to match code; no `@tag :skip`/pending. Property generators are never narrowed.
-- Every merge appends a status-doc line (`docs/agent/status_protocol.md`); failing seeds logged with shrunk case before the fix. Commits name the behavior/ADR (`B16: …` / `ADR-P08: …`). Merges to `main` are human-approved.
+If `pnpm`/`node`/`npx` misbehave in a non-interactive shell, they are shadowed by an nvm
+shim — prefix with `PATH=/opt/homebrew/opt/node/bin:$PATH` or run `unfunction node npm npx`.
 
-## Escalate to the human when
-Crypto choices/deviations · new deps · reinterpreting a behavior's meaning · anything touching `author`/identity/rotation · coordinator-shaped singletons · a boundary item seeming necessary · weakening a property/generator · a seed-fix that would change a ratified ADR · two consecutive failed gate attempts · any merge/publish to `main`.
+Running the tool live: `firehose install claude-code` merges hooks into
+`~/.claude/settings.json`; captured events land in `~/.agentfirehose/spool/*.ndjson`; a
+daemon on `127.0.0.1:4517` serves the live API.
 
-## Vocabulary
-Use HANDOFF §10 verbatim (op, deps, Replica, materialization, reduction, holder, delegation, Cap, quarantine reasons, tick, heartbeat, frontier, oracle). No synonyms.
+## Architecture
+
+Everything funnels through **one normalized envelope** (`internal/event`, `event.Event`).
+Every capture source is mapped into it before display, persistence, or export. Start there
+when learning the codebase.
+
+Data flow:
+
+```
+sources ──adapters──▶ event.Event ──privacy.Redact──▶ spool (NDJSON) ──▶ store/index ──▶ TUI / API
+```
+
+- **`internal/event`** — the `Event` envelope + `CurrentSchemaVersion` (currently 1). The
+  frozen contract; new fields must be additive (see below).
+- **`internal/adapters/*`** — one package per source, each mapping raw payloads into
+  `Event`s. `claudecode` & `opencode` receive pushed payloads via `firehose emit`; `codex`
+  *tails* `~/.codex/sessions` JSONL directly; `procwatch` polls the process list for known
+  agent binaries; `generic` handles arbitrary NDJSON via `firehose ingest`.
+- **`internal/privacy`** — redaction applied **before persistence**, at the engine boundary.
+  Modes: `minimal` (values → `{sha256,len}`), `balanced` default (strings truncated to 240
+  runes, `raw` dropped), `full`. The spool never holds more than the mode allows.
+- **`internal/spool`** — append-only NDJSON, one file per UTC day (`YYYY-MM-DD.ndjson`),
+  `O_APPEND` so concurrent producers never interleave. **This is the canonical source of
+  truth**; every derived store must be rebuildable from it. Also provides the tailer.
+- **`internal/index`** — derived in-memory index (sessions/traces/artifacts) built over the
+  spool; powers the daemon's query endpoints.
+- **`internal/store`** — ring buffer, filters, and burst coalescing (`×N` rows) for the TUI.
+- **`internal/daemon`** — the capture engine as a long-lived local API (`net/http`
+  `mux.HandleFunc`, Go 1.22+ routing). Routes: `/health`, `/config`, `/events`,
+  `/events/stream` (SSE), `/emit`, `/sessions[/{id}]`, `/traces/{id}`, `/artifacts/files`,
+  `/doctor`, `/install/{adapter}`, `/export`.
+- **`internal/client`** — HTTP client the TUI/desktop use to consume the daemon.
+- **`internal/tui`** — Bubble Tea model (`tui.go`) + rendering (`view.go`).
+- **`internal/cli`** — testable subcommand implementations (config, doctor, install, status,
+  emit, ingest, export). `cmd/firehose/main.go` is flag parsing + wiring only.
+
+**Daemon-optional design (important):** capture NEVER depends on the daemon being up. When
+a daemon is running, `firehose emit` and adapters route through it and the TUI consumes its
+stream (`viewFeed` in `cmd/firehose/main.go` prefers the daemon). When it isn't, everything
+falls back to direct spool access — the TUI merges the spool tailer, codex watcher, and
+procwatch locally. A daemon the user runs themselves always wins over the desktop sidecar.
+
+## Hard rules (from CONTRIBUTING.md and the frozen contract)
+
+- **TDD.** Every behavior change starts with a failing test. For adapters, use *real
+  captured payloads* pasted from the source as fixtures — never invent shapes.
+- **Local-first.** No network calls, no telemetry, no cloud dependencies.
+- **Never break the agent.** Capture paths (hooks, plugins) must fail *silently* rather than
+  interrupt a coding session — surface failures *in the timeline* as `meta`/`warn` events.
+- **The five frozen surfaces** (`docs/contracts.md`): event envelope schema, privacy
+  semantics, NDJSON spool format, export format, local API. Adding an optional field is fine
+  and needs no version bump (consumers ignore unknown fields). **Removing/renaming/changing
+  the meaning of a field, or changing privacy/spool/export/API semantics, requires a
+  `schema_version` bump + a reader that understands both versions** — escalate.
+- **Dependencies are minimal** (Bubble Tea + Lipgloss, std lib otherwise). Adding a Go dep is
+  a deliberate choice — prefer the standard library.
+- Merges to `main` are human-approved.
+
+## Docs worth reading
+
+`docs/contracts.md` (frozen surfaces), `docs/event.schema.json` (envelope JSON Schema),
+`docs/adapters.md` (how each adapter works / how to add one),
+`docs/agent-firehose-migration-plan.md` (daemon → desktop → optional cloud; status at top —
+phases 0–3 done, 4–5 gated), `docs/compatibility.md`, `docs/release-runbook.md`,
+`docs/plans/` (dated build plans).
