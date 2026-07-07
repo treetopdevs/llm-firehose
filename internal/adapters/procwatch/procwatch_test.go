@@ -2,15 +2,31 @@ package procwatch
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"agentfirehose/internal/event"
 )
 
-type fakeLister struct{ procs []Process }
+// fakeLister is mutated by the test while the watcher polls it, so access is
+// locked.
+type fakeLister struct {
+	mu    sync.Mutex
+	procs []Process
+}
 
-func (f *fakeLister) List() ([]Process, error) { return f.procs, nil }
+func (f *fakeLister) List() ([]Process, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.procs, nil
+}
+
+func (f *fakeLister) set(procs []Process) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.procs = procs
+}
 
 func collect(ch <-chan event.Event, n int, t *testing.T) []event.Event {
 	t.Helper()
@@ -36,7 +52,7 @@ func TestStartAndStopEvents(t *testing.T) {
 	go w.Run(ctx, ch)
 
 	time.Sleep(25 * time.Millisecond) // baseline poll with nothing running
-	lister.procs = []Process{{PID: 42, Command: "claude", Args: "claude --continue"}}
+	lister.set([]Process{{PID: 42, Command: "claude", Args: "claude --continue"}})
 
 	got := collect(ch, 1, t)
 	ev := got[0]
@@ -54,7 +70,7 @@ func TestStartAndStopEvents(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	lister.procs = nil
+	lister.set(nil)
 	got = collect(ch, 1, t)
 	if got[0].Name != "agent-stop" {
 		t.Fatalf("stop event wrong: %+v", got[0])

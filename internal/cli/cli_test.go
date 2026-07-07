@@ -205,6 +205,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.SpoolDir != filepath.Join(home, ".agentfirehose", "spool") {
 		t.Errorf("default spool = %q", cfg.SpoolDir)
 	}
+	if cfg.DaemonAddr != "127.0.0.1:4517" {
+		t.Errorf("default daemon addr = %q, want 127.0.0.1:4517", cfg.DaemonAddr)
+	}
 	// explicit config file overrides
 	os.MkdirAll(filepath.Join(home, ".agentfirehose"), 0o755)
 	os.WriteFile(filepath.Join(home, ".agentfirehose", "config.json"), []byte(`{"privacy_mode":"minimal"}`), 0o644)
