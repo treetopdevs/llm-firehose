@@ -31,7 +31,24 @@ firehose doctor                # verify everything is wired
 firehose                       # open the live view
 ```
 
-Codex needs no install step — the viewer tails `~/.codex/sessions` directly.
+Codex needs no install step — the engine tails `~/.codex/sessions` directly.
+
+## The daemon
+
+The capture engine can run as a long-lived local daemon that owns the spool
+and serves a localhost API (default `127.0.0.1:4517`):
+
+```sh
+firehose daemon            # run the engine: watchers, spool writes, local API
+firehose status            # is it running? which version/schema?
+```
+
+When the daemon is running, `firehose emit` (and every installed adapter)
+routes payloads through it, and the TUI consumes its live stream instead of
+tailing files itself. When it isn't, everything falls back to direct spool
+access — capture never depends on the daemon being up. The API surface
+(events, live SSE stream, sessions, doctor, export) is documented in
+[docs/contracts.md](docs/contracts.md).
 
 ## Supported sources
 
@@ -75,7 +92,10 @@ Or press `e` in the viewer to export exactly what you're looking at
 
 ## Docs
 
+- [Platform contract](docs/contracts.md) — frozen surfaces: envelope schema, spool/export formats, privacy semantics, local API
+- [Event schema](docs/event.schema.json) — JSON Schema for the normalized envelope
 - [Adapter guide](docs/adapters.md) — how each adapter works and how to add one
+- [Migration plan](docs/agent-firehose-migration-plan.md) — daemon → desktop shell → optional cloud
 - [Contributing](CONTRIBUTING.md)
 
 ## License
