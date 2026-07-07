@@ -70,15 +70,12 @@ func (h *hub) broadcast(ev event.Event) {
 // all feed the live hub. Codex events are read straight from its files, so
 // they are redacted here; spooled events were redacted at append time.
 func (s *Server) Start(ctx context.Context) {
-	mode, err := privacy.ParseMode(s.cfg.PrivacyMode)
-	if err != nil {
-		mode = privacy.ModeBalanced
-	}
+	cfg := s.config()
 	raw := make(chan event.Event, 1024)
-	go spool.NewTailer(s.cfg.SpoolDir, s.TailInterval).Run(ctx, raw)
-	if s.cfg.CodexDir != "" {
-		if _, err := os.Stat(s.cfg.CodexDir); err == nil {
-			go codex.NewWatcher(s.cfg.CodexDir, s.WatchInterval).Run(ctx, raw)
+	go spool.NewTailer(cfg.SpoolDir, s.TailInterval).Run(ctx, raw)
+	if cfg.CodexDir != "" {
+		if _, err := os.Stat(cfg.CodexDir); err == nil {
+			go codex.NewWatcher(cfg.CodexDir, s.WatchInterval).Run(ctx, raw)
 		}
 	}
 	go procwatch.NewWatcher(procwatch.PSLister{}, 2*time.Second).Run(ctx, raw)
@@ -89,12 +86,23 @@ func (s *Server) Start(ctx context.Context) {
 				return
 			case ev := <-raw:
 				if ev.Source == codex.Source {
-					ev = privacy.Redact(ev, mode)
+					// Mode is re-read per event so POST /config privacy
+					// changes apply live to the broadcast path too.
+					ev = privacy.Redact(ev, s.privacyMode())
 				}
 				s.hub.broadcast(ev)
 			}
 		}
 	}()
+}
+
+// privacyMode is the effective redaction mode, falling back to balanced.
+func (s *Server) privacyMode() privacy.Mode {
+	mode, err := privacy.ParseMode(s.config().PrivacyMode)
+	if err != nil {
+		return privacy.ModeBalanced
+	}
+	return mode
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {

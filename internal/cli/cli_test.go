@@ -193,6 +193,37 @@ func TestDoctorReportsChecks(t *testing.T) {
 	}
 }
 
+func TestSaveConfigRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	cfg, _ := LoadConfig(home)
+	cfg.PrivacyMode = "minimal"
+	if err := SaveConfig(home, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	got, err := LoadConfig(home)
+	if err != nil {
+		t.Fatalf("LoadConfig after save: %v", err)
+	}
+	if got.PrivacyMode != "minimal" {
+		t.Errorf("privacy = %q, want minimal", got.PrivacyMode)
+	}
+	if got.SpoolDir != cfg.SpoolDir {
+		t.Errorf("spool dir changed across save: %q vs %q", got.SpoolDir, cfg.SpoolDir)
+	}
+}
+
+func TestSaveConfigRejectsBadMode(t *testing.T) {
+	home := t.TempDir()
+	cfg, _ := LoadConfig(home)
+	cfg.PrivacyMode = "everything"
+	if err := SaveConfig(home, cfg); err == nil {
+		t.Fatal("want error for invalid privacy mode")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agentfirehose", "config.json")); !os.IsNotExist(err) {
+		t.Error("invalid config must not be written")
+	}
+}
+
 func TestLoadConfigDefaults(t *testing.T) {
 	home := t.TempDir()
 	cfg, err := LoadConfig(home)
