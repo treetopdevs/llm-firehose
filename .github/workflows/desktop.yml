@@ -1,0 +1,105 @@
+# Desktop packaging validation (migration plan, Phase 3): build the Tauri
+# shell with the bundled firehosed sidecar on all three platforms. Artifacts
+# are unsigned — signing/notarization needs org credentials and happens in
+# the release pipeline (docs/release-runbook.md).
+name: desktop
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/tauri-desktop/**"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "apps/tauri-desktop/**"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+
+  desktop:
+    needs: go
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+          - os: windows-2022
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/tauri-desktop/pnpm-lock.yaml
+
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Install frontend dependencies
+        run: pnpm -C apps/tauri-desktop install --frozen-lockfile
+
+      - name: Frontend tests
+        run: pnpm -C apps/tauri-desktop test
+
+      - name: Build firehosed sidecar
+        run: bash scripts/build-sidecar.sh ${{ matrix.triple }}
+
+      - name: Rust tests
+        run: cargo test --manifest-path apps/tauri-desktop/src-tauri/Cargo.toml
+
+      - name: Build desktop bundle
+        run: pnpm -C apps/tauri-desktop tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-firehose-${{ matrix.triple }}
+          path: |
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.dmg
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.app.tar.gz
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.AppImage
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.deb
+            apps/tauri-desktop/src-tauri/target/release/bundle/**/*.rpm
+          if-no-files-found: warn
