@@ -94,6 +94,23 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 	return l.Addr().String(), done, nil
 }
 
+// Run starts the capture engine and serves the local API on addr until ctx
+// is canceled. onReady, when non-nil, receives the bound address once the
+// listener is up. Both firehosed and `firehose daemon` are thin wrappers
+// around this.
+func Run(ctx context.Context, cfg cli.Config, home, version, addr string, onReady func(bound string)) error {
+	s := New(cfg, home, version)
+	s.Start(ctx)
+	bound, done, err := s.Serve(ctx, addr)
+	if err != nil {
+		return err
+	}
+	if onReady != nil {
+		onReady(bound)
+	}
+	return <-done
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
