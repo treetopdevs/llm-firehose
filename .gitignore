@@ -1,5 +1,13 @@
 /firehose
+/firehosed
 /dist/
 *.test
 coverage.out
 .DS_Store
+
+# desktop app
+node_modules/
+apps/tauri-desktop/dist/
+apps/tauri-desktop/src-tauri/target/
+apps/tauri-desktop/src-tauri/binaries/
+apps/tauri-desktop/src-tauri/gen/schemas/
