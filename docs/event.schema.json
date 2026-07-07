@@ -33,6 +33,10 @@
       "type": "string",
       "description": "Stable identifier grouping events of one agent session."
     },
+    "trace_id": {
+      "type": "string",
+      "description": "Identifier grouping causally related events, possibly across sessions. Present only when the source supplies one; adapters preserve it verbatim."
+    },
     "category": {
       "type": "string",
       "enum": ["session", "prompt", "message", "tool", "file", "permission", "shell", "error", "meta"],
