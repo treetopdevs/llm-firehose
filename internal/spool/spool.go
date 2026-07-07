@@ -29,10 +29,14 @@ func fileFor(dir string, t time.Time) string {
 	return filepath.Join(dir, t.UTC().Format("2006-01-02")+".ndjson")
 }
 
-// Append writes ev as one NDJSON line to today's spool file.
+// Append writes ev as one NDJSON line to today's spool file, stamping the
+// current schema version on events that don't carry one.
 func (w *Writer) Append(ev event.Event) error {
 	if err := ev.Validate(); err != nil {
 		return err
+	}
+	if ev.SchemaVersion == 0 {
+		ev.SchemaVersion = event.CurrentSchemaVersion
 	}
 	data, err := json.Marshal(ev)
 	if err != nil {

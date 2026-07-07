@@ -12,9 +12,9 @@ import (
 
 // Check is one doctor validation result.
 type Check struct {
-	Name   string
-	OK     bool
-	Detail string
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
 }
 
 // Doctor validates that capture paths are wired correctly.

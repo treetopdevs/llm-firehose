@@ -70,6 +70,41 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionSerializes(t *testing.T) {
+	if CurrentSchemaVersion != 1 {
+		t.Fatalf("CurrentSchemaVersion = %d, want 1", CurrentSchemaVersion)
+	}
+	ev := sample()
+	ev.SchemaVersion = CurrentSchemaVersion
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	if v, ok := raw["schema_version"].(float64); !ok || int(v) != 1 {
+		t.Errorf("schema_version = %v, want 1", raw["schema_version"])
+	}
+}
+
+func TestSchemaVersionAbsentIsZero(t *testing.T) {
+	// Pre-versioning spool lines have no schema_version field; they must
+	// still unmarshal, with SchemaVersion reporting zero.
+	line := `{"id":"a","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}`
+	var ev Event
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		t.Fatalf("unmarshal legacy line: %v", err)
+	}
+	if ev.SchemaVersion != 0 {
+		t.Errorf("SchemaVersion = %d, want 0 for legacy line", ev.SchemaVersion)
+	}
+	if err := ev.Validate(); err != nil {
+		t.Errorf("legacy event must stay valid: %v", err)
+	}
+}
+
 func TestNewIDUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for range 100 {

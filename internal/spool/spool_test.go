@@ -64,6 +64,38 @@ func TestReadLastNAcrossFilesAndLimit(t *testing.T) {
 	}
 }
 
+func TestAppendStampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir)
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	if ev.SchemaVersion != 0 {
+		t.Fatalf("precondition: fresh event should have zero version")
+	}
+	if err := w.Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].SchemaVersion != event.CurrentSchemaVersion {
+		t.Fatalf("spooled schema_version = %d, want %d", evs[0].SchemaVersion, event.CurrentSchemaVersion)
+	}
+}
+
+func TestReadPreVersioningLines(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"old","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}` + "\n"
+	os.WriteFile(filepath.Join(dir, "2026-07-01.ndjson"), []byte(legacy), 0o644)
+	evs, err := ReadLastN(dir, 10)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].ID != "old" || evs[0].SchemaVersion != 0 {
+		t.Fatalf("legacy line misread: %+v", evs)
+	}
+}
+
 func TestTailerSeesNewLines(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir)

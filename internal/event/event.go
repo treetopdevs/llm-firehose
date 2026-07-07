@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// CurrentSchemaVersion is stamped into every event at spool-append time.
+// Version 0 means a pre-versioning spool line; readers treat it as v1.
+const CurrentSchemaVersion = 1
+
 // Category classifies an event for display grouping and filtering.
 type Category string
 
@@ -46,19 +50,20 @@ var validSeverities = map[Severity]bool{
 
 // Event is the common envelope for all agent activity.
 type Event struct {
-	ID        string         `json:"id"`
-	Time      time.Time      `json:"time"`
-	Source    string         `json:"source"`               // agent family: claude-code, codex, opencode, generic, procwatch
-	Agent     string         `json:"agent,omitempty"`      // specific agent/binary name
-	SessionID string         `json:"session_id,omitempty"`
-	Category  Category       `json:"category"`
-	Name      string         `json:"name,omitempty"` // source-specific event name
-	Severity  Severity       `json:"severity,omitempty"`
-	Summary   string         `json:"summary,omitempty"`
-	Repo      string         `json:"repo,omitempty"`
-	CWD       string         `json:"cwd,omitempty"`
-	Payload   map[string]any `json:"payload,omitempty"`
-	Raw       string         `json:"raw,omitempty"` // original source payload, privacy mode permitting
+	SchemaVersion int            `json:"schema_version,omitempty"`
+	ID            string         `json:"id"`
+	Time          time.Time      `json:"time"`
+	Source        string         `json:"source"`          // agent family: claude-code, codex, opencode, generic, procwatch
+	Agent         string         `json:"agent,omitempty"` // specific agent/binary name
+	SessionID     string         `json:"session_id,omitempty"`
+	Category      Category       `json:"category"`
+	Name          string         `json:"name,omitempty"` // source-specific event name
+	Severity      Severity       `json:"severity,omitempty"`
+	Summary       string         `json:"summary,omitempty"`
+	Repo          string         `json:"repo,omitempty"`
+	CWD           string         `json:"cwd,omitempty"`
+	Payload       map[string]any `json:"payload,omitempty"`
+	Raw           string         `json:"raw,omitempty"` // original source payload, privacy mode permitting
 }
 
 // Validate reports whether the event has the minimum required shape.
