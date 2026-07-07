@@ -122,6 +122,79 @@ func TestTraceByID(t *testing.T) {
 	}
 }
 
+func TestArtifactFiles(t *testing.T) {
+	cfg := testConfig(t)
+	w := spool.NewWriter(cfg.SpoolDir)
+	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	evs := []event.Event{
+		{ID: "f1", Time: base, Source: "claude-code", SessionID: "s1", Category: event.CategoryFile,
+			Payload: map[string]any{"file_path": "/repo/auth.go"}},
+		{ID: "f2", Time: base.Add(time.Minute), Source: "opencode", SessionID: "s2", Category: event.CategoryFile,
+			Payload: map[string]any{"file": "/repo/a.ts"}},
+		{ID: "f3", Time: base.Add(2 * time.Minute), Source: "codex", SessionID: "s3", Category: event.CategoryFile,
+			Payload: map[string]any{"changes": map[string]any{"/repo/auth.go": map[string]any{}, "/repo/b.go": map[string]any{}}}},
+		{ID: "x1", Time: base.Add(3 * time.Minute), Source: "claude-code", SessionID: "s1", Category: event.CategoryShell,
+			Summary: "not a file event"},
+	}
+	for _, ev := range evs {
+		if err := w.Append(ev); err != nil {
+			t.Fatalf("seed append: %v", err)
+		}
+	}
+	ts := testServer(t, cfg)
+
+	resp, err := http.Get(ts.URL + "/artifacts/files")
+	if err != nil {
+		t.Fatalf("GET /artifacts/files: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var files []FileArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("got %d artifacts, want 3: %+v", len(files), files)
+	}
+	// Most recently touched first; /repo/auth.go and /repo/b.go tie on f3's
+	// time, auth.go seen first in a sorted walk of the changes map.
+	byPath := map[string]FileArtifact{}
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	auth := byPath["/repo/auth.go"]
+	if auth.Events != 2 {
+		t.Errorf("auth.go events = %d, want 2 (claude-code + codex)", auth.Events)
+	}
+	if len(auth.Sources) != 2 {
+		t.Errorf("auth.go sources = %v, want [claude-code codex]", auth.Sources)
+	}
+	if !auth.LastTime.After(auth.FirstTime) {
+		t.Errorf("auth.go time range wrong: %+v", auth)
+	}
+	if files[len(files)-1].Path != "/repo/a.ts" && files[0].Path == "/repo/a.ts" {
+		t.Errorf("ordering wrong, a.ts is oldest by last touch: %+v", files)
+	}
+}
+
+func TestArtifactFilesEmpty(t *testing.T) {
+	ts := testServer(t, testConfig(t))
+	resp, err := http.Get(ts.URL + "/artifacts/files")
+	if err != nil {
+		t.Fatalf("GET /artifacts/files: %v", err)
+	}
+	defer resp.Body.Close()
+	var files []FileArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if files == nil || len(files) != 0 {
+		t.Errorf("want empty JSON array, got %v", files)
+	}
+}
+
 func TestDoctorEndpoint(t *testing.T) {
 	ts := testServer(t, testConfig(t))
 	resp, err := http.Get(ts.URL + "/doctor")
