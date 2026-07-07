@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /traces/{id}", s.handleTraceByID)
 	mux.HandleFunc("GET /artifacts/files", s.handleArtifactFiles)
 	mux.HandleFunc("GET /doctor", s.handleDoctor)
+	mux.HandleFunc("POST /install/{adapter}", s.handleInstall)
 	mux.HandleFunc("POST /export", s.handleExport)
 	return mux
 }
