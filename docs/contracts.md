@@ -22,7 +22,9 @@ Every captured event is normalized into the envelope defined in
 Evolution rules:
 
 - New optional fields may be added without bumping the version. Consumers
-  MUST ignore unknown fields.
+  MUST ignore unknown fields. (Example: `trace_id` — optional, groups
+  causally related events across sessions when a source supplies one —
+  was added additively within version 1.)
 - Removing, renaming, or changing the meaning of a field requires a version
   bump and a reader that understands both versions.
 - Spool lines written before versioning have no `schema_version` field;
@@ -92,14 +94,29 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 |---|---|
 | `GET /health` | `{status, version, schema_version}` — reachability + compatibility probe |
 | `GET /config` | effective engine configuration |
+| `POST /config` | persist a partial config update; `privacy_mode` applies live, other fields are echoed in `restart_required` |
 | `GET /events?limit=N` | recent events, oldest first (default 500) |
 | `GET /events/stream` | live feed, Server-Sent Events (`data: <envelope JSON>`) |
 | `POST /events` | ingest NDJSON envelopes; returns `{ingested: n}` |
 | `POST /emit?source=S` | normalize one raw source payload; 204 on success |
-| `GET /sessions` | session summaries derived from the spool, most recent first |
+| `GET /sessions` | session summaries (derived index), most recent first |
 | `GET /sessions/{id}` | all events for one session, oldest first |
+| `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
+| `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]` |
+| `POST /install/{adapter}` | wire an adapter (claude-code \| opencode); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
+
+Session, trace, and file queries are served from an in-memory index derived
+from the spool (rebuilt at startup, updated from the tail); the spool stays
+the source of truth and the index is always disposable.
+
+CORS: browser origins are allowlisted to the desktop shell
+(`tauri://localhost`, `http(s)://tauri.localhost`, `http://localhost:1420`).
+Other web origins get no CORS access — a random website must not read the
+local event feed. Non-browser clients are unaffected.
+
+Compatibility rule for clients: see [compatibility.md](compatibility.md).
 
 Client rules:
 

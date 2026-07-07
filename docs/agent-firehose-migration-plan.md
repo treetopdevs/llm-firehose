@@ -1,5 +1,19 @@
 # Agent Firehose Migration Plan
 
+## Status (2026-07-06)
+
+| Phase | State |
+|---|---|
+| Phase 0 — platform contract freeze | **Done** — [contracts.md](contracts.md), [event.schema.json](event.schema.json), schema/export versioning |
+| Phase 1 — engine/clients split | **Done** — daemon + full local API (incl. `POST /config`, `/traces/{id}`, `/artifacts/files`, `POST /install/{adapter}`), `firehosed` binary, TUI/CLI route through the daemon, `trace_id` in the envelope |
+| Phase 2 — derived index over NDJSON | **Done** — in-memory index (`internal/index`) rebuilt from the spool at startup, updated from the tail; spool remains source of truth. bbolt/SQLite remains the documented next step if RAM ever hurts |
+| Phase 3 — Tauri desktop shell | **Done (alpha)** — [apps/tauri-desktop](../apps/tauri-desktop): live feed, sessions, files, doctor + install, settings, onboarding, compat banner; `firehosed` sidecar; macOS bundle validated locally, Windows/Linux in [CI](../.github/workflows/desktop.yml); signing/updater are human-credential steps in the [release runbook](release-runbook.md) |
+| Phase 4 — keep/replace decision | **Framework ready** — [migration/pain-review.md](migration/pain-review.md); fill after real beta usage, per this plan's own exit criteria |
+| Phase 5 — Phoenix cloud | **Design only, deferred** — [architecture/cloud-control-plane.md](architecture/cloud-control-plane.md); gated by this plan's anti-goals |
+
+Deviations from the letter of this plan (with rationale) are recorded in
+[plans/2026-07-06-daemon-desktop-migration.md](plans/2026-07-06-daemon-desktop-migration.md).
+
 ## Goal
 
 Evolve the current local-first Go TUI into a distributable cross-platform desktop product in three stages:
