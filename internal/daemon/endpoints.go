@@ -97,6 +97,26 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+func (s *Server) handleTraceByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	evs, err := s.readAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var out []event.Event
+	for _, ev := range evs {
+		if ev.TraceID == id {
+			out = append(out, ev)
+		}
+	}
+	if len(out) == 0 {
+		http.Error(w, fmt.Sprintf("no events for trace %q", id), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, out)
+}
+
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cli.Doctor(s.config(), s.home))
 }
