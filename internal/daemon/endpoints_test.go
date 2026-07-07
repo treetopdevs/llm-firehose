@@ -18,9 +18,9 @@ func seedSessions(t *testing.T, dir string) {
 	evs := []event.Event{
 		{ID: "a1", Time: base, Source: "claude-code", Agent: "claude", SessionID: "s1",
 			Category: event.CategorySession, Summary: "session started", Repo: "myrepo"},
-		{ID: "a2", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "s1",
+		{ID: "a2", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "s1", TraceID: "tr1",
 			Category: event.CategoryTool, Summary: "ran a tool"},
-		{ID: "b1", Time: base.Add(2 * time.Minute), Source: "codex", SessionID: "s2",
+		{ID: "b1", Time: base.Add(2 * time.Minute), Source: "codex", SessionID: "s2", TraceID: "tr1",
 			Category: event.CategoryPrompt, Summary: "hello"},
 		{ID: "c1", Time: base.Add(3 * time.Minute), Source: "procwatch",
 			Category: event.CategoryMeta, Summary: "no session id"},
@@ -87,6 +87,38 @@ func TestSessionByID(t *testing.T) {
 	notFound.Body.Close()
 	if notFound.StatusCode != http.StatusNotFound {
 		t.Errorf("missing session status = %d, want 404", notFound.StatusCode)
+	}
+}
+
+func TestTraceByID(t *testing.T) {
+	cfg := testConfig(t)
+	seedSessions(t, cfg.SpoolDir)
+	ts := testServer(t, cfg)
+
+	resp, err := http.Get(ts.URL + "/traces/tr1")
+	if err != nil {
+		t.Fatalf("GET /traces/tr1: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var evs []event.Event
+	if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// tr1 spans sessions s1 and s2; oldest first.
+	if len(evs) != 2 || evs[0].ID != "a2" || evs[1].ID != "b1" {
+		t.Fatalf("trace events wrong: %+v", evs)
+	}
+
+	notFound, err := http.Get(ts.URL + "/traces/does-not-exist")
+	if err != nil {
+		t.Fatalf("GET missing trace: %v", err)
+	}
+	notFound.Body.Close()
+	if notFound.StatusCode != http.StatusNotFound {
+		t.Errorf("missing trace status = %d, want 404", notFound.StatusCode)
 	}
 }
 
