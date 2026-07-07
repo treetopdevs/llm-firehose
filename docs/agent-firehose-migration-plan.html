@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agent-firehose-migration-plan</title>
+    <style type="text/css">
+/*
+This document has been created with Marked.app <https://marked2app.com>
+Content is property of the document author
+Please leave this notice in place, along with any additional credits below.
+---------------------------------------------------------------
+Title: Swiss
+Author: Brett Terpstra
+Description: Clean, Swiss typography with no frills.
+---
+*/
+body {
+  -webkit-font-smoothing: antialiased;
+  font-family: "Helvetica Neue", Helvetica, Arial, Verdana, sans-serif;
+  margin: 30px 0 0;
+  padding: 0;
+  background: #fff;
+  color: #303030;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+#wrapper {
+  padding: 2rem;
+  max-width: 65rem;
+  margin: 0 auto;
+}
+
+li {
+  font-size: 1rem;
+  line-height: 1.6;
+}
+li li {
+  font-size: 1rem;
+}
+li p {
+  font-size: 1rem;
+  margin: 0.75rem 0;
+}
+
+h1 {
+  color: #000;
+}
+
+h2 {
+  color: #111111;
+}
+
+h3 {
+  color: #111111;
+}
+
+h4 {
+  color: #111111;
+}
+
+h5 {
+  color: #111111;
+}
+
+h6 {
+  color: #111111;
+  font-style: italic;
+}
+
+p,
+td,
+div {
+  color: #111111;
+  font-family: "Helvetica Neue", Helvetica, Arial, Verdana, sans-serif;
+  word-wrap: break-word;
+}
+
+a {
+  color: #0d6ea1;
+  text-decoration: none;
+  -webkit-transition: color 0.2s ease-in-out;
+  -moz-transition: color 0.2s ease-in-out;
+  -o-transition: color 0.2s ease-in-out;
+  -ms-transition: color 0.2s ease-in-out;
+  transition: color 0.2s ease-in-out;
+}
+a:hover {
+  color: #3593d9;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  margin: 2.5rem 0 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h1 {
+  margin-top: 0;
+  font-size: 2.75rem;
+}
+
+h2 {
+  font-size: 2.25rem;
+}
+
+h3 {
+  font-size: 1.875rem;
+}
+
+h4 {
+  font-size: 1.5rem;
+}
+
+h5 {
+  font-size: 1.25rem;
+}
+
+ul,
+ol,
+pre,
+table,
+blockquote {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Sanitation */
+hr {
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  margin: 2rem 0;
+}
+
+ul ul,
+ol ol,
+ul ol,
+ol ul {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+b,
+strong,
+em,
+small,
+code {
+  line-height: 1;
+}
+
+.footnote {
+  color: #0d6ea1;
+  font-size: 0.8em;
+  vertical-align: super;
+}
+
+abbr,
+acronym {
+  border-bottom: 1px dotted #aaa;
+}
+
+#wrapper img {
+  max-width: 100%;
+  height: auto;
+}
+
+dd {
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+li > p:first-of-type {
+  margin: 0;
+}
+li p + p {
+  margin-top: 1rem;
+}
+
+ul,
+ol {
+  padding-left: 2rem;
+}
+
+#wrapper ol {
+  list-style-position: outside;
+}
+
+ul ul,
+ul ol {
+  margin-bottom: 0.75rem;
+}
+
+caption,
+col,
+colgroup,
+table,
+tbody,
+td,
+tfoot,
+th,
+thead,
+tr {
+  border-spacing: 0;
+}
+
+table {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 6px;
+  display: table;
+  empty-cells: hide;
+  margin: 1.5rem 0;
+  padding: 0;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+caption {
+  display: table-caption;
+  font-weight: 700;
+}
+
+col {
+  display: table-column;
+}
+
+colgroup {
+  display: table-column-group;
+}
+
+tbody {
+  display: table-row-group;
+}
+
+tfoot {
+  display: table-footer-group;
+}
+
+thead {
+  display: table-header-group;
+}
+
+td,
+th {
+  display: table-cell;
+}
+
+tr {
+  display: table-row;
+}
+
+table th,
+table td {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  padding: 0.75rem 1rem;
+  vertical-align: middle;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+table th:last-child,
+table td:last-child {
+  border-right: none;
+}
+
+table tbody tr:last-child td,
+table tfoot tr:last-child td {
+  border-bottom: none;
+}
+
+table thead {
+  background: rgba(0, 0, 0, 0.04);
+}
+table thead th:first-child {
+  border-top-left-radius: 6px;
+}
+table thead th:last-child {
+  border-top-right-radius: 6px;
+}
+
+table tbody {
+  background: transparent;
+}
+
+table tfoot {
+  background: rgba(0, 0, 0, 0.04);
+}
+table tfoot td:first-child {
+  border-bottom-left-radius: 6px;
+}
+table tfoot td:last-child {
+  border-bottom-right-radius: 6px;
+}
+
+figure {
+  display: inline-block;
+  overflow: hidden;
+  position: relative;
+  margin: 1.5rem 0 2rem;
+}
+
+figcaption {
+  font-style: italic;
+  text-align: center;
+  background: white;
+  color: #666666;
+}
+
+figure:hover > figcaption {
+  /* background: rgba(0,0,0,1) */
+}
+
+.poetry pre {
+  display: block;
+  font-family: Georgia, Garamond, serif !important;
+  font-size: 110% !important;
+  font-style: italic;
+  line-height: 1.6em;
+  margin-left: 1em;
+}
+.poetry pre code {
+  font-family: Georgia, Garamond, serif !important;
+  word-break: break-all;
+  word-break: break-word;
+  /* Non standard for webkit */
+  -webkit-hyphens: auto;
+  -moz-hyphens: auto;
+  hyphens: auto;
+  white-space: pre-wrap;
+}
+
+blockquote {
+  margin: 1.5rem 0;
+  padding-left: 1.5rem;
+  border-left: 3px solid rgba(0, 0, 0, 0.1);
+}
+blockquote p {
+  font-size: 1rem;
+  font-style: italic;
+  line-height: 1.6;
+  margin: 1rem 0;
+}
+blockquote p:first-child {
+  margin-top: 0;
+}
+blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+sup,
+sub,
+a.footnote {
+  font-size: 1.4ex;
+  height: 0;
+  line-height: 1;
+  position: relative;
+  vertical-align: super;
+}
+
+sub {
+  vertical-align: sub;
+  top: -1px;
+}
+
+p {
+  font-size: 1rem;
+  line-height: 1.6;
+  margin: 1.5rem 0;
+}
+
+dt,
+th {
+  font-weight: 700;
+}
+
+table tbody tr:nth-child(odd) td {
+  background: rgba(0, 0, 0, 0.01);
+}
+
+table tbody tr:nth-child(even) td {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+table tbody tr:hover td {
+  background: rgba(0, 0, 0, 0.03);
+  -webkit-transition: background 0.2s ease-in-out;
+  -moz-transition: background 0.2s ease-in-out;
+  -o-transition: background 0.2s ease-in-out;
+  -ms-transition: background 0.2s ease-in-out;
+  transition: background 0.2s ease-in-out;
+}
+
+@media print {
+  #wrapper {
+    background: #fff;
+    color: #303030;
+    padding: 10px;
+    position: relative;
+    text-indent: 0;
+  }
+}
+@media screen {
+  .inverted {
+    background: rgb(37, 42, 42);
+  }
+  .inverted #wrapper {
+    background: rgb(37, 42, 42);
+    color: #eeeeee;
+  }
+  .inverted hr {
+    border-color: rgb(51, 63, 64) !important;
+  }
+  .inverted p,
+  .inverted td,
+  .inverted li,
+  .inverted h1,
+  .inverted h2,
+  .inverted h3,
+  .inverted h4,
+  .inverted h5,
+  .inverted h6,
+  .inverted th,
+  .inverted .math,
+  .inverted caption,
+  .inverted dt,
+  .inverted dd {
+    color: #eeeeee;
+  }
+  .inverted pre {
+    background: #ccc;
+    color: #111;
+  }
+  .inverted table {
+    background: none;
+  }
+  .inverted table tr:nth-child(odd),
+  .inverted table td:nth-child(odd) {
+    background: none;
+  }
+  .inverted a {
+    color: rgb(172, 209, 213);
+  }
+  ::selection {
+    background: rgba(157, 193, 200, 0.5);
+  }
+  h1::selection {
+    background-color: rgba(45, 156, 208, 0.3);
+  }
+  h2::selection {
+    background-color: rgba(90, 182, 224, 0.3);
+  }
+  h3::selection,
+  h4::selection,
+  h5::selection,
+  h6::selection,
+  li::selection,
+  ol::selection {
+    background-color: rgba(133, 201, 232, 0.3);
+  }
+  code::selection {
+    background-color: rgba(0, 0, 0, 0.7);
+    color: #eee;
+  }
+  code span::selection {
+    background-color: rgba(0, 0, 0, 0.7) !important;
+    color: #eee !important;
+  }
+  a::selection {
+    background-color: rgba(255, 230, 102, 0.2);
+  }
+  .inverted a::selection {
+    background-color: rgba(255, 230, 102, 0.6);
+  }
+  td::selection,
+  th::selection,
+  caption::selection {
+    background-color: rgba(180, 237, 95, 0.5);
+  }
+}
+.mkstyle--swiss #wrapper aside.blurb:before {
+  margin-top: 0.7em;
+}
+</style>  <style>#wrapper { max-width:auto; margin:0 auto; }</style>
+<style id="diff-marker-style">.has-diff-marker{position:relative;}</style>
+<style id="marked-print-logo-styles">
+      @media print {
+        /* Ensure headers and footers have proper height for logos */
+        @page {
+          margin-top: 1in;
+          margin-bottom: 1in;
+          margin-left: 1in;
+          margin-right: 1in;
+        }
+
+        /* Style for logos in headers/footers */
+        .mkprinting img[alt="Logo"] {
+          max-height: 50px !important;
+          height: auto !important;
+          width: auto !important;
+          vertical-align: middle !important;
+          display: inline-block !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+                /* Base header/footer styling - only tall enough for one line of text */
+        .mkprinting .print-header,
+        .mkprinting .print-footer {
+          min-height: var(--header-footer-height, 1.2em);
+          height: var(--header-footer-height, 1.2em);
+          display: flex;
+          align-items: center;
+          justify-content: flex-start;
+          padding: 0;
+          box-sizing: border-box;
+          font-family: var(--header-footer-font, inherit);
+          font-size: var(--header-footer-font-size, inherit);
+          line-height: 1.2;
+          overflow: hidden;
+        }
+
+        /* Ensure text in headers/footers uses the specified font preferences */
+        .mkprinting .print-header *,
+        .mkprinting .print-footer * {
+          font-family: var(--header-footer-font, inherit);
+          font-size: var(--header-footer-font-size, inherit);
+        }
+
+        /* Ensure proper text rendering in headers/footers */
+        .mkprinting .print-header,
+        .mkprinting .print-footer {
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+
+        /* Handle text wrapping if needed */
+        .mkprinting .print-header.wrap-text,
+        .mkprinting .print-footer.wrap-text {
+          white-space: normal;
+          height: auto;
+          min-height: var(--header-footer-height, 1.2em);
+        }
+
+        /* Adjust page margins when logos are present */
+        .mkprinting.has-logo {
+          margin-top: 1.2in;
+          margin-bottom: 1.2in;
+        }
+
+        /* Dynamic height adjustment for headers/footers with logos */
+        .mkprinting.has-logo .print-header,
+        .mkprinting.has-logo .print-footer {
+          min-height: var(--logo-header-height, 70px);
+          height: var(--logo-header-height, 70px);
+          padding: 10px 0;
+          box-sizing: border-box;
+        }
+
+        /* Ensure proper spacing around logos */
+        .mkprinting img[alt="Logo"] + * {
+          margin-left: 10px;
+        }
+
+        /* Responsive logo sizing */
+        .mkprinting img[alt="Logo"] {
+          max-height: 50px !important;
+          max-width: 200px !important;
+          object-fit: contain;
+        }
+      }
+    </style>
+
+  
+</head>
+<body class="export">
+  <div id="wrapper"><h1 id="agentfirehosemigrationplan">Agent Firehose Migration Plan</h1>
+<h2 id="goal">Goal</h2>
+<p>Evolve the current local-first Go TUI into a distributable cross-platform desktop product in three stages:</p>
+<ol>
+<li><strong>Current state:</strong> Go CLI/TUI + local adapters + NDJSON spool.</li>
+<li><strong>Next state:</strong> Go daemon + Tauri desktop app for macOS, Windows, and Linux.</li>
+<li><strong>Optional future state:</strong> Phoenix cloud backend for sync, fleet analytics, collaboration, and hosted observability.</li>
+</ol>
+<p>The key principle is to preserve the current event model and spool/export contract as the durable platform boundary rather than rebuilding the entire system immediately.[cite:66]</p>
+<h2 id="whythispath">Why this path</h2>
+<p>The current implementation already has the right product core: a normalized <code>Event</code> envelope, adapter-driven ingestion, privacy redaction before persistence, local NDJSON spool files, export, install/doctor commands, and a viewer that can tail live activity.[cite:66]</p>
+<p>That means the risky and product-defining work is largely done already. The missing layer is a better desktop packaging and visualization story for non-TUI users, not a new ingestion model.[cite:66]</p>
+<p>Tauri is a strong fit for the desktop shell because it is designed for small, secure cross-platform desktop apps with a web frontend and Rust backend, and it supports updater workflows for macOS, Windows, and Linux distributions.[cite:72][cite:68][cite:75]</p>
+<p>Phoenix should be treated as an optional later control plane, not as the local desktop runtime. It is most valuable if the product grows into shared dashboards, team views, remote ingestion, or cloud-hosted observability.[cite:66]</p>
+<h2 id="architecturalnorthstar">Architectural north star</h2>
+<p>Use a <strong>three-layer architecture</strong>:</p>
+<ul>
+<li><strong>Capture engine:</strong> local Go runtime responsible for adapters, normalization, privacy, spool writes, export, install, and diagnostics.[cite:66]</li>
+<li><strong>Desktop shell:</strong> Tauri app responsible for timelines, graphs, settings, onboarding, tray behavior, filters, and installer/update UX.[cite:72][cite:75]</li>
+<li><strong>Cloud control plane (optional):</strong> Phoenix backend responsible for team accounts, cloud sync, multi-device session aggregation, remote analytics, and organization features.</li>
+</ul>
+<p>The compatibility contract should be:</p>
+<ul>
+<li>Event envelope schema.</li>
+<li>Privacy mode semantics.</li>
+<li>NDJSON spool format.</li>
+<li>Export format.</li>
+<li>Local API or IPC contract.</li>
+</ul>
+<p>These should remain stable so adapters and data survive UI changes.[cite:66]</p>
+<h2 id="phase0:freezetheplatformcontract">Phase 0: Freeze the platform contract</h2>
+<h3 id="objective">Objective</h3>
+<p>Before adding a GUI, define what must stay stable.</p>
+<h3 id="deliverables">Deliverables</h3>
+<ul>
+<li><code>event.schema.json</code> or equivalent documented schema for normalized events.</li>
+<li>Versioned spool format (<code>schema_version</code> field in each event).</li>
+<li>Versioned export format (<code>export_version</code>).</li>
+<li>Written privacy contract for <code>minimal</code>, <code>balanced</code>, and <code>full</code> capture modes.[cite:66]</li>
+<li>Source adapter contract describing how Claude Code, Codex, OpenCode, and generic NDJSON inputs map to canonical event categories.[cite:66]</li>
+</ul>
+<h3 id="implementationnotes">Implementation notes</h3>
+<p>Add schema versioning now, before a GUI or cloud backend exists. This avoids painful migrations later when older desktop clients and adapters are already in the wild.</p>
+<h3 id="exitcriteria">Exit criteria</h3>
+<ul>
+<li>Old spool files remain readable after minor schema evolution.</li>
+<li>New fields can be added without breaking old viewers.</li>
+<li>Export can be consumed by external tools.</li>
+</ul>
+<h2 id="phase1:splitthecurrentappintoengineandclients">Phase 1: Split the current app into engine and clients</h2>
+<h3 id="objective2">Objective</h3>
+<p>Refactor the Go app from “CLI with embedded viewer” into “local engine + thin clients.”</p>
+<h3 id="targetshape">Target shape</h3>
+<ul>
+<li><code>firehose-agent</code> or <code>firehosed</code>: long-running local daemon.</li>
+<li><code>firehose</code> CLI: install, doctor, export, status, config, developer tools.</li>
+<li>Existing TUI becomes an optional client of the daemon instead of the main architecture.</li>
+</ul>
+<h3 id="engineresponsibilities">Engine responsibilities</h3>
+<ul>
+<li>Hook/plugin ingest.</li>
+<li>File tailing and process watching.[cite:66]</li>
+<li>Event normalization.[cite:66]</li>
+<li>Privacy redaction.[cite:66]</li>
+<li>Spool append and read.[cite:66]</li>
+<li>Live subscription stream.</li>
+<li>Health/status reporting.</li>
+<li>Adapter management.</li>
+</ul>
+<h3 id="clientresponsibilities">Client responsibilities</h3>
+<ul>
+<li>TUI rendering.</li>
+<li>Desktop UI rendering.</li>
+<li>Filter state.</li>
+<li>Session exploration.</li>
+<li>Export invocation.</li>
+</ul>
+<h3 id="recommendedlocalinterface">Recommended local interface</h3>
+<p>Use one of these two patterns:</p>
+<table>
+<colgroup>
+<col style="text-align:left;">
+<col style="text-align:left;">
+<col style="text-align:left;">
+</colgroup>
+
+<thead>
+<tr>
+	<th style="text-align:left;">Option</th>
+	<th style="text-align:left;">Recommendation</th>
+	<th style="text-align:left;">Notes</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+	<td style="text-align:left;">Local HTTP API + SSE/WebSocket</td>
+	<td style="text-align:left;">Best default</td>
+	<td style="text-align:left;">Easy for Tauri, CLI, and future external tooling.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Unix socket / named pipe IPC</td>
+	<td style="text-align:left;">Good later optimization</td>
+	<td style="text-align:left;">Better for local-only security posture, but adds more platform complexity.</td>
+</tr>
+</tbody>
+</table>
+<p>Start with localhost HTTP plus tokenless local trust, then harden later if needed.</p>
+<h3 id="suggestedapisurface">Suggested API surface</h3>
+<ul>
+<li><code>GET /health</code></li>
+<li><code>GET /config</code></li>
+<li><code>POST /config</code></li>
+<li><code>GET /events/stream</code></li>
+<li><code>GET /sessions</code></li>
+<li><code>GET /sessions/:id</code></li>
+<li><code>GET /traces/:id</code></li>
+<li><code>GET /artifacts/files</code></li>
+<li><code>POST /export</code></li>
+<li><code>POST /install/:adapter</code></li>
+<li><code>GET /doctor</code></li>
+</ul>
+<h3 id="exitcriteria2">Exit criteria</h3>
+<ul>
+<li>TUI reads from daemon API instead of directly tailing files.</li>
+<li>Adapters write only through daemon.</li>
+<li>Viewer logic is fully separated from capture logic.</li>
+</ul>
+<h2 id="phase2:improvelocalstoragewithoutbreakingcompatibility">Phase 2: Improve local storage without breaking compatibility</h2>
+<h3 id="objective3">Objective</h3>
+<p>Keep NDJSON as the canonical append-only log, but add indexes or derived state for faster GUI queries.</p>
+<h3 id="recommendedapproach">Recommended approach</h3>
+<p>Do <strong>not</strong> replace NDJSON immediately. Instead:</p>
+<ul>
+<li>Keep daily spool files as the source of truth.[cite:66]</li>
+<li>Add a lightweight derived index for sessions, traces, file paths, and time ranges.</li>
+<li>Rebuild indexes on startup if missing or corrupt.</li>
+</ul>
+<h3 id="storageoptions">Storage options</h3>
+<table>
+<colgroup>
+<col style="text-align:left;">
+<col style="text-align:left;">
+<col style="text-align:left;">
+</colgroup>
+
+<thead>
+<tr>
+	<th style="text-align:left;">Option</th>
+	<th style="text-align:left;">Use</th>
+	<th style="text-align:left;">Recommendation</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+	<td style="text-align:left;">NDJSON only</td>
+	<td style="text-align:left;">Source of truth</td>
+	<td style="text-align:left;">Keep.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">BoltDB / bbolt / Pebble / SQLite index</td>
+	<td style="text-align:left;">Query acceleration</td>
+	<td style="text-align:left;">Add only for desktop responsiveness.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Full relational replacement</td>
+	<td style="text-align:left;">Primary store</td>
+	<td style="text-align:left;">Avoid in this phase.</td>
+</tr>
+</tbody>
+</table>
+<p>This protects backward compatibility while allowing fast UI operations like timeline zoom, session search, and file-based filtering.</p>
+<h3 id="exitcriteria3">Exit criteria</h3>
+<ul>
+<li>Cold start remains reliable using only spool files.</li>
+<li>Large local histories still feel responsive in the GUI.</li>
+<li>Export remains based on canonical spool data.</li>
+</ul>
+<h2 id="phase3:introducethetauridesktopshell">Phase 3: Introduce the Tauri desktop shell</h2>
+<h3 id="objective4">Objective</h3>
+<p>Ship a polished desktop UI without rewriting the Go ingestion engine.</p>
+<h3 id="recommendedstructure">Recommended structure</h3>
+<ul>
+<li><strong>Tauri app:</strong> UI shell, onboarding, settings, charts, timeline, graph, tray, update UX.[cite:72][cite:75]</li>
+<li><strong>Go daemon sidecar:</strong> spawned or installed companion process that owns capture and storage.</li>
+<li><strong>IPC/API bridge:</strong> Tauri frontend talks to Go daemon over localhost.</li>
+</ul>
+<h3 id="whythisisthebestnear-termcompromise">Why this is the best near-term compromise</h3>
+<ul>
+<li>It preserves the current Go investment.[cite:66]</li>
+<li>It gives a much better distribution story than a raw TUI.[cite:72][cite:75]</li>
+<li>It avoids a full Rust rewrite before product-market validation.</li>
+</ul>
+<h3 id="desktopuxpriorities">Desktop UX priorities</h3>
+<ol>
+<li>Onboarding wizard: choose privacy mode, install adapters, verify doctor status.</li>
+<li>Live dashboard: fleet roster, waterfall timeline, session explorer, artifact view.</li>
+<li>Settings: adapter status, spool location, retention, export, redaction.</li>
+<li>Background behavior: tray icon, startup at login, notifications for failures.</li>
+<li>Update flow: desktop updater and daemon version compatibility checks.[cite:68]</li>
+</ol>
+<h3 id="packagingmodel">Packaging model</h3>
+<table>
+<colgroup>
+<col style="text-align:left;">
+<col style="text-align:left;">
+<col style="text-align:left;">
+</colgroup>
+
+<thead>
+<tr>
+	<th style="text-align:left;">Component</th>
+	<th style="text-align:left;">Packaged with desktop app?</th>
+	<th style="text-align:left;">Notes</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+	<td style="text-align:left;">Tauri app</td>
+	<td style="text-align:left;">Yes</td>
+	<td style="text-align:left;">Main visible app.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Go daemon</td>
+	<td style="text-align:left;">Yes</td>
+	<td style="text-align:left;">Bundled sidecar or installed companion binary.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">CLI tools</td>
+	<td style="text-align:left;">Optional</td>
+	<td style="text-align:left;">Useful for power users and support workflows.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Adapter scripts/plugins</td>
+	<td style="text-align:left;">Yes</td>
+	<td style="text-align:left;">Installed by guided onboarding.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="desktopreleasetasks">Desktop release tasks</h3>
+<ul>
+<li>Sign macOS app bundle.</li>
+<li>Build Windows installer.</li>
+<li>Build Linux packages/AppImage.</li>
+<li>Add updater feed metadata for desktop releases.[cite:68][cite:73]</li>
+<li>Define daemon/UI compatibility matrix.</li>
+</ul>
+<h3 id="exitcriteria4">Exit criteria</h3>
+<ul>
+<li>A non-terminal user can install the app, enable adapters, and see live events.</li>
+<li>Updating the app does not destroy spool data or settings.</li>
+<li>The daemon can be restarted independently from the UI.</li>
+</ul>
+<h2 id="phase4:decidewhethertokeeporreplacethegoengine">Phase 4: Decide whether to keep or replace the Go engine</h2>
+<h3 id="objective5">Objective</h3>
+<p>Make the stack decision based on real product pain rather than speculation.</p>
+<h3 id="keepgoif">Keep Go if</h3>
+<ul>
+<li>Adapters are stable and easy to maintain.</li>
+<li>Process watching and file tailing are reliable across platforms.</li>
+<li>Performance is acceptable for local workloads.</li>
+<li>The main remaining work is UI polish and product packaging.</li>
+</ul>
+<h3 id="considerselectiverustmigrationif">Consider selective Rust migration if</h3>
+<ul>
+<li>Tauri-side native integrations are blocked by the Go sidecar model.</li>
+<li>Packaging the sidecar becomes fragile.</li>
+<li>Cross-platform process or filesystem edge cases become a chronic maintenance burden.</li>
+<li>Native plugin ecosystems on the Rust/Tauri side clearly reduce operational complexity.[cite:72][cite:75]</li>
+</ul>
+<h3 id="donotrebuildthewholeenginejustbecausetauriusesrust">Do not rebuild the whole engine just because Tauri uses Rust</h3>
+<p>A sidecar architecture is acceptable for a long time. Rebuild only the subsystems that are actually painful.</p>
+<h3 id="exitcriteria5">Exit criteria</h3>
+<ul>
+<li>A written “pain review” after real desktop beta usage.</li>
+<li>A measured decision based on install failures, crash reports, performance, and support load.</li>
+</ul>
+<h2 id="phase5:addoptionalphoenixcloudbackend">Phase 5: Add optional Phoenix cloud backend</h2>
+<h3 id="objective6">Objective</h3>
+<p>Add a hosted/team layer without breaking the local-first promise.</p>
+<h3 id="whatphoenixshoulddo">What Phoenix should do</h3>
+<ul>
+<li>User/org auth.</li>
+<li>Device registration.</li>
+<li>Encrypted or privacy-aware sync of allowed event subsets.</li>
+<li>Team dashboards.</li>
+<li>Multi-device or multi-user session aggregation.</li>
+<li>Long-term analytics.</li>
+<li>Shared traces, search, alerts, and collaboration.</li>
+</ul>
+<h3 id="whatphoenixshouldnotdoinitially">What Phoenix should not do initially</h3>
+<ul>
+<li>Replace the local collector.</li>
+<li>Become required for the product to function.</li>
+<li>Break offline mode.</li>
+</ul>
+<h3 id="deploymentmodes">Deployment modes</h3>
+<table>
+<colgroup>
+<col style="text-align:left;">
+<col style="text-align:left;">
+</colgroup>
+
+<thead>
+<tr>
+	<th style="text-align:left;">Mode</th>
+	<th style="text-align:left;">Description</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+	<td style="text-align:left;">Local only</td>
+	<td style="text-align:left;">No cloud sync; all data stays on device.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Personal sync</td>
+	<td style="text-align:left;">Optional backup/sync across one user’s devices.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Team mode</td>
+	<td style="text-align:left;">Multiple users/devices sending approved metadata to cloud.</td>
+</tr>
+<tr>
+	<td style="text-align:left;">Enterprise self-hosted</td>
+	<td style="text-align:left;">Organization-hosted Phoenix control plane.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="dataflow">Data flow</h3>
+<ul>
+<li>Local daemon captures full-fidelity events.</li>
+<li>Local policy decides what may leave the machine.</li>
+<li>Cloud receives a transformed subset based on privacy mode and org policy.</li>
+<li>Local export remains available regardless of cloud status.</li>
+</ul>
+<h3 id="whyphoenixfitshere">Why Phoenix fits here</h3>
+<p>Phoenix is strongest when the product becomes a <strong>shared realtime system</strong>, such as team dashboards and fleet aggregation, which is different from the local desktop runtime concern.[cite:66]</p>
+<h3 id="exitcriteria6">Exit criteria</h3>
+<ul>
+<li>Local-only mode remains first-class.</li>
+<li>Sync can be disabled completely.</li>
+<li>Cloud features add value without increasing local complexity.</li>
+</ul>
+<h2 id="suggestedrepostrategy">Suggested repo strategy</h2>
+<p>A monorepo will keep this manageable.</p>
+<pre style="background-color: rgb(255, 255, 255); height: 416px;"><code class="text hljs language-plaintext" style="color: rgb(36, 41, 46); background-color: rgb(255, 255, 255); font-weight: 400; font-style: normal; font-family: monospace;" data-highlighted="yes">agent-firehose/
+  apps/
+    go-daemon/
+    go-cli/
+    tauri-desktop/
+    phoenix-cloud/         # optional later
+  packages/
+    event-schema/
+    export-schema/
+    adapter-fixtures/
+    ui-contracts/
+  docs/
+    architecture/
+    migration/
+    adapters/</code></pre>
+<h2 id="recommendedmilestones">Recommended milestones</h2>
+<h3 id="milestone1:platformhardening">Milestone 1: Platform hardening</h3>
+<ul>
+<li>Freeze schema and spool contract.</li>
+<li>Add versioning.</li>
+<li>Separate engine from TUI.</li>
+<li>Provide local API.</li>
+</ul>
+<h3 id="milestone2:desktopalpha">Milestone 2: Desktop alpha</h3>
+<ul>
+<li>Tauri shell with live feed, sessions, detail panes, settings.</li>
+<li>Bundled Go daemon.</li>
+<li>Installer for macOS first, then Windows and Linux.</li>
+</ul>
+<h3 id="milestone3:desktopbeta">Milestone 3: Desktop beta</h3>
+<ul>
+<li>Timeline and graph views.</li>
+<li>Export UX.</li>
+<li>Auto-update.</li>
+<li>Crash reporting and compatibility checks.</li>
+</ul>
+<h3 id="milestone4:cloudpreview">Milestone 4: Cloud preview</h3>
+<ul>
+<li>Phoenix service for accounts and optional sync.</li>
+<li>Team dashboards and shared search.</li>
+<li>Privacy-aware cloud policies.</li>
+</ul>
+<h2 id="agentexecutionplan">Agent execution plan</h2>
+<h3 id="immediatenexttasks">Immediate next tasks</h3>
+<ol>
+<li>Extract current viewer logic behind a local API boundary.</li>
+<li>Introduce schema versioning into every normalized event.[cite:66]</li>
+<li>Add stable session/trace identifiers if not already universal.</li>
+<li>Build a tiny daemon process that owns spool append, tail, and live stream.</li>
+<li>Make the TUI consume daemon events.</li>
+<li>Build a Tauri proof-of-concept that renders:</li>
+<li>live event feed,</li>
+<li>session list,</li>
+<li>detail pane,</li>
+<li>doctor/install status.</li>
+<li>Validate packaging on macOS, Windows, and Linux.</li>
+<li>Only after beta feedback, decide whether any Go subsystems should be ported.</li>
+</ol>
+<h3 id="anti-goals">Anti-goals</h3>
+<ul>
+<li>Rewriting ingestion before the desktop UX exists.</li>
+<li>Replacing NDJSON before query pain is real.</li>
+<li>Adding cloud sync before local desktop usage is solid.</li>
+<li>Rebuilding in Elixir for the local runtime.</li>
+</ul>
+<h2 id="finalrecommendation">Final recommendation</h2>
+<p>The best migration path is:</p>
+<ul>
+<li><strong>Keep Go as the engine now.</strong>[cite:66]</li>
+<li><strong>Add a daemon boundary next.</strong>[cite:66]</li>
+<li><strong>Ship a Tauri desktop shell for cross-platform productization.</strong>[cite:72][cite:68][cite:75]</li>
+<li><strong>Introduce Phoenix only as an optional cloud control plane later.</strong></li>
+</ul>
+<p>This path preserves the current product insight, minimizes rewrite risk, and keeps the door open for later Rust or cloud evolution without forcing a premature rebuild.</p>
+</div>
+  
+</body>
+</html>
