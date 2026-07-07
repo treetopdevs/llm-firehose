@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"time"
 
@@ -197,6 +198,36 @@ func (s *Server) handleTraceByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cli.Doctor(s.config(), s.home))
+}
+
+// handleInstall wires an adapter the same way `firehose install` does, so
+// desktop onboarding can drive installation through the API.
+func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
+	adapter := r.PathValue("adapter")
+	var detail string
+	switch adapter {
+	case "claude-code":
+		bin, err := os.Executable()
+		if err != nil {
+			bin = "firehose"
+		}
+		if err := cli.InstallClaudeCode(s.home, bin); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		detail = "hooks merged into ~/.claude/settings.json (backup: settings.json.bak); restart running Claude Code sessions"
+	case "opencode":
+		path, err := cli.InstallOpenCode(s.home)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		detail = "plugin written to " + path + "; restart OpenCode to load it"
+	default:
+		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code or opencode)", adapter), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "detail": detail})
 }
 
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {

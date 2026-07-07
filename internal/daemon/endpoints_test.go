@@ -4,12 +4,23 @@ import (
 	"bufio"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/spool"
 )
+
+func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
 
 func seedSessions(t *testing.T, dir string) {
 	t.Helper()
@@ -221,6 +232,62 @@ func TestDoctorEndpoint(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no 'spool writable' check in %+v", checks)
+	}
+}
+
+func TestInstallEndpoint(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	ts := httptestNewServerWithHome(t, cfg, home)
+
+	resp, err := http.Post(ts.URL+"/install/claude-code", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-code: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got struct {
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.OK || got.Detail == "" {
+		t.Errorf("install response = %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		t.Errorf("hooks not installed: %v", err)
+	}
+
+	unknown, err := http.Post(ts.URL+"/install/emacs", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/emacs: %v", err)
+	}
+	unknown.Body.Close()
+	if unknown.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown adapter status = %d, want 404", unknown.StatusCode)
+	}
+}
+
+func TestInstallEndpointOpenCode(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	ts := httptestNewServerWithHome(t, cfg, home)
+
+	resp, err := http.Post(ts.URL+"/install/opencode", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/opencode: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	matches, _ := filepath.Glob(filepath.Join(home, ".config", "opencode", "plugin", "*"))
+	if len(matches) == 0 {
+		t.Error("opencode plugin not written")
 	}
 }
 
