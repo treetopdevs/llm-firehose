@@ -96,6 +96,71 @@ func TestReadPreVersioningLines(t *testing.T) {
 	}
 }
 
+func TestReadDaysLimitsToNamedFiles(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir)
+	day1 := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	for i, ts := range []time.Time{day1, day1.Add(time.Minute), day2} {
+		if err := w.Append(mkEvent(i, ts)); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	evs, err := ReadDays(dir, []string{"2026-07-02"})
+	if err != nil {
+		t.Fatalf("ReadDays: %v", err)
+	}
+	if len(evs) != 2 || evs[0].ID != "ev-0" || evs[1].ID != "ev-1" {
+		t.Fatalf("day-1 events wrong: %+v", evs)
+	}
+
+	// Both days, oldest first regardless of input order.
+	evs, err = ReadDays(dir, []string{"2026-07-03", "2026-07-02"})
+	if err != nil {
+		t.Fatalf("ReadDays both: %v", err)
+	}
+	if len(evs) != 3 || evs[0].ID != "ev-0" || evs[2].ID != "ev-2" {
+		t.Fatalf("two-day events wrong: %+v", evs)
+	}
+
+	// Missing day files are skipped, not errors.
+	evs, err = ReadDays(dir, []string{"1999-01-01"})
+	if err != nil || len(evs) != 0 {
+		t.Fatalf("missing day: evs=%v err=%v", evs, err)
+	}
+}
+
+func TestTailerPrimeFixesSnapshotBoundary(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir)
+	if err := w.Append(mkEvent(0, time.Now().UTC())); err != nil {
+		t.Fatalf("append existing: %v", err)
+	}
+
+	tail := NewTailer(dir, 10*time.Millisecond)
+	tail.Prime() // snapshot boundary: everything before this is "existing"
+
+	// Appended after Prime but before Run: must still be delivered.
+	if err := w.Append(mkEvent(1, time.Now().UTC())); err != nil {
+		t.Fatalf("append post-prime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan event.Event, 16)
+	go tail.Run(ctx, ch)
+
+	select {
+	case ev := <-ch:
+		if ev.ID != "ev-1" {
+			t.Errorf("got %q, want ev-1 (pre-prime content must be skipped)", ev.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailer never delivered post-prime event")
+	}
+}
+
 func TestTailerSeesNewLines(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir)

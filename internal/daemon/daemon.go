@@ -16,6 +16,7 @@ import (
 
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/index"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
@@ -30,9 +31,27 @@ type Server struct {
 	version string
 	hub     *hub
 
+	ixOnce sync.Once
+	ix     *index.Index
+
 	// TailInterval is the spool poll cadence; WatchInterval the codex one.
 	TailInterval  time.Duration
 	WatchInterval time.Duration
+}
+
+// ensureIndex builds the derived index from the spool exactly once (at Start
+// in production, or lazily at the first query) and returns it. A failed
+// build degrades to an empty index rather than taking the API down; the
+// spool remains authoritative either way.
+func (s *Server) ensureIndex() *index.Index {
+	s.ixOnce.Do(func() {
+		ix, err := index.Build(s.config().SpoolDir)
+		if err != nil {
+			ix = index.New()
+		}
+		s.ix = ix
+	})
+	return s.ix
 }
 
 func New(cfg cli.Config, home, version string) *Server {

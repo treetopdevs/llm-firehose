@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,56 @@ func TestArtifactFilesEmpty(t *testing.T) {
 	}
 	if files == nil || len(files) != 0 {
 		t.Errorf("want empty JSON array, got %v", files)
+	}
+}
+
+// The daemon must reflect spool appends while running: the tailer feeds the
+// derived index, so /sessions stays correct after the first query without
+// re-reading the whole spool.
+func TestSessionsLiveUpdateWhileRunning(t *testing.T) {
+	cfg := testConfig(t)
+	s := New(cfg, t.TempDir(), "test-version")
+	s.TailInterval = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	getSessions := func() []Session {
+		resp, err := http.Get(ts.URL + "/sessions")
+		if err != nil {
+			t.Fatalf("GET /sessions: %v", err)
+		}
+		defer resp.Body.Close()
+		var out []Session
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	if got := getSessions(); len(got) != 0 {
+		t.Fatalf("expected empty sessions, got %+v", got)
+	}
+
+	w := spool.NewWriter(cfg.SpoolDir)
+	ev := mkEvent(9, time.Now().UTC())
+	ev.SessionID = "s9"
+	if err := w.Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got := getSessions()
+		if len(got) == 1 && got[0].ID == "s9" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("appended session never appeared: %+v", got)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
