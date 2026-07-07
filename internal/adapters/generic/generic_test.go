@@ -20,6 +20,17 @@ func TestFullEnvelopePassthrough(t *testing.T) {
 	}
 }
 
+func TestTraceIDPassthrough(t *testing.T) {
+	line := `{"time":"2026-07-02T10:00:00Z","source":"my-agent","category":"shell","session_id":"s1","trace_id":"tr1"}`
+	ev, err := Parse([]byte(line))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if ev.TraceID != "tr1" {
+		t.Errorf("trace_id = %q, want tr1", ev.TraceID)
+	}
+}
+
 func TestArbitraryJSONWrapped(t *testing.T) {
 	ev, err := Parse([]byte(`{"foo":"bar","n":1}`))
 	if err != nil {

@@ -3,6 +3,8 @@ package event
 import (
 	"encoding/json"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +60,19 @@ func TestSchemaDocMatchesCode(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("schema doc must require %q", field)
+		}
+	}
+
+	// Every envelope field must be documented: new struct fields may only
+	// ship together with their schema-doc entry (additive evolution rule).
+	et := reflect.TypeOf(Event{})
+	for i := range et.NumField() {
+		tag := strings.Split(et.Field(i).Tag.Get("json"), ",")[0]
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if _, ok := doc.Properties[tag]; !ok {
+			t.Errorf("envelope field %q missing from schema doc", tag)
 		}
 	}
 }

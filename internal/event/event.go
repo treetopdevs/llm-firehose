@@ -56,6 +56,7 @@ type Event struct {
 	Source        string         `json:"source"`          // agent family: claude-code, codex, opencode, generic, procwatch
 	Agent         string         `json:"agent,omitempty"` // specific agent/binary name
 	SessionID     string         `json:"session_id,omitempty"`
+	TraceID       string         `json:"trace_id,omitempty"` // groups causally related events across sessions, when the source supplies one
 	Category      Category       `json:"category"`
 	Name          string         `json:"name,omitempty"` // source-specific event name
 	Severity      Severity       `json:"severity,omitempty"`
