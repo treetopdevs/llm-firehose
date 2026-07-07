@@ -97,6 +97,84 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// FileArtifact summarizes all touches of one file path across sources.
+type FileArtifact struct {
+	Path      string    `json:"path"`
+	Events    int       `json:"events"`
+	Sources   []string  `json:"sources"`
+	FirstTime time.Time `json:"first_time"`
+	LastTime  time.Time `json:"last_time"`
+}
+
+// eventFilePaths extracts the file paths a file-category event touched.
+// Adapters store them differently: claude-code uses payload.file_path,
+// opencode payload.file, codex a payload.changes map keyed by path.
+func eventFilePaths(ev event.Event) []string {
+	if ev.Category != event.CategoryFile {
+		return nil
+	}
+	for _, key := range []string{"file_path", "path", "file"} {
+		if p, ok := ev.Payload[key].(string); ok && p != "" {
+			return []string{p}
+		}
+	}
+	if changes, ok := ev.Payload["changes"].(map[string]any); ok {
+		paths := make([]string, 0, len(changes))
+		for p := range changes {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		return paths
+	}
+	return nil
+}
+
+func filesFromEvents(evs []event.Event) []FileArtifact {
+	byPath := map[string]*FileArtifact{}
+	sources := map[string]map[string]bool{}
+	for _, ev := range evs {
+		for _, p := range eventFilePaths(ev) {
+			f, ok := byPath[p]
+			if !ok {
+				f = &FileArtifact{Path: p, FirstTime: ev.Time, LastTime: ev.Time}
+				byPath[p] = f
+				sources[p] = map[string]bool{}
+			}
+			f.Events++
+			if ev.Time.Before(f.FirstTime) {
+				f.FirstTime = ev.Time
+			}
+			if !ev.Time.Before(f.LastTime) {
+				f.LastTime = ev.Time
+			}
+			if ev.Source != "" && !sources[p][ev.Source] {
+				sources[p][ev.Source] = true
+				f.Sources = append(f.Sources, ev.Source)
+			}
+		}
+	}
+	out := make([]FileArtifact, 0, len(byPath))
+	for _, f := range byPath {
+		out = append(out, *f)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].LastTime.Equal(out[j].LastTime) {
+			return out[i].LastTime.After(out[j].LastTime)
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
+func (s *Server) handleArtifactFiles(w http.ResponseWriter, r *http.Request) {
+	evs, err := s.readAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, filesFromEvents(evs))
+}
+
 func (s *Server) handleTraceByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	evs, err := s.readAll()
