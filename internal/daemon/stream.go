@@ -71,20 +71,35 @@ func (h *hub) broadcast(ev event.Event) {
 // they are redacted here; spooled events were redacted at append time.
 func (s *Server) Start(ctx context.Context) {
 	cfg := s.config()
-	raw := make(chan event.Event, 1024)
-	go spool.NewTailer(cfg.SpoolDir, s.TailInterval).Run(ctx, raw)
+
+	// Prime the tailer before building the index: everything before the
+	// boundary is covered by the build, everything after by the tail, and
+	// the index's per-id dedupe absorbs the overlap.
+	tailer := spool.NewTailer(cfg.SpoolDir, s.TailInterval)
+	tailer.Prime()
+	s.ensureIndex()
+
+	// Spooled events (already redacted at append time) update the derived
+	// index; watcher events are broadcast-only — they aren't in the spool,
+	// so a rebuilt index must not depend on them.
+	spooled := make(chan event.Event, 1024)
+	watched := make(chan event.Event, 1024)
+	go tailer.Run(ctx, spooled)
 	if cfg.CodexDir != "" {
 		if _, err := os.Stat(cfg.CodexDir); err == nil {
-			go codex.NewWatcher(cfg.CodexDir, s.WatchInterval).Run(ctx, raw)
+			go codex.NewWatcher(cfg.CodexDir, s.WatchInterval).Run(ctx, watched)
 		}
 	}
-	go procwatch.NewWatcher(procwatch.PSLister{}, 2*time.Second).Run(ctx, raw)
+	go procwatch.NewWatcher(procwatch.PSLister{}, 2*time.Second).Run(ctx, watched)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case ev := <-raw:
+			case ev := <-spooled:
+				s.ensureIndex().Apply(ev)
+				s.hub.broadcast(ev)
+			case ev := <-watched:
 				if ev.Source == codex.Source {
 					// Mode is re-read per event so POST /config privacy
 					// changes apply live to the broadcast path too.

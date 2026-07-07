@@ -94,6 +94,26 @@ func ReadLastN(dir string, n int) ([]event.Event, error) {
 	return all, nil
 }
 
+// ReadDays returns all events from the named UTC day files (YYYY-MM-DD),
+// oldest first. Missing files are skipped so callers can pass index-derived
+// day lists without racing file rotation.
+func ReadDays(dir string, days []string) ([]event.Event, error) {
+	sorted := append([]string(nil), days...)
+	sort.Strings(sorted) // day names sort chronologically
+	var all []event.Event
+	for _, day := range sorted {
+		evs, err := readFile(filepath.Join(dir, day+".ndjson"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		all = append(all, evs...)
+	}
+	return all, nil
+}
+
 func readFile(path string) ([]event.Event, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -118,16 +138,22 @@ type Tailer struct {
 	Dir      string
 	Interval time.Duration
 	offsets  map[string]int64
+	primed   bool
 }
 
 func NewTailer(dir string, interval time.Duration) *Tailer {
 	return &Tailer{Dir: dir, Interval: interval, offsets: map[string]int64{}}
 }
 
-// Run polls until ctx is done, sending new events (and meta/warn events for
-// unparseable lines) on ch. Files existing at start are skipped to their end.
-func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
-	// Record initial offsets so we only stream lines appended after start.
+// Prime records current file sizes so Run only streams lines appended after
+// this call. Calling it before Run pins the snapshot boundary: a caller can
+// read the spool (e.g. an index rebuild) after Prime without losing events
+// appended in between. Not safe to call concurrently with Run.
+func (t *Tailer) Prime() {
+	if t.primed {
+		return
+	}
+	t.primed = true
 	if files, err := spoolFiles(t.Dir); err == nil {
 		for _, f := range files {
 			if fi, err := os.Stat(f); err == nil {
@@ -135,6 +161,13 @@ func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
 			}
 		}
 	}
+}
+
+// Run polls until ctx is done, sending new events (and meta/warn events for
+// unparseable lines) on ch. Files existing at start are skipped to their end
+// unless Prime already pinned an earlier boundary.
+func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
+	t.Prime()
 	ticker := time.NewTicker(t.Interval)
 	defer ticker.Stop()
 	for {
