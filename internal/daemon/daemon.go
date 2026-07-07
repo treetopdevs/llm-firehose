@@ -65,6 +65,36 @@ func New(cfg cli.Config, home, version string) *Server {
 	}
 }
 
+// allowedOrigins are the browser origins that may read the local API: the
+// Tauri desktop shell and its vite dev server. Arbitrary web origins are
+// deliberately excluded — a random website must not read the event feed.
+var allowedOrigins = map[string]bool{
+	"tauri://localhost":       true, // tauri webview (macOS/Linux)
+	"http://tauri.localhost":  true, // tauri webview (Windows)
+	"https://tauri.localhost": true,
+	"http://localhost:1420":   true, // vite dev server (tauri dev)
+}
+
+// cors echoes the Origin header for allowlisted origins and answers their
+// preflights. Non-browser clients (no Origin header) are untouched.
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if allowedOrigins[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+				w.Header().Set("Access-Control-Max-Age", "600")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Handler returns the daemon's HTTP API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -82,7 +112,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /doctor", s.handleDoctor)
 	mux.HandleFunc("POST /install/{adapter}", s.handleInstall)
 	mux.HandleFunc("POST /export", s.handleExport)
-	return mux
+	return cors(mux)
 }
 
 // Serve listens on addr and serves the API until ctx is canceled. It returns

@@ -78,6 +78,59 @@ func TestRunServesUntilCanceled(t *testing.T) {
 	}
 }
 
+// Desktop-shell webviews call the API from tauri://localhost (and the vite
+// dev server); those origins get CORS access. Arbitrary web origins must
+// not — a random website may not read the local event feed.
+func TestCORSAllowsDesktopShellOnly(t *testing.T) {
+	ts := testServer(t, testConfig(t))
+
+	for _, origin := range []string{"tauri://localhost", "http://tauri.localhost", "http://localhost:1420"} {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
+		req.Header.Set("Origin", origin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /health: %v", err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != origin {
+			t.Errorf("origin %s: ACAO = %q, want echoed origin", origin, got)
+		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /health: %v", err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("disallowed origin got ACAO %q, want none", got)
+	}
+}
+
+func TestCORSPreflight(t *testing.T) {
+	ts := testServer(t, testConfig(t))
+	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/config", nil)
+	req.Header.Set("Origin", "tauri://localhost")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "content-type")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("OPTIONS /config: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+		t.Errorf("allow-methods = %q, want POST included", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "content-type") {
+		t.Errorf("allow-headers = %q, want content-type included", got)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	ts := testServer(t, testConfig(t))
 	resp, err := http.Get(ts.URL + "/health")
