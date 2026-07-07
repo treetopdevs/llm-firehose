@@ -40,6 +40,7 @@ and serves a localhost API (default `127.0.0.1:4517`):
 
 ```sh
 firehose daemon            # run the engine: watchers, spool writes, local API
+firehosed                  # same engine as a dedicated binary (used as the desktop sidecar)
 firehose status            # is it running? which version/schema?
 ```
 
@@ -49,6 +50,25 @@ tailing files itself. When it isn't, everything falls back to direct spool
 access — capture never depends on the daemon being up. The API surface
 (events, live SSE stream, sessions, doctor, export) is documented in
 [docs/contracts.md](docs/contracts.md).
+
+## The desktop app
+
+A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
+for non-terminal users: live feed, session explorer, touched-file view,
+doctor with one-click adapter install, settings, and a first-run onboarding
+wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
+already running — a daemon you run yourself always wins.
+
+```sh
+scripts/build-sidecar.sh                    # compile firehosed into the sidecar slot
+pnpm -C apps/tauri-desktop install
+pnpm -C apps/tauri-desktop tauri dev        # develop
+pnpm -C apps/tauri-desktop tauri build      # package (.app / .msi / AppImage)
+```
+
+Packaging for macOS, Windows, and Linux is validated in CI
+([desktop workflow](.github/workflows/desktop.yml)); signing and the update
+feed are documented in the [release runbook](docs/release-runbook.md).
 
 ## Supported sources
 
@@ -95,7 +115,11 @@ Or press `e` in the viewer to export exactly what you're looking at
 - [Platform contract](docs/contracts.md) — frozen surfaces: envelope schema, spool/export formats, privacy semantics, local API
 - [Event schema](docs/event.schema.json) — JSON Schema for the normalized envelope
 - [Adapter guide](docs/adapters.md) — how each adapter works and how to add one
-- [Migration plan](docs/agent-firehose-migration-plan.md) — daemon → desktop shell → optional cloud
+- [Migration plan](docs/agent-firehose-migration-plan.md) — daemon → desktop shell → optional cloud (with status)
+- [Compatibility](docs/compatibility.md) — daemon/UI schema-version rules
+- [Release runbook](docs/release-runbook.md) — signing, packaging, updater feed
+- [Pain review](docs/migration/pain-review.md) — Phase 4 engine decision framework
+- [Cloud control plane](docs/architecture/cloud-control-plane.md) — Phase 5 design (deferred)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
