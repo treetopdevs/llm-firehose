@@ -11,10 +11,12 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
 
@@ -22,6 +24,7 @@ const defaultRecentLimit = 500
 
 // Server owns the capture engine behind the local API.
 type Server struct {
+	mu      sync.RWMutex // guards cfg
 	cfg     cli.Config
 	home    string
 	version string
@@ -48,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /config", s.handleConfig)
+	mux.HandleFunc("POST /config", s.handleConfigUpdate)
 	mux.HandleFunc("GET /events", s.handleRecent)
 	mux.HandleFunc("GET /events/stream", s.handleStream)
 	mux.HandleFunc("POST /events", s.handleIngest)
@@ -100,8 +104,62 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// config returns a snapshot of the effective runtime configuration.
+func (s *Server) config() cli.Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg
+}
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.cfg)
+	writeJSON(w, s.config())
+}
+
+// handleConfigUpdate persists a partial config update. Only privacy_mode is
+// applied to the running engine; other fields take effect on restart.
+func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	var patch cli.Config
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if patch.PrivacyMode != "" {
+		if _, err := privacy.ParseMode(patch.PrivacyMode); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	s.mu.Lock()
+	merged := s.cfg
+	var restart []string
+	if patch.PrivacyMode != "" {
+		merged.PrivacyMode = patch.PrivacyMode
+	}
+	if patch.SpoolDir != "" && patch.SpoolDir != merged.SpoolDir {
+		merged.SpoolDir = patch.SpoolDir
+		restart = append(restart, "spool_dir")
+	}
+	if patch.CodexDir != "" && patch.CodexDir != merged.CodexDir {
+		merged.CodexDir = patch.CodexDir
+		restart = append(restart, "codex_sessions_dir")
+	}
+	if patch.DaemonAddr != "" && patch.DaemonAddr != merged.DaemonAddr {
+		merged.DaemonAddr = patch.DaemonAddr
+		restart = append(restart, "daemon_addr")
+	}
+	if err := cli.SaveConfig(s.home, merged); err != nil {
+		s.mu.Unlock()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.cfg.PrivacyMode = merged.PrivacyMode
+	s.mu.Unlock()
+
+	if restart == nil {
+		restart = []string{}
+	}
+	writeJSON(w, map[string]any{"config": merged, "restart_required": restart})
 }
 
 func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +172,7 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	evs, err := spool.ReadLastN(s.cfg.SpoolDir, limit)
+	evs, err := spool.ReadLastN(s.config().SpoolDir, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -126,7 +184,7 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
-	n, err := cli.Ingest(s.cfg, r.Body)
+	n, err := cli.Ingest(s.config(), r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -146,7 +204,7 @@ func (s *Server) handleEmit(w http.ResponseWriter, r *http.Request) {
 	}
 	// EmitLocal, never Emit: the daemon is the engine and must not proxy
 	// emits back to its own address.
-	if err := cli.EmitLocal(s.cfg, source, raw); err != nil {
+	if err := cli.EmitLocal(s.config(), source, raw); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

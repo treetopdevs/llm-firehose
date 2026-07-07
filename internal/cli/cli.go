@@ -67,6 +67,22 @@ func LoadConfig(home string) (Config, error) {
 	return cfg, nil
 }
 
+// SaveConfig validates cfg and writes it to config.json under home.
+func SaveConfig(home string, cfg Config) error {
+	if _, err := privacy.ParseMode(cfg.PrivacyMode); err != nil {
+		return err
+	}
+	dir := filepath.Join(home, ".agentfirehose")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "config.json"), append(data, '\n'), 0o600)
+}
+
 func (c Config) mode() privacy.Mode {
 	m, err := privacy.ParseMode(c.PrivacyMode)
 	if err != nil {

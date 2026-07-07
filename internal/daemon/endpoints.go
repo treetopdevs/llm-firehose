@@ -65,7 +65,7 @@ func sessionsFromEvents(evs []event.Event) []Session {
 }
 
 func (s *Server) readAll() ([]event.Event, error) {
-	return spool.ReadLastN(s.cfg.SpoolDir, 1<<31-1)
+	return spool.ReadLastN(s.config().SpoolDir, 1<<31-1)
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -98,13 +98,13 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, cli.Doctor(s.cfg, s.home))
+	writeJSON(w, cli.Doctor(s.config(), s.home))
 }
 
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Firehose-Export-Version", fmt.Sprint(cli.ExportVersion))
-	if _, err := cli.Export(s.cfg, w); err != nil {
+	if _, err := cli.Export(s.config(), w); err != nil {
 		// Headers are already sent; the truncated body is the best signal left.
 		return
 	}

@@ -80,6 +80,96 @@ func TestConfigEndpoint(t *testing.T) {
 	}
 }
 
+func TestConfigUpdateEndpoint(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Post(ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"minimal"}`))
+	if err != nil {
+		t.Fatalf("POST /config: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// live: GET /config reflects the new mode immediately
+	get, err := http.Get(ts.URL + "/config")
+	if err != nil {
+		t.Fatalf("GET /config: %v", err)
+	}
+	defer get.Body.Close()
+	var live cli.Config
+	if err := json.NewDecoder(get.Body).Decode(&live); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if live.PrivacyMode != "minimal" {
+		t.Errorf("live privacy = %q, want minimal", live.PrivacyMode)
+	}
+
+	// persisted: config.json under the daemon's home carries the change
+	saved, err := cli.LoadConfig(home)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if saved.PrivacyMode != "minimal" {
+		t.Errorf("saved privacy = %q, want minimal", saved.PrivacyMode)
+	}
+	if saved.SpoolDir != cfg.SpoolDir {
+		t.Errorf("saved spool dir = %q, want %q", saved.SpoolDir, cfg.SpoolDir)
+	}
+}
+
+func TestConfigUpdateRestartRequiredFields(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	t.Cleanup(ts.Close)
+
+	newSpool := filepath.Join(home, "elsewhere")
+	resp, err := http.Post(ts.URL+"/config", "application/json",
+		strings.NewReader(`{"spool_dir":"`+newSpool+`"}`))
+	if err != nil {
+		t.Fatalf("POST /config: %v", err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		RestartRequired []string `json:"restart_required"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.RestartRequired) != 1 || got.RestartRequired[0] != "spool_dir" {
+		t.Errorf("restart_required = %v, want [spool_dir]", got.RestartRequired)
+	}
+	// runtime keeps the old spool dir; disk carries the new one
+	get, _ := http.Get(ts.URL + "/config")
+	defer get.Body.Close()
+	var live cli.Config
+	json.NewDecoder(get.Body).Decode(&live)
+	if live.SpoolDir != cfg.SpoolDir {
+		t.Errorf("runtime spool dir changed without restart: %q", live.SpoolDir)
+	}
+	saved, _ := cli.LoadConfig(home)
+	if saved.SpoolDir != newSpool {
+		t.Errorf("saved spool dir = %q, want %q", saved.SpoolDir, newSpool)
+	}
+}
+
+func TestConfigUpdateRejectsBadMode(t *testing.T) {
+	ts := testServer(t, testConfig(t))
+	resp, err := http.Post(ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"everything"}`))
+	if err != nil {
+		t.Fatalf("POST /config: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestIngestEndpoint(t *testing.T) {
 	cfg := testConfig(t)
 	ts := testServer(t, cfg)
