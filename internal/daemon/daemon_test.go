@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,6 +38,43 @@ func mkEvent(i int, ts time.Time) event.Event {
 		Source:   "generic",
 		Category: event.CategoryMeta,
 		Summary:  fmt.Sprintf("event %d", i),
+	}
+}
+
+func TestRunServesUntilCanceled(t *testing.T) {
+	cfg := testConfig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ready := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, cfg, t.TempDir(), "test-version", "127.0.0.1:0", func(bound string) { ready <- bound })
+	}()
+
+	var bound string
+	select {
+	case bound = <-ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run never became ready")
+	}
+	resp, err := http.Get("http://" + bound + "/health")
+	if err != nil {
+		t.Fatalf("GET /health while running: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v on clean shutdown, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
 	}
 }
 
@@ -145,7 +183,10 @@ func TestConfigUpdateRestartRequiredFields(t *testing.T) {
 		t.Errorf("restart_required = %v, want [spool_dir]", got.RestartRequired)
 	}
 	// runtime keeps the old spool dir; disk carries the new one
-	get, _ := http.Get(ts.URL + "/config")
+	get, err := http.Get(ts.URL + "/config")
+	if err != nil {
+		t.Fatalf("GET /config: %v", err)
+	}
 	defer get.Body.Close()
 	var live cli.Config
 	json.NewDecoder(get.Body).Decode(&live)

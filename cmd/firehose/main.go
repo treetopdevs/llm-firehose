@@ -143,14 +143,9 @@ func runDaemon(cfg cfgType, home, addr string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	s := daemon.New(cfg, home, version)
-	s.Start(ctx)
-	bound, done, err := s.Serve(ctx, addr)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "firehose daemon listening on %s (spool: %s)\n", bound, cfg.SpoolDir)
-	return <-done
+	return daemon.Run(ctx, cfg, home, version, addr, func(bound string) {
+		fmt.Fprintf(os.Stderr, "firehose daemon listening on %s (spool: %s)\n", bound, cfg.SpoolDir)
+	})
 }
 
 // runView opens the TUI. When a daemon is running it is the single source of
