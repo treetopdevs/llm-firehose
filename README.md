@@ -26,12 +26,15 @@ Put the `firehose` binary on your `PATH`, then wire up the agents you use:
 
 ```sh
 firehose install claude-code   # merges hooks into ~/.claude/settings.json (backs it up first)
+firehose install codex         # adds lifecycle/tool hooks; review trust in Codex /hooks
 firehose install opencode      # writes a plugin into ~/.config/opencode/plugin/
 firehose doctor                # verify everything is wired
 firehose                       # open the live view
 ```
 
-Codex needs no install step — the engine tails `~/.codex/sessions` directly.
+Codex assistant messages need no hook: the engine durably tails
+`~/.codex/sessions`. Installing Codex hooks adds lifecycle, permission, and
+tool observations without replacing rollout message streaming.
 
 ## The daemon
 
@@ -75,7 +78,7 @@ feed are documented in the [release runbook](docs/release-runbook.md).
 | Source | Depth | How it works |
 |---|---|---|
 | Claude Code | deep | hooks forward every lifecycle event to `firehose emit` |
-| Codex | deep | viewer tails rollout session JSONL files |
+| Codex | deep | durable rollout tail plus optional lifecycle/tool hooks |
 | OpenCode | deep | plugin forwards bus events to `firehose emit` |
 | any process | shallow | process watcher emits start/stop for known agent binaries |
 | anything else | generic | pipe NDJSON into `firehose ingest`, or call `firehose emit` |

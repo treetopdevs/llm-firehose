@@ -166,6 +166,99 @@ func TestInstallOpenCodeWritesPlugin(t *testing.T) {
 	}
 }
 
+func TestInstallCodexHooksMergesBacksUpAndIsIdempotent(t *testing.T) {
+	for _, bin := range []string{"/Applications/Agent Firehose/firehose", "/Applications/Agent Firehose/firehosed"} {
+		t.Run(filepath.Base(bin), func(t *testing.T) {
+			home := t.TempDir()
+			hooksPath := filepath.Join(home, ".codex", "hooks.json")
+			if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			original := `{"description":"keep me","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"existing hook"}]}]}}`
+			if err := os.WriteFile(hooksPath, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := InstallCodex(home, bin); err != nil {
+				t.Fatalf("InstallCodex: %v", err)
+			}
+			first, _ := os.ReadFile(hooksPath)
+			backup, _ := os.ReadFile(hooksPath + ".bak")
+			if string(backup) != original {
+				t.Fatalf("backup = %q, want original", backup)
+			}
+			if !strings.Contains(string(first), "existing hook") || !strings.Contains(string(first), "keep me") {
+				t.Fatalf("unrelated configuration was not preserved: %s", first)
+			}
+			for _, name := range CodexHookEvents {
+				if !strings.Contains(string(first), `"`+name+`"`) {
+					t.Errorf("missing %s", name)
+				}
+			}
+			if !strings.Contains(string(first), `'`+bin+`' hook-forward`) {
+				t.Fatalf("path with spaces was not quoted: %s", first)
+			}
+
+			if err := InstallCodex(home, bin); err != nil {
+				t.Fatalf("second InstallCodex: %v", err)
+			}
+			second, _ := os.ReadFile(hooksPath)
+			if string(first) != string(second) {
+				t.Fatal("Codex hook installation is not idempotent")
+			}
+			backupAfter, _ := os.ReadFile(hooksPath + ".bak")
+			if string(backupAfter) != original {
+				t.Fatalf("idempotent install replaced original backup: %q", backupAfter)
+			}
+		})
+	}
+}
+
+func TestInstallCodexShellQuotesSpecialExecutablePath(t *testing.T) {
+	home := t.TempDir()
+	bin := `/Applications/$Agent's Firehose/firehose`
+	if err := InstallCodex(home, bin); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	if !strings.Contains(string(data), `'/Applications/$Agent'\"'\"'s Firehose/firehose' hook-forward`) {
+		t.Fatalf("unsafe command quoting: %s", data)
+	}
+}
+
+func TestInstallCodexCreatesConfigurationAndBackup(t *testing.T) {
+	home := t.TempDir()
+	if err := InstallCodex(home, "firehose"); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", ".bak"} {
+		if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json") + suffix); err != nil {
+			t.Errorf("missing hooks.json%s: %v", suffix, err)
+		}
+	}
+}
+
+func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DaemonAddr = "127.0.0.1:1"
+	var out bytes.Buffer
+	if err := HookForward(cfg, strings.NewReader(`{"session_id":"s1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hello"}`), &out); err != nil {
+		t.Fatalf("HookForward: %v", err)
+	}
+	if out.String() != "{}\n" {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	if err != nil || len(evs) != 1 || evs[0].Source != "codex" {
+		t.Fatalf("fallback spool = %+v, %v", evs, err)
+	}
+
+	out.Reset()
+	if err := HookForward(cfg, strings.NewReader(`not json`), &out); err != nil || out.String() != "{}\n" {
+		t.Fatalf("malformed hook must fail silently: err=%v out=%q", err, out.String())
+	}
+}
+
 func TestDoctorReportsChecks(t *testing.T) {
 	home := t.TempDir()
 	cfg := Config{SpoolDir: filepath.Join(home, ".agentfirehose", "spool"), PrivacyMode: "balanced"}
@@ -183,6 +276,9 @@ func TestDoctorReportsChecks(t *testing.T) {
 	if c, ok := byName["spool writable"]; !ok || !c.OK {
 		t.Errorf("spool should be creatable: %+v", c)
 	}
+	if c, ok := byName["codex hooks"]; !ok || c.OK {
+		t.Errorf("codex hooks should fail in empty home: %+v", c)
+	}
 	// after install, hooks check passes
 	InstallClaudeCode(home, "firehose")
 	checks = Doctor(cfg, home)
@@ -190,6 +286,34 @@ func TestDoctorReportsChecks(t *testing.T) {
 		if c.Name == "claude-code hooks" && !c.OK {
 			t.Errorf("hooks check should pass after install: %+v", c)
 		}
+	}
+}
+
+func TestDoctorRequiresAllCodexHooksAndLiveExecutable(t *testing.T) {
+	home := t.TempDir()
+	bin := filepath.Join(home, "Agent Firehose", "firehosed")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallCodex(home, bin); err != nil {
+		t.Fatal(err)
+	}
+	if !CodexHooksConfigured(home) {
+		t.Fatal("complete Codex installation reported unhealthy")
+	}
+
+	data, _ := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	var doc map[string]any
+	_ = json.Unmarshal(data, &doc)
+	hooks := doc["hooks"].(map[string]any)
+	delete(hooks, "PostCompact")
+	partial, _ := json.Marshal(doc)
+	_ = os.WriteFile(filepath.Join(home, ".codex", "hooks.json"), partial, 0o600)
+	if CodexHooksConfigured(home) {
+		t.Fatal("partial Codex installation reported healthy")
 	}
 }
 

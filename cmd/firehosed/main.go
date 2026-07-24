@@ -19,6 +19,12 @@ import (
 const version = "0.1.0"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
+		home, _ := os.UserHomeDir()
+		cfg, _ := cli.LoadConfig(home)
+		_ = cli.HookForward(cfg, os.Stdin, os.Stdout)
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fatal(err)
@@ -27,7 +33,6 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-
 	fs := flag.NewFlagSet("firehosed", flag.ExitOnError)
 	addr := fs.String("addr", cfg.DaemonAddr, "listen address for the local API")
 	showVersion := fs.Bool("version", false, "print version and exit")

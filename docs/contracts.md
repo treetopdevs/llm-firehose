@@ -22,9 +22,11 @@ Every captured event is normalized into the envelope defined in
 Evolution rules:
 
 - New optional fields may be added without bumping the version. Consumers
-  MUST ignore unknown fields. (Example: `trace_id` — optional, groups
-  causally related events across sessions when a source supplies one —
-  was added additively within version 1.)
+  MUST ignore unknown fields. (Examples: `trace_id` — optional, groups
+  causally related events across sessions when a source supplies one — and
+  `turn_id` — optional, groups events within a source-native turn — and
+  `call_id` — optional, the source-native tool/command correlation id —
+  were added additively within version 1.)
 - Removing, renaming, or changing the meaning of a field requires a version
   bump and a reader that understands both versions.
 - Spool lines written before versioning have no `schema_version` field;
@@ -79,7 +81,7 @@ Current mappings (details in [adapters.md](adapters.md)):
 | Source | Transport | Notes |
 |---|---|---|
 | `claude-code` | hooks → `firehose emit --source claude-code` | lifecycle hooks per event |
-| `codex` | engine tails `~/.codex/sessions` rollout files | no install needed |
+| `codex` | durable rollout tail + observational `codex-hook` forwarding | rollout messages plus installable lifecycle/tool hooks |
 | `opencode` | plugin → `firehose emit --source opencode` | bus events |
 | `generic` | `firehose ingest` / `emit --source generic` | envelope passthrough or meta-wrap |
 | `procwatch` | engine polls `ps` | agent process lifecycle |
@@ -99,17 +101,20 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /events/stream` | live feed, Server-Sent Events (`data: <envelope JSON>`) |
 | `POST /events` | ingest NDJSON envelopes; returns `{ingested: n}` |
 | `POST /emit?source=S` | normalize one raw source payload; 204 on success |
-| `GET /sessions` | session summaries (derived index), most recent first |
+| `GET /sessions` | session summaries (derived index), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
 | `GET /sessions/{id}` | all events for one session, oldest first |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]` |
-| `POST /install/{adapter}` | wire an adapter (claude-code \| opencode); `{ok, detail}` |
+| `POST /install/{adapter}` | wire an adapter (claude-code \| codex \| opencode); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 
 Session, trace, and file queries are served from an in-memory index derived
 from the spool (rebuilt at startup, updated from the tail); the spool stays
-the source of truth and the index is always disposable.
+the source of truth and the index is always disposable. Attention `state` is
+derived only — never written to the spool. Stream-only `source=firehose`
+/`name=state.transition` frames on `/events/stream` announce transitions for
+live clients; they are never persisted or exported.
 
 CORS: browser origins are allowlisted to the desktop shell
 (`tauri://localhost`, `http(s)://tauri.localhost`, `http://localhost:1420`).

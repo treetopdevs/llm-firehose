@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"agentfirehose/internal/adapters/procwatch"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/index"
@@ -34,9 +35,15 @@ type Server struct {
 	ixOnce sync.Once
 	ix     *index.Index
 
-	// TailInterval is the spool poll cadence; WatchInterval the codex one.
+	// TailInterval is the spool poll cadence; WatchInterval the codex one;
+	// ProcInterval the process-table one.
 	TailInterval  time.Duration
 	WatchInterval time.Duration
+	ProcInterval  time.Duration
+
+	// ProcLister supplies the process table for the agent process watcher;
+	// injectable for tests.
+	ProcLister procwatch.Lister
 }
 
 // ensureIndex builds the derived index from the spool exactly once (at Start
@@ -62,6 +69,8 @@ func New(cfg cli.Config, home, version string) *Server {
 		hub:           newHub(),
 		TailInterval:  100 * time.Millisecond,
 		WatchInterval: 250 * time.Millisecond,
+		ProcInterval:  2 * time.Second,
+		ProcLister:    procwatch.PSLister{},
 	}
 }
 

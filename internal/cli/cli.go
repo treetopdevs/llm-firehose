@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"agentfirehose/internal/adapters/claudecode"
+	"agentfirehose/internal/adapters/codexhook"
 	"agentfirehose/internal/adapters/generic"
 	"agentfirehose/internal/adapters/opencode"
 	"agentfirehose/internal/client"
@@ -128,6 +129,12 @@ func EmitLocal(cfg Config, source string, raw []byte) error {
 			return err
 		}
 		ev = parsed // nil = skipped
+	case codexhook.Source:
+		parsed, err := codexhook.Parse(raw)
+		if err != nil {
+			return err
+		}
+		ev = &parsed
 	default:
 		parsed, err := generic.Parse(raw)
 		if err != nil {
@@ -140,6 +147,15 @@ func EmitLocal(cfg Config, source string, raw []byte) error {
 	}
 	redacted := privacy.Redact(*ev, cfg.mode())
 	return spool.NewWriter(cfg.SpoolDir).Append(redacted)
+}
+
+// HookForward captures a Codex hook observation without ever influencing the
+// Codex session. It always writes the neutral hook response and returns
+// success, even when parsing, daemon delivery, or fallback persistence fails.
+func HookForward(cfg Config, r io.Reader, w io.Writer) error {
+	_ = Emit(cfg, codexhook.Source, r)
+	_, _ = io.WriteString(w, "{}\n")
+	return nil
 }
 
 // Ingest streams NDJSON lines from r into the spool, returning how many

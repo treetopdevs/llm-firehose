@@ -15,6 +15,7 @@ var (
 	headerStyle = lipgloss.NewStyle().Bold(true)
 	liveStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	pauseStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+	needsStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	countStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
 	selStyle    = lipgloss.NewStyle().Reverse(true)
@@ -83,6 +84,13 @@ func (m Model) viewHeader() string {
 		mode = pauseStyle.Render(fmt.Sprintf("⏸ PAUSED · %d new", m.unread))
 	}
 	parts := []string{headerStyle.Render("AGENT FIREHOSE"), mode, dimStyle.Render(fmt.Sprintf("%d events", m.total))}
+	if n := m.needsYouCount(); n > 0 {
+		label := fmt.Sprintf("NEEDS YOU · %d", n)
+		if reason := m.oldestNeedsYouReason(); reason != "" {
+			label += " · " + reason
+		}
+		parts = append(parts, needsStyle.Render(label))
+	}
 	if f := m.filterLabel(); f != "" {
 		parts = append(parts, dimStyle.Render("filter: ")+f)
 	}

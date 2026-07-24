@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -80,32 +81,73 @@ func (s *Server) Start(ctx context.Context) {
 	s.ensureIndex()
 
 	// Spooled events (already redacted at append time) update the derived
-	// index; watcher events are broadcast-only — they aren't in the spool,
-	// so a rebuilt index must not depend on them.
+	// index and are broadcast by the tail loop. Watcher events (codex files,
+	// procwatch) are redacted here — the engine boundary — and persisted to
+	// the spool, the canonical source of truth; the tailer then indexes and
+	// broadcasts them like any other event, so a rebuilt index sees them too.
 	spooled := make(chan event.Event, 1024)
 	watched := make(chan event.Event, 1024)
 	go tailer.Run(ctx, spooled)
 	if cfg.CodexDir != "" {
 		if _, err := os.Stat(cfg.CodexDir); err == nil {
-			go codex.NewWatcher(cfg.CodexDir, s.WatchInterval).Run(ctx, watched)
+			cursorPath := filepath.Join(s.home, ".agentfirehose", "state", "codex-cursors.json")
+			watcher := codex.NewDurableWatcher(
+				cfg.CodexDir,
+				cursorPath,
+				s.WatchInterval,
+				func(ev event.Event) error {
+					// Append is synchronous: the watcher checkpoints the line
+					// only after this returns success.
+					ev = privacy.Redact(ev, s.privacyMode())
+					return spool.NewWriter(s.config().SpoolDir).Append(ev)
+				},
+			)
+			// Establish the legacy-file baseline before Start returns. A fresh
+			// Codex task launched after /health is ready cannot race into the
+			// initial baseline and disappear.
+			_ = watcher.Initialize()
+			go watcher.Run(ctx)
 		}
 	}
-	go procwatch.NewWatcher(procwatch.PSLister{}, 2*time.Second).Run(ctx, watched)
+	go procwatch.NewWatcher(s.ProcLister, s.ProcInterval).Run(ctx, watched)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case ev := <-spooled:
-				s.ensureIndex().Apply(ev)
-				s.hub.broadcast(ev)
-			case ev := <-watched:
-				if ev.Source == codex.Source {
-					// Mode is re-read per event so POST /config privacy
-					// changes apply live to the broadcast path too.
-					ev = privacy.Redact(ev, s.privacyMode())
+				if tr := s.ensureIndex().Apply(ev); tr != nil {
+					s.hub.broadcast(*tr)
 				}
 				s.hub.broadcast(ev)
+			case ev := <-watched:
+				// Mode is re-read per event so POST /config privacy
+				// changes apply live to this capture path too.
+				ev = privacy.Redact(ev, s.privacyMode())
+				if err := spool.NewWriter(s.config().SpoolDir).Append(ev); err != nil {
+					// Capture must never go dark: an unwritable spool
+					// degrades to the old broadcast-only behavior.
+					s.hub.broadcast(ev)
+				}
+			}
+		}
+	}()
+
+	// Idle ticker: promote quiet working sessions to idle and push
+	// stream-only transitions so clients can animate without polling.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				for _, tr := range s.ensureIndex().AdvanceIdle(now) {
+					if tr != nil {
+						s.hub.broadcast(*tr)
+					}
+				}
 			}
 		}
 	}()

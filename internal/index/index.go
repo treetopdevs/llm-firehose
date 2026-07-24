@@ -8,6 +8,7 @@ package index
 import (
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,14 +18,20 @@ import (
 
 // Session summarizes one agent session.
 type Session struct {
-	ID        string    `json:"id"`
-	Source    string    `json:"source"`
-	Agent     string    `json:"agent,omitempty"`
-	Repo      string    `json:"repo,omitempty"`
-	CWD       string    `json:"cwd,omitempty"`
-	FirstTime time.Time `json:"first_time"`
-	LastTime  time.Time `json:"last_time"`
-	Events    int       `json:"events"`
+	ID           string       `json:"id"`
+	Source       string       `json:"source"`
+	Agent        string       `json:"agent,omitempty"`
+	Repo         string       `json:"repo,omitempty"`
+	CWD          string       `json:"cwd,omitempty"`
+	FirstTime    time.Time    `json:"first_time"`
+	LastTime     time.Time    `json:"last_time"`
+	Events       int          `json:"events"`
+	State        SessionState `json:"state"`
+	StateSince   time.Time    `json:"state_since"`
+	StateReason  string       `json:"state_reason,omitempty"`
+	HasError     bool         `json:"has_error,omitempty"`
+	LastSummary  string       `json:"last_summary,omitempty"`
+	LastCategory string       `json:"last_category,omitempty"`
 }
 
 // Trace summarizes causally related events sharing one trace_id.
@@ -61,7 +68,9 @@ type Index struct {
 
 type sessionEntry struct {
 	Session
-	days map[string]bool
+	days         map[string]bool
+	lastActivity time.Time
+	openTools    int // tool calls begun (PreToolUse) but not yet finished
 }
 
 type traceEntry struct {
@@ -98,16 +107,27 @@ func Build(dir string) (*Index, error) {
 	return ix, nil
 }
 
+// SourceFirehose is the synthetic source for stream-only derived frames.
+const SourceFirehose = "firehose"
+
+// NameStateTransition is the event name for attention-state SSE frames.
+const NameStateTransition = "state.transition"
+
 // Apply folds one event into the index. Events with an id already applied
 // are ignored, so replays (e.g. the startup tail overlapping the build read)
-// never double-count.
-func (ix *Index) Apply(ev event.Event) {
+// never double-count. When a session's attention state changes, Apply returns
+// a stream-only synthetic event (never spooled).
+func (ix *Index) Apply(ev event.Event) *event.Event {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
+	if ev.Source == SourceFirehose && ev.Name == NameStateTransition {
+		return nil
+	}
+
 	if ev.ID != "" {
 		if ix.seen[ev.ID] {
-			return
+			return nil
 		}
 		ix.seen[ev.ID] = true
 		ix.seenOrder = append(ix.seenOrder, ev.ID)
@@ -118,13 +138,21 @@ func (ix *Index) Apply(ev event.Event) {
 	}
 
 	day := ev.Time.UTC().Format("2006-01-02")
+	var transition *event.Event
 
 	if ev.SessionID != "" {
 		s, ok := ix.sessions[ev.SessionID]
 		if !ok {
 			s = &sessionEntry{
-				Session: Session{ID: ev.SessionID, FirstTime: ev.Time, LastTime: ev.Time},
-				days:    map[string]bool{},
+				Session: Session{
+					ID:         ev.SessionID,
+					FirstTime:  ev.Time,
+					LastTime:   ev.Time,
+					State:      StateWorking,
+					StateSince: ev.Time,
+				},
+				days:         map[string]bool{},
+				lastActivity: ev.Time,
 			}
 			ix.sessions[ev.SessionID] = s
 		}
@@ -134,6 +162,8 @@ func (ix *Index) Apply(ev event.Event) {
 		}
 		if !ev.Time.Before(s.LastTime) {
 			s.LastTime = ev.Time
+			s.LastSummary = ev.Summary
+			s.LastCategory = string(ev.Category)
 		}
 		if s.Source == "" {
 			s.Source = ev.Source
@@ -148,6 +178,34 @@ func (ix *Index) Apply(ev event.Event) {
 			s.CWD = ev.CWD
 		}
 		s.days[day] = true
+		s.lastActivity = ev.Time
+
+		switch {
+		case strings.HasPrefix(ev.Name, "PreToolUse"):
+			s.openTools++
+		case strings.HasPrefix(ev.Name, "PostToolUse"):
+			if s.openTools > 0 {
+				s.openTools--
+			}
+		case isSessionEnd(ev):
+			// A lost PostToolUse must not pin the session out of idle forever.
+			s.openTools = 0
+		}
+
+		prev := Attention{
+			State:    s.State,
+			Since:    s.StateSince,
+			Reason:   s.StateReason,
+			HasError: s.HasError,
+		}
+		next, changed := Transition(prev, ev)
+		if changed {
+			s.State = next.State
+			s.StateSince = next.Since
+			s.StateReason = next.Reason
+			s.HasError = next.HasError
+			transition = newStateTransition(ev.SessionID, prev.State, next, ev.Time)
+		}
 	}
 
 	if ev.TraceID != "" {
@@ -189,6 +247,57 @@ func (ix *Index) Apply(ev event.Event) {
 			f.sources[ev.Source] = true
 			f.Sources = append(f.Sources, ev.Source)
 		}
+	}
+	return transition
+}
+
+// AdvanceIdle moves quiet working sessions to idle and returns one synthetic
+// transition event per session that changed.
+func (ix *Index) AdvanceIdle(now time.Time) []*event.Event {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+
+	var out []*event.Event
+	for id, s := range ix.sessions {
+		prev := Attention{
+			State:    s.State,
+			Since:    s.StateSince,
+			Reason:   s.StateReason,
+			HasError: s.HasError,
+		}
+		next, changed := TickIdle(prev, s.lastActivity, now, s.openTools > 0)
+		if !changed {
+			continue
+		}
+		s.State = next.State
+		s.StateSince = next.Since
+		s.StateReason = next.Reason
+		out = append(out, newStateTransition(id, prev.State, next, now))
+	}
+	return out
+}
+
+func newStateTransition(sessionID string, prev SessionState, next Attention, t time.Time) *event.Event {
+	summary := string(next.State)
+	if next.Reason != "" {
+		summary = string(next.State) + ": " + next.Reason
+	}
+	return &event.Event{
+		SchemaVersion: event.CurrentSchemaVersion,
+		ID:            event.NewID(),
+		Time:          t,
+		Source:        SourceFirehose,
+		SessionID:     sessionID,
+		Category:      event.CategoryMeta,
+		Name:          NameStateTransition,
+		Severity:      event.SeverityInfo,
+		Summary:       summary,
+		Payload: map[string]any{
+			"state":     string(next.State),
+			"prev":      string(prev),
+			"reason":    next.Reason,
+			"has_error": next.HasError,
+		},
 	}
 }
 

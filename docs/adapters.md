@@ -21,7 +21,11 @@ Events reach the viewer two ways:
    one NDJSON line to `~/.agentfirehose/spool/YYYY-MM-DD.ndjson`. The viewer
    tails this directory. The spool *is* the local history.
 2. **Direct tail** — sources that already persist their own structured logs
-   (Codex) are tailed by the viewer directly and are not re-persisted.
+   (Codex) and the process watcher are tailed/polled by the engine. When the
+   daemon runs, it redacts these events per the privacy mode and appends them
+   to the spool like any other event, so the spool stays the canonical source
+   of truth; the daemonless TUI tails Codex files directly without
+   re-persisting them.
 
 ## Claude Code (deep)
 
@@ -37,15 +41,35 @@ PostToolUse, Notification, Stop, SubagentStop, PreCompact. Mapping highlights:
 
 ## Codex (deep)
 
-No install. The viewer walks `~/.codex/sessions/**/rollout-*.jsonl`, skips
-pre-existing content to its end, and streams appended lines. Files created
-after startup (new sessions) are read from the top.
+Codex has two complementary observational transports:
 
-Line mapping: `session_meta` → session start; `event_msg` `user_message` /
-`agent_message` → prompt/message; `exec_command_end` → shell (non-zero exit →
-warn); `patch_apply_end` → file (failure → error); `web_search_end` → tool;
-`task_started`/`task_complete` → session; errors → error. Token counts,
-encrypted reasoning, and duplicate call records are skipped deliberately.
+- The engine tails `~/.codex/sessions/**/rollout-*.jsonl`. On first activation
+  it baselines existing files without importing history. Per-file offsets and
+  parser context are checkpointed only after a synchronous spool append, so
+  lines written while the daemon is down are recovered at least once after
+  restart. Rollouts are authoritative for streaming assistant commentary.
+- `firehose install codex` merges all current lifecycle, permission,
+  compaction, subagent, and tool hooks into user-wide `~/.codex/hooks.json`.
+  It preserves existing hooks, writes `hooks.json.bak`, and is idempotent.
+  Codex requires a separate trust review in `/hooks`. Both `firehose` and
+  bundled `firehosed` expose a fail-silent `hook-forward` command that always
+  returns `{}` and falls back to direct spool writing if the daemon is down.
+
+Rollouts map prompts, assistant messages, turn lifecycle, commands, patches,
+searches, MCP/functions/custom tools, outputs, and errors. They also surface
+token/context usage and rate-limit/credit state, plus safe model, effort,
+approval, permission, collaboration, and sandbox settings. Tool starts and
+ends preserve `turn_id` and `call_id`. Output is normalized to a top-level
+string before privacy filtering.
+
+Duplicate `response_item` messages, reasoning/encrypted reasoning, instruction
+bodies, and complete world-state contents are skipped. World state emits only
+changed section names and the full/update flag. Unknown meaningful record
+types produce one adapter-drift warning per type.
+
+Hook and rollout observations both remain in the spool. Live and session
+presentation coalesce exact IDs and correlated observations within five
+seconds while keeping start and completion phases separate.
 
 ## OpenCode (deep)
 

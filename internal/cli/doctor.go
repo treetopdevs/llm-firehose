@@ -55,6 +55,13 @@ func Doctor(cfg Config, home string) []Check {
 		Detail: pick(hookOK, "wired in ~/.claude/settings.json", "run: firehose install claude-code"),
 	})
 
+	codexHookOK := CodexHooksConfigured(home)
+	checks = append(checks, Check{
+		Name:   "codex hooks",
+		OK:     codexHookOK,
+		Detail: pick(codexHookOK, "configured in ~/.codex/hooks.json; review trust in Codex /hooks", "run: firehose install codex"),
+	})
+
 	// opencode plugin present
 	pluginPath := filepath.Join(home, ".config", "opencode", "plugin", opencode.PluginFileName)
 	_, operr := os.Stat(pluginPath)
@@ -63,7 +70,8 @@ func Doctor(cfg Config, home string) []Check {
 		Detail: pick(operr == nil, pluginPath, "run: firehose install opencode"),
 	})
 
-	// codex sessions dir found (codex needs no install; the viewer tails it)
+	// Rollout tailing is independent of hooks and remains the assistant-message
+	// transport.
 	_, cerr := os.Stat(cfg.CodexDir)
 	checks = append(checks, Check{
 		Name: "codex sessions", OK: cerr == nil,

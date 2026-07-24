@@ -97,6 +97,40 @@ func TestUnknownHookIsMetaWarn(t *testing.T) {
 	}
 }
 
+// Cursor hooks use camelCase event names and tool_output (not Claude Code's
+// PascalCase + tool_response). Captured from a live Cursor agent session.
+func TestCursorPostToolUseCamelCase(t *testing.T) {
+	ev := parse(t, `{"conversation_id":"e2bc0b89-8121-49b5-98f9-c497526a3c45","tool_name":"Read","tool_input":{"file_path":"/Users/nicholas/develop/llm-firehose/terminals/1937.txt"},"tool_output":"{\"content_length\":44896}","session_id":"e2bc0b89-8121-49b5-98f9-c497526a3c45","hook_event_name":"postToolUse","cursor_version":"3.12.29","workspace_roots":["/Users/nicholas/develop/llm-firehose"]}`)
+	if ev.Category != event.CategoryTool {
+		t.Errorf("category = %q, want tool", ev.Category)
+	}
+	if ev.Severity != event.SeverityInfo {
+		t.Errorf("severity = %q, want info (not unrecognized warn)", ev.Severity)
+	}
+	if ev.Name != "PostToolUse:Read" {
+		t.Errorf("name = %q, want PostToolUse:Read", ev.Name)
+	}
+	if strings.Contains(ev.Summary, "unrecognized") {
+		t.Errorf("summary still unrecognized: %q", ev.Summary)
+	}
+	if ev.Payload["tool_response"] == nil {
+		t.Error("tool_output should map into payload tool_response")
+	}
+}
+
+func TestCursorPreToolUseShellIsShell(t *testing.T) {
+	ev := parse(t, `{"hook_event_name":"preToolUse","session_id":"s1","tool_name":"Shell","tool_input":{"command":"go test ./..."}}`)
+	if ev.Category != event.CategoryShell {
+		t.Errorf("category = %q, want shell", ev.Category)
+	}
+	if ev.Name != "PreToolUse:Shell" {
+		t.Errorf("name = %q, want PreToolUse:Shell", ev.Name)
+	}
+	if !strings.Contains(ev.Summary, "go test ./...") {
+		t.Errorf("summary should show command, got %q", ev.Summary)
+	}
+}
+
 func TestInvalidJSONErrors(t *testing.T) {
 	if _, err := Parse([]byte("not json")); err == nil {
 		t.Error("expected error for invalid JSON")

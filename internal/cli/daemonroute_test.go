@@ -54,6 +54,30 @@ func TestEmitRoutesThroughDaemonWhenReachable(t *testing.T) {
 	}
 }
 
+func TestHookForwardRoutesThroughDaemonAndReturnsNeutralJSON(t *testing.T) {
+	daemonAddr, daemonSpool := startDaemon(t)
+	cfg := cli.Config{
+		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
+		PrivacyMode: "balanced",
+		DaemonAddr:  daemonAddr,
+	}
+	var out bytes.Buffer
+	raw := `{"session_id":"s-hook","turn_id":"t-hook","hook_event_name":"Stop","last_assistant_message":"done"}`
+	if err := cli.HookForward(cfg, strings.NewReader(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "{}\n" {
+		t.Fatalf("hook stdout = %q", out.String())
+	}
+	evs, _ := spool.ReadLastN(daemonSpool, 10)
+	if len(evs) != 1 || evs[0].Source != "codex" || evs[0].Name != "Stop" {
+		t.Fatalf("daemon spool = %+v", evs)
+	}
+	if local, _ := spool.ReadLastN(cfg.SpoolDir, 10); len(local) != 0 {
+		t.Fatalf("hook was also written locally: %+v", local)
+	}
+}
+
 func TestEmitFallsBackToLocalSpoolWhenDaemonDown(t *testing.T) {
 	cfg := cli.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),

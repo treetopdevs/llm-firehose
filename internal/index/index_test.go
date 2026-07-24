@@ -53,6 +53,9 @@ func TestSessionsAggregation(t *testing.T) {
 	if !s1.LastTime.After(s1.FirstTime) {
 		t.Errorf("s1 time range wrong: %+v", s1)
 	}
+	if s1.LastSummary != "ran a tool" || s1.LastCategory != "tool" {
+		t.Errorf("s1 latest activity wrong: %+v", s1)
+	}
 	if _, ok := ix.Session("s2"); !ok {
 		t.Error("Session(s2) not found")
 	}
@@ -149,6 +152,190 @@ func TestBuildEqualsFold(t *testing.T) {
 	}
 	if !reflect.DeepEqual(built.SessionDays("s1"), folded.SessionDays("s1")) {
 		t.Errorf("Build days != fold days")
+	}
+}
+
+func TestSessionAttentionSequence(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+
+	tr := ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategorySession, Name: "SessionStart", Summary: "session started",
+	})
+	if tr != nil {
+		t.Fatalf("SessionStart on new session should not transition: %+v", tr)
+	}
+	s, _ := ix.Session("s1")
+	if s.State != StateWorking {
+		t.Fatalf("initial state = %q", s.State)
+	}
+
+	tr = ix.Apply(event.Event{
+		ID: "2", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryPermission, Name: "Notification",
+		Summary: "Claude needs your permission to use Bash", Severity: event.SeverityNotice,
+	})
+	if tr == nil || tr.Name != NameStateTransition {
+		t.Fatalf("want state.transition, got %+v", tr)
+	}
+	if tr.Source != SourceFirehose || tr.Payload["state"] != "needs_input" {
+		t.Errorf("transition payload wrong: %+v", tr)
+	}
+	s, _ = ix.Session("s1")
+	if s.State != StateNeedsInput || s.StateReason != "Claude needs your permission to use Bash" {
+		t.Errorf("after perm: %+v", s)
+	}
+
+	tr = ix.Apply(event.Event{
+		ID: "3", Time: base.Add(2 * time.Minute), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "Bash",
+	})
+	if tr == nil || tr.Payload["state"] != "working" {
+		t.Fatalf("tool should resume working: %+v", tr)
+	}
+
+	tr = ix.Apply(event.Event{
+		ID: "4", Time: base.Add(3 * time.Minute), Source: "claude-code", SessionID: "s1",
+		Category: event.CategorySession, Name: "Stop", Summary: "agent finished responding",
+	})
+	if tr == nil || tr.Payload["state"] != "done" {
+		t.Fatalf("Stop → done: %+v", tr)
+	}
+	s, _ = ix.Session("s1")
+	if s.State != StateDone {
+		t.Errorf("final state = %q", s.State)
+	}
+}
+
+func TestApplyIgnoresSyntheticTransition(t *testing.T) {
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: time.Now(), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+	tr := ix.Apply(event.Event{
+		ID: "synth", Time: time.Now(), Source: SourceFirehose, SessionID: "s1",
+		Category: event.CategoryMeta, Name: NameStateTransition,
+		Payload: map[string]any{"state": "needs_input"},
+	})
+	if tr != nil {
+		t.Fatalf("synthetic must not re-enter: %+v", tr)
+	}
+	s, _ := ix.Session("s1")
+	if s.State != StateWorking || s.Events != 1 {
+		t.Errorf("synthetic altered session: %+v", s)
+	}
+}
+
+func TestAdvanceIdle(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+	ix.Apply(event.Event{
+		ID: "2", Time: base, Source: "claude-code", SessionID: "s2",
+		Category: event.CategoryPermission, Summary: "need you",
+	})
+
+	trs := ix.AdvanceIdle(base.Add(IdleAfter + time.Second))
+	if len(trs) != 1 {
+		t.Fatalf("want 1 idle transition (s1 only), got %d: %+v", len(trs), trs)
+	}
+	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
+		t.Errorf("wrong transition: %+v", trs[0])
+	}
+	s2, _ := ix.Session("s2")
+	if s2.State != StateNeedsInput {
+		t.Errorf("s2 must stay needs_input, got %q", s2.State)
+	}
+}
+
+func TestAdvanceIdleSuppressedWhileToolOpen(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Name: "PreToolUse:Bash", Summary: "Bash",
+	})
+
+	// The build runs long past the idle threshold — still working.
+	if trs := ix.AdvanceIdle(base.Add(IdleAfter + time.Second)); len(trs) != 0 {
+		t.Fatalf("open tool call must suppress idle, got %+v", trs)
+	}
+	s, _ := ix.Session("s1")
+	if s.State != StateWorking {
+		t.Fatalf("state = %q, want working", s.State)
+	}
+
+	ix.Apply(event.Event{
+		ID: "2", Time: base.Add(2 * time.Minute), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Name: "PostToolUse:Bash", Summary: "Bash",
+	})
+	trs := ix.AdvanceIdle(base.Add(2*time.Minute + IdleAfter + time.Second))
+	if len(trs) != 1 || trs[0].Payload["state"] != "idle" {
+		t.Fatalf("tool closed → idle after quiet period, got %+v", trs)
+	}
+}
+
+func TestSessionEndClearsOpenTools(t *testing.T) {
+	// A missing PostToolUse must not pin a finished session out of idle
+	// forever: session end resets the open-tool bookkeeping.
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Name: "PreToolUse:Bash",
+	})
+	ix.Apply(event.Event{
+		ID: "2", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "s1",
+		Category: event.CategorySession, Name: "Stop",
+	})
+	ix.Apply(event.Event{
+		ID: "3", Time: base.Add(2 * time.Minute), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryPrompt, Summary: "next prompt",
+	})
+	trs := ix.AdvanceIdle(base.Add(2*time.Minute + IdleAfter + time.Second))
+	if len(trs) != 1 || trs[0].Payload["state"] != "idle" {
+		t.Fatalf("session end should clear open tools, got %+v", trs)
+	}
+}
+
+func TestBuildAttentionDeterminism(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "spool")
+	w := spool.NewWriter(dir)
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	evs := []event.Event{
+		{ID: "a", Time: base, Source: "claude-code", SessionID: "s1",
+			Category: event.CategoryPermission, Name: "Notification",
+			Summary: "Claude needs your permission to use Bash"},
+		{ID: "b", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "s1",
+			Category: event.CategoryTool, Summary: "Bash"},
+		{ID: "c", Time: base.Add(2 * time.Minute), Source: "claude-code", SessionID: "s1",
+			Category: event.CategorySession, Name: "Stop"},
+	}
+	for _, ev := range evs {
+		if err := w.Append(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	built, err := Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := spool.ReadLastN(dir, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folded := foldIndex(written)
+	if !reflect.DeepEqual(built.Sessions(), folded.Sessions()) {
+		t.Errorf("attention rebuild mismatch:\n%+v\n%+v", built.Sessions(), folded.Sessions())
+	}
+	s, _ := built.Session("s1")
+	if s.State != StateDone {
+		t.Errorf("built state = %q, want done", s.State)
 	}
 }
 

@@ -105,8 +105,18 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail = "plugin written to " + path + "; restart OpenCode to load it"
+	case "codex":
+		bin, err := os.Executable()
+		if err != nil {
+			bin = "firehosed"
+		}
+		if err := cli.InstallCodex(s.home, bin); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		detail = "Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak); review and trust them in Codex /hooks, then start a fresh task"
 	default:
-		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code or opencode)", adapter), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code, codex, or opencode)", adapter), http.StatusNotFound)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "detail": detail})

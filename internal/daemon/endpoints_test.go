@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,12 @@ func TestSessionsAggregatesSpool(t *testing.T) {
 	}
 	if !s1.LastTime.After(s1.FirstTime) {
 		t.Errorf("s1 time range wrong: %+v", s1)
+	}
+	if s1.State == "" || s1.StateSince.IsZero() {
+		t.Errorf("s1 missing attention fields: state=%q since=%v", s1.State, s1.StateSince)
+	}
+	if string(s1.State) != "working" {
+		t.Errorf("s1 state = %q, want working (last event was tool)", s1.State)
 	}
 }
 
@@ -339,6 +346,33 @@ func TestInstallEndpointOpenCode(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(home, ".config", "opencode", "plugin", "*"))
 	if len(matches) == 0 {
 		t.Error("opencode plugin not written")
+	}
+}
+
+func TestInstallEndpointCodex(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	ts := httptestNewServerWithHome(t, cfg, home)
+
+	resp, err := http.Post(ts.URL+"/install/codex", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/codex: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Detail, "configured") || !strings.Contains(got.Detail, "/hooks") {
+		t.Fatalf("detail must distinguish configured from trust review: %q", got.Detail)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); err != nil {
+		t.Fatalf("hooks not installed: %v", err)
 	}
 }
 

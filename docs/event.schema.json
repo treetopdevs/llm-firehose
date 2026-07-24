@@ -37,6 +37,14 @@
       "type": "string",
       "description": "Identifier grouping causally related events, possibly across sessions. Present only when the source supplies one; adapters preserve it verbatim."
     },
+    "turn_id": {
+      "type": "string",
+      "description": "Source-native identifier grouping events within one agent turn. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
+    "call_id": {
+      "type": "string",
+      "description": "Source-native tool/command correlation id (e.g. a Codex call_id). Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
     "category": {
       "type": "string",
       "enum": ["session", "prompt", "message", "tool", "file", "permission", "shell", "error", "meta"],

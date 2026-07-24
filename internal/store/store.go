@@ -1,5 +1,5 @@
 // Package store holds the viewer's in-memory event window: a bounded ring
-// buffer with filtering and burst coalescing for display.
+// buffer with filtering and correlated-observation coalescing for display.
 package store
 
 import (
@@ -115,25 +115,61 @@ type Row struct {
 	Count int
 }
 
-func groupKey(ev event.Event) string {
-	return ev.Source + "\x00" + ev.SessionID + "\x00" + string(ev.Category) + "\x00" + ev.Name
-}
-
-// Coalesce groups consecutive events with the same source, session, category,
-// and name when each arrives within window of the previous one. The latest
-// event represents the group.
+// Coalesce removes replayed ids and groups dual transport observations sharing
+// session, turn, call, phase, and tool within window. Starts and completions
+// have different phase keys and can never collapse.
 func Coalesce(evs []event.Event, window time.Duration) []Row {
 	var rows []Row
+	seen := map[string]bool{}
+	correlated := map[string]int{}
 	for _, ev := range evs {
-		if n := len(rows); n > 0 {
-			last := &rows[n-1]
-			if groupKey(last.Event) == groupKey(ev) && ev.Time.Sub(last.Event.Time) <= window {
-				last.Event = ev
-				last.Count++
-				continue
+		if ev.ID != "" && seen[ev.ID] {
+			continue
+		}
+		seen[ev.ID] = true
+		key := correlationKey(ev)
+		if key != "" {
+			if index, ok := correlated[key]; ok {
+				row := &rows[index]
+				gap := ev.Time.Sub(row.Event.Time)
+				if gap < 0 {
+					gap = -gap
+				}
+				if gap <= window {
+					row.Event = ev
+					row.Count++
+					continue
+				}
 			}
 		}
 		rows = append(rows, Row{Event: ev, Count: 1})
+		if key != "" {
+			correlated[key] = len(rows) - 1
+		}
 	}
 	return rows
+}
+
+func correlationKey(ev event.Event) string {
+	if ev.SessionID == "" || ev.TurnID == "" || ev.CallID == "" {
+		return ""
+	}
+	phase := metadataKey(ev.Payload["phase"])
+	tool := metadataKey(ev.Payload["tool_name"])
+	if phase == "" || tool == "" {
+		return ""
+	}
+	return ev.SessionID + "\x00" + ev.TurnID + "\x00" + ev.CallID + "\x00" + phase + "\x00" + tool
+}
+
+func metadataKey(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	if digest, ok := value.(map[string]any); ok {
+		if sha, ok := digest["sha256"].(string); ok {
+			return "sha256:" + sha
+		}
+	}
+	return ""
 }

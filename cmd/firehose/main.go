@@ -36,12 +36,19 @@ Usage:
   firehose emit --source S     normalize one payload from stdin (via daemon when running)
   firehose ingest              stream NDJSON events from stdin into the spool
   firehose export [-o FILE]    dump captured events as NDJSON (default stdout)
-  firehose install AGENT       wire an adapter (claude-code | opencode)
+  firehose hook-forward        fail-silent Codex hook capture
+  firehose install AGENT       wire an adapter (claude-code | codex | opencode)
   firehose doctor              validate adapter wiring
   firehose version             print version
 `
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
+		home, _ := os.UserHomeDir()
+		cfg, _ := cli.LoadConfig(home)
+		_ = cli.HookForward(cfg, os.Stdin, os.Stdout)
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fatal(err)
@@ -72,7 +79,7 @@ func main() {
 		}
 	case "emit":
 		fs := flag.NewFlagSet("emit", flag.ExitOnError)
-		source := fs.String("source", "generic", "source adapter (claude-code | opencode | generic)")
+		source := fs.String("source", "generic", "source adapter (claude-code | codex-hook | opencode | generic)")
 		fs.Parse(args)
 		fatalIf(cli.Emit(cfg, *source, os.Stdin))
 	case "ingest":
@@ -95,7 +102,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "exported %d events\n", n)
 	case "install":
 		if len(args) != 1 {
-			fatal(fmt.Errorf("usage: firehose install <claude-code|opencode>"))
+			fatal(fmt.Errorf("usage: firehose install <claude-code|codex|opencode>"))
 		}
 		switch args[0] {
 		case "claude-code":
@@ -111,8 +118,16 @@ func main() {
 			fatalIf(err)
 			fmt.Printf("✓ plugin written to %s\n", path)
 			fmt.Println("  restart OpenCode to load it (needs `firehose` on PATH)")
+		case "codex":
+			bin, err := os.Executable()
+			if err != nil {
+				bin = "firehose"
+			}
+			fatalIf(cli.InstallCodex(home, bin))
+			fmt.Println("✓ Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak)")
+			fmt.Println("  open /hooks in Codex to review and trust them, then start a fresh task")
 		default:
-			fatal(fmt.Errorf("unknown adapter %q (want claude-code or opencode)", args[0]))
+			fatal(fmt.Errorf("unknown adapter %q (want claude-code, codex, or opencode)", args[0]))
 		}
 	case "doctor":
 		bad := 0
