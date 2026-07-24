@@ -87,29 +87,25 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	adapter := r.PathValue("adapter")
 	var detail string
+	bin, err := os.Executable()
+	if err != nil {
+		bin = "firehosed"
+	}
 	switch adapter {
 	case "claude-code":
-		bin, err := os.Executable()
-		if err != nil {
-			bin = "firehose"
-		}
 		if err := cli.InstallClaudeCode(s.home, bin); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		detail = "hooks merged into ~/.claude/settings.json (backup: settings.json.bak); restart running Claude Code sessions"
 	case "opencode":
-		path, err := cli.InstallOpenCode(s.home)
+		path, err := cli.InstallOpenCode(s.home, bin)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		detail = "plugin written to " + path + "; restart OpenCode to load it"
 	case "codex":
-		bin, err := os.Executable()
-		if err != nil {
-			bin = "firehosed"
-		}
 		if err := cli.InstallCodex(s.home, bin); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

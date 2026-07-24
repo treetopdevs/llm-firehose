@@ -46,7 +46,7 @@ func Doctor(cfg Config, home string) []Check {
 		var settings map[string]any
 		if json.Unmarshal(data, &settings) == nil {
 			if hooks, err := json.Marshal(settings["hooks"]); err == nil {
-				hookOK = strings.Contains(string(hooks), "emit --source claude-code")
+				hookOK = strings.Contains(string(hooks), "hook-forward --source claude-code")
 			}
 		}
 	}

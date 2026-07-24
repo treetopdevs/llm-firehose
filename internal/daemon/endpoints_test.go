@@ -222,7 +222,10 @@ func TestSessionsLiveUpdateWhileRunning(t *testing.T) {
 	s := New(cfg, t.TempDir(), "test-version")
 	s.TailInterval = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(func() {
+		cancel()
+		s.Wait()
+	})
 	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -319,6 +322,10 @@ func TestInstallEndpoint(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err != nil {
 		t.Errorf("hooks not installed: %v", err)
 	}
+	settings, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(string(settings), "hook-forward --source claude-code") {
+		t.Fatalf("desktop install did not use the sidecar-compatible forwarder: %s", settings)
+	}
 
 	unknown, err := http.Post(ts.URL+"/install/emacs", "application/json", nil)
 	if err != nil {
@@ -346,6 +353,10 @@ func TestInstallEndpointOpenCode(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(home, ".config", "opencode", "plugin", "*"))
 	if len(matches) == 0 {
 		t.Error("opencode plugin not written")
+	}
+	plugin, _ := os.ReadFile(matches[0])
+	if !strings.Contains(string(plugin), `"hook-forward","--source","opencode"`) {
+		t.Fatalf("desktop install did not use the sidecar-compatible forwarder: %s", plugin)
 	}
 }
 

@@ -21,8 +21,7 @@ const version = "0.1.0"
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
 		home, _ := os.UserHomeDir()
-		cfg, _ := cli.LoadConfig(home)
-		_ = cli.HookForward(cfg, os.Stdin, os.Stdout)
+		cli.RunHookForwardCommand(home, os.Args[2:], os.Stdin, os.Stdout)
 		return
 	}
 	home, err := os.UserHomeDir()

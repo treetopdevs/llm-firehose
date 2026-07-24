@@ -1,5 +1,5 @@
 // Package claudecode maps Claude Code (and Cursor-compatible) hook payloads
-// delivered on stdin to `firehose emit --source claude-code` into normalized
+// delivered to `firehose hook-forward --source claude-code` into normalized
 // events. Cursor uses camelCase hook names and tool_output; both are accepted.
 package claudecode
 

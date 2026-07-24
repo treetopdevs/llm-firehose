@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"agentfirehose/internal/adapters/claudecode"
 	"agentfirehose/internal/adapters/codexhook"
@@ -149,13 +151,57 @@ func EmitLocal(cfg Config, source string, raw []byte) error {
 	return spool.NewWriter(cfg.SpoolDir).Append(redacted)
 }
 
-// HookForward captures a Codex hook observation without ever influencing the
-// Codex session. It always writes the neutral hook response and returns
-// success, even when parsing, daemon delivery, or fallback persistence fails.
-func HookForward(cfg Config, r io.Reader, w io.Writer) error {
-	_ = Emit(cfg, codexhook.Source, r)
+// HookForward captures a hook observation without ever influencing the agent
+// session. It always writes the neutral hook response and returns success,
+// even when parsing, daemon delivery, or fallback persistence fails.
+func HookForward(cfg Config, source string, r io.Reader, w io.Writer) error {
+	if err := Emit(cfg, source, r); err != nil {
+		reportHookCaptureError(cfg, source, err)
+	}
 	_, _ = io.WriteString(w, "{}\n")
 	return nil
+}
+
+// RunHookForwardCommand parses the shared hook command and keeps every
+// failure—including invalid flags, config errors, and malformed payloads—
+// observational. Both distributed binaries use this exact entrypoint.
+func RunHookForwardCommand(home string, args []string, r io.Reader, w io.Writer) {
+	if home == "" {
+		_, _ = io.WriteString(w, "{}\n")
+		return
+	}
+	fs := flag.NewFlagSet("hook-forward", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	source := fs.String("source", codexhook.Source, "source adapter")
+	flagErr := fs.Parse(args)
+	cfg, configErr := LoadConfig(home)
+	if flagErr != nil {
+		reportHookCaptureError(cfg, *source, fmt.Errorf("hook flags: %w", flagErr))
+	}
+	if configErr != nil {
+		// A malformed config still returns safe path defaults. Avoid routing
+		// through an address we could not successfully load and persist both
+		// the warning and hook locally instead.
+		cfg.DaemonAddr = ""
+		reportHookCaptureError(cfg, *source, fmt.Errorf("load config: %w", configErr))
+	}
+	_ = HookForward(cfg, *source, r, w)
+}
+
+func reportHookCaptureError(cfg Config, source string, captureErr error) {
+	_ = spool.NewWriter(cfg.SpoolDir).Append(event.Event{
+		ID:       event.NewID(),
+		Time:     time.Now().UTC(),
+		Source:   "firehose",
+		Category: event.CategoryMeta,
+		Name:     "hook_capture_error",
+		Severity: event.SeverityWarn,
+		Summary:  "Adapter hook capture warning: " + captureErr.Error(),
+		Payload: map[string]any{
+			"adapter_source": source,
+			"status":         "error",
+		},
+	})
 }
 
 // Ingest streams NDJSON lines from r into the spool, returning how many

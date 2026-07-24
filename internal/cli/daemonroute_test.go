@@ -63,7 +63,7 @@ func TestHookForwardRoutesThroughDaemonAndReturnsNeutralJSON(t *testing.T) {
 	}
 	var out bytes.Buffer
 	raw := `{"session_id":"s-hook","turn_id":"t-hook","hook_event_name":"Stop","last_assistant_message":"done"}`
-	if err := cli.HookForward(cfg, strings.NewReader(raw), &out); err != nil {
+	if err := cli.HookForward(cfg, "codex-hook", strings.NewReader(raw), &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "{}\n" {

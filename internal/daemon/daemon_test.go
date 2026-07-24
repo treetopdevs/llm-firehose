@@ -107,6 +107,9 @@ func TestCORSAllowsDesktopShellOnly(t *testing.T) {
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("disallowed origin got ACAO %q, want none", got)
 	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("disallowed origin status = %d, want 403", resp.StatusCode)
+	}
 }
 
 func TestCORSPreflight(t *testing.T) {
@@ -128,6 +131,18 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	if got := resp.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "content-type") {
 		t.Errorf("allow-headers = %q, want content-type included", got)
+	}
+}
+
+func TestServeRejectsNonLoopbackAddresses(t *testing.T) {
+	s := New(testConfig(t), t.TempDir(), "test-version")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, addr := range []string{"0.0.0.0:0", "[::]:0", ":0", "192.0.2.10:4517"} {
+		if _, _, err := s.Serve(ctx, addr); err == nil {
+			t.Errorf("Serve(%q) succeeded, want a loopback-only error", addr)
+		}
 	}
 }
 

@@ -110,7 +110,7 @@ func TestUnknownSkipped(t *testing.T) {
 
 func TestWritePlugin(t *testing.T) {
 	dir := t.TempDir()
-	path, err := WritePlugin(dir)
+	path, err := WritePlugin(dir, "/Applications/Agent Firehose/firehosed")
 	if err != nil {
 		t.Fatalf("WritePlugin: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestWritePlugin(t *testing.T) {
 		t.Fatalf("read plugin: %v", err)
 	}
 	js := string(data)
-	if !strings.Contains(js, "firehose") || !strings.Contains(js, "emit") || !strings.Contains(js, "opencode") {
-		t.Errorf("plugin should forward events via `firehose emit --source opencode`:\n%s", js)
+	if !strings.Contains(js, `["/Applications/Agent Firehose/firehosed","hook-forward","--source","opencode"]`) {
+		t.Errorf("plugin should use the configured fail-silent executable:\n%s", js)
 	}
 }

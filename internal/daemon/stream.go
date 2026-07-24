@@ -87,7 +87,7 @@ func (s *Server) Start(ctx context.Context) {
 	// broadcasts them like any other event, so a rebuilt index sees them too.
 	spooled := make(chan event.Event, 1024)
 	watched := make(chan event.Event, 1024)
-	go tailer.Run(ctx, spooled)
+	s.launch(func() { tailer.Run(ctx, spooled) })
 	if cfg.CodexDir != "" {
 		if _, err := os.Stat(cfg.CodexDir); err == nil {
 			cursorPath := filepath.Join(s.home, ".agentfirehose", "state", "codex-cursors.json")
@@ -106,11 +106,11 @@ func (s *Server) Start(ctx context.Context) {
 			// Codex task launched after /health is ready cannot race into the
 			// initial baseline and disappear.
 			_ = watcher.Initialize()
-			go watcher.Run(ctx)
+			s.launch(func() { watcher.Run(ctx) })
 		}
 	}
-	go procwatch.NewWatcher(s.ProcLister, s.ProcInterval).Run(ctx, watched)
-	go func() {
+	s.launch(func() { procwatch.NewWatcher(s.ProcLister, s.ProcInterval).Run(ctx, watched) })
+	s.launch(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -131,11 +131,11 @@ func (s *Server) Start(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 
 	// Idle ticker: promote quiet working sessions to idle and push
 	// stream-only transitions so clients can animate without polling.
-	go func() {
+	s.launch(func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -150,7 +150,7 @@ func (s *Server) Start(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }
 
 // privacyMode is the effective redaction mode, falling back to balanced.

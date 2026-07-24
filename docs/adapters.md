@@ -32,7 +32,9 @@ Events reach the viewer two ways:
 `firehose install claude-code` merges hook entries into
 `~/.claude/settings.json` (a `.bak` backup is written first; existing hooks
 are preserved; reruns are idempotent). Each hook pipes its JSON payload to
-`firehose emit --source claude-code`.
+`firehose hook-forward --source claude-code`, which never lets capture errors
+interrupt Claude Code and records a best-effort warning when the spool remains
+writable.
 
 Hooked events: SessionStart, SessionEnd, UserPromptSubmit, PreToolUse,
 PostToolUse, Notification, Stop, SubagentStop, PreCompact. Mapping highlights:
@@ -47,7 +49,9 @@ Codex has two complementary observational transports:
   it baselines existing files without importing history. Per-file offsets and
   parser context are checkpointed only after a synchronous spool append, so
   lines written while the daemon is down are recovered at least once after
-  restart. Rollouts are authoritative for streaming assistant commentary.
+  restart. A corrupt checkpoint is quarantined, safely re-baselined, and
+  surfaced as a warning instead of disabling capture. Rollouts are
+  authoritative for streaming assistant commentary.
 - `firehose install codex` merges all current lifecycle, permission,
   compaction, subagent, and tool hooks into user-wide `~/.codex/hooks.json`.
   It preserves existing hooks, writes `hooks.json.bak`, and is idempotent.
@@ -74,8 +78,10 @@ seconds while keeping start and completion phases separate.
 ## OpenCode (deep)
 
 `firehose install opencode` writes `~/.config/opencode/plugin/agent-firehose.js`.
-The plugin subscribes to the OpenCode event bus and forwards each event to
-`firehose emit --source opencode` (the binary must be on OpenCode's PATH).
+The plugin subscribes to the OpenCode event bus and forwards each event through
+the exact binary that installed it using
+`hook-forward --source opencode`. The forwarder is fail-silent, and desktop
+installs do not depend on a separate `firehose` binary being on `PATH`.
 
 Mapping highlights: `session.*` → session (errors → error), `message.updated`
 → prompt/message by role, tool parts → shell/file/tool once they reach a

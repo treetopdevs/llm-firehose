@@ -26,7 +26,10 @@ func testDaemon(t *testing.T) (*httptest.Server, cli.Config) {
 	s := daemon.New(cfg, t.TempDir(), "test-version")
 	s.TailInterval = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	t.Cleanup(func() {
+		cancel()
+		s.Wait()
+	})
 	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -27,6 +28,7 @@ const defaultRecentLimit = 500
 // Server owns the capture engine behind the local API.
 type Server struct {
 	mu      sync.RWMutex // guards cfg
+	wg      sync.WaitGroup
 	cfg     cli.Config
 	home    string
 	version string
@@ -44,6 +46,20 @@ type Server struct {
 	// ProcLister supplies the process table for the agent process watcher;
 	// injectable for tests.
 	ProcLister procwatch.Lister
+}
+
+func (s *Server) launch(run func()) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		run()
+	}()
+}
+
+// Wait blocks until capture workers launched by Start have observed
+// cancellation and stopped.
+func (s *Server) Wait() {
+	s.wg.Wait()
 }
 
 // ensureIndex builds the derived index from the spool exactly once (at Start
@@ -89,7 +105,11 @@ var allowedOrigins = map[string]bool{
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if allowedOrigins[origin] {
+		if origin != "" && !allowedOrigins[origin] {
+			http.Error(w, "browser origin is not allowed", http.StatusForbidden)
+			return
+		}
+		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			if r.Method == http.MethodOptions {
@@ -129,9 +149,17 @@ func (s *Server) Handler() http.Handler {
 // error (nil on clean shutdown). Open event streams are closed on shutdown so
 // the daemon can always restart independently of its clients.
 func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, error) {
+	if err := validateLoopbackAddr(addr); err != nil {
+		return "", nil, err
+	}
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return "", nil, err
+	}
+	tcpAddr, ok := l.Addr().(*net.TCPAddr)
+	if !ok || tcpAddr.IP == nil || !tcpAddr.IP.IsLoopback() {
+		_ = l.Close()
+		return "", nil, fmt.Errorf("daemon address %q resolved outside loopback", addr)
 	}
 	srv := &http.Server{Handler: s.Handler()}
 	srv.RegisterOnShutdown(s.hub.closeAll)
@@ -152,21 +180,45 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 	return l.Addr().String(), done, nil
 }
 
+func validateLoopbackAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("daemon address %q: %w", addr, err)
+	}
+	if host == "localhost" {
+		// The actual listener address is checked again after bind, so a
+		// nonstandard hosts-file mapping is still rejected without DNS here.
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("daemon address %q must use localhost or a loopback IP", addr)
+	}
+	return nil
+}
+
 // Run starts the capture engine and serves the local API on addr until ctx
 // is canceled. onReady, when non-nil, receives the bound address once the
 // listener is up. Both firehosed and `firehose daemon` are thin wrappers
 // around this.
 func Run(ctx context.Context, cfg cli.Config, home, version, addr string, onReady func(bound string)) error {
 	s := New(cfg, home, version)
-	s.Start(ctx)
-	bound, done, err := s.Serve(ctx, addr)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.Start(runCtx)
+	bound, done, err := s.Serve(runCtx, addr)
 	if err != nil {
+		cancel()
+		s.Wait()
 		return err
 	}
 	if onReady != nil {
 		onReady(bound)
 	}
-	return <-done
+	err = <-done
+	cancel()
+	s.Wait()
+	return err
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

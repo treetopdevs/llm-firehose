@@ -15,6 +15,26 @@ import (
 
 const sessionMetaLine = `{"timestamp":"2026-05-07T15:12:00.000Z","type":"session_meta","payload":{"id":"sess-codex-1","timestamp":"2026-05-07T15:11:59.000Z","cwd":"/Users/x/proj","originator":"Codex CLI","cli_version":"0.100.0","source":"vscode"}}`
 
+func capturedRolloutLine(t *testing.T, marker string) string {
+	t.Helper()
+	f, err := os.Open(filepath.Join("testdata", "rollout_current_sanitized.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if strings.Contains(sc.Text(), marker) {
+			return sc.Text()
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("captured rollout fixture has no line containing %q", marker)
+	return ""
+}
+
 func newParser(t *testing.T) *FileParser {
 	t.Helper()
 	p := NewFileParser()
@@ -449,6 +469,87 @@ func TestDurableWatcherBaselinesHistoryAndCapturesFreshFile(t *testing.T) {
 	}
 	if len(got) != 2 || got[1].Category != event.CategoryMessage || got[1].SessionID != "sess-codex-1" {
 		t.Fatalf("fresh capture = %+v", got)
+	}
+}
+
+func TestDurableWatcherBaselineKeepsContextForLaterAppends(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "2026", "07", "24", "rollout-existing.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionLine := capturedRolloutLine(t, `"type":"session_meta"`)
+	agentLine := capturedRolloutLine(t, `"type":"agent_message"`)
+	if err := os.WriteFile(path, []byte(sessionLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []event.Event
+	w := NewDurableWatcher(root, filepath.Join(t.TempDir(), "codex-cursors.json"), time.Second, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("baseline imported historical events: %+v", got)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(agentLine + "\n")
+	_ = f.Close()
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].SessionID != "019f944c-e8a2-7092-b9e2-1bdfe7ec4ded" || got[0].CWD != "/Users/nicholas/develop/llm-firehose" {
+		t.Fatalf("baseline context was not retained: %+v", got)
+	}
+}
+
+func TestDurableWatcherQuarantinesCorruptCursorAndResumes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "rollout-existing.jsonl")
+	sessionLine := capturedRolloutLine(t, `"type":"session_meta"`)
+	agentLine := capturedRolloutLine(t, `"type":"agent_message"`)
+	if err := os.WriteFile(path, []byte(sessionLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(t.TempDir(), "codex-cursors.json")
+	if err := os.WriteFile(statePath, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []event.Event
+	w := NewDurableWatcher(root, statePath, time.Second, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err := w.Initialize(); err != nil {
+		t.Fatalf("corrupt cursor disabled capture: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "rollout_capture_error" || got[0].Severity != event.SeverityWarn {
+		t.Fatalf("cursor recovery warning = %+v", got)
+	}
+	backups, err := filepath.Glob(statePath + ".corrupt-*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("corrupt cursor was not quarantined: backups=%v err=%v", backups, err)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(agentLine + "\n")
+	_ = f.Close()
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].SessionID != "019f944c-e8a2-7092-b9e2-1bdfe7ec4ded" {
+		t.Fatalf("capture did not resume with context: %+v", got)
 	}
 }
 

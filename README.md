@@ -77,9 +77,9 @@ feed are documented in the [release runbook](docs/release-runbook.md).
 
 | Source | Depth | How it works |
 |---|---|---|
-| Claude Code | deep | hooks forward every lifecycle event to `firehose emit` |
+| Claude Code | deep | hooks forward lifecycle events through a fail-silent local command |
 | Codex | deep | durable rollout tail plus optional lifecycle/tool hooks |
-| OpenCode | deep | plugin forwards bus events to `firehose emit` |
+| OpenCode | deep | plugin forwards bus events through a fail-silent local command |
 | any process | shallow | process watcher emits start/stop for known agent binaries |
 | anything else | generic | pipe NDJSON into `firehose ingest`, or call `firehose emit` |
 

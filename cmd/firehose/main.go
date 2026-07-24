@@ -36,7 +36,7 @@ Usage:
   firehose emit --source S     normalize one payload from stdin (via daemon when running)
   firehose ingest              stream NDJSON events from stdin into the spool
   firehose export [-o FILE]    dump captured events as NDJSON (default stdout)
-  firehose hook-forward        fail-silent Codex hook capture
+  firehose hook-forward        fail-silent adapter hook capture
   firehose install AGENT       wire an adapter (claude-code | codex | opencode)
   firehose doctor              validate adapter wiring
   firehose version             print version
@@ -45,8 +45,7 @@ Usage:
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
 		home, _ := os.UserHomeDir()
-		cfg, _ := cli.LoadConfig(home)
-		_ = cli.HookForward(cfg, os.Stdin, os.Stdout)
+		cli.RunHookForwardCommand(home, os.Args[2:], os.Stdin, os.Stdout)
 		return
 	}
 	home, err := os.UserHomeDir()
@@ -104,25 +103,21 @@ func main() {
 		if len(args) != 1 {
 			fatal(fmt.Errorf("usage: firehose install <claude-code|codex|opencode>"))
 		}
+		bin, err := os.Executable()
+		if err != nil {
+			bin = "firehose"
+		}
 		switch args[0] {
 		case "claude-code":
-			bin, err := os.Executable()
-			if err != nil {
-				bin = "firehose"
-			}
 			fatalIf(cli.InstallClaudeCode(home, bin))
 			fmt.Println("✓ hooks merged into ~/.claude/settings.json (backup: settings.json.bak)")
 			fmt.Println("  restart running Claude Code sessions to pick them up")
 		case "opencode":
-			path, err := cli.InstallOpenCode(home)
+			path, err := cli.InstallOpenCode(home, bin)
 			fatalIf(err)
 			fmt.Printf("✓ plugin written to %s\n", path)
-			fmt.Println("  restart OpenCode to load it (needs `firehose` on PATH)")
+			fmt.Println("  restart OpenCode to load it")
 		case "codex":
-			bin, err := os.Executable()
-			if err != nil {
-				bin = "firehose"
-			}
 			fatalIf(cli.InstallCodex(home, bin))
 			fmt.Println("✓ Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak)")
 			fmt.Println("  open /hooks in Codex to review and trust them, then start a fresh task")

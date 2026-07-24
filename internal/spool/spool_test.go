@@ -2,9 +2,11 @@ package spool
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +43,30 @@ func TestAppendReadRoundTrip(t *testing.T) {
 		if ev.ID != fmt.Sprintf("ev-%d", i) {
 			t.Errorf("event %d out of order: %s", i, ev.ID)
 		}
+	}
+}
+
+func TestAppendReadRoundTripLargerThanScannerLimit(t *testing.T) {
+	dir := t.TempDir()
+	ev := mkEvent(1, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.Payload = map[string]any{"output": strings.Repeat("x", 5*1024*1024)}
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append large event: %v", err)
+	}
+	after := mkEvent(2, ev.Time.Add(time.Second))
+	if err := NewWriter(dir).Append(after); err != nil {
+		t.Fatalf("append event after large record: %v", err)
+	}
+
+	evs, err := ReadLastN(dir, 2)
+	if err != nil {
+		t.Fatalf("read large event: %v", err)
+	}
+	if len(evs) != 2 || evs[0].ID != ev.ID || evs[1].ID != after.ID {
+		t.Fatalf("large event did not round-trip: %+v", evs)
+	}
+	if got := evs[0].Payload["output"].(string); len(got) != 5*1024*1024 {
+		t.Fatalf("large payload length = %d", len(got))
 	}
 }
 
@@ -93,6 +119,21 @@ func TestReadPreVersioningLines(t *testing.T) {
 	}
 	if len(evs) != 1 || evs[0].ID != "old" || evs[0].SchemaVersion != 0 {
 		t.Fatalf("legacy line misread: %+v", evs)
+	}
+}
+
+func TestReadLegacyFinalRecordWithoutNewline(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"old","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}`
+	if err := os.WriteFile(filepath.Join(dir, "2026-07-01.ndjson"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := ReadLastN(dir, 10)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].ID != "old" {
+		t.Fatalf("legacy final record was not read: %+v", evs)
 	}
 }
 
@@ -207,5 +248,81 @@ func TestTailerEmitsParseErrorEvent(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("tailer never surfaced parse failure")
+	}
+}
+
+func TestTailerWaitsForIncompleteFinalLine(t *testing.T) {
+	dir := t.TempDir()
+	tail := NewTailer(dir, time.Second)
+	tail.Prime()
+	ch := make(chan event.Event, 2)
+	ctx := context.Background()
+
+	ev := mkEvent(7, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	line, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "2026-07-02.ndjson")
+	cut := len(line) / 2
+	if err := os.WriteFile(path, line[:cut], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(ctx, ch)
+	select {
+	case got := <-ch:
+		t.Fatalf("incomplete line produced an event: %+v", got)
+	default:
+	}
+	if got := tail.offsets[path]; got != 0 {
+		t.Fatalf("incomplete line advanced offset to %d", got)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(line[cut:], '\n')); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(ctx, ch)
+	select {
+	case got := <-ch:
+		if got.ID != ev.ID {
+			t.Fatalf("completed line produced %+v", got)
+		}
+	default:
+		t.Fatal("completed line was not delivered")
+	}
+}
+
+func TestTailerAdvancesPastLargeRecord(t *testing.T) {
+	dir := t.TempDir()
+	tail := NewTailer(dir, time.Second)
+	tail.Prime()
+	ch := make(chan event.Event, 2)
+
+	large := mkEvent(8, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	large.Payload = map[string]any{"output": strings.Repeat("x", 5*1024*1024)}
+	after := mkEvent(9, large.Time.Add(time.Second))
+	writer := NewWriter(dir)
+	if err := writer.Append(large); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Append(after); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(context.Background(), ch)
+	first := <-ch
+	second := <-ch
+	if first.ID != large.ID || second.ID != after.ID {
+		t.Fatalf("tailer stopped at large record: first=%s second=%s", first.ID, second.ID)
 	}
 }

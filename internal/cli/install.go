@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"agentfirehose/internal/adapters/opencode"
@@ -49,7 +50,7 @@ func InstallClaudeCode(home, binPath string) error {
 		}
 	}
 
-	command := binPath + " emit --source claude-code"
+	command := quoteCommandPath(binPath, runtime.GOOS) + " hook-forward --source claude-code"
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
@@ -107,7 +108,7 @@ func InstallCodex(home, binPath string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	command := shellQuote(binPath) + " hook-forward"
+	command := quoteCommandPath(binPath, runtime.GOOS) + " hook-forward"
 	hooks, _ := doc["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
@@ -153,6 +154,15 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+func quoteCommandPath(value, goos string) string {
+	if goos == "windows" {
+		// Double quotes are the executable-path delimiter understood by
+		// cmd.exe. A Windows filename itself cannot contain a double quote.
+		return `"` + value + `"`
+	}
+	return shellQuote(value)
+}
+
 // CodexHooksConfigured verifies every supported event has a forwarding hook
 // and that its referenced executable is currently available.
 func CodexHooksConfigured(home string) bool {
@@ -195,6 +205,8 @@ func commandAvailable(command string) bool {
 	if strings.HasPrefix(bin, "'") && strings.HasSuffix(bin, "'") {
 		bin = strings.TrimSuffix(strings.TrimPrefix(bin, "'"), "'")
 		bin = strings.ReplaceAll(bin, "'\"'\"'", "'")
+	} else if strings.HasPrefix(bin, `"`) && strings.HasSuffix(bin, `"`) {
+		bin = strings.TrimSuffix(strings.TrimPrefix(bin, `"`), `"`)
 	}
 	if filepath.IsAbs(bin) {
 		info, err := os.Stat(bin)
@@ -206,6 +218,6 @@ func commandAvailable(command string) bool {
 
 // InstallOpenCode writes the forwarder plugin into
 // <home>/.config/opencode/plugin/ and returns its path.
-func InstallOpenCode(home string) (string, error) {
-	return opencode.WritePlugin(filepath.Join(home, ".config", "opencode", "plugin"))
+func InstallOpenCode(home, binPath string) (string, error) {
+	return opencode.WritePlugin(filepath.Join(home, ".config", "opencode", "plugin"), binPath)
 }

@@ -25,7 +25,10 @@ func startedServer(t *testing.T, cfg cli.Config) *httptest.Server {
 	s.TailInterval = 10 * time.Millisecond
 	s.WatchInterval = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	t.Cleanup(func() {
+		cancel()
+		s.Wait()
+	})
 	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -287,7 +290,10 @@ func TestProcwatchEventsPersistedToSpool(t *testing.T) {
 	fl := &fakeLister{}
 	s.ProcLister = fl
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	t.Cleanup(func() {
+		cancel()
+		s.Wait()
+	})
 	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)

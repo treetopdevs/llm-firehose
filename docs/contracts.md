@@ -42,7 +42,7 @@ events read directly from other tools' files (codex).
 | Mode | `raw` | `payload` values | Metadata (source, category, name, times, ids, repo/cwd, summary) |
 |---|---|---|---|
 | `minimal` | dropped | replaced with `{"sha256": "...", "len": N}` digests | kept |
-| `balanced` (default) | dropped | strings truncated to 240 runes (with `…`) | kept |
+| `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept |
 | `full` | kept | kept verbatim | kept |
 
 ## Spool format
@@ -80,9 +80,9 @@ Current mappings (details in [adapters.md](adapters.md)):
 
 | Source | Transport | Notes |
 |---|---|---|
-| `claude-code` | hooks → `firehose emit --source claude-code` | lifecycle hooks per event |
+| `claude-code` | hooks → fail-silent `hook-forward --source claude-code` | lifecycle hooks per event |
 | `codex` | durable rollout tail + observational `codex-hook` forwarding | rollout messages plus installable lifecycle/tool hooks |
-| `opencode` | plugin → `firehose emit --source opencode` | bus events |
+| `opencode` | plugin → fail-silent `hook-forward --source opencode` | bus events |
 | `generic` | `firehose ingest` / `emit --source generic` | envelope passthrough or meta-wrap |
 | `procwatch` | engine polls `ps` | agent process lifecycle |
 
@@ -118,8 +118,9 @@ live clients; they are never persisted or exported.
 
 CORS: browser origins are allowlisted to the desktop shell
 (`tauri://localhost`, `http(s)://tauri.localhost`, `http://localhost:1420`).
-Other web origins get no CORS access — a random website must not read the
-local event feed. Non-browser clients are unaffected.
+Requests carrying any other browser origin are rejected with `403` — a random
+website must not read or write the local event feed. Non-browser clients are
+unaffected. The daemon refuses to bind a non-loopback listen address.
 
 Compatibility rule for clients: see [compatibility.md](compatibility.md).
 

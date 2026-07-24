@@ -6,9 +6,12 @@ package spool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,16 +124,22 @@ func readFile(path string) ([]event.Event, error) {
 	}
 	defer f.Close()
 	var evs []event.Event
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
+	reader := bufio.NewReader(f)
+	for {
+		line, _, err := readLine(reader, true)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
 		var ev event.Event
-		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+		if err := json.Unmarshal(line, &ev); err != nil {
 			continue // reader skips bad lines; the tailer surfaces them
 		}
 		evs = append(evs, ev)
 	}
-	return evs, sc.Err()
+	return evs, nil
 }
 
 // Tailer polls the spool directory and delivers newly appended events.
@@ -202,12 +211,17 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 			f.Close()
 			continue
 		}
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		reader := bufio.NewReader(f)
 		read := off
-		for sc.Scan() {
-			line := sc.Bytes()
-			read += int64(len(line)) + 1
+		for {
+			line, consumed, readErr := readLine(reader, false)
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				break
+			}
+			read += consumed
 			ev, perr := parseLine(line)
 			if perr != nil {
 				ev = event.Event{
@@ -230,6 +244,21 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 		f.Close()
 		t.offsets[path] = read
 	}
+}
+
+// readLine returns one record and the exact number of bytes consumed. Snapshot
+// readers accept a legacy final record without a newline; live tailers leave
+// it unconsumed so a later append can complete it.
+func readLine(reader *bufio.Reader, acceptFinal bool) ([]byte, int64, error) {
+	raw, err := reader.ReadBytes('\n')
+	if err != nil {
+		if !errors.Is(err, io.EOF) || len(raw) == 0 || !acceptFinal {
+			return nil, 0, err
+		}
+	}
+	line := bytes.TrimSuffix(raw, []byte{'\n'})
+	line = bytes.TrimSuffix(line, []byte{'\r'})
+	return line, int64(len(raw)), nil
 }
 
 func parseLine(line []byte) (event.Event, error) {

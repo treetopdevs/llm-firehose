@@ -1,6 +1,6 @@
 // Package opencode maps OpenCode bus events into normalized events. Capture
 // works through an OpenCode plugin (see plugin.go) that forwards each bus
-// event to `firehose emit --source opencode` as JSON on stdin.
+// event to `firehose hook-forward --source opencode` as JSON on stdin.
 package opencode
 
 import (

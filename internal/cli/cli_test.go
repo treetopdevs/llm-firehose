@@ -134,8 +134,8 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 			t.Errorf("hook for %s not installed", evName)
 		}
 	}
-	if !strings.Contains(s, "firehose emit --source claude-code") {
-		t.Error("firehose emit command not wired")
+	if !strings.Contains(s, "hook-forward --source claude-code") {
+		t.Error("fail-silent Claude forwarder not wired")
 	}
 	// backup created
 	if _, err := os.Stat(settingsPath + ".bak"); err != nil {
@@ -147,14 +147,25 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 		t.Fatalf("second install: %v", err)
 	}
 	data2, _ := os.ReadFile(settingsPath)
-	if c := strings.Count(string(data2), "firehose emit --source claude-code"); c != strings.Count(s, "firehose emit --source claude-code") {
-		t.Errorf("install not idempotent: %d vs %d occurrences", c, strings.Count(s, "firehose emit --source claude-code"))
+	if c := strings.Count(string(data2), "hook-forward --source claude-code"); c != strings.Count(s, "hook-forward --source claude-code") {
+		t.Errorf("install not idempotent: %d vs %d occurrences", c, strings.Count(s, "hook-forward --source claude-code"))
+	}
+}
+
+func TestCommandPathQuotingIsPlatformAppropriate(t *testing.T) {
+	const windowsPath = `C:\Program Files\Agent Firehose\firehosed.exe`
+	if got, want := quoteCommandPath(windowsPath, "windows"), `"`+windowsPath+`"`; got != want {
+		t.Fatalf("Windows command path = %q, want %q", got, want)
+	}
+	const posixPath = `/Applications/Agent Firehose/firehosed`
+	if got, want := quoteCommandPath(posixPath, "darwin"), `'`+posixPath+`'`; got != want {
+		t.Fatalf("POSIX command path = %q, want %q", got, want)
 	}
 }
 
 func TestInstallOpenCodeWritesPlugin(t *testing.T) {
 	home := t.TempDir()
-	path, err := InstallOpenCode(home)
+	path, err := InstallOpenCode(home, "/Applications/Agent Firehose/firehosed")
 	if err != nil {
 		t.Fatalf("InstallOpenCode: %v", err)
 	}
@@ -163,6 +174,10 @@ func TestInstallOpenCodeWritesPlugin(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("plugin not written: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `"/Applications/Agent Firehose/firehosed","hook-forward","--source","opencode"`) {
+		t.Fatalf("desktop sidecar forwarder not wired safely:\n%s", data)
 	}
 }
 
@@ -242,7 +257,7 @@ func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) 
 	cfg := testConfig(t)
 	cfg.DaemonAddr = "127.0.0.1:1"
 	var out bytes.Buffer
-	if err := HookForward(cfg, strings.NewReader(`{"session_id":"s1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hello"}`), &out); err != nil {
+	if err := HookForward(cfg, "codex-hook", strings.NewReader(`{"session_id":"s1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hello"}`), &out); err != nil {
 		t.Fatalf("HookForward: %v", err)
 	}
 	if out.String() != "{}\n" {
@@ -254,8 +269,39 @@ func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) 
 	}
 
 	out.Reset()
-	if err := HookForward(cfg, strings.NewReader(`not json`), &out); err != nil || out.String() != "{}\n" {
+	if err := HookForward(cfg, "claude-code", strings.NewReader(`not json`), &out); err != nil || out.String() != "{}\n" {
 		t.Fatalf("malformed hook must fail silently: err=%v out=%q", err, out.String())
+	}
+	evs, err = spool.ReadLastN(cfg.SpoolDir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[1].Name != "hook_capture_error" || evs[1].Severity != event.SeverityWarn {
+		t.Fatalf("capture failure warning = %+v", evs)
+	}
+}
+
+func TestRunHookForwardCommandSurfacesConfigFailureAndForwards(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".agentfirehose")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	payload := `{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/repo","prompt":"hello"}`
+	RunHookForwardCommand(home, []string{"--source", "claude-code"}, strings.NewReader(payload), &out)
+	if out.String() != "{}\n" {
+		t.Fatalf("hook command stdout = %q", out.String())
+	}
+	evs, err := spool.ReadLastN(filepath.Join(home, ".agentfirehose", "spool"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[0].Name != "hook_capture_error" || evs[1].Category != event.CategoryPrompt {
+		t.Fatalf("config warning and captured hook = %+v", evs)
 	}
 }
 

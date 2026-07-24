@@ -97,3 +97,35 @@ func TestRedactBalancedDoesNotMutateOriginal(t *testing.T) {
 		t.Error("Redact mutated the input event's payload")
 	}
 }
+
+func TestRedactBalancedTruncatesNestedStringsWithoutMutatingOriginal(t *testing.T) {
+	secret := strings.Repeat("nested-secret ", 40)
+	orig := sample()
+	orig.Payload = map[string]any{
+		"tool_input": map[string]any{
+			"command": secret,
+			"args": []any{
+				map[string]any{"response": secret},
+			},
+		},
+	}
+
+	redacted := Redact(orig, ModeBalanced)
+	toolInput := redacted.Payload["tool_input"].(map[string]any)
+	if got := toolInput["command"].(string); len([]rune(got)) != 241 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("nested command was not bounded: %q", got)
+	}
+	args := toolInput["args"].([]any)
+	if got := args[0].(map[string]any)["response"].(string); len([]rune(got)) != 241 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("nested response was not bounded: %q", got)
+	}
+
+	originalToolInput := orig.Payload["tool_input"].(map[string]any)
+	if got := originalToolInput["command"].(string); got != secret {
+		t.Fatal("Redact mutated the original nested map")
+	}
+	originalArgs := originalToolInput["args"].([]any)
+	if got := originalArgs[0].(map[string]any)["response"].(string); got != secret {
+		t.Fatal("Redact mutated the original nested slice")
+	}
+}

@@ -57,11 +57,20 @@ func (w *DurableWatcher) Initialize() error {
 		return nil
 	}
 	w.state = cursorState{Files: map[string]cursorFile{}}
+	w.files = map[string]*fileState{}
 	data, err := os.ReadFile(w.StatePath)
 	switch {
 	case err == nil:
-		if err := json.Unmarshal(data, &w.state); err != nil {
-			return err
+		if decodeErr := json.Unmarshal(data, &w.state); decodeErr != nil {
+			quarantinePath, renameErr := w.quarantineCorruptState()
+			if renameErr != nil {
+				return renameErr
+			}
+			if err := w.initializeBaseline(); err != nil {
+				return err
+			}
+			w.report(errors.New("corrupt Codex cursor quarantined at " + filepath.Base(quarantinePath) + ": " + decodeErr.Error()))
+			return nil
 		}
 		if w.state.Files == nil {
 			w.state.Files = map[string]cursorFile{}
@@ -73,25 +82,37 @@ func (w *DurableWatcher) Initialize() error {
 			}
 		}
 	case os.IsNotExist(err):
-		for _, path := range scanRollouts(w.Root) {
-			state, err := baseline(path)
-			if err != nil {
-				continue
-			}
-			w.files[path] = state
-			w.state.Files[path] = cursorFile{Offset: state.offset, Parser: state.parser.Snapshot()}
-		}
-		w.loaded = true
-		if err := w.save(); err != nil {
-			w.loaded = false
-			return err
-		}
-		return nil
+		return w.initializeBaseline()
 	default:
 		return err
 	}
 	w.loaded = true
 	return nil
+}
+
+func (w *DurableWatcher) initializeBaseline() error {
+	w.state = cursorState{Files: map[string]cursorFile{}}
+	w.files = map[string]*fileState{}
+	for _, path := range scanRollouts(w.Root) {
+		state, err := baseline(path)
+		if err != nil {
+			continue
+		}
+		w.files[path] = state
+		w.state.Files[path] = cursorFile{Offset: state.offset, Parser: state.parser.Snapshot()}
+	}
+	w.loaded = true
+	if err := w.save(); err != nil {
+		w.loaded = false
+		return err
+	}
+	return nil
+}
+
+func (w *DurableWatcher) quarantineCorruptState() (string, error) {
+	suffix := time.Now().UTC().Format("20060102T150405.000000000Z")
+	path := w.StatePath + ".corrupt-" + suffix
+	return path, os.Rename(w.StatePath, path)
 }
 
 // Run polls until cancellation. Transient failures leave the cursor in place
@@ -294,14 +315,31 @@ func (w *DurableWatcher) save() error {
 }
 
 func baseline(path string) (*fileState, error) {
-	info, err := os.Stat(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	// Historical files are deliberately not parsed or imported on first
-	// activation. Fresh files are read from byte zero and carry their own
-	// session_meta context; known files resume with checkpointed parser state.
-	return &fileState{offset: info.Size(), parser: NewFileParser()}, nil
+	defer f.Close()
+
+	parser := NewFileParser()
+	reader := bufio.NewReader(f)
+	var offset int64
+	for {
+		line, err := reader.ReadBytes('\n')
+		if errors.Is(err, io.EOF) {
+			break // leave a partial final line for the first poll
+		}
+		if err != nil {
+			return nil, err
+		}
+		offset += int64(len(line))
+		line = bytes.TrimSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		_, _ = parser.ParseLine(line)
+	}
+	// Historical events are not imported, but their parser context is needed
+	// to correlate lines appended after activation.
+	return &fileState{offset: offset, parser: parser}, nil
 }
 
 func scanRollouts(root string) []string {
