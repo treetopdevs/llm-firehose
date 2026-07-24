@@ -4,8 +4,14 @@ import { clear, el } from "../dom";
 import { shortPath } from "../format";
 import { renderEventList } from "./feed";
 
+export type SessionsPanel = {
+  root: HTMLElement;
+  refresh(): void;
+  openSession(id: string): Promise<void>;
+};
+
 // Session explorer: summaries from /sessions, drill-down via /sessions/{id}.
-export function createSessions(onSelect: (ev: FirehoseEvent) => void): { root: HTMLElement; refresh(): void } {
+export function createSessions(onSelect: (ev: FirehoseEvent) => void): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
   const root = el("section", { class: "sessions" }, listBox, eventsBox);
@@ -35,11 +41,35 @@ export function createSessions(onSelect: (ev: FirehoseEvent) => void): { root: H
         return;
       }
       for (const s of all) {
+        const badges: HTMLElement[] = [];
+        if (s.state === "needs_input") {
+          badges.push(el("span", { class: "badge needs" }, "NEEDS YOU"));
+        }
+        if (s.has_error) {
+          badges.push(el("span", { class: "badge err" }, "ERROR"));
+        }
+        if (s.state === "idle") {
+          badges.push(el("span", { class: "badge idle" }, "idle"));
+        }
+        if (s.state === "done") {
+          badges.push(el("span", { class: "badge dim" }, "done"));
+        }
+        const titleBits: (string | HTMLElement)[] = [
+          `${s.source}${s.agent ? ` (${s.agent})` : ""} — ${s.events} events`,
+          ...badges,
+        ];
+        const sub = [s.repo, s.cwd ? shortPath(s.cwd) : "", new Date(s.last_time).toLocaleString()]
+          .filter(Boolean)
+          .join(" · ");
+        const reason = s.state_reason
+          ? el("div", { class: "session-reason" }, s.state_reason)
+          : null;
         const item = el(
           "div",
           { class: "session-item", tabindex: "0" },
-          el("div", { class: "session-title" }, `${s.source}${s.agent ? ` (${s.agent})` : ""} — ${s.events} events`),
-          el("div", { class: "session-sub" }, [s.repo, s.cwd ? shortPath(s.cwd) : "", new Date(s.last_time).toLocaleString()].filter(Boolean).join(" · ")),
+          el("div", { class: "session-title" }, ...titleBits),
+          el("div", { class: "session-sub" }, sub),
+          ...(reason ? [reason] : []),
           el("div", { class: "session-id dim" }, s.id),
         );
         item.addEventListener("click", () => openSession(s.id));
@@ -51,5 +81,5 @@ export function createSessions(onSelect: (ev: FirehoseEvent) => void): { root: H
     }
   }
 
-  return { root, refresh };
+  return { root, refresh, openSession };
 }

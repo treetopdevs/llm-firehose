@@ -91,6 +91,10 @@ input, select {
   overflow: auto;
   padding: 0.6rem;
 }
+.content:has(.orbit) {
+  padding: 0;
+  overflow: hidden;
+}
 .content h2 { margin: 0.2rem 0 0.6rem; font-size: 1rem; }
 .content h3 { margin: 1rem 0 0.4rem; font-size: 0.9rem; color: var(--text-dim); }
 
@@ -168,9 +172,82 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
   cursor: pointer;
 }
 .session-item:hover { background: var(--bg-hover); }
-.session-title { font-weight: 600; }
+.session-title { font-weight: 600; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .session-sub { color: var(--text-dim); font-size: 12px; }
+.session-reason { color: var(--warn); font-size: 12px; margin-top: 0.2rem; }
 .session-id { font-size: 11px; word-break: break-all; }
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+}
+.badge.needs { color: #000; background: #ff9f43; border-color: #ff9f43; }
+.badge.err { color: #fff; background: var(--err); border-color: var(--err); }
+.badge.idle { color: var(--text-dim); }
+.badge.dim { color: var(--text-dim); }
+
+/* orbit */
+.orbit {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.orbit-canvas-host {
+  position: absolute;
+  inset: 0;
+}
+.orbit-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.orbit-hover {
+  position: absolute;
+  z-index: 2;
+  min-width: 160px;
+  max-width: 240px;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  pointer-events: none;
+  font-size: 12px;
+}
+.orbit-hover.hidden { display: none; }
+.orbit-hover-title { font-weight: 600; margin-bottom: 0.2rem; }
+.orbit-hover-reason { color: var(--warn); margin-top: 0.25rem; }
+.orbit-hover-activity {
+  margin-top: 0.5rem;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orbit-hover-time { margin-top: 0.1rem; font-size: 0.7rem; }
+.orbit-label {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -120%);
+  padding: 0.15rem 0.4rem;
+  background: #ff9f43;
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 3px;
+  pointer-events: none;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* files */
 .files-table { border-collapse: collapse; width: 100%; }

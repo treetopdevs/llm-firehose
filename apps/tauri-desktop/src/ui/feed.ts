@@ -2,6 +2,7 @@ import type { FirehoseEvent } from "../api";
 import { clear, el } from "../dom";
 import { formatClock, severityClass, shortPath, summaryLine } from "../format";
 import type { FeedState, Row } from "../state";
+import { coalesce } from "../state";
 
 const CATEGORIES = [
   "", "session", "prompt", "message", "tool", "file", "permission", "shell", "error", "meta",
@@ -112,13 +113,14 @@ export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => voi
 // Read-only event list used by the session explorer.
 export function renderEventList(container: HTMLElement, evs: FirehoseEvent[], onSelect: (ev: FirehoseEvent) => void): void {
   clear(container);
-  for (const ev of evs) {
+  for (const row of coalesce(evs)) {
+    const ev = row.event;
     const line = el(
       "div",
       { class: `feed-row ${severityClass(ev.severity)}`, role: "listitem", tabindex: "0" },
       el("span", { class: "cell time" }, formatClock(ev.time)),
       el("span", { class: "cell category" }, `[${ev.category}]`),
-      el("span", { class: "cell summary" }, summaryLine(ev)),
+      el("span", { class: "cell summary" }, summaryLine(ev) + (row.count > 1 ? ` ×${row.count}` : "")),
     );
     line.addEventListener("click", () => onSelect(ev));
     container.append(line);

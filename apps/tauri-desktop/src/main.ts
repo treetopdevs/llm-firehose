@@ -13,6 +13,7 @@ import { createDoctor } from "./ui/doctor";
 import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
+import { createOrbit } from "./ui/orbit";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 
@@ -22,9 +23,19 @@ const feedState = new FeedState(5000);
 const detailPane = el("aside", { class: "detail" });
 const showDetail = (ev: FirehoseEvent) => renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}));
 
+const sessionsPanel = createSessions(showDetail);
+
+function openSessionFromOrbit(id: string) {
+  show("sessions");
+  void sessionsPanel.openSession(id);
+}
+
+const orbitPanel = createOrbit(openSessionFromOrbit);
+
 const panels = {
+  orbit: orbitPanel,
   live: createFeed(feedState, showDetail),
-  sessions: createSessions(showDetail),
+  sessions: sessionsPanel,
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -38,10 +49,13 @@ const statusText = el("span", { class: "status-text dim" }, "connecting…");
 const compatBanner = el("div", { class: "compat-banner" });
 const eventCount = el("span", { class: "event-count dim" }, "");
 
-let active: PanelName = "live";
+let active: PanelName = "orbit";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
+  if (active === "orbit" && name !== "orbit") {
+    orbitPanel.dispose();
+  }
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
@@ -71,6 +85,9 @@ function onEvent(ev: FirehoseEvent) {
   feedState.push(ev);
   received++;
   eventCount.textContent = `${received.toLocaleString()} events`;
+  if (active === "orbit") {
+    orbitPanel.onEvent(ev);
+  }
   if (active === "live" && !renderQueued) {
     renderQueued = true;
     requestAnimationFrame(() => {
@@ -104,7 +121,12 @@ async function connect() {
       }
       stopStream = stream(onEvent, (open) => {
         statusDot.className = `status-dot ${open ? "ok" : "warn"}`;
-        if (!open) {
+        if (open) {
+          statusText.textContent = `daemon ${h.version} · schema v${h.schema_version} · LIVE`;
+          if (active === "orbit") {
+            void orbitPanel.refresh();
+          }
+        } else {
           statusText.textContent = "stream interrupted — reconnecting…";
         }
       });
@@ -119,7 +141,7 @@ async function connect() {
 
 connect();
 setInterval(connect, 3000);
-show("live");
+show("orbit");
 
 if (!isOnboarded()) {
   app.append(createOnboarding(() => show("doctor")));

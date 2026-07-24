@@ -12,7 +12,46 @@ function ev(partial: Partial<FirehoseEvent> & { id: string }): FirehoseEvent {
 }
 
 describe("coalesce", () => {
-  test("groups consecutive same-shape events within the window", () => {
+  test("coalesces exact ids and correlated hook-rollout observations", () => {
+    const rollout = ev({
+      id: "rollout",
+      session_id: "s1",
+      turn_id: "t1",
+      call_id: "c1",
+      name: "function_call_output:exec_command",
+      time: "2026-07-02T10:00:02Z",
+      payload: { transport: "rollout", phase: "end", tool_name: "exec_command" },
+    });
+    const hook = ev({
+      id: "hook",
+      session_id: "s1",
+      turn_id: "t1",
+      call_id: "c1",
+      name: "PostToolUse:exec_command",
+      time: "2026-07-02T10:00:03Z",
+      payload: { transport: "hook", phase: "end", tool_name: "exec_command" },
+    });
+    const rows = coalesce([rollout, rollout, hook]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].count).toBe(2);
+  });
+
+  test("never collapses start and completion phases", () => {
+    const common = {
+      session_id: "s1",
+      turn_id: "t1",
+      call_id: "c1",
+      name: "exec_command",
+      payload: { tool_name: "exec_command" },
+    };
+    const rows = coalesce([
+      ev({ id: "start", ...common, payload: { ...common.payload, phase: "start" } }),
+      ev({ id: "end", ...common, payload: { ...common.payload, phase: "end" } }),
+    ]);
+    expect(rows).toHaveLength(2);
+  });
+
+  test("keeps consecutive same-shape events without native correlation", () => {
     const rows = coalesce(
       [
         ev({ id: "1", session_id: "s1", name: "Edit", time: "2026-07-02T10:00:00Z" }),
@@ -21,9 +60,7 @@ describe("coalesce", () => {
       ],
       2000,
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].count).toBe(3);
-    expect(rows[0].event.id).toBe("3"); // latest event represents the group
+    expect(rows).toHaveLength(3);
   });
 
   test("different name breaks the group", () => {
@@ -46,6 +83,18 @@ describe("coalesce", () => {
       2000,
     );
     expect(rows).toHaveLength(2);
+  });
+
+  test("correlates minimal-mode hashed phase and tool without merging start and end", () => {
+    const digest = (sha256: string) => ({ sha256, len: 4 });
+    const common = { session_id: "s1", turn_id: "t1", call_id: "c1" };
+    const rows = coalesce([
+      ev({ id: "a", ...common, payload: { phase: digest("start"), tool_name: digest("tool") } }),
+      ev({ id: "b", ...common, payload: { phase: digest("start"), tool_name: digest("tool") } }),
+      ev({ id: "c", ...common, payload: { phase: digest("end"), tool_name: digest("tool") } }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].count).toBe(2);
   });
 });
 

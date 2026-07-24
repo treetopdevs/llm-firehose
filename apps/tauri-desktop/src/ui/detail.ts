@@ -23,6 +23,8 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
   addRow("severity", ev.severity);
   addRow("session", ev.session_id);
   addRow("trace", ev.trace_id);
+  addRow("turn", ev.turn_id);
+  addRow("call", ev.call_id);
   addRow("repo", ev.repo);
   addRow("cwd", ev.cwd ? shortPath(ev.cwd) : undefined);
 

@@ -15,30 +15,54 @@ export interface Filter {
   text?: string;
 }
 
-const COALESCE_WINDOW_MS = 2000;
+const CORRELATION_WINDOW_MS = 5000;
 
-function groupKey(ev: FirehoseEvent): string {
-  return `${ev.source}\0${ev.session_id ?? ""}\0${ev.category}\0${ev.name ?? ""}`;
+function metadataKey(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof (value as { sha256?: unknown }).sha256 === "string") {
+    return `sha256:${(value as { sha256: string }).sha256}`;
+  }
+  return null;
+}
+
+function correlationKey(ev: FirehoseEvent): string | null {
+  const phase = metadataKey(ev.payload?.phase);
+  const tool = metadataKey(ev.payload?.tool_name);
+  if (!ev.session_id || !ev.turn_id || !ev.call_id ||
+      !phase || !tool) {
+    return null;
+  }
+  return `${ev.session_id}\0${ev.turn_id}\0${ev.call_id}\0${phase}\0${tool}`;
 }
 
 /**
- * Groups consecutive events with the same source, session, category, and
- * name when each arrives within windowMs of the previous one. The latest
- * event represents the group.
+ * Coalesces replayed ids and dual hook/rollout observations with the same
+ * native correlation fields. Distinct activity is never burst-grouped.
  */
-export function coalesce(evs: FirehoseEvent[], windowMs = COALESCE_WINDOW_MS): Row[] {
+export function coalesce(evs: FirehoseEvent[], windowMs = CORRELATION_WINDOW_MS): Row[] {
   const rows: Row[] = [];
+  const seenIds = new Set<string>();
+  const correlated = new Map<string, number>();
   for (const ev of evs) {
-    const last = rows[rows.length - 1];
-    if (last && groupKey(last.event) === groupKey(ev)) {
-      const gap = Date.parse(ev.time) - Date.parse(last.event.time);
-      if (!Number.isNaN(gap) && gap <= windowMs) {
-        last.event = ev;
-        last.count++;
-        continue;
+    if (ev.id && seenIds.has(ev.id)) continue;
+    if (ev.id) seenIds.add(ev.id);
+
+    const correlatedKey = correlationKey(ev);
+    if (correlatedKey) {
+      const index = correlated.get(correlatedKey);
+      if (index !== undefined) {
+        const row = rows[index];
+        const gap = Math.abs(Date.parse(ev.time) - Date.parse(row.event.time));
+        if (!Number.isNaN(gap) && gap <= windowMs) {
+          row.event = ev;
+          row.count++;
+          continue;
+        }
       }
     }
+
     rows.push({ event: ev, count: 1 });
+    if (correlatedKey) correlated.set(correlatedKey, rows.length - 1);
   }
   return rows;
 }

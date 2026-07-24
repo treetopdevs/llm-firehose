@@ -49,10 +49,10 @@ export function createOnboarding(onDone: () => void): HTMLElement {
     clear(card);
     card.append(
       el("h3", {}, "2 / 3 — wire up your agents"),
-      el("p", { class: "dim" }, "Codex needs no install; its sessions are tailed directly."),
+      el("p", { class: "dim" }, "Codex messages stream from local rollouts; hooks add lifecycle and tool activity. Codex will ask you to review hook trust in /hooks."),
     );
     const status = el("p", { class: "dim" }, "");
-    for (const adapter of ["claude-code", "opencode"]) {
+    for (const adapter of ["claude-code", "codex", "opencode"]) {
       const btn = el("button", {}, `install ${adapter}`);
       btn.addEventListener("click", async () => {
         status.textContent = `installing ${adapter}…`;

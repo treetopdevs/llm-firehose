@@ -15,6 +15,8 @@ export interface FirehoseEvent {
   agent?: string;
   session_id?: string;
   trace_id?: string;
+  turn_id?: string;
+  call_id?: string;
   category: string;
   name?: string;
   severity?: string;
@@ -40,6 +42,12 @@ export interface SessionSummary {
   first_time: string;
   last_time: string;
   events: number;
+  state?: string;
+  state_since?: string;
+  state_reason?: string;
+  has_error?: boolean;
+  last_summary?: string;
+  last_category?: string;
 }
 
 export interface FileArtifact {
