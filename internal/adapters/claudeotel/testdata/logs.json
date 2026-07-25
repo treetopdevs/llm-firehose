@@ -1,0 +1,78 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "host.arch", "value": {"stringValue": "SECRET-HOST-MARKER"}},
+          {"key": "os.version", "value": {"stringValue": "SECRET-OS-MARKER"}},
+          {"key": "service.name", "value": {"stringValue": "claude-code"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "com.anthropic.claude_code.events",
+            "version": "2.1.218"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1784995425549000000",
+              "body": {"stringValue": "SECRET-BODY-MARKER"},
+              "attributes": [
+                {"key": "user.id", "value": {"stringValue": "SECRET-USER-ID"}},
+                {"key": "user.email", "value": {"stringValue": "SECRET-EMAIL"}},
+                {"key": "organization.id", "value": {"stringValue": "SECRET-ORG"}},
+                {"key": "session.id", "value": {"stringValue": "session-fixture"}},
+                {"key": "event.name", "value": {"stringValue": "user_prompt"}},
+                {"key": "event.sequence", "value": {"intValue": 1}},
+                {"key": "prompt.id", "value": {"stringValue": "prompt-fixture"}},
+                {"key": "message.uuid", "value": {"stringValue": "message-fixture"}},
+                {"key": "prompt", "value": {"stringValue": "SECRET-PROMPT-MARKER"}},
+                {"key": "prompt_length", "value": {"stringValue": "20"}}
+              ]
+            },
+            {
+              "timeUnixNano": "1784995425599000000",
+              "body": {"stringValue": "SECRET-API-BODY"},
+              "attributes": [
+                {"key": "user.account_uuid", "value": {"stringValue": "SECRET-ACCOUNT"}},
+                {"key": "session.id", "value": {"stringValue": "session-fixture"}},
+                {"key": "event.name", "value": {"stringValue": "api_request"}},
+                {"key": "event.sequence", "value": {"intValue": 2}},
+                {"key": "prompt.id", "value": {"stringValue": "prompt-fixture"}},
+                {"key": "request_id", "value": {"stringValue": "request-fixture"}},
+                {"key": "client_request_id", "value": {"stringValue": "client-request-fixture"}},
+                {"key": "model", "value": {"stringValue": "claude-opus-fixture"}},
+                {"key": "query_source", "value": {"stringValue": "main"}},
+                {"key": "duration_ms", "value": {"intValue": 120}},
+                {"key": "input_tokens", "value": {"intValue": 10}},
+                {"key": "output_tokens", "value": {"intValue": 20}},
+                {"key": "cache_read_tokens", "value": {"intValue": 30}},
+                {"key": "cache_creation_tokens", "value": {"intValue": 40}},
+                {"key": "cost_usd", "value": {"doubleValue": 0.125}}
+              ]
+            },
+            {
+              "timeUnixNano": "1784995425600000000",
+              "body": {"stringValue": "SECRET-TOOL-BODY"},
+              "attributes": [
+                {"key": "user.account_id", "value": {"stringValue": "SECRET-ACCOUNT-ID"}},
+                {"key": "session.id", "value": {"stringValue": "session-fixture"}},
+                {"key": "event.name", "value": {"stringValue": "tool_result"}},
+                {"key": "event.sequence", "value": {"intValue": 3}},
+                {"key": "prompt.id", "value": {"stringValue": "prompt-fixture"}},
+                {"key": "tool_use_id", "value": {"stringValue": "tool-fixture"}},
+                {"key": "tool_name", "value": {"stringValue": "Bash"}},
+                {"key": "success", "value": {"stringValue": "true"}},
+                {"key": "duration_ms", "value": {"stringValue": "17"}},
+                {"key": "tool_input_size_bytes", "value": {"stringValue": "100"}},
+                {"key": "tool_result_size_bytes", "value": {"stringValue": "200"}},
+                {"key": "response", "value": {"stringValue": "SECRET-TOOL-RESULT"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

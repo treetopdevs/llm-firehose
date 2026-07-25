@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,31 +13,201 @@ import (
 	"agentfirehose/internal/adapters/opencode"
 )
 
-// ClaudeHookEvents is the observational Claude Code hook surface Firehose
-// installs. WorktreeCreate is excluded because registering it replaces
-// Claude's worktree implementation and a neutral observer cannot return the
-// required path. FileChanged is excluded until the user supplies a bounded
-// watch list.
+// ClaudeOTelEnvironment is the exact opt-in environment block Firehose adds
+// to Claude Code settings. It intentionally omits every content-bearing
+// telemetry option.
+func ClaudeOTelEnvironment(daemonAddr string) map[string]string {
+	base := "http://" + daemonAddr
+	return map[string]string{
+		"CLAUDE_CODE_ENABLE_TELEMETRY":        "1",
+		"OTEL_LOGS_EXPORTER":                  "otlp",
+		"OTEL_METRICS_EXPORTER":               "otlp",
+		"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL":    "http/json",
+		"OTEL_EXPORTER_OTLP_METRICS_PROTOCOL": "http/json",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":    base + "/v1/logs",
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": base + "/v1/metrics",
+	}
+}
+
+// InstallClaudeOTel opts Claude Code into the daemon's supplemental local
+// OTLP/HTTP JSON receiver. Existing user, process, or managed telemetry
+// settings are a hard conflict and are never overwritten.
+func InstallClaudeOTel(home, daemonAddr string) error {
+	if err := validateClaudeOTelAddr(daemonAddr); err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settings := map[string]any{}
+	original := []byte("{}")
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		original = data
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("existing %s is not valid JSON, refusing to modify: %w", settingsPath, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	for _, managedPath := range []string{
+		filepath.Join(home, ".claude", "managed-settings.json"),
+		"/Library/Application Support/ClaudeCode/managed-settings.json",
+	} {
+		if data, err := os.ReadFile(managedPath); err == nil {
+			var managed any
+			if err := json.Unmarshal(data, &managed); err != nil {
+				return fmt.Errorf("managed Claude settings at %s are invalid; refusing to modify user telemetry: %w", managedPath, err)
+			}
+			if containsTelemetrySetting(managed) {
+				return fmt.Errorf("managed Claude telemetry settings exist at %s; refusing to override", managedPath)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect managed Claude settings: %w", err)
+		}
+	}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if isClaudeTelemetryKey(key) {
+			return fmt.Errorf("process environment already configures %s; refusing to override", key)
+		}
+	}
+
+	var env map[string]any
+	if existing, ok := settings["env"]; ok {
+		var valid bool
+		env, valid = existing.(map[string]any)
+		if !valid {
+			return fmt.Errorf("existing %s env value is not an object, refusing to modify", settingsPath)
+		}
+	} else {
+		env = map[string]any{}
+	}
+	target := ClaudeOTelEnvironment(daemonAddr)
+	telemetryEntries := 0
+	exact := true
+	for key, value := range env {
+		if !isClaudeTelemetryKey(key) {
+			continue
+		}
+		telemetryEntries++
+		want, targeted := target[key]
+		if !targeted || value != want {
+			exact = false
+		}
+	}
+	if telemetryEntries > 0 {
+		if exact && telemetryEntries == len(target) {
+			for key, value := range target {
+				if env[key] != value {
+					exact = false
+					break
+				}
+			}
+		}
+		if exact && telemetryEntries == len(target) {
+			return nil
+		}
+		return fmt.Errorf("existing Claude telemetry settings conflict; refusing to overwrite")
+	}
+	for key, value := range target {
+		env[key] = value
+	}
+	settings["env"] = env
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(settingsPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(settingsPath+".bak", original, 0o600); err != nil {
+			return fmt.Errorf("backup: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
+}
+
+// ClaudeOTelConfigured reports whether the exact local, content-disabled
+// environment block is present.
+func ClaudeOTelConfigured(home, daemonAddr string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	env, _ := settings["env"].(map[string]any)
+	target := ClaudeOTelEnvironment(daemonAddr)
+	seen := 0
+	for key, value := range env {
+		if !isClaudeTelemetryKey(key) {
+			continue
+		}
+		seen++
+		if target[key] != value {
+			return false
+		}
+	}
+	return seen == len(target)
+}
+
+func validateClaudeOTelAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("Claude OTel daemon address %q: %w", addr, err)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("Claude OTel daemon address %q must use loopback", addr)
+	}
+	return nil
+}
+
+func isClaudeTelemetryKey(key string) bool {
+	return key == "CLAUDE_CODE_ENABLE_TELEMETRY" || strings.HasPrefix(key, "OTEL_")
+}
+
+func containsTelemetrySetting(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if isClaudeTelemetryKey(key) || containsTelemetrySetting(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if containsTelemetrySetting(nested) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ClaudeHookEvents is the fixture-proven observational Claude Code hook
+// surface Firehose installs. Additional documented hook names stay parser-only
+// until a real local payload can prove their shape and behavior.
 var ClaudeHookEvents = []string{
-	"SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
-	"PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
-	"PostToolUseFailure", "PostToolBatch", "Notification", "SubagentStart",
-	"SubagentStop", "TaskCreated", "TaskCompleted", "Stop", "StopFailure",
-	"TeammateIdle", "InstructionsLoaded", "ConfigChange", "CwdChanged",
-	"WorktreeRemove", "PreCompact", "PostCompact", "Elicitation",
-	"ElicitationResult", "SessionEnd", "MessageDisplay",
+	"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+	"Notification", "SubagentStop", "Stop", "SessionEnd",
 }
 
 var claudeHooksWithoutMatchers = map[string]bool{
 	"UserPromptSubmit": true,
-	"PostToolBatch":    true,
+	"SessionStart":     true,
+	"SessionEnd":       true,
+	"Notification":     true,
+	"SubagentStop":     true,
 	"Stop":             true,
-	"TeammateIdle":     true,
-	"TaskCreated":      true,
-	"TaskCompleted":    true,
-	"WorktreeRemove":   true,
-	"CwdChanged":       true,
-	"MessageDisplay":   true,
 }
 
 // CodexHookEvents is the complete lifecycle/tool hook surface supported by
@@ -66,8 +237,14 @@ func InstallClaudeCode(home, binPath string) error {
 	}
 
 	command := quoteCommandPath(binPath, runtime.GOOS) + " hook-forward --source claude-code"
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
+	var hooks map[string]any
+	if existing, ok := settings["hooks"]; ok {
+		var valid bool
+		hooks, valid = existing.(map[string]any)
+		if !valid {
+			return fmt.Errorf("existing %s hooks value is not an object, refusing to modify", settingsPath)
+		}
+	} else {
 		hooks = map[string]any{}
 	}
 	changed := false
@@ -110,6 +287,9 @@ func ensureClaudeHook(entries []any, command, matcher string) ([]any, bool) {
 	for _, rawEntry := range entries {
 		entry, _ := rawEntry.(map[string]any)
 		handlers, _ := entry["hooks"].([]any)
+		if len(handlers) != 1 {
+			continue
+		}
 		for _, rawHandler := range handlers {
 			handler, _ := rawHandler.(map[string]any)
 			if handler["command"] != command {

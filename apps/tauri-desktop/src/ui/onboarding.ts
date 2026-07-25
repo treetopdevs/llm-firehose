@@ -52,7 +52,7 @@ export function createOnboarding(onDone: () => void): HTMLElement {
       el("p", { class: "dim" }, "Codex messages stream from local rollouts; hooks add lifecycle and tool activity. Codex will ask you to review hook trust in /hooks."),
     );
     const status = el("p", { class: "dim" }, "");
-    for (const adapter of ["claude-code", "codex", "opencode"]) {
+    for (const adapter of ["claude-code", "claude-otel", "codex", "opencode"]) {
       const btn = el("button", {}, `install ${adapter}`);
       btn.addEventListener("click", async () => {
         status.textContent = `installing ${adapter}…`;

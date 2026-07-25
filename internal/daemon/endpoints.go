@@ -98,6 +98,16 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail = "hooks merged into ~/.claude/settings.json (backup: settings.json.bak); restart running Claude Code sessions"
+	case "claude-otel":
+		addr := s.config().DaemonAddr
+		if addr == "" {
+			addr = cli.DefaultDaemonAddr
+		}
+		if err := cli.InstallClaudeOTel(s.home, addr); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		detail = "supplemental Claude OTLP/HTTP JSON enabled for the local daemon; restart running Claude Code sessions"
 	case "opencode":
 		path, err := cli.InstallOpenCode(s.home, bin)
 		if err != nil {
@@ -112,7 +122,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		}
 		detail = "Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak); review and trust them in Codex /hooks, then start a fresh task"
 	default:
-		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code, codex, or opencode)", adapter), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code, claude-otel, codex, or opencode)", adapter), http.StatusNotFound)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "detail": detail})

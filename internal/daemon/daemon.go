@@ -134,6 +134,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events/stream", s.handleStream)
 	mux.HandleFunc("POST /events", s.handleIngest)
 	mux.HandleFunc("POST /emit", s.handleEmit)
+	mux.HandleFunc("POST /v1/logs", s.handleOTLPLogs)
+	mux.HandleFunc("POST /v1/metrics", s.handleOTLPMetrics)
 	mux.HandleFunc("GET /sessions", s.handleSessions)
 	mux.HandleFunc("GET /sessions/{id}", s.handleSessionByID)
 	mux.HandleFunc("GET /traces/{id}", s.handleTraceByID)

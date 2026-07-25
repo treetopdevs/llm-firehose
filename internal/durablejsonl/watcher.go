@@ -64,21 +64,33 @@ type fileState struct {
 	lastLineHash string
 }
 
+type fileStamp struct {
+	size    int64
+	modTime time.Time
+}
+
 // Watcher tails all files selected by Match under Root.
 type Watcher struct {
-	options Options
-	state   cursorState
-	files   map[string]*fileState
-	warned  map[string]bool
-	loaded  bool
+	options              Options
+	state                cursorState
+	files                map[string]*fileState
+	observed             map[string]fileStamp
+	warned               map[string]bool
+	discoveryWatermark   time.Time
+	firstLineFingerprint func(string) (string, error)
+	lastLineFingerprint  func(string, int64) (string, error)
+	loaded               bool
 }
 
 // New constructs a watcher. Initialize performs filesystem work.
 func New(options Options) *Watcher {
 	return &Watcher{
-		options: options,
-		files:   map[string]*fileState{},
-		warned:  map[string]bool{},
+		options:              options,
+		files:                map[string]*fileState{},
+		observed:             map[string]fileStamp{},
+		warned:               map[string]bool{},
+		firstLineFingerprint: firstLineHash,
+		lastLineFingerprint:  lastLineHashBefore,
 	}
 }
 
@@ -100,6 +112,7 @@ func (w *Watcher) Initialize() error {
 	}
 	w.state = cursorState{Files: map[string]cursorFile{}}
 	w.files = map[string]*fileState{}
+	w.observed = map[string]fileStamp{}
 
 	data, err := os.ReadFile(w.options.StatePath)
 	switch {
@@ -118,6 +131,7 @@ func (w *Watcher) Initialize() error {
 		if w.state.Files == nil {
 			w.state.Files = map[string]cursorFile{}
 		}
+		w.discoveryWatermark = w.state.SavedAt
 		for path, cursor := range w.state.Files {
 			parser, parserErr := w.options.NewParser(cursor.Parser)
 			if parserErr != nil {
@@ -155,6 +169,8 @@ func (w *Watcher) Initialize() error {
 func (w *Watcher) initializeBaseline() error {
 	w.state = cursorState{Files: map[string]cursorFile{}}
 	w.files = map[string]*fileState{}
+	w.observed = map[string]fileStamp{}
+	w.discoveryWatermark = time.Now().UTC()
 	for _, path := range w.scan() {
 		state, cursor, err := w.baseline(path)
 		if err != nil {
@@ -162,6 +178,9 @@ func (w *Watcher) initializeBaseline() error {
 		}
 		w.files[path] = state
 		w.state.Files[path] = cursor
+		if info, statErr := os.Stat(path); statErr == nil {
+			w.observed[path] = stampFor(info)
+		}
 	}
 	w.loaded = true
 	if err := w.save(); err != nil {
@@ -215,13 +234,14 @@ func (w *Watcher) Poll(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if !w.state.SavedAt.IsZero() && info.ModTime().Before(w.state.SavedAt) {
+			if !w.discoveryWatermark.IsZero() && info.ModTime().Before(w.discoveryWatermark) {
 				state, cursor, err := w.baseline(path)
 				if err != nil {
 					return err
 				}
 				w.files[path] = state
 				w.state.Files[path] = cursor
+				w.observed[path] = stampFor(info)
 				if err := w.save(); err != nil {
 					return err
 				}
@@ -249,20 +269,27 @@ func (w *Watcher) resetIfChanged(path string, state *fileState) error {
 	if err != nil {
 		return nil
 	}
+	stamp := stampFor(info)
+	if previous, ok := w.observed[path]; ok && previous == stamp {
+		return nil
+	}
 	changed := info.Size() < state.offset
 	if !changed && state.offset > 0 {
-		identity, identityErr := firstLineHash(path)
+		identity, identityErr := w.firstLineFingerprint(path)
 		if identityErr != nil {
-			return identityErr
+			w.Report(fmt.Errorf("fingerprint %s: %w", filepath.Base(path), identityErr))
+			return nil
 		}
-		lastHash, lastErr := lastLineHashBefore(path, state.offset)
+		lastHash, lastErr := w.lastLineFingerprint(path, state.offset)
 		if lastErr != nil {
-			return lastErr
+			w.Report(fmt.Errorf("fingerprint %s: %w", filepath.Base(path), lastErr))
+			return nil
 		}
 		changed = (state.identity != "" && identity != state.identity) ||
 			(state.lastLineHash != "" && lastHash != state.lastLineHash)
 	}
 	if !changed {
+		w.observed[path] = stamp
 		return nil
 	}
 	parser, err := w.options.NewParser(nil)
@@ -273,6 +300,7 @@ func (w *Watcher) resetIfChanged(path string, state *fileState) error {
 	state.parser = parser
 	state.identity = ""
 	state.lastLineHash = ""
+	w.observed[path] = stamp
 	w.state.Files[path] = cursorFile{}
 	return w.save()
 }
@@ -532,4 +560,8 @@ func hashLine(line []byte) string {
 	}
 	sum := sha256.Sum256(line)
 	return hex.EncodeToString(sum[:])
+}
+
+func stampFor(info os.FileInfo) fileStamp {
+	return fileStamp{size: info.Size(), modTime: info.ModTime()}
 }

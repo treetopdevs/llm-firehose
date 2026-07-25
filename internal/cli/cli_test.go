@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"agentfirehose/internal/capturemeta"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
@@ -86,6 +88,31 @@ func TestEmitOpenCodeSource(t *testing.T) {
 	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Category != event.CategoryFile {
 		t.Fatalf("opencode emit wrong: %+v", evs)
+	}
+}
+
+func TestOpenCodeToolContentIsOnlyRetainedInFullMode(t *testing.T) {
+	raw := []byte(`{"type":"message.part.updated","properties":{"part":{"id":"call-fixture","sessionID":"oc-1","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"SECRET-OPENCODE-COMMAND"},"output":"SECRET-OPENCODE-RESULT"}}}}`)
+	for _, mode := range []privacy.Mode{privacy.ModeBalanced, privacy.ModeMinimal, privacy.ModeFull} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.PrivacyMode = string(mode)
+			if err := EmitLocal(cfg, "opencode", raw); err != nil {
+				t.Fatal(err)
+			}
+			evs, err := spool.ReadLastN(cfg.SpoolDir, 1)
+			if err != nil || len(evs) != 1 {
+				t.Fatalf("spool: events=%+v err=%v", evs, err)
+			}
+			data, _ := json.Marshal(evs[0])
+			hasMarker := strings.Contains(string(data), "SECRET-OPENCODE")
+			if mode == privacy.ModeFull && !hasMarker {
+				t.Errorf("full mode lost raw OpenCode content: %s", data)
+			}
+			if mode != privacy.ModeFull && hasMarker {
+				t.Errorf("%s mode leaked OpenCode content: %s", mode, data)
+			}
+		})
 	}
 }
 
@@ -178,22 +205,24 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 		t.Error("existing hook removed")
 	}
 	expected := []string{
-		"SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
-		"PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
-		"PostToolUseFailure", "PostToolBatch", "Notification", "SubagentStart",
-		"SubagentStop", "TaskCreated", "TaskCompleted", "Stop", "StopFailure",
-		"TeammateIdle", "InstructionsLoaded", "ConfigChange", "CwdChanged",
-		"WorktreeRemove", "PreCompact", "PostCompact", "Elicitation",
-		"ElicitationResult", "SessionEnd", "MessageDisplay",
+		"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"Notification", "SubagentStop", "Stop", "SessionEnd",
 	}
 	for _, evName := range expected {
 		if !strings.Contains(s, `"`+evName+`"`) {
 			t.Errorf("hook for %s not installed", evName)
 		}
 	}
-	for _, omitted := range []string{"WorktreeCreate", "FileChanged"} {
+	for _, omitted := range []string{
+		"Setup", "UserPromptExpansion", "PermissionRequest", "PermissionDenied",
+		"PostToolUseFailure", "PostToolBatch", "SubagentStart", "TaskCreated",
+		"TaskCompleted", "StopFailure", "TeammateIdle", "InstructionsLoaded",
+		"ConfigChange", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
+		"PreCompact", "PostCompact", "Elicitation", "ElicitationResult",
+		"FileChanged", "MessageDisplay",
+	} {
 		if strings.Contains(s, `"`+omitted+`"`) {
-			t.Errorf("unsafe/unbounded hook %s must not be installed by default", omitted)
+			t.Errorf("unproven/unsafe hook %s must not be installed by default", omitted)
 		}
 	}
 	if !strings.Contains(s, "hook-forward --source claude-code") {
@@ -219,6 +248,9 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 	}
 
 	hooks := settings["hooks"].(map[string]any)
+	if len(hooks) != len(expected) {
+		t.Errorf("installed hook families = %d, want fixture-proven %d: %+v", len(hooks), len(expected), hooks)
+	}
 	for _, name := range expected {
 		entries := hooks[name].([]any)
 		last := entries[len(entries)-1].(map[string]any)
@@ -229,8 +261,8 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 		}
 	}
 	for _, name := range []string{
-		"UserPromptSubmit", "PostToolBatch", "Stop", "TeammateIdle",
-		"TaskCreated", "TaskCompleted", "WorktreeRemove", "CwdChanged",
+		"SessionStart", "UserPromptSubmit", "Notification", "SubagentStop",
+		"Stop", "SessionEnd",
 	} {
 		entries := hooks[name].([]any)
 		last := entries[len(entries)-1].(map[string]any)
@@ -238,15 +270,78 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 			t.Errorf("%s does not support a matcher: %+v", name, last)
 		}
 	}
-	for _, name := range []string{
-		"PreToolUse", "PermissionRequest", "PermissionDenied",
-		"PostToolUse", "PostToolUseFailure",
-	} {
+	for _, name := range []string{"PreToolUse", "PostToolUse"} {
 		entries := hooks[name].([]any)
 		last := entries[len(entries)-1].(map[string]any)
 		if last["matcher"] != ".*" {
 			t.Errorf("%s matcher = %v, want valid all-tools regex", name, last["matcher"])
 		}
+	}
+}
+
+func TestInstallClaudeCodeDoesNotMutateSharedUserEntry(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := quoteCommandPath("/tmp/firehose", runtime.GOOS) + " hook-forward --source claude-code"
+	document := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "Bash",
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "my-audit"},
+						map[string]any{"type": "command", "command": command},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(document)
+	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InstallClaudeCode(home, "/tmp/firehose"); err != nil {
+		t.Fatal(err)
+	}
+	installed, _ := os.ReadFile(settingsPath)
+	var got map[string]any
+	if err := json.Unmarshal(installed, &got); err != nil {
+		t.Fatal(err)
+	}
+	entries := got["hooks"].(map[string]any)["PreToolUse"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("PreToolUse entries = %+v, want shared user entry plus Firehose-owned entry", entries)
+	}
+	shared := entries[0].(map[string]any)
+	if shared["matcher"] != "Bash" {
+		t.Fatalf("shared user matcher mutated: %+v", shared)
+	}
+	owned := entries[1].(map[string]any)
+	if owned["matcher"] != ".*" {
+		t.Fatalf("Firehose-owned matcher = %v, want .*", owned["matcher"])
+	}
+}
+
+func TestInstallClaudeCodeRefusesNonObjectHooks(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"hooks":["user-owned-shape"]}`)
+	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallClaudeCode(home, "firehose"); err == nil {
+		t.Fatal("non-object hooks were silently replaced")
+	}
+	after, _ := os.ReadFile(settingsPath)
+	if string(after) != string(original) {
+		t.Fatalf("settings changed after refusal: %s", after)
 	}
 }
 
@@ -269,13 +364,137 @@ func TestClaudeHooksConfiguredRejectsPartialCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooks := settings["hooks"].(map[string]any)
-	delete(hooks, "PostToolUseFailure")
+	delete(hooks, "PostToolUse")
 	changed, _ := json.Marshal(settings)
 	if err := os.WriteFile(path, changed, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if ClaudeHooksConfigured(home) {
 		t.Fatal("partial/outdated installation reported healthy")
+	}
+}
+
+func TestInstallClaudeOTelIsOptInPreservingAndIdempotent(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"model":"opus","env":{"KEEP_ME":"yes"}}`)
+	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	if err := json.Unmarshal(first, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env := settings["env"].(map[string]any)
+	if env["KEEP_ME"] != "yes" || settings["model"] != "opus" {
+		t.Fatalf("unrelated Claude settings changed: %+v", settings)
+	}
+	for key, want := range ClaudeOTelEnvironment("127.0.0.1:4517") {
+		if env[key] != want {
+			t.Errorf("%s = %v, want %q", key, env[key], want)
+		}
+	}
+	if env["OTEL_LOG_USER_PROMPTS"] != nil || env["OTEL_LOG_TOOL_DETAILS"] != nil {
+		t.Fatalf("content-bearing telemetry option enabled: %+v", env)
+	}
+	backup, err := os.ReadFile(settingsPath + ".bak")
+	if err != nil || string(backup) != string(original) {
+		t.Fatalf("recovery backup = %q err=%v", backup, err)
+	}
+	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatal("installed Claude OTel settings reported unavailable")
+	}
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.ReadFile(settingsPath)
+	if string(second) != string(first) {
+		t.Fatal("idempotent Claude OTel install rewrote settings")
+	}
+}
+
+func TestInstallClaudeOTelRefusesConflictsAndManagedSettings(t *testing.T) {
+	t.Run("user endpoint", func(t *testing.T) {
+		home := t.TempDir()
+		settingsPath := filepath.Join(home, ".claude", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		original := []byte(`{"env":{"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"http://127.0.0.1:9999/v1/logs"}}`)
+		if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err == nil {
+			t.Fatal("existing user OTel destination was overwritten")
+		}
+		after, _ := os.ReadFile(settingsPath)
+		if string(after) != string(original) {
+			t.Fatalf("conflicting settings changed: %s", after)
+		}
+	})
+
+	t.Run("managed endpoint", func(t *testing.T) {
+		home := t.TempDir()
+		managed := filepath.Join(home, ".claude", "managed-settings.json")
+		if err := os.MkdirAll(filepath.Dir(managed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(managed,
+			[]byte(`{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://managed.example"}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err == nil {
+			t.Fatal("managed OTel destination was ignored")
+		}
+	})
+
+	t.Run("malformed managed settings", func(t *testing.T) {
+		home := t.TempDir()
+		managed := filepath.Join(home, ".claude", "managed-settings.json")
+		if err := os.MkdirAll(filepath.Dir(managed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(managed, []byte(`{"env":`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err == nil {
+			t.Fatal("malformed managed settings were ignored")
+		}
+	})
+
+	t.Run("non-loopback", func(t *testing.T) {
+		if err := InstallClaudeOTel(t.TempDir(), "0.0.0.0:4517"); err == nil {
+			t.Fatal("non-loopback OTel endpoint accepted")
+		}
+	})
+}
+
+func TestDoctorReportsClaudeOTelAsSupplementalTransport(t *testing.T) {
+	home := t.TempDir()
+	cfg := testConfig(t)
+	cfg.DaemonAddr = "127.0.0.1:4517"
+	if err := InstallClaudeOTel(home, cfg.DaemonAddr); err != nil {
+		t.Fatal(err)
+	}
+	var found *Check
+	for _, check := range Doctor(cfg, home) {
+		if check.Name == "claude-code otel" {
+			copy := check
+			found = &copy
+			break
+		}
+	}
+	if found == nil || !found.OK || found.Transport != "otel-http" ||
+		found.Fidelity != string(capturemeta.SupportedPassiveStream) ||
+		found.SupportedEvents == 0 {
+		t.Fatalf("Claude OTel doctor check = %+v", found)
 	}
 }
 

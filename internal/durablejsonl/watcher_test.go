@@ -95,7 +95,7 @@ func testOptions(t *testing.T, root, state string, sink func(event.Event) error)
 
 func TestWatcherBaselinesExistingFilesAndReadsNewFilesFromStart(t *testing.T) {
 	root := t.TempDir()
-	old := filepath.Join(root, "old.jsonl")
+	old := filepath.Join(root, "a-active.jsonl")
 	if err := os.WriteFile(old, []byte(`{"session":"old","text":"history"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestWatcherBaselinesExistingFilesAndReadsNewFilesFromStart(t *testing.T) {
 	if err := appendLine(old, `{"text":"after baseline"}`); err != nil {
 		t.Fatal(err)
 	}
-	fresh := filepath.Join(root, "fresh.jsonl")
+	fresh := filepath.Join(root, "z-new.jsonl")
 	if err := os.WriteFile(fresh, []byte(`{"session":"fresh","text":"first"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +127,98 @@ func TestWatcherBaselinesExistingFilesAndReadsNewFilesFromStart(t *testing.T) {
 	}
 	if len(got) != 2 || bySession["old"].Summary != "after baseline" || bySession["fresh"].Summary != "first" {
 		t.Fatalf("captured events = %+v", got)
+	}
+}
+
+func TestWatcherUnreadableFileDoesNotStarveLaterFiles(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state.json")
+	var got []event.Event
+	w := New(testOptions(t, root, state, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}))
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+
+	unreadable := filepath.Join(root, "a-unreadable.jsonl")
+	if err := os.WriteFile(unreadable, []byte(`{"session":"blocked","text":"first"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later := filepath.Join(root, "z-readable.jsonl")
+	if err := os.WriteFile(later, []byte(`{"session":"live","text":"first"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+
+	if err := appendLine(unreadable, `{"text":"unreadable append"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+	if err := appendLine(later, `{"text":"must not starve"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatalf("unreadable file aborted poll: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "capture-warning" ||
+		got[1].SessionID != "live" || got[1].Summary != "must not starve" {
+		t.Fatalf("later capture = %+v", got)
+	}
+}
+
+func TestWatcherFingerprintsOnlyWhenObservedFileStampChanges(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "active.jsonl")
+	if err := os.WriteFile(path, []byte(`{"session":"s1","text":"history"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(testOptions(t, root, filepath.Join(t.TempDir(), "state.json"), func(event.Event) error {
+		return nil
+	}))
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	firstReads := 0
+	lastReads := 0
+	w.firstLineFingerprint = func(path string) (string, error) {
+		firstReads++
+		return firstLineHash(path)
+	}
+	w.lastLineFingerprint = func(path string, offset int64) (string, error) {
+		lastReads++
+		return lastLineHashBefore(path, offset)
+	}
+
+	for range 3 {
+		if err := w.Poll(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if firstReads != 0 || lastReads != 0 {
+		t.Fatalf("unchanged file fingerprinted %d/%d times", firstReads, lastReads)
+	}
+	if err := appendLine(path, `{"text":"new"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if firstReads != 1 || lastReads != 1 {
+		t.Fatalf("changed file fingerprint reads = %d/%d, want 1/1", firstReads, lastReads)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if firstReads != 1 || lastReads != 1 {
+		t.Fatalf("unchanged post-append file fingerprinted again: %d/%d", firstReads, lastReads)
 	}
 }
 
@@ -241,6 +333,35 @@ func TestWatcherRecoversFromTruncateAndReplacement(t *testing.T) {
 	}
 }
 
+func TestWatcherRecoversWhenFileShrinksBelowCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state.json")
+	var got []event.Event
+	w := New(testOptions(t, root, state, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}))
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "fresh.jsonl")
+	if err := os.WriteFile(path, []byte(`{"session":"long-session","text":"a deliberately long first event"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"session":"new","text":"short"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].SessionID != "new" || got[1].Summary != "short" {
+		t.Fatalf("truncate recovery = %+v", got)
+	}
+}
+
 func TestWatcherUsesExplicitMatcher(t *testing.T) {
 	root := t.TempDir()
 	var got []event.Event
@@ -315,6 +436,43 @@ func TestWatcherQuarantinesSemanticallyCorruptParserCheckpoint(t *testing.T) {
 	}
 	if len(got) != 2 || got[1].SessionID != "s1" || got[1].Summary != "after recovery" {
 		t.Fatalf("capture did not recover parser context: %+v", got)
+	}
+}
+
+func TestWatcherQuarantinesMalformedJSONCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "existing.jsonl")
+	if err := os.WriteFile(path, []byte(`{"session":"s1","text":"history"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(state, []byte(`{"saved_at":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []event.Event
+	w := New(testOptions(t, root, state, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}))
+	if err := w.Initialize(); err != nil {
+		t.Fatalf("malformed cursor disabled capture: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "capture-warning" {
+		t.Fatalf("cursor warning = %+v", got)
+	}
+	backups, err := filepath.Glob(state + ".corrupt-*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("malformed cursor was not quarantined: backups=%v err=%v", backups, err)
+	}
+	if err := appendLine(path, `{"text":"after recovery"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].SessionID != "s1" || got[1].Summary != "after recovery" {
+		t.Fatalf("capture did not resume after quarantine: %+v", got)
 	}
 }
 

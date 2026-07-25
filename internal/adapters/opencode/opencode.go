@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"agentfirehose/internal/capturemeta"
@@ -16,23 +17,25 @@ import (
 // Source is the agent family identifier for OpenCode events.
 const Source = "opencode"
 
+var handledBusTypes = map[string]struct{}{
+	"session.idle":         {},
+	"session.created":      {},
+	"session.deleted":      {},
+	"session.error":        {},
+	"message.updated":      {},
+	"message.part.updated": {},
+	"permission.updated":   {},
+	"permission.replied":   {},
+	"file.edited":          {},
+}
+
 // Manifest is the parser/plugin coverage contract. The generated plugin uses
 // the same lists so high-volume filters cannot drift independently.
 var Manifest = capturemeta.Manifest{
 	Source:    Source,
 	Transport: "plugin",
 	Fidelity:  capturemeta.SupportedPassiveStream,
-	Mapped: []string{
-		"session.idle",
-		"session.created",
-		"session.deleted",
-		"session.error",
-		"message.updated",
-		"message.part.updated",
-		"permission.updated",
-		"permission.replied",
-		"file.edited",
-	},
+	Mapped:    handledBusTypeNames(),
 	Filtered: []string{
 		"message.part.delta",
 		"message.reasoning.delta",
@@ -73,8 +76,26 @@ func Parse(raw []byte) (*event.Event, error) {
 		Transport:   Manifest.Transport,
 		Name:        be.Type,
 		Severity:    event.SeverityInfo,
-		Payload:     props,
+		Payload:     map[string]any{},
 		Raw:         string(raw),
+	}
+	if containsType(Manifest.Filtered, be.Type) {
+		return nil, nil
+	}
+	if _, ok := handledBusTypes[be.Type]; !ok {
+		sourceVersion, _ := props["version"].(string)
+		warning := capturemeta.UnknownEvent(
+			Source,
+			Manifest.Transport,
+			be.Type,
+			sourceVersion,
+			"native bus event is not present in the OpenCode manifest",
+			captured,
+		)
+		warning.Agent = "opencode"
+		warning.SessionID = ev.SessionID
+		warning.CWD = ev.CWD
+		return &warning, nil
 	}
 
 	switch be.Type {
@@ -92,12 +113,21 @@ func Parse(raw []byte) (*event.Event, error) {
 	case "session.error":
 		ev.Category = event.CategoryError
 		ev.Severity = event.SeverityError
-		ev.Summary = "session error: " + errorSummary(props)
+		ev.Summary = "session error: " + errorName(props)
 	case "message.updated":
 		info, _ := props["info"].(map[string]any)
 		role, _ := info["role"].(string)
 		if id, ok := info["sessionID"].(string); ok {
 			ev.SessionID = id
+		}
+		if id, ok := info["id"].(string); ok {
+			ev.MessageID = id
+		}
+		if id, ok := info["parentID"].(string); ok {
+			ev.ParentID = id
+		}
+		if role != "" {
+			ev.Payload["role"] = role
 		}
 		if role == "user" {
 			ev.Category = event.CategoryPrompt
@@ -111,31 +141,23 @@ func Parse(raw []byte) (*event.Event, error) {
 	case "permission.updated":
 		ev.Category = event.CategoryPermission
 		ev.Severity = event.SeverityNotice
-		title, _ := props["title"].(string)
-		ev.Summary = "permission requested: " + title
+		ev.Summary = "permission requested"
+		if permissionType, ok := props["type"].(string); ok {
+			ev.Payload["permission_type"] = permissionType
+		}
 	case "permission.replied":
 		ev.Category = event.CategoryPermission
 		ev.Severity = event.SeverityNotice
 		resp, _ := props["response"].(string)
 		ev.Summary = "permission answered: " + resp
+		ev.Payload["decision"] = resp
 	case "file.edited":
 		ev.Category = event.CategoryFile
 		file, _ := props["file"].(string)
 		ev.Summary = "edited " + filepath.Base(file)
+		ev.Payload["file_path"] = file
 	default:
-		sourceVersion, _ := props["version"].(string)
-		warning := capturemeta.UnknownEvent(
-			Source,
-			Manifest.Transport,
-			be.Type,
-			sourceVersion,
-			"native bus event is not present in the OpenCode manifest",
-			captured,
-		)
-		warning.Agent = "opencode"
-		warning.SessionID = ev.SessionID
-		warning.CWD = ev.CWD
-		return &warning, nil
+		return nil, fmt.Errorf("opencode: manifest type %q has no parser handler", be.Type)
 	}
 	return ev, nil
 }
@@ -154,14 +176,18 @@ func parsePart(ev *event.Event, props map[string]any) (*event.Event, error) {
 	if id, ok := part["sessionID"].(string); ok {
 		ev.SessionID = id
 	}
+	if id, ok := part["id"].(string); ok {
+		ev.CallID = id
+	}
 	tool, _ := part["tool"].(string)
 	input, _ := state["input"].(map[string]any)
 	ev.Name = "tool:" + tool
+	ev.Payload["tool_name"] = tool
+	ev.Payload["status"] = status
 	switch {
 	case tool == "bash":
 		ev.Category = event.CategoryShell
-		cmd, _ := input["command"].(string)
-		ev.Summary = "ran: " + cmd
+		ev.Summary = "ran shell tool"
 	case fileToolNames[tool]:
 		ev.Category = event.CategoryFile
 		path, _ := input["filePath"].(string)
@@ -176,6 +202,24 @@ func parsePart(ev *event.Event, props map[string]any) (*event.Event, error) {
 	return ev, nil
 }
 
+func handledBusTypeNames() []string {
+	names := make([]string, 0, len(handledBusTypes))
+	for name := range handledBusTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func containsType(names []string, target string) bool {
+	for _, name := range names {
+		if name == target {
+			return true
+		}
+	}
+	return false
+}
+
 func sessionID(props map[string]any) string {
 	if id, ok := props["sessionID"].(string); ok {
 		return id
@@ -188,14 +232,9 @@ func sessionID(props map[string]any) string {
 	return ""
 }
 
-func errorSummary(props map[string]any) string {
+func errorName(props map[string]any) string {
 	err, _ := props["error"].(map[string]any)
 	name, _ := err["name"].(string)
-	if data, ok := err["data"].(map[string]any); ok {
-		if msg, ok := data["message"].(string); ok {
-			return name + ": " + msg
-		}
-	}
 	if name == "" {
 		return "unknown"
 	}

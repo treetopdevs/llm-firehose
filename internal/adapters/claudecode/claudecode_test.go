@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,10 +13,14 @@ import (
 
 func parse(t *testing.T, raw string) event.Event {
 	t.Helper()
-	ev, err := Parse([]byte(raw))
+	parsed, err := Parse([]byte(raw))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
+	if parsed == nil {
+		t.Fatal("Parse unexpectedly skipped event")
+	}
+	ev := *parsed
 	if ev.Source != "claude-code" {
 		t.Errorf("source = %q, want claude-code", ev.Source)
 	}
@@ -176,6 +181,27 @@ func TestNotificationIsPermission(t *testing.T) {
 	}
 }
 
+func TestNotificationWithoutTypeStillNeedsPermissionAttention(t *testing.T) {
+	ev := parse(t, `{"hook_event_name":"notification","session_id":"s1"}`)
+	if ev.Category != event.CategoryPermission {
+		t.Errorf("category = %q, want permission-safe default", ev.Category)
+	}
+}
+
+func TestFilteredHooksAreSkipped(t *testing.T) {
+	for _, name := range Manifest.Filtered {
+		t.Run(name, func(t *testing.T) {
+			ev, err := Parse([]byte(`{"hook_event_name":"` + name + `","session_id":"s1"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev != nil {
+				t.Fatalf("filtered hook produced event: %+v", ev)
+			}
+		})
+	}
+}
+
 func TestUnknownHookIsMetaWarn(t *testing.T) {
 	ev := parse(t, `{"hook_event_name":"SomethingNew","session_id":"s1"}`)
 	if ev.Category != event.CategoryMeta || ev.Severity != event.SeverityWarn {
@@ -217,6 +243,16 @@ func TestCursorPreToolUseShellIsShell(t *testing.T) {
 	}
 }
 
+func TestCursorPostToolUseFailureIsWarn(t *testing.T) {
+	ev := parse(t, `{"hook_event_name":"postToolUseFailure","session_id":"s1","tool_name":"Shell","tool_input":{"command":"false"}}`)
+	if ev.Name != "PostToolUseFailure:Shell" || ev.Severity != event.SeverityWarn {
+		t.Fatalf("Cursor failure = %s/%s, want PostToolUseFailure:Shell/warn", ev.Name, ev.Severity)
+	}
+	if ev.Payload["status"] != "error" {
+		t.Fatalf("failure status = %v, want error", ev.Payload["status"])
+	}
+}
+
 func TestInvalidJSONErrors(t *testing.T) {
 	if _, err := Parse([]byte("not json")); err == nil {
 		t.Error("expected error for invalid JSON")
@@ -226,6 +262,13 @@ func TestInvalidJSONErrors(t *testing.T) {
 func TestManifestIsValid(t *testing.T) {
 	if err := Manifest.Validate(); err != nil {
 		t.Fatalf("manifest: %v", err)
+	}
+	want := []string{
+		"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"Notification", "SubagentStop", "Stop", "SessionEnd",
+	}
+	if !reflect.DeepEqual(Manifest.Mapped, want) {
+		t.Fatalf("mapped hooks = %v, want fixture-proven %v", Manifest.Mapped, want)
 	}
 }
 

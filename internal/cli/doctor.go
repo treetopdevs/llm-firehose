@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"agentfirehose/internal/adapters/claudecode"
+	"agentfirehose/internal/adapters/claudeotel"
 	"agentfirehose/internal/adapters/codex"
 	"agentfirehose/internal/adapters/opencode"
 	"agentfirehose/internal/capturemeta"
@@ -54,6 +55,21 @@ func Doctor(cfg Config, home string) []Check {
 		Fidelity:        string(capturemeta.SupportedInBandHook),
 		SupportedEvents: len(claudecode.Manifest.Mapped),
 		FilteredEvents:  len(claudecode.Manifest.Filtered),
+	})
+
+	otelAddr := cfg.DaemonAddr
+	if otelAddr == "" {
+		otelAddr = DefaultDaemonAddr
+	}
+	otelOK := ClaudeOTelConfigured(home, otelAddr)
+	checks = append(checks, Check{
+		Name:            "claude-code otel",
+		OK:              otelOK,
+		Detail:          pick(otelOK, "supplemental local OTLP/HTTP JSON enabled", "optional: firehose install claude-otel"),
+		Transport:       claudeotel.Transport,
+		Fidelity:        string(claudeotel.Manifest.Fidelity),
+		SupportedEvents: len(claudeotel.Manifest.Mapped),
+		FilteredEvents:  len(claudeotel.Manifest.Filtered),
 	})
 
 	codexHookOK := CodexHooksConfigured(home)

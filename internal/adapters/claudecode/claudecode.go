@@ -18,19 +18,16 @@ import (
 const Source = "claude-code"
 
 // Manifest declares the locally observed and safely installed Claude Code
-// hook surface. WorktreeCreate and FileChanged remain explicit coverage gaps.
+// hook surface. WorktreeCreate and FileChanged are deliberately skipped:
+// observing the former would replace Claude's worktree behavior, while the
+// latter requires a user-defined watch list.
 var Manifest = capturemeta.Manifest{
 	Source:    Source,
 	Transport: "hook",
 	Fidelity:  capturemeta.SupportedInBandHook,
 	Mapped: []string{
-		"SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
-		"PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
-		"PostToolUseFailure", "PostToolBatch", "Notification", "SubagentStart",
-		"SubagentStop", "TaskCreated", "TaskCompleted", "Stop", "StopFailure",
-		"TeammateIdle", "InstructionsLoaded", "ConfigChange", "CwdChanged",
-		"WorktreeRemove", "PreCompact", "PostCompact", "Elicitation",
-		"ElicitationResult", "SessionEnd", "MessageDisplay",
+		"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"Notification", "SubagentStop", "Stop", "SessionEnd",
 	},
 	Filtered:     []string{"WorktreeCreate", "FileChanged"},
 	SourceSchema: "claude-code@2.1.218",
@@ -55,7 +52,6 @@ type hookPayload struct {
 	AgentID          string         `json:"agent_id"`
 	AgentType        string         `json:"agent_type"`
 	Effort           map[string]any `json:"effort"`
-	Timestamp        string         `json:"timestamp"`
 }
 
 var fileTools = map[string]bool{
@@ -68,7 +64,7 @@ var fileTools = map[string]bool{
 var cursorHookAliases = map[string]string{
 	"preToolUse":         "PreToolUse",
 	"postToolUse":        "PostToolUse",
-	"postToolUseFailure": "PostToolUse",
+	"postToolUseFailure": "PostToolUseFailure",
 	"userPromptSubmit":   "UserPromptSubmit",
 	"beforeSubmitPrompt": "UserPromptSubmit",
 	"sessionStart":       "SessionStart",
@@ -86,25 +82,21 @@ func canonicalHookEvent(name string) string {
 	return name
 }
 
-// Parse converts one hook payload into a normalized event.
-func Parse(raw []byte) (event.Event, error) {
+// Parse converts one hook payload into a normalized event. A nil event means
+// the hook family is deliberately filtered.
+func Parse(raw []byte) (*event.Event, error) {
 	var p hookPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return event.Event{}, fmt.Errorf("claudecode: %w", err)
+		return nil, fmt.Errorf("claudecode: %w", err)
 	}
 	hook := canonicalHookEvent(p.HookEventName)
-	captured := time.Now().UTC()
-	occurred := captured
-	var sourceTime *time.Time
-	if parsed, err := time.Parse(time.RFC3339Nano, p.Timestamp); err == nil {
-		parsed = parsed.UTC()
-		occurred = parsed
-		sourceTime = &parsed
+	if hook == "WorktreeCreate" || hook == "FileChanged" {
+		return nil, nil
 	}
-	ev := event.Event{
+	captured := time.Now().UTC()
+	ev := &event.Event{
 		ID:          event.NewID(),
-		Time:        occurred,
-		SourceTime:  sourceTime,
+		Time:        captured,
 		CaptureTime: &captured,
 		Source:      Source,
 		Agent:       "claude",
@@ -123,12 +115,9 @@ func Parse(raw []byte) (event.Event, error) {
 	addCommonPayload(ev.Payload, p)
 
 	switch hook {
-	case "UserPromptSubmit", "UserPromptExpansion":
+	case "UserPromptSubmit":
 		ev.Category = event.CategoryPrompt
 		ev.Summary = "user prompt submitted"
-		if hook == "UserPromptExpansion" {
-			ev.Summary = "user prompt expanded"
-		}
 
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure":
 		ev.Name = hook + ":" + p.ToolName
@@ -174,51 +163,20 @@ func Parse(raw []byte) (event.Event, error) {
 		ev.Severity = event.SeverityNotice
 		ev.Summary = "session ended (" + orUnknown(p.Reason) + ")"
 
-	case "Stop", "SubagentStart", "SubagentStop", "TeammateIdle", "TaskCreated", "TaskCompleted":
+	case "Stop", "SubagentStop":
 		ev.Category = event.CategorySession
 		ev.Summary = lifecycleSummary(hook)
 
 	case "Notification":
-		ev.Category = event.CategoryMeta
-		if p.NotificationType == "permission_prompt" ||
-			p.NotificationType == "elicitation_dialog" ||
-			p.NotificationType == "elicitation_response" {
-			ev.Category = event.CategoryPermission
-		}
+		// Older Claude and Cursor payloads omit notification_type. Preserve the
+		// conservative needs-input behavior unless a real fixture proves a
+		// notification family is non-blocking.
+		ev.Category = event.CategoryPermission
 		ev.Severity = event.SeverityNotice
 		ev.Summary = "notification"
 		if p.NotificationType != "" {
 			ev.Summary += ": " + p.NotificationType
 		}
-
-	case "PreCompact", "PostCompact":
-		ev.Category = event.CategoryMeta
-		ev.Summary = map[string]string{
-			"PreCompact":  "context compaction starting",
-			"PostCompact": "context compaction completed",
-		}[hook]
-
-	case "PermissionRequest", "PermissionDenied", "Elicitation", "ElicitationResult":
-		ev.Category = event.CategoryPermission
-		ev.Severity = event.SeverityNotice
-		ev.Summary = lifecycleSummary(hook)
-		if p.ToolName != "" {
-			ev.Payload["tool_name"] = p.ToolName
-		}
-
-	case "PostToolBatch":
-		ev.Category = event.CategoryTool
-		ev.Summary = "tool batch completed"
-
-	case "StopFailure":
-		ev.Category = event.CategoryError
-		ev.Severity = event.SeverityError
-		ev.Summary = "agent turn failed"
-
-	case "Setup", "InstructionsLoaded", "ConfigChange", "CwdChanged",
-		"FileChanged", "WorktreeCreate", "WorktreeRemove", "MessageDisplay":
-		ev.Category = event.CategoryMeta
-		ev.Summary = lifecycleSummary(hook)
 
 	default:
 		warning := capturemeta.UnknownEvent(
@@ -233,9 +191,11 @@ func Parse(raw []byte) (event.Event, error) {
 		warning.SessionID = ev.SessionID
 		warning.PromptID = ev.PromptID
 		warning.CWD = ev.CWD
-		return workspace.Enrich(warning), nil
+		enriched := workspace.Enrich(warning)
+		return &enriched, nil
 	}
-	return workspace.Enrich(ev), nil
+	enriched := workspace.Enrich(*ev)
+	return &enriched, nil
 }
 
 func addCommonPayload(payload map[string]any, p hookPayload) {
@@ -265,25 +225,8 @@ func orUnknown(s string) string {
 
 func lifecycleSummary(hook string) string {
 	summaries := map[string]string{
-		"Setup":              "setup lifecycle",
-		"Stop":               "agent finished responding",
-		"StopFailure":        "agent turn failed",
-		"SubagentStart":      "subagent started",
-		"SubagentStop":       "subagent stopped",
-		"TeammateIdle":       "teammate idle",
-		"TaskCreated":        "task created",
-		"TaskCompleted":      "task completed",
-		"PermissionRequest":  "permission requested",
-		"PermissionDenied":   "permission denied",
-		"Elicitation":        "elicitation requested",
-		"ElicitationResult":  "elicitation completed",
-		"InstructionsLoaded": "instructions loaded",
-		"ConfigChange":       "configuration changed",
-		"CwdChanged":         "working directory changed",
-		"FileChanged":        "watched file changed",
-		"WorktreeCreate":     "worktree creation requested",
-		"WorktreeRemove":     "worktree removed",
-		"MessageDisplay":     "message display metadata",
+		"Stop":         "agent finished responding",
+		"SubagentStop": "subagent stopped",
 	}
 	if summary := summaries[hook]; summary != "" {
 		return summary

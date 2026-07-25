@@ -132,12 +132,14 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /events/stream` | live feed, Server-Sent Events (`data: <envelope JSON>`) |
 | `POST /events` | ingest NDJSON envelopes; returns `{ingested: n}` |
 | `POST /emit?source=S` | normalize one raw source payload; 204 on success |
+| `POST /v1/logs` | opt-in loopback OTLP/HTTP JSON logs; `{}` on accepted batch |
+| `POST /v1/metrics` | opt-in loopback OTLP/HTTP JSON metrics; `{}` on accepted batch |
 | `GET /sessions` | session summaries (derived index), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
 | `GET /sessions/{id}` | all events for one session, oldest first |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
-| `POST /install/{adapter}` | wire an adapter (claude-code \| codex \| opencode); `{ok, detail}` |
+| `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 
 Session, trace, and file queries are served from an in-memory index derived
@@ -152,6 +154,8 @@ CORS: browser origins are allowlisted to the desktop shell
 Requests carrying any other browser origin are rejected with `403` — a random
 website must not read or write the local event feed. Non-browser clients are
 unaffected. The daemon refuses to bind a non-loopback listen address.
+The OTLP endpoints reject every browser `Origin`, accept only bounded
+`application/json` bodies, and never retain raw OTLP or resource attributes.
 
 Compatibility rule for clients: see [compatibility.md](compatibility.md).
 

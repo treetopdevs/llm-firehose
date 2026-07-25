@@ -74,6 +74,10 @@ export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
+  transport?: string;
+  fidelity?: string;
+  supported_events?: number;
+  filtered_events?: number;
 }
 
 export interface EngineConfig {

@@ -327,6 +327,18 @@ func TestInstallEndpoint(t *testing.T) {
 		t.Fatalf("desktop install did not use the sidecar-compatible forwarder: %s", settings)
 	}
 
+	otel, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-otel: %v", err)
+	}
+	otel.Body.Close()
+	if otel.StatusCode != http.StatusOK {
+		t.Fatalf("Claude OTel install status = %d, want 200", otel.StatusCode)
+	}
+	if !cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+		t.Fatal("desktop Claude OTel install did not configure the local receiver")
+	}
+
 	unknown, err := http.Post(ts.URL+"/install/emacs", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST /install/emacs: %v", err)

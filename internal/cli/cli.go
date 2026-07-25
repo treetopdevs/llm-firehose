@@ -124,7 +124,7 @@ func EmitLocal(cfg Config, source string, raw []byte) error {
 		if err != nil {
 			return err
 		}
-		ev = &parsed
+		ev = parsed // nil = deliberately filtered
 	case opencode.Source:
 		parsed, err := opencode.Parse(raw)
 		if err != nil {

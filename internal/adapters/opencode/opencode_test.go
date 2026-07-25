@@ -1,8 +1,6 @@
 package opencode
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,6 +39,9 @@ func TestSessionError(t *testing.T) {
 	if ev == nil || ev.Category != event.CategoryError || ev.Severity != event.SeverityError {
 		t.Fatalf("session.error => %+v, want error/error", ev)
 	}
+	if strings.Contains(ev.Summary, "bad key") {
+		t.Fatalf("session error summary leaked provider body: %q", ev.Summary)
+	}
 }
 
 func TestMessageRoles(t *testing.T) {
@@ -58,12 +59,19 @@ func TestMessageRoles(t *testing.T) {
 }
 
 func TestToolPartBashIsShell(t *testing.T) {
-	ev := parse(t, `{"type":"message.part.updated","properties":{"part":{"id":"p1","sessionID":"oc-1","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls -la"}}}}}`)
+	raw := `{"type":"message.part.updated","properties":{"part":{"id":"p1","sessionID":"oc-1","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"SECRET-COMMAND"}}}}}`
+	ev := parse(t, raw)
 	if ev == nil || ev.Category != event.CategoryShell {
 		t.Fatalf("bash tool part => %+v, want shell", ev)
 	}
-	if !strings.Contains(ev.Summary, "ls -la") {
-		t.Errorf("summary %q", ev.Summary)
+	if ev.CallID != "p1" || ev.Payload["tool_name"] != "bash" || ev.Payload["status"] != "completed" {
+		t.Fatalf("tool correlation = %+v", ev)
+	}
+	if strings.Contains(ev.Summary, "SECRET-COMMAND") {
+		t.Errorf("summary leaked shell command: %q", ev.Summary)
+	}
+	if !strings.Contains(ev.Raw, "SECRET-COMMAND") {
+		t.Errorf("full-mode raw no longer retains source payload: %q", ev.Raw)
 	}
 }
 
@@ -85,10 +93,24 @@ func TestTextPartsSkipped(t *testing.T) {
 	}
 }
 
+func TestManifestFilteredBusTypesAreSkipped(t *testing.T) {
+	for _, eventType := range Manifest.Filtered {
+		t.Run(eventType, func(t *testing.T) {
+			ev := parse(t, `{"type":"`+eventType+`","properties":{"secret":"SECRET-FILTERED"}}`)
+			if ev != nil {
+				t.Fatalf("filtered type produced event: %+v", ev)
+			}
+		})
+	}
+}
+
 func TestPermissionEvents(t *testing.T) {
 	ask := parse(t, `{"type":"permission.updated","properties":{"sessionID":"oc-1","title":"Run: rm -rf build","type":"bash"}}`)
 	if ask == nil || ask.Category != event.CategoryPermission || ask.Severity != event.SeverityNotice {
 		t.Fatalf("permission.updated => %+v", ask)
+	}
+	if strings.Contains(ask.Summary, "rm -rf") {
+		t.Fatalf("permission summary leaked title: %q", ask.Summary)
 	}
 	reply := parse(t, `{"type":"permission.replied","properties":{"sessionID":"oc-1","response":"always"}}`)
 	if reply == nil || reply.Category != event.CategoryPermission {
@@ -119,42 +141,37 @@ func TestUnknownBecomesSafeDriftWarning(t *testing.T) {
 	}
 }
 
-func TestWritePlugin(t *testing.T) {
-	dir := t.TempDir()
-	path, err := WritePlugin(dir, "/Applications/Agent Firehose/firehosed")
-	if err != nil {
-		t.Fatalf("WritePlugin: %v", err)
-	}
-	if filepath.Dir(path) != dir {
-		t.Errorf("plugin written outside dir: %s", path)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read plugin: %v", err)
-	}
-	js := string(data)
-	if !strings.Contains(js, `["/Applications/Agent Firehose/firehosed","hook-forward","--source","opencode"]`) {
-		t.Errorf("plugin should use the configured fail-silent executable:\n%s", js)
-	}
-	for _, want := range []string{
-		`const mappedTypes = new Set(`,
-		`const filteredTypes = new Set(`,
-		`const warnedUnknownTypes = new Set()`,
-		`part.type === "text"`,
-		`part.type === "reasoning"`,
-		`status !== "completed" && status !== "error"`,
-	} {
-		if !strings.Contains(js, want) {
-			t.Errorf("plugin missing manifest-driven filter %q:\n%s", want, js)
-		}
-	}
-	if strings.Count(js, `"session.created"`) != 1 {
-		t.Errorf("mapped type list drifted or was duplicated:\n%s", js)
-	}
-}
-
 func TestManifestIsValid(t *testing.T) {
 	if err := Manifest.Validate(); err != nil {
 		t.Fatalf("manifest: %v", err)
+	}
+}
+
+func TestEveryManifestMappedTypeHasAParserHandler(t *testing.T) {
+	fixtures := map[string]string{
+		"session.idle":         `{"type":"session.idle","properties":{"sessionID":"s1"}}`,
+		"session.created":      `{"type":"session.created","properties":{"info":{"id":"s1"}}}`,
+		"session.deleted":      `{"type":"session.deleted","properties":{"sessionID":"s1"}}`,
+		"session.error":        `{"type":"session.error","properties":{"sessionID":"s1","error":{"name":"TestError"}}}`,
+		"message.updated":      `{"type":"message.updated","properties":{"info":{"sessionID":"s1","role":"assistant"}}}`,
+		"message.part.updated": `{"type":"message.part.updated","properties":{"part":{"sessionID":"s1","type":"tool","tool":"bash","state":{"status":"completed"}}}}`,
+		"permission.updated":   `{"type":"permission.updated","properties":{"sessionID":"s1"}}`,
+		"permission.replied":   `{"type":"permission.replied","properties":{"sessionID":"s1"}}`,
+		"file.edited":          `{"type":"file.edited","properties":{"file":"/tmp/file"}}`,
+	}
+	if len(fixtures) != len(Manifest.Mapped) {
+		t.Fatalf("fixture count = %d, manifest mapped count = %d", len(fixtures), len(Manifest.Mapped))
+	}
+	for _, eventType := range Manifest.Mapped {
+		t.Run(eventType, func(t *testing.T) {
+			raw, ok := fixtures[eventType]
+			if !ok {
+				t.Fatalf("manifest type %q has no drift-guard fixture", eventType)
+			}
+			ev := parse(t, raw)
+			if ev == nil || ev.Name == "adapter.unknown_event" {
+				t.Fatalf("manifest type %q has no parser handler: %+v", eventType, ev)
+			}
+		})
 	}
 }

@@ -104,10 +104,17 @@ func isSessionEnd(ev event.Event) bool {
 	return false
 }
 
-// isPermissionReply reports whether the permission event is the human's
-// answer (opencode permission.replied) rather than a new request.
+// isPermissionReply reports whether the permission event completes an
+// interaction rather than opening a new request.
 func isPermissionReply(ev event.Event) bool {
-	return ev.Category == event.CategoryPermission && ev.Name == "permission.replied"
+	if ev.Category != event.CategoryPermission {
+		return false
+	}
+	switch ev.Name {
+	case "permission.replied", "PermissionDenied", "ElicitationResult":
+		return true
+	}
+	return false
 }
 
 func isActivity(ev event.Event) bool {

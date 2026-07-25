@@ -46,13 +46,14 @@ asynchronous and pipes its JSON payload to
 never makes a policy decision, and records a best-effort warning when the
 spool remains writable.
 
-Firehose installs the current observational lifecycle, prompt, tool,
-permission, notification, subagent/task/team, stop/failure, instruction,
-configuration/CWD, compaction, elicitation, session, and display-metadata
-events. `WorktreeCreate` is excluded because merely registering that hook
-replaces Claude's built-in worktree implementation and requires a path result;
-`FileChanged` is excluded until a bounded filename watch list is configured.
-Doctor reports those gaps rather than treating them as complete coverage.
+Firehose installs only the fixture-proven event families: `SessionStart`,
+`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`,
+`SubagentStop`, `Stop`, and `SessionEnd`. Tool-name matchers are added only to
+the two tool hooks. Other documented hook families remain visible coverage
+gaps until a genuine payload is captured. `WorktreeCreate` is filtered because
+merely registering that hook replaces Claude's built-in worktree
+implementation and requires a path result; `FileChanged` is filtered until a
+bounded filename watch list is configured.
 
 The safe payload is an explicit metadata allowlist: native prompt/tool/agent
 IDs, permission mode, effort, tool name/status/duration/interruption,
@@ -60,6 +61,23 @@ notification type, and file path for file tools. Prompt text, assistant text,
 tool arguments/results, notification bodies, transcript paths, titles, and
 elicitation values remain only in `raw`, so balanced/minimal persistence
 drops them. `Bash` tools map to `shell`; file tools map to `file`.
+
+### Claude local OpenTelemetry (supplemental)
+
+`firehose install claude-otel` adds an opt-in Claude settings environment block
+for OTLP `http/json` logs and metrics at the daemon's loopback
+`POST /v1/logs` and `POST /v1/metrics` endpoints. It refuses to overwrite any
+existing user, process, or managed exporter, endpoint, protocol, header,
+certificate, or other OTel setting. It never edits shell profiles and does not
+enable content-bearing telemetry options.
+
+The receiver limits request size, record count, attribute count, and retained
+string size. Malformed individual records return exporter success and create a
+bounded warning instead of retry pressure. It allowlists correlation IDs,
+model/request/tool/hook metadata, latency, byte counts, tokens, cost, and the
+four locally observed usage metrics. All resource attributes, identities,
+prompt/response/body fields, and raw OTLP are discarded in every privacy mode.
+OTel enriches the hook stream only while the daemon is available.
 
 ## Codex (deep)
 
@@ -120,7 +138,8 @@ turns that observation into a bounded `adapter.unknown_event` warning.
 Mapping highlights: `session.*` → session (errors → error), `message.updated`
 → prompt/message by role, tool parts → shell/file/tool once they reach a
 terminal state (streaming text parts are skipped), `permission.*` →
-permission, `file.edited` → file.
+permission, `file.edited` → file. Shell command text remains only in full-mode
+raw input and is never copied into the summary.
 
 ## Process watcher (shallow)
 

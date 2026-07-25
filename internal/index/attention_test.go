@@ -74,6 +74,25 @@ func TestTransitionPermissionReplyClearsNeedsInput(t *testing.T) {
 	}
 }
 
+func TestTransitionClaudeTerminalPermissionEventsClearNeedsInput(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{"PermissionDenied", "ElicitationResult"} {
+		t.Run(name, func(t *testing.T) {
+			prev := Attention{State: StateNeedsInput, Since: base, Reason: "waiting"}
+			ev := event.Event{
+				Category: event.CategoryPermission,
+				Name:     name,
+				Summary:  "permission interaction completed",
+				Time:     base.Add(time.Minute),
+			}
+			next, changed := Transition(prev, ev)
+			if !changed || next.State != StateWorking || next.Reason != "" {
+				t.Fatalf("%s => %+v changed=%v, want working with cleared reason", name, next, changed)
+			}
+		})
+	}
+}
+
 func TestTransitionPermissionUpdatedStillNeedsInput(t *testing.T) {
 	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	prev := Attention{State: StateWorking, Since: base}

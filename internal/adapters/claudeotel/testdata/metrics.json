@@ -1,0 +1,67 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "host.arch", "value": {"stringValue": "SECRET-HOST-MARKER"}},
+          {"key": "service.version", "value": {"stringValue": "SECRET-RESOURCE-VERSION"}}
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "com.anthropic.claude_code",
+            "version": "2.1.218"
+          },
+          "metrics": [
+            {
+              "name": "claude_code.token.usage",
+              "unit": "tokens",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": false,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {"key": "user.email", "value": {"stringValue": "SECRET-EMAIL"}},
+                      {"key": "session.id", "value": {"stringValue": "session-fixture"}},
+                      {"key": "model", "value": {"stringValue": "claude-opus-fixture"}},
+                      {"key": "query_source", "value": {"stringValue": "main"}},
+                      {"key": "effort", "value": {"stringValue": "high"}},
+                      {"key": "type", "value": {"stringValue": "output"}}
+                    ],
+                    "startTimeUnixNano": "1784995425581000000",
+                    "timeUnixNano": "1784995485611000000",
+                    "asDouble": 20
+                  }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.cost.usage",
+              "unit": "USD",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": false,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {"key": "organization.id", "value": {"stringValue": "SECRET-ORG"}},
+                      {"key": "session.id", "value": {"stringValue": "session-fixture"}},
+                      {"key": "model", "value": {"stringValue": "claude-opus-fixture"}},
+                      {"key": "query_source", "value": {"stringValue": "main"}},
+                      {"key": "effort", "value": {"stringValue": "high"}}
+                    ],
+                    "startTimeUnixNano": "1784995425581000000",
+                    "timeUnixNano": "1784995485611000000",
+                    "asDouble": 0.125
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
