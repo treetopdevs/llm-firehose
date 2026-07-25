@@ -6,10 +6,15 @@ Every capture path produces the same normalized envelope (`internal/event`):
 {
   "id": "…", "time": "…", "capture_time": "…",
   "source": "claude-code", "agent": "claude",
-  "session_id": "…", "category": "shell", "name": "PostToolUse:Bash",
-  "severity": "info", "summary": "ran: go test ./...",
+  "session_id": "…", "prompt_id": "…", "call_id": "…",
+  "category": "shell", "name": "PostToolUse:Bash",
+  "severity": "info", "summary": "Bash completed",
   "cwd": "/repo", "repo_id": "/repo/.git", "worktree_id": "/repo",
-  "payload": { }, "raw": "…"
+  "payload": {
+    "tool_name": "Bash", "phase": "end", "status": "success",
+    "duration_ms": 4652
+  },
+  "raw": "…"
 }
 ```
 
@@ -39,9 +44,20 @@ interrupt Claude Code and records a best-effort warning when the spool remains
 writable.
 
 Hooked events: SessionStart, SessionEnd, UserPromptSubmit, PreToolUse,
-PostToolUse, Notification, Stop, SubagentStop, PreCompact. Mapping highlights:
-`Bash` tools → `shell`, `Edit/Write/MultiEdit/NotebookEdit` → `file`,
-`Notification` → `permission`.
+PostToolUse, PostToolUseFailure, Notification, Stop, StopFailure,
+SubagentStop, PreCompact. Mapping highlights: `Bash` tools → `shell`,
+`Edit/Write/MultiEdit/NotebookEdit` → `file`, `Notification` → `permission`,
+and response failures → `error`.
+
+Claude hook events preserve native `prompt_id` and map `tool_use_id` to the
+envelope's `call_id`. Tool lifecycle payloads retain only the tool name,
+start/end phase, started/success/error/interrupted status, native
+`duration_ms`, and interruption flag. `StopFailure` retains only Anthropic's
+documented bounded API error class, mapping future unknown values to `unknown`.
+The default balanced privacy path does not persist prompt or notification
+message bodies, transcript paths, tool inputs, tool responses, or detailed
+error text. Full privacy mode may still retain the original hook JSON in
+`raw`; this is the existing explicit opt-in behavior.
 
 ## Codex (deep)
 

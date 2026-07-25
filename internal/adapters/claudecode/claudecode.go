@@ -6,8 +6,6 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"agentfirehose/internal/event"
@@ -18,17 +16,18 @@ import (
 const Source = "claude-code"
 
 type hookPayload struct {
-	HookEventName string         `json:"hook_event_name"`
-	SessionID     string         `json:"session_id"`
-	CWD           string         `json:"cwd"`
-	ToolName      string         `json:"tool_name"`
-	ToolInput     map[string]any `json:"tool_input"`
-	ToolResponse  any            `json:"tool_response"`
-	ToolOutput    any            `json:"tool_output"` // Cursor alias for tool_response
-	Prompt        string         `json:"prompt"`
-	Message       string         `json:"message"`
-	Source        string         `json:"source"` // SessionStart source
-	Reason        string         `json:"reason"` // SessionEnd reason
+	HookEventName string          `json:"hook_event_name"`
+	SessionID     string          `json:"session_id"`
+	PromptID      string          `json:"prompt_id"`
+	CWD           string          `json:"cwd"`
+	ToolName      string          `json:"tool_name"`
+	ToolUseID     string          `json:"tool_use_id"`
+	ToolResponse  json.RawMessage `json:"tool_response"`
+	DurationMS    *int64          `json:"duration_ms"`
+	IsInterrupt   *bool           `json:"is_interrupt"`
+	Error         string          `json:"error"`
+	Source        string          `json:"source"` // SessionStart source
+	Reason        string          `json:"reason"` // SessionEnd reason
 }
 
 var fileTools = map[string]bool{
@@ -41,7 +40,7 @@ var fileTools = map[string]bool{
 var cursorHookAliases = map[string]string{
 	"preToolUse":         "PreToolUse",
 	"postToolUse":        "PostToolUse",
-	"postToolUseFailure": "PostToolUse",
+	"postToolUseFailure": "PostToolUseFailure",
 	"userPromptSubmit":   "UserPromptSubmit",
 	"beforeSubmitPrompt": "UserPromptSubmit",
 	"sessionStart":       "SessionStart",
@@ -59,13 +58,6 @@ func canonicalHookEvent(name string) string {
 	return name
 }
 
-func toolResponse(p hookPayload) any {
-	if p.ToolResponse != nil {
-		return p.ToolResponse
-	}
-	return p.ToolOutput
-}
-
 // Parse converts one hook payload into a normalized event.
 func Parse(raw []byte) (event.Event, error) {
 	var p hookPayload
@@ -81,6 +73,8 @@ func Parse(raw []byte) (event.Event, error) {
 		Source:      Source,
 		Agent:       "claude",
 		SessionID:   p.SessionID,
+		PromptID:    p.PromptID,
+		CallID:      p.ToolUseID,
 		CWD:         p.CWD,
 		Name:        hook,
 		Severity:    event.SeverityInfo,
@@ -91,34 +85,10 @@ func Parse(raw []byte) (event.Event, error) {
 	switch hook {
 	case "UserPromptSubmit":
 		ev.Category = event.CategoryPrompt
-		ev.Summary = fmt.Sprintf("prompt: %q", excerpt(p.Prompt, 80))
-		ev.Payload["prompt"] = p.Prompt
+		ev.Summary = "prompt submitted"
 
-	case "PreToolUse", "PostToolUse":
-		ev.Name = hook + ":" + p.ToolName
-		ev.Category = event.CategoryTool
-		verb := "will run"
-		if hook == "PostToolUse" {
-			verb = "ran"
-		}
-		switch {
-		case p.ToolName == "Bash" || p.ToolName == "Shell":
-			ev.Category = event.CategoryShell
-			cmd, _ := p.ToolInput["command"].(string)
-			ev.Summary = fmt.Sprintf("%s: %s", verb, excerpt(cmd, 100))
-		case fileTools[p.ToolName]:
-			ev.Category = event.CategoryFile
-			path, _ := p.ToolInput["file_path"].(string)
-			ev.Summary = fmt.Sprintf("%s %s on %s", verb, p.ToolName, filepath.Base(path))
-			ev.Payload["file_path"] = path
-		default:
-			ev.Summary = fmt.Sprintf("%s tool %s", verb, p.ToolName)
-		}
-		ev.Payload["tool_name"] = p.ToolName
-		ev.Payload["tool_input"] = p.ToolInput
-		if resp := toolResponse(p); resp != nil {
-			ev.Payload["tool_response"] = resp
-		}
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure":
+		mapToolEvent(&ev, p, hook)
 
 	case "SessionStart":
 		ev.Category = event.CategorySession
@@ -133,12 +103,21 @@ func Parse(raw []byte) (event.Event, error) {
 	case "Stop", "SubagentStop":
 		ev.Category = event.CategorySession
 		ev.Summary = "agent finished responding"
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "completed"
+
+	case "StopFailure":
+		ev.Category = event.CategoryError
+		ev.Severity = event.SeverityError
+		ev.Summary = "agent response failed"
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "error"
+		ev.Payload["error_class"] = stopFailureClass(p.Error)
 
 	case "Notification":
 		ev.Category = event.CategoryPermission
 		ev.Severity = event.SeverityNotice
-		ev.Summary = excerpt(p.Message, 120)
-		ev.Payload["message"] = p.Message
+		ev.Summary = "notification received"
 
 	case "PreCompact":
 		ev.Category = event.CategoryMeta
@@ -152,13 +131,79 @@ func Parse(raw []byte) (event.Event, error) {
 	return workspace.Enrich(ev), nil
 }
 
-func excerpt(s string, max int) string {
-	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	r := []rune(s)
-	if len(r) > max {
-		return string(r[:max]) + "…"
+func mapToolEvent(ev *event.Event, p hookPayload, hook string) {
+	ev.Name = hook + ":" + p.ToolName
+	ev.Category = categoryForTool(p.ToolName)
+	ev.Payload["tool_name"] = p.ToolName
+
+	switch hook {
+	case "PreToolUse":
+		ev.Summary = p.ToolName + " started"
+		ev.Payload["phase"] = "start"
+		ev.Payload["status"] = "started"
+	case "PostToolUse":
+		ev.Summary = p.ToolName + " completed"
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "success"
+		if interrupted := toolResponseInterrupted(p.ToolResponse); interrupted != nil {
+			ev.Payload["interrupted"] = *interrupted
+			if *interrupted {
+				ev.Summary = p.ToolName + " interrupted"
+				ev.Payload["status"] = "interrupted"
+			}
+		}
+	case "PostToolUseFailure":
+		ev.Severity = event.SeverityError
+		ev.Summary = p.ToolName + " failed"
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "error"
+		if p.IsInterrupt != nil {
+			ev.Payload["interrupted"] = *p.IsInterrupt
+			if *p.IsInterrupt {
+				ev.Summary = p.ToolName + " interrupted"
+				ev.Payload["status"] = "interrupted"
+			}
+		}
 	}
-	return s
+
+	if p.DurationMS != nil && *p.DurationMS >= 0 {
+		ev.Payload["duration_ms"] = *p.DurationMS
+	}
+}
+
+func categoryForTool(name string) event.Category {
+	switch {
+	case name == "Bash" || name == "Shell":
+		return event.CategoryShell
+	case fileTools[name]:
+		return event.CategoryFile
+	default:
+		return event.CategoryTool
+	}
+}
+
+func toolResponseInterrupted(raw json.RawMessage) *bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	var safe struct {
+		Interrupted *bool `json:"interrupted"`
+	}
+	if err := json.Unmarshal(raw, &safe); err != nil {
+		return nil
+	}
+	return safe.Interrupted
+}
+
+func stopFailureClass(class string) string {
+	switch class {
+	case "rate_limit", "overloaded", "authentication_failed",
+		"oauth_org_not_allowed", "billing_error", "invalid_request",
+		"model_not_found", "server_error", "max_output_tokens":
+		return class
+	default:
+		return "unknown"
+	}
 }
 
 func orUnknown(s string) string {

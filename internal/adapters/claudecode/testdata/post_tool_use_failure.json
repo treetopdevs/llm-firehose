@@ -1,0 +1,16 @@
+{
+  "session_id": "claude-fixture-session",
+  "transcript_path": "/tmp/agent-firehose-hook-fixture/transcript.jsonl",
+  "cwd": "/tmp/agent-firehose-hook-fixture/work",
+  "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "[sanitized tool input]"
+  },
+  "tool_use_id": "toolu_fixture_failure_01",
+  "error": "[sanitized tool error]",
+  "is_interrupt": false,
+  "duration_ms": 3
+}

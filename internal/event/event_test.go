@@ -113,6 +113,25 @@ func TestSchemaVersionAbsentIsZero(t *testing.T) {
 	}
 }
 
+func TestPromptIDRoundTripsAdditivelyWithinVersionOne(t *testing.T) {
+	line := `{"id":"a","time":"2026-07-01T10:00:00Z","source":"claude-code","session_id":"s","prompt_id":"p","category":"prompt"}`
+	var ev Event
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["prompt_id"] != "p" {
+		t.Errorf("prompt_id = %v, want p", got["prompt_id"])
+	}
+}
+
 func TestNewIDUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for range 100 {

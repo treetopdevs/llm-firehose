@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,16 +31,117 @@ func parse(t *testing.T, raw string) event.Event {
 	return ev
 }
 
-func TestUserPromptSubmit(t *testing.T) {
-	ev := parse(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/repo","prompt":"fix the login bug"}`)
+func fixture(t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", name+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func envelopeField(t *testing.T, ev event.Event, name string) any {
+	t.Helper()
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields[name]
+}
+
+func safeDetails(t *testing.T, ev event.Event) string {
+	t.Helper()
+	data, err := json.Marshal(struct {
+		Summary string         `json:"summary"`
+		Payload map[string]any `json:"payload"`
+	}{ev.Summary, ev.Payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestRealUserPromptFixturePreservesCorrelationWithoutBody(t *testing.T) {
+	ev := parse(t, string(fixture(t, "user_prompt_submit")))
 	if ev.Category != event.CategoryPrompt {
 		t.Errorf("category = %q, want prompt", ev.Category)
 	}
-	if ev.SessionID != "s1" || ev.CWD != "/repo" {
+	if ev.SessionID != "claude-fixture-session" ||
+		ev.CWD != "/tmp/agent-firehose-hook-fixture/work" {
 		t.Errorf("context lost: %+v", ev)
 	}
-	if !strings.Contains(ev.Summary, "fix the login bug") {
-		t.Errorf("summary should quote prompt, got %q", ev.Summary)
+	if got := envelopeField(t, ev, "prompt_id"); got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("prompt_id = %v", got)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "sanitized prompt body") ||
+		strings.Contains(got, "transcript.jsonl") {
+		t.Errorf("safe prompt details contain a body or transcript path: %s", got)
+	}
+}
+
+func TestRealToolFixturesPreserveCorrelationTimingAndOutcomeWithoutBodies(t *testing.T) {
+	pre := parse(t, string(fixture(t, "pre_tool_use")))
+	post := parse(t, string(fixture(t, "post_tool_use")))
+
+	for _, ev := range []event.Event{pre, post} {
+		if ev.CallID != "toolu_fixture_01" {
+			t.Errorf("%s call_id = %q", ev.Name, ev.CallID)
+		}
+		if got := envelopeField(t, ev, "prompt_id"); got != "550e8400-e29b-41d4-a716-446655440000" {
+			t.Errorf("%s prompt_id = %v", ev.Name, got)
+		}
+		if got := safeDetails(t, ev); strings.Contains(got, "sanitized tool input") ||
+			strings.Contains(got, "sanitized tool output") ||
+			strings.Contains(got, "transcript.jsonl") {
+			t.Errorf("%s safe details contain sensitive hook fields: %s", ev.Name, got)
+		}
+	}
+	if pre.Payload["phase"] != "start" || pre.Payload["status"] != "started" {
+		t.Errorf("pre outcome = %+v", pre.Payload)
+	}
+	if post.Payload["phase"] != "end" || post.Payload["status"] != "success" {
+		t.Errorf("post outcome = %+v", post.Payload)
+	}
+	if post.Payload["interrupted"] != false {
+		t.Errorf("post interrupted = %#v", post.Payload["interrupted"])
+	}
+	if post.Payload["duration_ms"] != int64(4652) {
+		t.Errorf("duration_ms = %#v", post.Payload["duration_ms"])
+	}
+}
+
+func TestRealToolFailureKeepsOutcomeNotErrorBody(t *testing.T) {
+	ev := parse(t, string(fixture(t, "post_tool_use_failure")))
+	if ev.Name != "PostToolUseFailure:Read" || ev.Severity != event.SeverityError {
+		t.Errorf("failure envelope = %+v", ev)
+	}
+	if ev.CallID != "toolu_fixture_failure_01" ||
+		ev.Payload["phase"] != "end" || ev.Payload["status"] != "error" ||
+		ev.Payload["interrupted"] != false ||
+		ev.Payload["duration_ms"] != int64(3) {
+		t.Errorf("failure outcome = %+v", ev.Payload)
+	}
+	if _, ok := ev.Payload["error_class"]; ok {
+		t.Errorf("free-form tool error must not be promoted to a class: %+v", ev.Payload)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "sanitized tool error") ||
+		strings.Contains(got, "sanitized tool input") {
+		t.Errorf("failure details contain an error or tool body: %s", got)
+	}
+}
+
+func TestRealStopFailureKeepsOnlyOfficialErrorClass(t *testing.T) {
+	ev := parse(t, string(fixture(t, "stop_failure")))
+	if ev.Category != event.CategoryError || ev.Severity != event.SeverityError ||
+		ev.Payload["status"] != "error" || ev.Payload["error_class"] != "model_not_found" {
+		t.Errorf("stop failure = %+v", ev)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "sanitized error") {
+		t.Errorf("stop failure contains error details or rendered message: %s", got)
 	}
 }
 
@@ -67,8 +169,8 @@ func TestPostToolUseBashIsShell(t *testing.T) {
 	if ev.Category != event.CategoryShell {
 		t.Errorf("category = %q, want shell", ev.Category)
 	}
-	if !strings.Contains(ev.Summary, "go test ./...") {
-		t.Errorf("summary should show command, got %q", ev.Summary)
+	if strings.Contains(ev.Summary, "go test ./...") {
+		t.Errorf("summary contains command input: %q", ev.Summary)
 	}
 	if ev.Name != "PostToolUse:Bash" {
 		t.Errorf("name = %q", ev.Name)
@@ -80,8 +182,8 @@ func TestPreToolUseEditIsFile(t *testing.T) {
 	if ev.Category != event.CategoryFile {
 		t.Errorf("category = %q, want file", ev.Category)
 	}
-	if !strings.Contains(ev.Summary, "main.go") {
-		t.Errorf("summary should show file, got %q", ev.Summary)
+	if strings.Contains(ev.Summary, "main.go") {
+		t.Errorf("summary contains file input: %q", ev.Summary)
 	}
 }
 
@@ -115,6 +217,9 @@ func TestNotificationIsPermission(t *testing.T) {
 	if ev.Severity != event.SeverityNotice {
 		t.Errorf("severity = %q, want notice", ev.Severity)
 	}
+	if strings.Contains(safeDetails(t, ev), "permission to use Bash") {
+		t.Errorf("notification message body was retained: %+v", ev)
+	}
 }
 
 func TestUnknownHookIsMetaWarn(t *testing.T) {
@@ -140,8 +245,8 @@ func TestCursorPostToolUseCamelCase(t *testing.T) {
 	if strings.Contains(ev.Summary, "unrecognized") {
 		t.Errorf("summary still unrecognized: %q", ev.Summary)
 	}
-	if ev.Payload["tool_response"] == nil {
-		t.Error("tool_output should map into payload tool_response")
+	if _, ok := ev.Payload["tool_response"]; ok {
+		t.Error("tool_output must not map into the safe payload")
 	}
 }
 
@@ -153,8 +258,8 @@ func TestCursorPreToolUseShellIsShell(t *testing.T) {
 	if ev.Name != "PreToolUse:Shell" {
 		t.Errorf("name = %q, want PreToolUse:Shell", ev.Name)
 	}
-	if !strings.Contains(ev.Summary, "go test ./...") {
-		t.Errorf("summary should show command, got %q", ev.Summary)
+	if strings.Contains(ev.Summary, "go test ./...") {
+		t.Errorf("summary contains command input: %q", ev.Summary)
 	}
 }
 

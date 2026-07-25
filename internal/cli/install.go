@@ -15,8 +15,8 @@ import (
 // hookedEvents are the Claude Code hook events the firehose subscribes to.
 var hookedEvents = []string{
 	"SessionStart", "SessionEnd", "UserPromptSubmit",
-	"PreToolUse", "PostToolUse", "Notification",
-	"Stop", "SubagentStop", "PreCompact",
+	"PreToolUse", "PostToolUse", "PostToolUseFailure",
+	"Notification", "Stop", "StopFailure", "SubagentStop", "PreCompact",
 }
 
 // CodexHookEvents is the complete lifecycle/tool hook surface supported by
@@ -63,7 +63,7 @@ func InstallClaudeCode(home, binPath string) error {
 		entry := map[string]any{
 			"hooks": []any{map[string]any{"type": "command", "command": command}},
 		}
-		if evName == "PreToolUse" || evName == "PostToolUse" {
+		if evName == "PreToolUse" || evName == "PostToolUse" || evName == "PostToolUseFailure" {
 			entry["matcher"] = "*"
 		}
 		hooks[evName] = append(entries, entry)

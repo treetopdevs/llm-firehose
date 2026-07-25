@@ -40,8 +40,8 @@ func TestEmitClaudeCodeWritesRedactedEvent(t *testing.T) {
 	if ev.Raw != "" {
 		t.Error("balanced mode must drop raw payload")
 	}
-	if p, _ := ev.Payload["prompt"].(string); len([]rune(p)) > 241 {
-		t.Errorf("balanced mode must truncate payload, len=%d", len([]rune(p)))
+	if _, ok := ev.Payload["prompt"]; ok || strings.Contains(ev.Summary, strings.Repeat("x", 20)) {
+		t.Errorf("balanced Claude capture must exclude prompt bodies: %+v", ev)
 	}
 }
 
@@ -129,7 +129,10 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 	if !strings.Contains(s, "my-existing-hook") {
 		t.Error("existing hook removed")
 	}
-	for _, evName := range []string{"UserPromptSubmit", "PreToolUse", "PostToolUse", "SessionStart", "Notification"} {
+	for _, evName := range []string{
+		"UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+		"SessionStart", "Notification", "StopFailure",
+	} {
 		if !strings.Contains(s, evName) {
 			t.Errorf("hook for %s not installed", evName)
 		}
