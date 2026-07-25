@@ -11,6 +11,8 @@ export interface FirehoseEvent {
   schema_version?: number;
   id: string;
   time: string;
+  source_time?: string;
+  capture_time?: string;
   source: string;
   agent?: string;
   session_id?: string;
@@ -23,6 +25,8 @@ export interface FirehoseEvent {
   summary?: string;
   repo?: string;
   cwd?: string;
+  repo_id?: string;
+  worktree_id?: string;
   payload?: Record<string, unknown>;
   raw?: string;
 }

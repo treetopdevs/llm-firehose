@@ -62,6 +62,12 @@ func TestStartAndStopEvents(t *testing.T) {
 	if ev.Agent != "claude" || ev.Source != "procwatch" {
 		t.Errorf("agent identity wrong: %+v", ev)
 	}
+	if ev.CaptureTime == nil || !ev.Time.Equal(*ev.CaptureTime) {
+		t.Errorf("capture_time = %v, want process observation time %v", ev.CaptureTime, ev.Time)
+	}
+	if ev.SourceTime != nil {
+		t.Errorf("source_time = %v, want absent because the process table supplies no timestamp", ev.SourceTime)
+	}
 
 	// still running: no duplicate
 	select {

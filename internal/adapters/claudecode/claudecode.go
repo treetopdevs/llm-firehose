@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/workspace"
 )
 
 // Source is the agent family identifier for Claude Code events.
@@ -72,17 +73,19 @@ func Parse(raw []byte) (event.Event, error) {
 		return event.Event{}, fmt.Errorf("claudecode: %w", err)
 	}
 	hook := canonicalHookEvent(p.HookEventName)
+	captured := time.Now().UTC()
 	ev := event.Event{
-		ID:        event.NewID(),
-		Time:      time.Now().UTC(),
-		Source:    Source,
-		Agent:     "claude",
-		SessionID: p.SessionID,
-		CWD:       p.CWD,
-		Name:      hook,
-		Severity:  event.SeverityInfo,
-		Raw:       string(raw),
-		Payload:   map[string]any{},
+		ID:          event.NewID(),
+		Time:        captured,
+		CaptureTime: &captured,
+		Source:      Source,
+		Agent:       "claude",
+		SessionID:   p.SessionID,
+		CWD:         p.CWD,
+		Name:        hook,
+		Severity:    event.SeverityInfo,
+		Raw:         string(raw),
+		Payload:     map[string]any{},
 	}
 
 	switch hook {
@@ -146,7 +149,7 @@ func Parse(raw []byte) (event.Event, error) {
 		ev.Severity = event.SeverityWarn
 		ev.Summary = "unrecognized hook event: " + p.HookEventName
 	}
-	return ev, nil
+	return workspace.Enrich(ev), nil
 }
 
 func excerpt(s string, max int) string {

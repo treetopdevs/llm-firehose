@@ -47,18 +47,20 @@ func Parse(raw []byte) (event.Event, error) {
 	if p.HookEventName == "" {
 		return event.Event{}, fmt.Errorf("codex-hook: hook_event_name is required")
 	}
+	captured := time.Now().UTC()
 	ev := event.Event{
-		ID:        event.NewID(),
-		Time:      time.Now().UTC(),
-		Source:    "codex",
-		Agent:     "codex",
-		SessionID: p.SessionID,
-		TurnID:    p.TurnID,
-		CallID:    p.ToolUseID,
-		CWD:       p.CWD,
-		Name:      p.HookEventName,
-		Severity:  event.SeverityInfo,
-		Raw:       string(raw),
+		ID:          event.NewID(),
+		Time:        captured,
+		CaptureTime: &captured,
+		Source:      "codex",
+		Agent:       "codex",
+		SessionID:   p.SessionID,
+		TurnID:      p.TurnID,
+		CallID:      p.ToolUseID,
+		CWD:         p.CWD,
+		Name:        p.HookEventName,
+		Severity:    event.SeverityInfo,
+		Raw:         string(raw),
 		Payload: map[string]any{
 			"transport": "hook",
 		},

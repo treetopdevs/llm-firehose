@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/workspace"
 )
 
 // Writer appends events to the daily spool file in Dir.
@@ -38,6 +39,11 @@ func (w *Writer) Append(ev event.Event) error {
 	if err := ev.Validate(); err != nil {
 		return err
 	}
+	if ev.CaptureTime == nil {
+		captured := time.Now().UTC()
+		ev.CaptureTime = &captured
+	}
+	ev = workspace.Enrich(ev)
 	if ev.SchemaVersion == 0 {
 		ev.SchemaVersion = event.CurrentSchemaVersion
 	}
@@ -224,14 +230,16 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 			read += consumed
 			ev, perr := parseLine(line)
 			if perr != nil {
+				captured := time.Now().UTC()
 				ev = event.Event{
-					ID:       event.NewID(),
-					Time:     time.Now().UTC(),
-					Source:   "firehose",
-					Category: event.CategoryMeta,
-					Name:     "parse-error",
-					Severity: event.SeverityWarn,
-					Summary:  fmt.Sprintf("unparseable spool line in %s: %v", filepath.Base(path), perr),
+					ID:          event.NewID(),
+					Time:        captured,
+					CaptureTime: &captured,
+					Source:      "firehose",
+					Category:    event.CategoryMeta,
+					Name:        "parse-error",
+					Severity:    event.SeverityWarn,
+					Summary:     fmt.Sprintf("unparseable spool line in %s: %v", filepath.Base(path), perr),
 				}
 			}
 			select {

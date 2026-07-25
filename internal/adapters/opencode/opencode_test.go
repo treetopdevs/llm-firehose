@@ -15,6 +15,14 @@ func parse(t *testing.T, raw string) *event.Event {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
+	if ev != nil {
+		if ev.CaptureTime == nil || !ev.Time.Equal(*ev.CaptureTime) {
+			t.Errorf("capture_time = %v, want the locally assigned event time %v", ev.CaptureTime, ev.Time)
+		}
+		if ev.SourceTime != nil {
+			t.Errorf("source_time = %v, want absent because OpenCode bus events supply no timestamp", ev.SourceTime)
+		}
+	}
 	return ev
 }
 

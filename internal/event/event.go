@@ -53,8 +53,10 @@ type Event struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
 	ID            string         `json:"id"`
 	Time          time.Time      `json:"time"`
-	Source        string         `json:"source"`          // agent family: claude-code, codex, opencode, generic, procwatch
-	Agent         string         `json:"agent,omitempty"` // specific agent/binary name
+	SourceTime    *time.Time     `json:"source_time,omitempty"`  // source-supplied timestamp, when observable
+	CaptureTime   *time.Time     `json:"capture_time,omitempty"` // when Firehose observed the event
+	Source        string         `json:"source"`                 // agent family: claude-code, codex, opencode, generic, procwatch
+	Agent         string         `json:"agent,omitempty"`        // specific agent/binary name
 	SessionID     string         `json:"session_id,omitempty"`
 	TraceID       string         `json:"trace_id,omitempty"` // groups causally related events across sessions, when the source supplies one
 	TurnID        string         `json:"turn_id,omitempty"`  // source-native turn identifier, when the source supplies one
@@ -65,6 +67,8 @@ type Event struct {
 	Summary       string         `json:"summary,omitempty"`
 	Repo          string         `json:"repo,omitempty"`
 	CWD           string         `json:"cwd,omitempty"`
+	RepoID        string         `json:"repo_id,omitempty"`     // canonical local Git common-directory path, when observable
+	WorktreeID    string         `json:"worktree_id,omitempty"` // canonical local Git worktree-root path, when observable
 	Payload       map[string]any `json:"payload,omitempty"`
 	Raw           string         `json:"raw,omitempty"` // original source payload, privacy mode permitting
 }

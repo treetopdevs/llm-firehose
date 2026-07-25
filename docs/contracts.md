@@ -25,21 +25,36 @@ Evolution rules:
   MUST ignore unknown fields. (Examples: `trace_id` — optional, groups
   causally related events across sessions when a source supplies one — and
   `turn_id` — optional, groups events within a source-native turn — and
-  `call_id` — optional, the source-native tool/command correlation id —
+  `call_id` — optional, the source-native tool/command correlation id;
+  `source_time` / `capture_time` — the source clock and Firehose observation
+  clock; and `repo_id` / `worktree_id` — observable local Git identities —
   were added additively within version 1.)
 - Removing, renaming, or changing the meaning of a field requires a version
   bump and a reader that understands both versions.
 - Spool lines written before versioning have no `schema_version` field;
   readers treat absent/`0` as version 1.
 
+The original `time` field remains the adapter's compatible primary event
+timestamp. `source_time` is present only when the source supplied a timestamp;
+`capture_time` records when Firehose observed the event. For source-stamped
+events such as Codex rollouts, `time` remains equal to `source_time`. For
+capture-only hooks and process observations, `time` remains equal to
+`capture_time`; Firehose does not invent a source clock.
+
+When `cwd` resolves inside a local Git worktree, `repo_id` is the canonical
+path to Git's common directory and `worktree_id` is the canonical worktree
+root. Linked worktrees therefore share `repo_id` but have different
+`worktree_id` values. The fields are absent when that identity cannot be
+observed; path equality alone is never promoted to a repository claim.
+
 ## Privacy modes
 
 Redaction happens **before persistence** — the spool never contains more than
-the configured mode allows. The mode is applied at the engine boundary: at
-spool-append time for emitted/ingested events, and at broadcast time for
-events read directly from other tools' files (codex).
+the configured mode allows. The mode is applied at the engine boundary before
+emitted, ingested, rollout, or process observations are appended. In
+daemonless viewing, direct Codex observations are redacted before display.
 
-| Mode | `raw` | `payload` values | Metadata (source, category, name, times, ids, repo/cwd, summary) |
+| Mode | `raw` | `payload` values | Metadata (source, category, name, source/capture times, ids, repo/worktree/cwd, summary) |
 |---|---|---|---|
 | `minimal` | dropped | replaced with `{"sha256": "...", "len": N}` digests | kept |
 | `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept |
@@ -69,6 +84,10 @@ An adapter maps a source's native payloads to canonical envelopes. Rules:
 
 - Set `source` to the agent family and preserve the source's own session
   identifier in `session_id` whenever one exists.
+- Preserve a supplied clock in `source_time`, assign `capture_time` at
+  observation, and leave `source_time` absent when the source has no clock.
+- Attach `repo_id` and `worktree_id` only when `cwd` makes local Git identity
+  observable.
 - Map activity onto canonical categories: `session`, `prompt`, `message`,
   `tool`, `file`, `permission`, `shell`, `error`, `meta`.
 - Put structured details in `payload`; never pre-truncate — privacy redaction

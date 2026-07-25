@@ -4,10 +4,12 @@ Every capture path produces the same normalized envelope (`internal/event`):
 
 ```json
 {
-  "id": "…", "time": "…", "source": "claude-code", "agent": "claude",
+  "id": "…", "time": "…", "capture_time": "…",
+  "source": "claude-code", "agent": "claude",
   "session_id": "…", "category": "shell", "name": "PostToolUse:Bash",
   "severity": "info", "summary": "ran: go test ./...",
-  "cwd": "/repo", "payload": { }, "raw": "…"
+  "cwd": "/repo", "repo_id": "/repo/.git", "worktree_id": "/repo",
+  "payload": { }, "raw": "…"
 }
 ```
 

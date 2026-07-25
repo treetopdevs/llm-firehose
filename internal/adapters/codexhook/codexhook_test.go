@@ -27,6 +27,12 @@ func TestRealLifecycleAndPromptFixtures(t *testing.T) {
 	if start.Source != "codex" || start.Payload["transport"] != "hook" {
 		t.Fatalf("transport = %+v", start)
 	}
+	if start.CaptureTime == nil || !start.Time.Equal(*start.CaptureTime) {
+		t.Errorf("capture_time = %v, want hook observation time %v", start.CaptureTime, start.Time)
+	}
+	if start.SourceTime != nil {
+		t.Errorf("source_time = %v, want absent because the native hook supplies no timestamp", start.SourceTime)
+	}
 
 	prompt, err := Parse(fixture(t, "user_prompt_submit"))
 	if err != nil || prompt.Category != event.CategoryPrompt || prompt.TurnID != "019f9488-turn" {

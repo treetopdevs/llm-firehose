@@ -109,6 +109,108 @@ func TestAppendStampsSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestAppendStampsMissingCaptureTime(t *testing.T) {
+	dir := t.TempDir()
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	before := time.Now().UTC()
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	after := time.Now().UTC()
+
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].CaptureTime == nil {
+		t.Fatalf("spooled capture_time = %v, want a timestamp", evs)
+	}
+	if evs[0].CaptureTime.Before(before) || evs[0].CaptureTime.After(after) {
+		t.Errorf("capture_time = %v, want append observation between %v and %v", evs[0].CaptureTime, before, after)
+	}
+	if evs[0].SourceTime != nil {
+		t.Errorf("source_time = %v, want absent when the producer did not identify one", evs[0].SourceTime)
+	}
+}
+
+func TestAppendObservesRepositoryAndWorktreeIdentity(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "project")
+	cwd := filepath.Join(repo, "nested", "package")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.CWD = cwd
+	ev.RepoID = "unverified-source-repo"
+	ev.WorktreeID = "unverified-source-worktree"
+	dir := filepath.Join(root, "spool")
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("spooled events = %d, want 1", len(evs))
+	}
+	wantRepo, err := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantWorktree, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evs[0].RepoID != wantRepo {
+		t.Errorf("repo_id = %q, want %q", evs[0].RepoID, wantRepo)
+	}
+	if evs[0].WorktreeID != wantWorktree {
+		t.Errorf("worktree_id = %q, want %q", evs[0].WorktreeID, wantWorktree)
+	}
+}
+
+func TestAppendDistinguishesLinkedWorktreesInOneRepository(t *testing.T) {
+	root := t.TempDir()
+	commonDir := filepath.Join(root, "main", ".git")
+	gitDir := filepath.Join(commonDir, "worktrees", "feature")
+	worktree := filepath.Join(root, "feature")
+	cwd := filepath.Join(worktree, "internal", "thing")
+	for _, dir := range []string{commonDir, gitDir, cwd} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.CWD = cwd
+	dir := filepath.Join(root, "spool")
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("read = %+v, %v", evs, err)
+	}
+	wantRepo, _ := filepath.EvalSymlinks(commonDir)
+	wantWorktree, _ := filepath.EvalSymlinks(worktree)
+	if evs[0].RepoID != wantRepo || evs[0].WorktreeID != wantWorktree {
+		t.Errorf("identity = repo %q worktree %q, want repo %q worktree %q",
+			evs[0].RepoID, evs[0].WorktreeID, wantRepo, wantWorktree)
+	}
+}
+
 func TestReadPreVersioningLines(t *testing.T) {
 	dir := t.TempDir()
 	legacy := `{"id":"old","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}` + "\n"
@@ -245,6 +347,12 @@ func TestTailerEmitsParseErrorEvent(t *testing.T) {
 	case ev := <-ch:
 		if ev.Category != event.CategoryMeta || ev.Severity != event.SeverityWarn {
 			t.Errorf("want meta/warn parse-error event, got %+v", ev)
+		}
+		if ev.CaptureTime == nil || !ev.Time.Equal(*ev.CaptureTime) {
+			t.Errorf("capture_time = %v, want parse observation time %v", ev.CaptureTime, ev.Time)
+		}
+		if ev.SourceTime != nil {
+			t.Errorf("source_time = %v, want absent for an unparseable source line", ev.SourceTime)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("tailer never surfaced parse failure")

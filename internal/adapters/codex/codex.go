@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/workspace"
 )
 
 // Source is the agent family identifier for Codex events.
@@ -186,18 +187,24 @@ func (p *FileParser) ParseLine(line []byte) (*event.Event, error) {
 }
 
 func (p *FileParser) base(rl rolloutLine, cat event.Category, name string) *event.Event {
-	return &event.Event{
-		ID:        event.NewID(),
-		Time:      rl.Timestamp,
-		Source:    Source,
-		Agent:     "codex",
-		SessionID: p.sessionID,
-		CWD:       p.cwd,
-		Category:  cat,
-		Name:      name,
-		Severity:  event.SeverityInfo,
-		Payload:   map[string]any{"transport": "rollout"},
+	sourceTime := rl.Timestamp
+	captureTime := time.Now().UTC()
+	ev := event.Event{
+		ID:          event.NewID(),
+		Time:        sourceTime,
+		SourceTime:  &sourceTime,
+		CaptureTime: &captureTime,
+		Source:      Source,
+		Agent:       "codex",
+		SessionID:   p.sessionID,
+		CWD:         p.cwd,
+		Category:    cat,
+		Name:        name,
+		Severity:    event.SeverityInfo,
+		Payload:     map[string]any{"transport": "rollout"},
 	}
+	enriched := workspace.Enrich(ev)
+	return &enriched
 }
 
 func (p *FileParser) parseSessionMeta(rl rolloutLine) (*event.Event, error) {

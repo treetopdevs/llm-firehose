@@ -1,6 +1,8 @@
 package claudecode
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,6 +21,12 @@ func parse(t *testing.T, raw string) event.Event {
 	if ev.Time.IsZero() {
 		t.Error("time not set")
 	}
+	if ev.CaptureTime == nil || !ev.Time.Equal(*ev.CaptureTime) {
+		t.Errorf("capture_time = %v, want the locally assigned event time %v", ev.CaptureTime, ev.Time)
+	}
+	if ev.SourceTime != nil {
+		t.Errorf("source_time = %v, want absent because Claude hooks supply no timestamp", ev.SourceTime)
+	}
 	return ev
 }
 
@@ -32,6 +40,25 @@ func TestUserPromptSubmit(t *testing.T) {
 	}
 	if !strings.Contains(ev.Summary, "fix the login bug") {
 		t.Errorf("summary should quote prompt, got %q", ev.Summary)
+	}
+}
+
+func TestObservableGitIdentityIsAttachedBeforePersistence(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	cwd := filepath.Join(repo, "subdir")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := parse(t, `{"hook_event_name":"SessionStart","session_id":"s1","cwd":"`+cwd+`"}`)
+	wantRepo, _ := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+	wantWorktree, _ := filepath.EvalSymlinks(repo)
+	if ev.RepoID != wantRepo || ev.WorktreeID != wantWorktree {
+		t.Errorf("identity = repo %q worktree %q, want repo %q worktree %q",
+			ev.RepoID, ev.WorktreeID, wantRepo, wantWorktree)
 	}
 }
 

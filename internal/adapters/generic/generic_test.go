@@ -2,13 +2,16 @@ package generic
 
 import (
 	"testing"
+	"time"
 
 	"agentfirehose/internal/event"
 )
 
 func TestFullEnvelopePassthrough(t *testing.T) {
+	before := time.Now().UTC()
 	line := `{"time":"2026-07-02T10:00:00Z","source":"my-agent","category":"shell","summary":"ran make"}`
 	ev, err := Parse([]byte(line))
+	after := time.Now().UTC()
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -17,6 +20,13 @@ func TestFullEnvelopePassthrough(t *testing.T) {
 	}
 	if ev.ID == "" {
 		t.Error("missing ID should be filled in")
+	}
+	wantSource := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	if ev.SourceTime == nil || !ev.SourceTime.Equal(wantSource) {
+		t.Errorf("source_time = %v, want supplied envelope time %v", ev.SourceTime, wantSource)
+	}
+	if ev.CaptureTime == nil || ev.CaptureTime.Before(before) || ev.CaptureTime.After(after) {
+		t.Errorf("capture_time = %v, want ingest observation between %v and %v", ev.CaptureTime, before, after)
 	}
 }
 
@@ -28,6 +38,21 @@ func TestTraceIDPassthrough(t *testing.T) {
 	}
 	if ev.TraceID != "tr1" {
 		t.Errorf("trace_id = %q, want tr1", ev.TraceID)
+	}
+}
+
+func TestCaptureOnlyEnvelopeDoesNotInventSourceTime(t *testing.T) {
+	line := `{"time":"2026-07-02T10:00:00Z","capture_time":"2026-07-02T10:00:00Z","source":"claude-code","category":"prompt"}`
+	ev, err := Parse([]byte(line))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if ev.SourceTime != nil {
+		t.Errorf("source_time = %v, want absent on capture-only envelope replay", ev.SourceTime)
+	}
+	wantCapture := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	if ev.CaptureTime == nil || !ev.CaptureTime.Equal(wantCapture) {
+		t.Errorf("capture_time = %v, want preserved %v", ev.CaptureTime, wantCapture)
 	}
 }
 

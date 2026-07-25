@@ -7,19 +7,25 @@ import (
 )
 
 func sample() Event {
+	sourceTime := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	captureTime := sourceTime.Add(2 * time.Second)
 	return Event{
-		ID:        "ev-1",
-		Time:      time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC),
-		Source:    "claude-code",
-		Agent:     "claude",
-		SessionID: "sess-abc",
-		Category:  CategoryTool,
-		Name:      "PostToolUse:Bash",
-		Severity:  SeverityInfo,
-		Summary:   "ran `go test ./...`",
-		Repo:      "llmlog",
-		CWD:       "/Users/x/llmlog",
-		Payload:   map[string]any{"command": "go test ./..."},
+		ID:          "ev-1",
+		Time:        sourceTime,
+		SourceTime:  &sourceTime,
+		CaptureTime: &captureTime,
+		Source:      "claude-code",
+		Agent:       "claude",
+		SessionID:   "sess-abc",
+		Category:    CategoryTool,
+		Name:        "PostToolUse:Bash",
+		Severity:    SeverityInfo,
+		Summary:     "ran `go test ./...`",
+		Repo:        "llmlog",
+		CWD:         "/Users/x/llmlog",
+		RepoID:      "/Users/x/llmlog/.git",
+		WorktreeID:  "/Users/x/llmlog",
+		Payload:     map[string]any{"command": "go test ./..."},
 	}
 }
 
@@ -36,7 +42,9 @@ func TestJSONRoundTrip(t *testing.T) {
 	if got.ID != ev.ID || !got.Time.Equal(ev.Time) || got.Source != ev.Source ||
 		got.SessionID != ev.SessionID || got.Category != ev.Category ||
 		got.Name != ev.Name || got.Severity != ev.Severity || got.Summary != ev.Summary ||
-		got.CWD != ev.CWD {
+		got.CWD != ev.CWD || got.SourceTime == nil || !got.SourceTime.Equal(*ev.SourceTime) ||
+		got.CaptureTime == nil || !got.CaptureTime.Equal(*ev.CaptureTime) ||
+		got.RepoID != ev.RepoID || got.WorktreeID != ev.WorktreeID {
 		t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, ev)
 	}
 	if got.Payload["command"] != "go test ./..." {

@@ -51,6 +51,48 @@ func newParser(t *testing.T) *FileParser {
 	return p
 }
 
+func TestRolloutDistinguishesSourceAndCaptureTime(t *testing.T) {
+	before := time.Now().UTC()
+	ev, err := NewFileParser().ParseLine([]byte(sessionMetaLine))
+	after := time.Now().UTC()
+	if err != nil || ev == nil {
+		t.Fatalf("ParseLine = %+v, %v", ev, err)
+	}
+
+	wantSource := time.Date(2026, 5, 7, 15, 12, 0, 0, time.UTC)
+	if ev.SourceTime == nil || !ev.SourceTime.Equal(wantSource) {
+		t.Errorf("source_time = %v, want %v", ev.SourceTime, wantSource)
+	}
+	if !ev.Time.Equal(wantSource) {
+		t.Errorf("legacy time = %v, want source time %v", ev.Time, wantSource)
+	}
+	if ev.CaptureTime == nil || ev.CaptureTime.Before(before) || ev.CaptureTime.After(after) {
+		t.Errorf("capture_time = %v, want parser observation between %v and %v", ev.CaptureTime, before, after)
+	}
+}
+
+func TestRolloutObservesGitIdentityForDaemonlessCapture(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	cwd := filepath.Join(repo, "subdir")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"timestamp":"2026-05-07T15:12:00Z","type":"session_meta","payload":{"id":"sess","cwd":"` + cwd + `"}}`
+	ev, err := NewFileParser().ParseLine([]byte(line))
+	if err != nil || ev == nil {
+		t.Fatalf("ParseLine = %+v, %v", ev, err)
+	}
+	wantRepo, _ := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+	wantWorktree, _ := filepath.EvalSymlinks(repo)
+	if ev.RepoID != wantRepo || ev.WorktreeID != wantWorktree {
+		t.Errorf("identity = repo %q worktree %q, want repo %q worktree %q",
+			ev.RepoID, ev.WorktreeID, wantRepo, wantWorktree)
+	}
+}
+
 func TestCurrentSanitizedRolloutFixture(t *testing.T) {
 	f, err := os.Open(filepath.Join("testdata", "rollout_current_sanitized.jsonl"))
 	if err != nil {

@@ -36,17 +36,19 @@ func Parse(raw []byte) (*event.Event, error) {
 			return nil, fmt.Errorf("opencode: properties: %w", err)
 		}
 	}
+	captured := time.Now().UTC()
 	ev := &event.Event{
-		ID:        event.NewID(),
-		Time:      time.Now().UTC(),
-		Source:    Source,
-		Agent:     "opencode",
-		SessionID: sessionID(props),
-		CWD:       be.Directory,
-		Name:      be.Type,
-		Severity:  event.SeverityInfo,
-		Payload:   props,
-		Raw:       string(raw),
+		ID:          event.NewID(),
+		Time:        captured,
+		CaptureTime: &captured,
+		Source:      Source,
+		Agent:       "opencode",
+		SessionID:   sessionID(props),
+		CWD:         be.Directory,
+		Name:        be.Type,
+		Severity:    event.SeverityInfo,
+		Payload:     props,
+		Raw:         string(raw),
 	}
 
 	switch be.Type {

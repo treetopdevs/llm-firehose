@@ -20,6 +20,16 @@
       "format": "date-time",
       "description": "Event timestamp (RFC 3339, UTC preferred)."
     },
+    "source_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp supplied by the observed source, when one exists. Added additively within schema version 1."
+    },
+    "capture_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when Agent Firehose observed the event. Added additively within schema version 1."
+    },
     "source": {
       "type": "string",
       "description": "Agent family that produced the event.",
@@ -71,6 +81,14 @@
     "cwd": {
       "type": "string",
       "description": "Working directory of the agent, when known."
+    },
+    "repo_id": {
+      "type": "string",
+      "description": "Canonical local path of the Git common directory, identifying one repository across linked worktrees when observable. Added additively within schema version 1."
+    },
+    "worktree_id": {
+      "type": "string",
+      "description": "Canonical local path of the containing Git worktree root when observable. Added additively within schema version 1."
     },
     "payload": {
       "type": "object",
