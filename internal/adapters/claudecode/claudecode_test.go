@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,15 +32,19 @@ func parse(t *testing.T, raw string) event.Event {
 }
 
 func TestUserPromptSubmit(t *testing.T) {
-	ev := parse(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/repo","prompt":"fix the login bug"}`)
+	raw := fixture(t, "user_prompt_submit.json")
+	ev := parse(t, raw)
 	if ev.Category != event.CategoryPrompt {
 		t.Errorf("category = %q, want prompt", ev.Category)
 	}
-	if ev.SessionID != "s1" || ev.CWD != "/repo" {
+	if ev.SessionID != "session-fixture" || ev.CWD != "/tmp/agent-firehose-fixture/work" {
 		t.Errorf("context lost: %+v", ev)
 	}
-	if !strings.Contains(ev.Summary, "fix the login bug") {
-		t.Errorf("summary should quote prompt, got %q", ev.Summary)
+	if ev.PromptID != "prompt-fixture" || ev.Transport != "hook" {
+		t.Errorf("correlation lost: %+v", ev)
+	}
+	if strings.Contains(ev.Summary, "SECRET-PROMPT-MARKER") {
+		t.Errorf("summary leaked prompt: %q", ev.Summary)
 	}
 }
 
@@ -63,25 +68,79 @@ func TestObservableGitIdentityIsAttachedBeforePersistence(t *testing.T) {
 }
 
 func TestPostToolUseBashIsShell(t *testing.T) {
-	ev := parse(t, `{"hook_event_name":"PostToolUse","session_id":"s1","cwd":"/repo","tool_name":"Bash","tool_input":{"command":"go test ./..."},"tool_response":{"stdout":"ok"}}`)
+	ev := parse(t, fixture(t, "post_tool_use_bash.json"))
 	if ev.Category != event.CategoryShell {
 		t.Errorf("category = %q, want shell", ev.Category)
-	}
-	if !strings.Contains(ev.Summary, "go test ./...") {
-		t.Errorf("summary should show command, got %q", ev.Summary)
 	}
 	if ev.Name != "PostToolUse:Bash" {
 		t.Errorf("name = %q", ev.Name)
 	}
+	if ev.CallID != "tool-fixture" || ev.PromptID != "prompt-fixture" {
+		t.Errorf("tool correlation lost: %+v", ev)
+	}
+	if ev.Payload["duration_ms"] != float64(17) || ev.Payload["status"] != "success" {
+		t.Errorf("safe tool metadata lost: %+v", ev.Payload)
+	}
 }
 
 func TestPreToolUseEditIsFile(t *testing.T) {
-	ev := parse(t, `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Edit","tool_input":{"file_path":"/repo/main.go"}}`)
+	ev := parse(t, fixture(t, "pre_tool_use_edit.json"))
 	if ev.Category != event.CategoryFile {
 		t.Errorf("category = %q, want file", ev.Category)
 	}
 	if !strings.Contains(ev.Summary, "main.go") {
 		t.Errorf("summary should show file, got %q", ev.Summary)
+	}
+}
+
+func TestFixturePayloadUsesSafeAllowlist(t *testing.T) {
+	for _, name := range []string{
+		"user_prompt_submit.json",
+		"pre_tool_use_bash.json",
+		"post_tool_use_bash.json",
+		"pre_tool_use_edit.json",
+		"notification.json",
+		"stop.json",
+		"subagent_stop.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ev := parse(t, fixture(t, name))
+			safe, err := json.Marshal(struct {
+				Summary string         `json:"summary"`
+				Payload map[string]any `json:"payload"`
+			}{ev.Summary, ev.Payload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(safe), "SECRET-") {
+				t.Errorf("safe fields leaked fixture content: %s", safe)
+			}
+			if !strings.Contains(ev.Raw, "SECRET-") {
+				t.Errorf("fixture no longer proves full-mode raw retention: %s", ev.Raw)
+			}
+		})
+	}
+}
+
+func TestRealFixtureFamilies(t *testing.T) {
+	tests := []struct {
+		file     string
+		category event.Category
+		name     string
+	}{
+		{"session_start.json", event.CategorySession, "SessionStart"},
+		{"session_end.json", event.CategorySession, "SessionEnd"},
+		{"notification.json", event.CategoryPermission, "Notification"},
+		{"stop.json", event.CategorySession, "Stop"},
+		{"subagent_stop.json", event.CategorySession, "SubagentStop"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			ev := parse(t, fixture(t, tt.file))
+			if ev.Category != tt.category || ev.Name != tt.name {
+				t.Errorf("got %s/%s, want %s/%s", ev.Category, ev.Name, tt.category, tt.name)
+			}
+		})
 	}
 }
 
@@ -108,7 +167,7 @@ func TestSessionLifecycle(t *testing.T) {
 }
 
 func TestNotificationIsPermission(t *testing.T) {
-	ev := parse(t, `{"hook_event_name":"Notification","session_id":"s1","message":"Claude needs your permission to use Bash"}`)
+	ev := parse(t, fixture(t, "notification.json"))
 	if ev.Category != event.CategoryPermission {
 		t.Errorf("category = %q, want permission", ev.Category)
 	}
@@ -140,8 +199,8 @@ func TestCursorPostToolUseCamelCase(t *testing.T) {
 	if strings.Contains(ev.Summary, "unrecognized") {
 		t.Errorf("summary still unrecognized: %q", ev.Summary)
 	}
-	if ev.Payload["tool_response"] == nil {
-		t.Error("tool_output should map into payload tool_response")
+	if _, ok := ev.Payload["tool_response"]; ok {
+		t.Error("tool_output must remain only in full-mode raw input")
 	}
 }
 
@@ -153,8 +212,8 @@ func TestCursorPreToolUseShellIsShell(t *testing.T) {
 	if ev.Name != "PreToolUse:Shell" {
 		t.Errorf("name = %q, want PreToolUse:Shell", ev.Name)
 	}
-	if !strings.Contains(ev.Summary, "go test ./...") {
-		t.Errorf("summary should show command, got %q", ev.Summary)
+	if strings.Contains(ev.Summary, "go test ./...") {
+		t.Errorf("summary leaked command, got %q", ev.Summary)
 	}
 }
 
@@ -164,10 +223,25 @@ func TestInvalidJSONErrors(t *testing.T) {
 	}
 }
 
+func TestManifestIsValid(t *testing.T) {
+	if err := Manifest.Validate(); err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+}
+
 func TestRawPreserved(t *testing.T) {
 	raw := `{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hi"}`
 	ev := parse(t, raw)
 	if ev.Raw != raw {
 		t.Errorf("raw not preserved: %q", ev.Raw)
 	}
+}
+
+func fixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return strings.TrimSpace(string(data))
 }

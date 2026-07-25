@@ -441,6 +441,12 @@ func TestMalformedLineErrors(t *testing.T) {
 	}
 }
 
+func TestDurableManifestIsValid(t *testing.T) {
+	if err := DurableManifest.Validate(); err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+}
+
 func TestWatcherStreamsNewSessionFile(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())

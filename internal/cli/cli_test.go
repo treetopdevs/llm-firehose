@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
 
@@ -45,6 +46,37 @@ func TestEmitClaudeCodeWritesRedactedEvent(t *testing.T) {
 	}
 }
 
+func TestClaudeFixtureContentIsOnlyRetainedInFullMode(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "adapters", "claudecode", "testdata", "post_tool_use_bash.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []privacy.Mode{privacy.ModeBalanced, privacy.ModeMinimal, privacy.ModeFull} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.PrivacyMode = string(mode)
+			if err := EmitLocal(cfg, "claude-code", raw); err != nil {
+				t.Fatal(err)
+			}
+			evs, err := spool.ReadLastN(cfg.SpoolDir, 1)
+			if err != nil || len(evs) != 1 {
+				t.Fatalf("spool: events=%+v err=%v", evs, err)
+			}
+			data, err := json.Marshal(evs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasMarker := strings.Contains(string(data), "SECRET-")
+			if mode == privacy.ModeFull && !hasMarker {
+				t.Errorf("full mode lost raw fixture content: %s", data)
+			}
+			if mode != privacy.ModeFull && hasMarker {
+				t.Errorf("%s mode leaked fixture content: %s", mode, data)
+			}
+		})
+	}
+}
+
 func TestEmitOpenCodeSource(t *testing.T) {
 	cfg := testConfig(t)
 	in := strings.NewReader(`{"type":"file.edited","properties":{"file":"/repo/a.ts"},"directory":"/repo"}`)
@@ -59,13 +91,29 @@ func TestEmitOpenCodeSource(t *testing.T) {
 
 func TestEmitSkippedEventWritesNothing(t *testing.T) {
 	cfg := testConfig(t)
-	in := strings.NewReader(`{"type":"lsp.client.diagnostics","properties":{}}`)
+	in := strings.NewReader(`{"type":"message.part.updated","properties":{"part":{"type":"text","text":"streaming"}}}`)
 	if err := Emit(cfg, "opencode", in); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
 	if len(evs) != 0 {
 		t.Fatalf("skipped event must not be spooled: %+v", evs)
+	}
+}
+
+func TestEmitUnknownEventWritesSafeWarning(t *testing.T) {
+	cfg := testConfig(t)
+	in := strings.NewReader(`{"type":"lsp.client.diagnostics","properties":{"secret":"SECRET-RAW"}}`)
+	if err := Emit(cfg, "opencode", in); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	if len(evs) != 1 || evs[0].Name != "adapter.unknown_event" {
+		t.Fatalf("unknown event warning missing: %+v", evs)
+	}
+	data, _ := json.Marshal(evs[0])
+	if strings.Contains(string(data), "SECRET-RAW") {
+		t.Fatalf("unknown warning leaked raw input: %s", data)
 	}
 }
 
@@ -129,9 +177,23 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 	if !strings.Contains(s, "my-existing-hook") {
 		t.Error("existing hook removed")
 	}
-	for _, evName := range []string{"UserPromptSubmit", "PreToolUse", "PostToolUse", "SessionStart", "Notification"} {
-		if !strings.Contains(s, evName) {
+	expected := []string{
+		"SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
+		"PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
+		"PostToolUseFailure", "PostToolBatch", "Notification", "SubagentStart",
+		"SubagentStop", "TaskCreated", "TaskCompleted", "Stop", "StopFailure",
+		"TeammateIdle", "InstructionsLoaded", "ConfigChange", "CwdChanged",
+		"WorktreeRemove", "PreCompact", "PostCompact", "Elicitation",
+		"ElicitationResult", "SessionEnd", "MessageDisplay",
+	}
+	for _, evName := range expected {
+		if !strings.Contains(s, `"`+evName+`"`) {
 			t.Errorf("hook for %s not installed", evName)
+		}
+	}
+	for _, omitted := range []string{"WorktreeCreate", "FileChanged"} {
+		if strings.Contains(s, `"`+omitted+`"`) {
+			t.Errorf("unsafe/unbounded hook %s must not be installed by default", omitted)
 		}
 	}
 	if !strings.Contains(s, "hook-forward --source claude-code") {
@@ -141,14 +203,79 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 	if _, err := os.Stat(settingsPath + ".bak"); err != nil {
 		t.Error("no backup written")
 	}
+	backup, _ := os.ReadFile(settingsPath + ".bak")
 
 	// idempotent: run again, no duplicate firehose hooks
 	if err := InstallClaudeCode(home, "firehose"); err != nil {
 		t.Fatalf("second install: %v", err)
 	}
 	data2, _ := os.ReadFile(settingsPath)
-	if c := strings.Count(string(data2), "hook-forward --source claude-code"); c != strings.Count(s, "hook-forward --source claude-code") {
-		t.Errorf("install not idempotent: %d vs %d occurrences", c, strings.Count(s, "hook-forward --source claude-code"))
+	if string(data2) != string(data) {
+		t.Error("second install changed settings")
+	}
+	backup2, _ := os.ReadFile(settingsPath + ".bak")
+	if string(backup2) != string(backup) {
+		t.Error("second install overwrote recovery backup")
+	}
+
+	hooks := settings["hooks"].(map[string]any)
+	for _, name := range expected {
+		entries := hooks[name].([]any)
+		last := entries[len(entries)-1].(map[string]any)
+		handlers := last["hooks"].([]any)
+		handler := handlers[0].(map[string]any)
+		if handler["async"] != true {
+			t.Errorf("%s Firehose hook is not asynchronous: %+v", name, handler)
+		}
+	}
+	for _, name := range []string{
+		"UserPromptSubmit", "PostToolBatch", "Stop", "TeammateIdle",
+		"TaskCreated", "TaskCompleted", "WorktreeRemove", "CwdChanged",
+	} {
+		entries := hooks[name].([]any)
+		last := entries[len(entries)-1].(map[string]any)
+		if _, ok := last["matcher"]; ok {
+			t.Errorf("%s does not support a matcher: %+v", name, last)
+		}
+	}
+	for _, name := range []string{
+		"PreToolUse", "PermissionRequest", "PermissionDenied",
+		"PostToolUse", "PostToolUseFailure",
+	} {
+		entries := hooks[name].([]any)
+		last := entries[len(entries)-1].(map[string]any)
+		if last["matcher"] != ".*" {
+			t.Errorf("%s matcher = %v, want valid all-tools regex", name, last["matcher"])
+		}
+	}
+}
+
+func TestClaudeHooksConfiguredRejectsPartialCoverage(t *testing.T) {
+	home := t.TempDir()
+	bin := filepath.Join(home, "firehose")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallClaudeCode(home, bin); err != nil {
+		t.Fatal(err)
+	}
+	if !ClaudeHooksConfigured(home) {
+		t.Fatal("complete installation reported unhealthy")
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	data, _ := os.ReadFile(path)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	hooks := settings["hooks"].(map[string]any)
+	delete(hooks, "PostToolUseFailure")
+	changed, _ := json.Marshal(settings)
+	if err := os.WriteFile(path, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ClaudeHooksConfigured(home) {
+		t.Fatal("partial/outdated installation reported healthy")
 	}
 }
 
@@ -316,6 +443,12 @@ func TestDoctorReportsChecks(t *testing.T) {
 	for _, c := range checks {
 		byName[c.Name] = c
 	}
+	for _, name := range []string{"claude-code hooks", "codex hooks", "opencode plugin", "codex sessions"} {
+		c := byName[name]
+		if c.Transport == "" || c.Fidelity == "" || c.SupportedEvents == 0 {
+			t.Errorf("%s missing additive capture metadata: %+v", name, c)
+		}
+	}
 	if c, ok := byName["claude-code hooks"]; !ok || c.OK {
 		t.Errorf("claude-code hooks should fail in empty home: %+v", c)
 	}
@@ -326,7 +459,11 @@ func TestDoctorReportsChecks(t *testing.T) {
 		t.Errorf("codex hooks should fail in empty home: %+v", c)
 	}
 	// after install, hooks check passes
-	InstallClaudeCode(home, "firehose")
+	bin := filepath.Join(home, "firehose")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	InstallClaudeCode(home, bin)
 	checks = Doctor(cfg, home)
 	for _, c := range checks {
 		if c.Name == "claude-code hooks" && !c.OK {

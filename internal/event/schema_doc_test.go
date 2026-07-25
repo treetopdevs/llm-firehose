@@ -19,6 +19,7 @@ func TestSchemaDocMatchesCode(t *testing.T) {
 		Required   []string `json:"required"`
 		Properties map[string]struct {
 			Enum []string `json:"enum"`
+			Type string   `json:"type"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -73,6 +74,26 @@ func TestSchemaDocMatchesCode(t *testing.T) {
 		}
 		if _, ok := doc.Properties[tag]; !ok {
 			t.Errorf("envelope field %q missing from schema doc", tag)
+		}
+	}
+
+	for field, wantType := range map[string]string{
+		"upstream_event_id": "string",
+		"prompt_id":         "string",
+		"message_id":        "string",
+		"parent_id":         "string",
+		"request_id":        "string",
+		"sequence":          "integer",
+		"transport":         "string",
+		"source_version":    "string",
+	} {
+		property, ok := doc.Properties[field]
+		if !ok {
+			t.Errorf("additive capture field %q missing from schema doc", field)
+			continue
+		}
+		if property.Type != wantType {
+			t.Errorf("schema property %q type = %q, want %q", field, property.Type, wantType)
 		}
 	}
 }

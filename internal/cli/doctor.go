@@ -1,20 +1,25 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"agentfirehose/internal/adapters/claudecode"
+	"agentfirehose/internal/adapters/codex"
 	"agentfirehose/internal/adapters/opencode"
+	"agentfirehose/internal/capturemeta"
 )
 
 // Check is one doctor validation result.
 type Check struct {
-	Name   string `json:"name"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail"`
+	Name            string `json:"name"`
+	OK              bool   `json:"ok"`
+	Detail          string `json:"detail"`
+	Transport       string `json:"transport,omitempty"`
+	Fidelity        string `json:"fidelity,omitempty"`
+	SupportedEvents int    `json:"supported_events,omitempty"`
+	FilteredEvents  int    `json:"filtered_events,omitempty"`
 }
 
 // Doctor validates that capture paths are wired correctly.
@@ -41,25 +46,24 @@ func Doctor(cfg Config, home string) []Check {
 	})
 
 	// claude-code hooks present
-	hookOK := false
-	if data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err == nil {
-		var settings map[string]any
-		if json.Unmarshal(data, &settings) == nil {
-			if hooks, err := json.Marshal(settings["hooks"]); err == nil {
-				hookOK = strings.Contains(string(hooks), "hook-forward --source claude-code")
-			}
-		}
-	}
+	hookOK := ClaudeHooksConfigured(home)
 	checks = append(checks, Check{
 		Name: "claude-code hooks", OK: hookOK,
-		Detail: pick(hookOK, "wired in ~/.claude/settings.json", "run: firehose install claude-code"),
+		Detail:          pick(hookOK, "wired in ~/.claude/settings.json", "run: firehose install claude-code"),
+		Transport:       "hook",
+		Fidelity:        string(capturemeta.SupportedInBandHook),
+		SupportedEvents: len(claudecode.Manifest.Mapped),
+		FilteredEvents:  len(claudecode.Manifest.Filtered),
 	})
 
 	codexHookOK := CodexHooksConfigured(home)
 	checks = append(checks, Check{
-		Name:   "codex hooks",
-		OK:     codexHookOK,
-		Detail: pick(codexHookOK, "configured in ~/.codex/hooks.json; review trust in Codex /hooks", "run: firehose install codex"),
+		Name:            "codex hooks",
+		OK:              codexHookOK,
+		Detail:          pick(codexHookOK, "configured in ~/.codex/hooks.json; review trust in Codex /hooks", "run: firehose install codex"),
+		Transport:       "hook",
+		Fidelity:        string(capturemeta.SupportedInBandHook),
+		SupportedEvents: len(CodexHookEvents),
 	})
 
 	// opencode plugin present
@@ -67,15 +71,24 @@ func Doctor(cfg Config, home string) []Check {
 	_, operr := os.Stat(pluginPath)
 	checks = append(checks, Check{
 		Name: "opencode plugin", OK: operr == nil,
-		Detail: pick(operr == nil, pluginPath, "run: firehose install opencode"),
+		Detail:          pick(operr == nil, pluginPath, "run: firehose install opencode"),
+		Transport:       "plugin",
+		Fidelity:        string(capturemeta.SupportedPassiveStream),
+		SupportedEvents: len(opencode.Manifest.Mapped),
+		FilteredEvents:  len(opencode.Manifest.Filtered),
 	})
 
 	// Rollout tailing is independent of hooks and remains the assistant-message
 	// transport.
 	_, cerr := os.Stat(cfg.CodexDir)
 	checks = append(checks, Check{
-		Name: "codex sessions", OK: cerr == nil,
-		Detail: pick(cerr == nil, cfg.CodexDir, "no Codex session directory found (start Codex once)"),
+		Name:            "codex sessions",
+		OK:              cerr == nil,
+		Detail:          pick(cerr == nil, cfg.CodexDir, "no Codex session directory found (start Codex once)"),
+		Transport:       "durable-jsonl",
+		Fidelity:        string(capturemeta.PassiveInternalFile),
+		SupportedEvents: len(codex.DurableManifest.Mapped),
+		FilteredEvents:  len(codex.DurableManifest.Filtered),
 	})
 
 	return checks

@@ -12,11 +12,31 @@ import (
 	"agentfirehose/internal/adapters/opencode"
 )
 
-// hookedEvents are the Claude Code hook events the firehose subscribes to.
-var hookedEvents = []string{
-	"SessionStart", "SessionEnd", "UserPromptSubmit",
-	"PreToolUse", "PostToolUse", "Notification",
-	"Stop", "SubagentStop", "PreCompact",
+// ClaudeHookEvents is the observational Claude Code hook surface Firehose
+// installs. WorktreeCreate is excluded because registering it replaces
+// Claude's worktree implementation and a neutral observer cannot return the
+// required path. FileChanged is excluded until the user supplies a bounded
+// watch list.
+var ClaudeHookEvents = []string{
+	"SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
+	"PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
+	"PostToolUseFailure", "PostToolBatch", "Notification", "SubagentStart",
+	"SubagentStop", "TaskCreated", "TaskCompleted", "Stop", "StopFailure",
+	"TeammateIdle", "InstructionsLoaded", "ConfigChange", "CwdChanged",
+	"WorktreeRemove", "PreCompact", "PostCompact", "Elicitation",
+	"ElicitationResult", "SessionEnd", "MessageDisplay",
+}
+
+var claudeHooksWithoutMatchers = map[string]bool{
+	"UserPromptSubmit": true,
+	"PostToolBatch":    true,
+	"Stop":             true,
+	"TeammateIdle":     true,
+	"TaskCreated":      true,
+	"TaskCompleted":    true,
+	"WorktreeRemove":   true,
+	"CwdChanged":       true,
+	"MessageDisplay":   true,
 }
 
 // CodexHookEvents is the complete lifecycle/tool hook surface supported by
@@ -33,21 +53,16 @@ var CodexHookEvents = []string{
 func InstallClaudeCode(home, binPath string) error {
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	settings := map[string]any{}
+	original := []byte("{}")
+	existed := false
 	if data, err := os.ReadFile(settingsPath); err == nil {
+		existed = true
+		original = data
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("existing %s is not valid JSON, refusing to modify: %w", settingsPath, err)
 		}
-		if err := os.WriteFile(settingsPath+".bak", data, 0o644); err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
-	} else {
-		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
-			return err
-		}
-		// still create a backup marker so the doctor/test flow is uniform
-		if err := os.WriteFile(settingsPath+".bak", []byte("{}"), 0o644); err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
 	command := quoteCommandPath(binPath, runtime.GOOS) + " hook-forward --source claude-code"
@@ -55,18 +70,32 @@ func InstallClaudeCode(home, binPath string) error {
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	for _, evName := range hookedEvents {
+	changed := false
+	for _, evName := range ClaudeHookEvents {
 		entries, _ := hooks[evName].([]any)
-		if hasCommand(entries, command) {
-			continue
+		matcher := ".*"
+		if claudeHooksWithoutMatchers[evName] {
+			matcher = ""
 		}
-		entry := map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": command}},
+		var entryChanged bool
+		entries, entryChanged = ensureClaudeHook(entries, command, matcher)
+		if entryChanged {
+			hooks[evName] = entries
+			changed = true
 		}
-		if evName == "PreToolUse" || evName == "PostToolUse" {
-			entry["matcher"] = "*"
+	}
+	if !changed && existed {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(settingsPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(settingsPath+".bak", original, 0o600); err != nil {
+			return fmt.Errorf("backup: %w", err)
 		}
-		hooks[evName] = append(entries, entry)
+	} else if err != nil {
+		return fmt.Errorf("backup: %w", err)
 	}
 	settings["hooks"] = hooks
 
@@ -74,7 +103,50 @@ func InstallClaudeCode(home, binPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath, append(out, '\n'), 0o644)
+	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
+}
+
+func ensureClaudeHook(entries []any, command, matcher string) ([]any, bool) {
+	for _, rawEntry := range entries {
+		entry, _ := rawEntry.(map[string]any)
+		handlers, _ := entry["hooks"].([]any)
+		for _, rawHandler := range handlers {
+			handler, _ := rawHandler.(map[string]any)
+			if handler["command"] != command {
+				continue
+			}
+			changed := false
+			if handler["type"] != "command" {
+				handler["type"] = "command"
+				changed = true
+			}
+			if handler["async"] != true {
+				handler["async"] = true
+				changed = true
+			}
+			if matcher == "" {
+				if _, ok := entry["matcher"]; ok {
+					delete(entry, "matcher")
+					changed = true
+				}
+			} else if entry["matcher"] != matcher {
+				entry["matcher"] = matcher
+				changed = true
+			}
+			return entries, changed
+		}
+	}
+
+	handler := map[string]any{
+		"type":    "command",
+		"command": command,
+		"async":   true,
+	}
+	entry := map[string]any{"hooks": []any{handler}}
+	if matcher != "" {
+		entry["matcher"] = matcher
+	}
+	return append(entries, entry), true
 }
 
 func hasCommand(entries []any, command string) bool {
@@ -89,6 +161,53 @@ func hasCommand(entries []any, command string) bool {
 		}
 	}
 	return false
+}
+
+// ClaudeHooksConfigured verifies complete, current Firehose-owned Claude hook
+// coverage and a live forwarding executable.
+func ClaudeHooksConfigured(home string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	for _, name := range ClaudeHookEvents {
+		entries, _ := hooks[name].([]any)
+		found := false
+		for _, rawEntry := range entries {
+			entry, _ := rawEntry.(map[string]any)
+			if claudeHooksWithoutMatchers[name] {
+				if _, ok := entry["matcher"]; ok {
+					continue
+				}
+			} else if entry["matcher"] != ".*" {
+				continue
+			}
+			handlers, _ := entry["hooks"].([]any)
+			for _, rawHandler := range handlers {
+				handler, _ := rawHandler.(map[string]any)
+				command, _ := handler["command"].(string)
+				if strings.HasSuffix(command, " hook-forward --source claude-code") &&
+					handler["type"] == "command" &&
+					handler["async"] == true &&
+					commandAvailable(strings.TrimSuffix(command, " --source claude-code")) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // InstallCodex merges observational forwarding hooks into user-wide

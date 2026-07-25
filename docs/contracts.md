@@ -26,6 +26,10 @@ Evolution rules:
   causally related events across sessions when a source supplies one — and
   `turn_id` — optional, groups events within a source-native turn — and
   `call_id` — optional, the source-native tool/command correlation id;
+  `upstream_event_id`, `prompt_id`, `message_id`, `parent_id`, and
+  `request_id` — optional source-native correlation identifiers; `sequence`
+  — an optional native ordering value within its documented source scope;
+  `transport` and `source_version` — optional capture provenance;
   `source_time` / `capture_time` — the source clock and Firehose observation
   clock; and `repo_id` / `worktree_id` — observable local Git identities —
   were added additively within version 1.)
@@ -98,6 +102,10 @@ An adapter maps a source's native payloads to canonical envelopes. Rules:
   is the engine's job.
 - An adapter may deliberately skip payloads that carry no signal; a skip is
   not an error.
+- Deep adapters publish a capability manifest declaring source schema,
+  transport, fidelity, mapped native events, and deliberately filtered
+  events. Unknown native types surface as bounded `adapter.unknown_event`
+  warnings rather than disappearing silently.
 
 Current mappings (details in [adapters.md](adapters.md)):
 
@@ -128,7 +136,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /sessions/{id}` | all events for one session, oldest first |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
-| `GET /doctor` | adapter wiring checks `[{name, ok, detail}]` |
+| `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
 | `POST /install/{adapter}` | wire an adapter (claude-code \| codex \| opencode); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 

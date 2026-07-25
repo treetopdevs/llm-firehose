@@ -109,10 +109,13 @@ func TestFileEdited(t *testing.T) {
 	}
 }
 
-func TestUnknownSkipped(t *testing.T) {
+func TestUnknownBecomesSafeDriftWarning(t *testing.T) {
 	ev := parse(t, `{"type":"lsp.client.diagnostics","properties":{}}`)
-	if ev != nil {
-		t.Fatalf("unknown type should be skipped, got %+v", ev)
+	if ev == nil || ev.Category != event.CategoryMeta || ev.Severity != event.SeverityWarn {
+		t.Fatalf("unknown type => %+v, want meta/warn", ev)
+	}
+	if ev.Name != "adapter.unknown_event" || ev.Transport != "plugin" || ev.Raw != "" {
+		t.Errorf("unsafe drift warning: %+v", ev)
 	}
 }
 
@@ -132,5 +135,26 @@ func TestWritePlugin(t *testing.T) {
 	js := string(data)
 	if !strings.Contains(js, `["/Applications/Agent Firehose/firehosed","hook-forward","--source","opencode"]`) {
 		t.Errorf("plugin should use the configured fail-silent executable:\n%s", js)
+	}
+	for _, want := range []string{
+		`const mappedTypes = new Set(`,
+		`const filteredTypes = new Set(`,
+		`const warnedUnknownTypes = new Set()`,
+		`part.type === "text"`,
+		`part.type === "reasoning"`,
+		`status !== "completed" && status !== "error"`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("plugin missing manifest-driven filter %q:\n%s", want, js)
+		}
+	}
+	if strings.Count(js, `"session.created"`) != 1 {
+		t.Errorf("mapped type list drifted or was duplicated:\n%s", js)
+	}
+}
+
+func TestManifestIsValid(t *testing.T) {
+	if err := Manifest.Validate(); err != nil {
+		t.Fatalf("manifest: %v", err)
 	}
 }

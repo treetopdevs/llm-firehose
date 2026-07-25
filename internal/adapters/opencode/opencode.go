@@ -9,11 +9,36 @@ import (
 	"path/filepath"
 	"time"
 
+	"agentfirehose/internal/capturemeta"
 	"agentfirehose/internal/event"
 )
 
 // Source is the agent family identifier for OpenCode events.
 const Source = "opencode"
+
+// Manifest is the parser/plugin coverage contract. The generated plugin uses
+// the same lists so high-volume filters cannot drift independently.
+var Manifest = capturemeta.Manifest{
+	Source:    Source,
+	Transport: "plugin",
+	Fidelity:  capturemeta.SupportedPassiveStream,
+	Mapped: []string{
+		"session.idle",
+		"session.created",
+		"session.deleted",
+		"session.error",
+		"message.updated",
+		"message.part.updated",
+		"permission.updated",
+		"permission.replied",
+		"file.edited",
+	},
+	Filtered: []string{
+		"message.part.delta",
+		"message.reasoning.delta",
+	},
+	SourceSchema: "opencode@1.18.x",
+}
 
 type busEvent struct {
 	Type       string          `json:"type"`
@@ -45,6 +70,7 @@ func Parse(raw []byte) (*event.Event, error) {
 		Agent:       "opencode",
 		SessionID:   sessionID(props),
 		CWD:         be.Directory,
+		Transport:   Manifest.Transport,
 		Name:        be.Type,
 		Severity:    event.SeverityInfo,
 		Payload:     props,
@@ -97,7 +123,19 @@ func Parse(raw []byte) (*event.Event, error) {
 		file, _ := props["file"].(string)
 		ev.Summary = "edited " + filepath.Base(file)
 	default:
-		return nil, nil
+		sourceVersion, _ := props["version"].(string)
+		warning := capturemeta.UnknownEvent(
+			Source,
+			Manifest.Transport,
+			be.Type,
+			sourceVersion,
+			"native bus event is not present in the OpenCode manifest",
+			captured,
+		)
+		warning.Agent = "opencode"
+		warning.SessionID = ev.SessionID
+		warning.CWD = ev.CWD
+		return &warning, nil
 	}
 	return ev, nil
 }

@@ -19,6 +19,14 @@ export interface FirehoseEvent {
   trace_id?: string;
   turn_id?: string;
   call_id?: string;
+  upstream_event_id?: string;
+  prompt_id?: string;
+  message_id?: string;
+  parent_id?: string;
+  request_id?: string;
+  sequence?: number;
+  transport?: string;
+  source_version?: string;
   category: string;
   name?: string;
   severity?: string;

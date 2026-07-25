@@ -10,22 +10,30 @@ func sample() Event {
 	sourceTime := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	captureTime := sourceTime.Add(2 * time.Second)
 	return Event{
-		ID:          "ev-1",
-		Time:        sourceTime,
-		SourceTime:  &sourceTime,
-		CaptureTime: &captureTime,
-		Source:      "claude-code",
-		Agent:       "claude",
-		SessionID:   "sess-abc",
-		Category:    CategoryTool,
-		Name:        "PostToolUse:Bash",
-		Severity:    SeverityInfo,
-		Summary:     "ran `go test ./...`",
-		Repo:        "llmlog",
-		CWD:         "/Users/x/llmlog",
-		RepoID:      "/Users/x/llmlog/.git",
-		WorktreeID:  "/Users/x/llmlog",
-		Payload:     map[string]any{"command": "go test ./..."},
+		ID:              "ev-1",
+		Time:            sourceTime,
+		SourceTime:      &sourceTime,
+		CaptureTime:     &captureTime,
+		Source:          "claude-code",
+		Agent:           "claude",
+		SessionID:       "sess-abc",
+		UpstreamEventID: "native-1",
+		PromptID:        "prompt-1",
+		MessageID:       "message-1",
+		ParentID:        "parent-1",
+		RequestID:       "request-1",
+		Sequence:        int64ptr(42),
+		Transport:       "hook",
+		SourceVersion:   "2.1.218",
+		Category:        CategoryTool,
+		Name:            "PostToolUse:Bash",
+		Severity:        SeverityInfo,
+		Summary:         "ran `go test ./...`",
+		Repo:            "llmlog",
+		CWD:             "/Users/x/llmlog",
+		RepoID:          "/Users/x/llmlog/.git",
+		WorktreeID:      "/Users/x/llmlog",
+		Payload:         map[string]any{"command": "go test ./..."},
 	}
 }
 
@@ -41,6 +49,10 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 	if got.ID != ev.ID || !got.Time.Equal(ev.Time) || got.Source != ev.Source ||
 		got.SessionID != ev.SessionID || got.Category != ev.Category ||
+		got.UpstreamEventID != ev.UpstreamEventID || got.PromptID != ev.PromptID ||
+		got.MessageID != ev.MessageID || got.ParentID != ev.ParentID ||
+		got.RequestID != ev.RequestID || got.Sequence == nil || *got.Sequence != *ev.Sequence ||
+		got.Transport != ev.Transport || got.SourceVersion != ev.SourceVersion ||
 		got.Name != ev.Name || got.Severity != ev.Severity || got.Summary != ev.Summary ||
 		got.CWD != ev.CWD || got.SourceTime == nil || !got.SourceTime.Equal(*ev.SourceTime) ||
 		got.CaptureTime == nil || !got.CaptureTime.Equal(*ev.CaptureTime) ||
@@ -50,6 +62,10 @@ func TestJSONRoundTrip(t *testing.T) {
 	if got.Payload["command"] != "go test ./..." {
 		t.Errorf("payload lost: %+v", got.Payload)
 	}
+}
+
+func int64ptr(value int64) *int64 {
+	return &value
 }
 
 func TestValidate(t *testing.T) {

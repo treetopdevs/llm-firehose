@@ -13,6 +13,13 @@ Every capture path produces the same normalized envelope (`internal/event`):
 }
 ```
 
+Optional source-native correlation fields (`upstream_event_id`, `prompt_id`,
+`message_id`, `parent_id`, `request_id`, and `sequence`) survive the spool,
+export, API, and clients unchanged. `transport` records how the observation
+arrived and `source_version` is present only when the source supplied or the
+adapter actually observed it. See [adapter-capabilities.md](adapter-capabilities.md)
+for fidelity and deliberate-filter coverage.
+
 Categories: `session, prompt, message, tool, file, permission, shell, error, meta`.
 Severities: `info, notice, warn, error`.
 
@@ -33,27 +40,40 @@ Events reach the viewer two ways:
 
 `firehose install claude-code` merges hook entries into
 `~/.claude/settings.json` (a `.bak` backup is written first; existing hooks
-are preserved; reruns are idempotent). Each hook pipes its JSON payload to
-`firehose hook-forward --source claude-code`, which never lets capture errors
-interrupt Claude Code and records a best-effort warning when the spool remains
-writable.
+are preserved; reruns are idempotent). Each Firehose-owned command hook is
+asynchronous and pipes its JSON payload to
+`hook-forward --source claude-code`, which always returns neutral success,
+never makes a policy decision, and records a best-effort warning when the
+spool remains writable.
 
-Hooked events: SessionStart, SessionEnd, UserPromptSubmit, PreToolUse,
-PostToolUse, Notification, Stop, SubagentStop, PreCompact. Mapping highlights:
-`Bash` tools → `shell`, `Edit/Write/MultiEdit/NotebookEdit` → `file`,
-`Notification` → `permission`.
+Firehose installs the current observational lifecycle, prompt, tool,
+permission, notification, subagent/task/team, stop/failure, instruction,
+configuration/CWD, compaction, elicitation, session, and display-metadata
+events. `WorktreeCreate` is excluded because merely registering that hook
+replaces Claude's built-in worktree implementation and requires a path result;
+`FileChanged` is excluded until a bounded filename watch list is configured.
+Doctor reports those gaps rather than treating them as complete coverage.
+
+The safe payload is an explicit metadata allowlist: native prompt/tool/agent
+IDs, permission mode, effort, tool name/status/duration/interruption,
+notification type, and file path for file tools. Prompt text, assistant text,
+tool arguments/results, notification bodies, transcript paths, titles, and
+elicitation values remain only in `raw`, so balanced/minimal persistence
+drops them. `Bash` tools map to `shell`; file tools map to `file`.
 
 ## Codex (deep)
 
 Codex has two complementary observational transports:
 
-- The engine tails `~/.codex/sessions/**/rollout-*.jsonl`. On first activation
-  it baselines existing files without importing history. Per-file offsets and
-  parser context are checkpointed only after a synchronous spool append, so
-  lines written while the daemon is down are recovered at least once after
-  restart. A corrupt checkpoint is quarantined, safely re-baselined, and
-  surfaced as a warning instead of disabling capture. Rollouts are
-  authoritative for streaming assistant commentary.
+- The engine tails `~/.codex/sessions/**/rollout-*.jsonl` through the reusable
+  `internal/durablejsonl` core. On first activation it baselines existing
+  files without importing history. Per-file offsets and parser context are
+  checkpointed only after a synchronous spool append, so lines written while
+  the daemon is down are recovered at least once after restart. Partial
+  records wait for completion; truncation, replacement, and rotation reset
+  only the affected cursor. A corrupt checkpoint is quarantined, safely
+  re-baselined, and surfaced as a warning instead of disabling capture.
+  Rollouts are authoritative for streaming assistant commentary.
 - `firehose install codex` merges all current lifecycle, permission,
   compaction, subagent, and tool hooks into user-wide `~/.codex/hooks.json`.
   It preserves existing hooks, writes `hooks.json.bak`, and is idempotent.
@@ -90,6 +110,12 @@ The plugin subscribes to the OpenCode event bus and forwards each event through
 the exact binary that installed it using
 `hook-forward --source opencode`. The forwarder is fail-silent, and desktop
 installs do not depend on a separate `firehose` binary being on `PATH`.
+
+The generated plugin is driven by the same mapped/filtered manifest lists as
+the Go parser. It drops text/reasoning deltas and nonterminal tool updates
+before spawning a process, forwards mapped event families, and forwards at
+most one observation per unknown native type per plugin run. The Go adapter
+turns that observation into a bounded `adapter.unknown_event` warning.
 
 Mapping highlights: `session.*` → session (errors → error), `message.updated`
 → prompt/message by role, tool parts → shell/file/tool once they reach a
