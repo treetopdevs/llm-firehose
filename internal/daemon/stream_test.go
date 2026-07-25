@@ -79,6 +79,26 @@ func waitFor(t *testing.T, ch <-chan event.Event, want string) event.Event {
 	}
 }
 
+func capturedCodexLine(t *testing.T, marker string) string {
+	t.Helper()
+	f, err := os.Open(filepath.Join("..", "adapters", "codex", "testdata", "rollout_current_sanitized.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if strings.Contains(sc.Text(), marker) {
+			return sc.Text()
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("captured Codex fixture has no line containing %q", marker)
+	return ""
+}
+
 func TestStreamDeliversIngestedEvents(t *testing.T) {
 	cfg := testConfig(t)
 	ts := startedServer(t, cfg)
@@ -260,6 +280,148 @@ waitPrompt:
 	}
 	if !found {
 		t.Fatal("sess-codex-1 not in /sessions")
+	}
+}
+
+func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.CodexDir = t.TempDir()
+	home := t.TempDir()
+	rolloutDir := filepath.Join(cfg.CodexDir, "2026", "07", "25")
+	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rolloutPath := filepath.Join(rolloutDir, "rollout-restart.jsonl")
+	sessionLine := capturedCodexLine(t, `"type":"session_meta"`)
+
+	start := func() (*httptest.Server, func()) {
+		s := New(cfg, home, "test-version")
+		s.TailInterval = 10 * time.Millisecond
+		s.WatchInterval = 10 * time.Millisecond
+		s.ProcLister = &fakeLister{}
+		ctx, cancel := context.WithCancel(context.Background())
+		s.Start(ctx)
+		ts := httptest.NewServer(s.Handler())
+		var once sync.Once
+		stop := func() {
+			once.Do(func() {
+				cancel()
+				s.Wait()
+				ts.Close()
+			})
+		}
+		return ts, stop
+	}
+	readEvents := func(url string) []event.Event {
+		t.Helper()
+		resp, err := http.Get(url + "/events")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var evs []event.Event
+		if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
+			t.Fatal(err)
+		}
+		return evs
+	}
+	waitEvents := func(url string, n int) []event.Event {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			evs := readEvents(url)
+			if len(evs) >= n {
+				return evs
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("/events has %d events, want at least %d", len(evs), n)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	ts1, stop1 := start()
+	t.Cleanup(stop1)
+	if err := os.WriteFile(rolloutPath, []byte(sessionLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := waitEvents(ts1.URL, 1)[0]
+	stop1()
+
+	missedLine := capturedCodexLine(t, `"type":"agent_message"`)
+	f, err := os.OpenFile(rolloutPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(missedLine + "\n"); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Model the crash window after the first spool append but before the
+	// cursor advance. The pending stable id makes the restart replay
+	// at-least-once without turning it into a second logical observation.
+	statePath := filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json")
+	state := map[string]any{
+		"saved_at": time.Now().UTC(),
+		"files": map[string]any{
+			rolloutPath: map[string]any{
+				"offset":       0,
+				"parser":       map[string]any{},
+				"pending_id":   first.ID,
+				"pending_next": len(sessionLine) + 1,
+			},
+		},
+	}
+	stateData, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, stateData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts2, stop2 := start()
+	t.Cleanup(stop2)
+	evs := waitEvents(ts2.URL, 3)
+	counts := map[string]int{}
+	for _, ev := range evs {
+		counts[ev.ID]++
+	}
+	if counts[first.ID] != 2 {
+		t.Fatalf("raw at-least-once replay count for %q = %d, want 2", first.ID, counts[first.ID])
+	}
+	if len(counts) != 2 {
+		t.Fatalf("unique stable ids = %d, want 2 across replay plus missed line: %+v", len(counts), evs)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		resp, err := http.Get(ts2.URL + "/sessions")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sessions []Session
+		err = json.NewDecoder(resp.Body).Decode(&sessions)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, session := range sessions {
+			if session.ID == "019f944c-e8a2-7092-b9e2-1bdfe7ec4ded" && session.Events == 2 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deduplicated restarted session did not reach 2 logical events: %+v", sessions)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

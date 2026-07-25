@@ -77,6 +77,12 @@ Hook and rollout observations both remain in the spool. Live and session
 presentation coalesce exact IDs and correlated observations within five
 seconds while keeping start and completion phases separate.
 
+Rollout events preserve the rollout timestamp as both `time` and
+`source_time`, and separately stamp `capture_time`. If a daemon stops after a
+spool append but before advancing its cursor, restart may replay the same
+stable ID into the append-only spool; rebuilt/live indexes count that ID once
+and still ingest later lines written while the daemon was down.
+
 ## OpenCode (deep)
 
 `firehose install opencode` writes `~/.config/opencode/plugin/agent-firehose.js`.

@@ -68,6 +68,10 @@ daemonless viewing, direct Codex observations are redacted before display.
   `O_APPEND` so concurrent producers never interleave.
 - The spool is the canonical, append-only source of truth. Derived stores
   (indexes, caches) must be rebuildable from it.
+- Capture is at-least-once across a crash window: the spool may contain the
+  same stable event `id` more than once after replay. Derived indexes and
+  presentation deduplicate exact IDs; the append-only spool and export retain
+  the observations as written.
 - Readers skip unparseable lines; the tailer surfaces them as `meta`/`warn`
   events instead of failing.
 
