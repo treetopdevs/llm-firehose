@@ -14,3 +14,4 @@ apps/tauri-desktop/src-tauri/target/
 apps/tauri-desktop/src-tauri/binaries/
 apps/tauri-desktop/src-tauri/gen/schemas/
 .playwright-mcp/
+/.specstory
