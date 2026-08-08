@@ -431,23 +431,31 @@ func (w *Watcher) save() error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	cleanup := func() { os.Remove(tmpPath) }
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
+		cleanup()
 		return err
 	}
 	if _, err := tmp.Write(append(data, '\n')); err != nil {
 		tmp.Close()
+		cleanup()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
+		cleanup()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		cleanup()
 		return err
 	}
-	return os.Rename(tmpPath, w.options.StatePath)
+	if err := os.Rename(tmpPath, w.options.StatePath); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 func (w *Watcher) baseline(path string) (*fileState, cursorFile, error) {
