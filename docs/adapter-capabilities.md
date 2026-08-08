@@ -45,12 +45,17 @@ two permission families keep their pre-corpus mappings as unproven inherited
 shapes (see the opencode testdata README). Five further observed bus types
 (`plugin.added`, `catalog.updated`, `integration.updated`,
 `reference.updated`, `project.directories.updated`) deliberately surface as
-bounded drift warnings. The Gemini hook adapter remains
-fixture-blocked: the installed client has no local event corpus, and no
-additional authenticated model run was authorized to capture one. Pi and
-GitHub Copilot CLI are not installed, so their adapter milestones also remain
-blocked by the plan's real-fixture STOP condition. No payload is invented to
-claim support.
+bounded drift warnings. The Gemini hook adapter is blocked as
+planned: Google decommissioned classic Gemini CLI service for individual
+accounts (the installed 0.46.0 client fails auth with `IneligibleTierError
+UNSUPPORTED_CLIENT`), so its 11-hook fixture matrix now requires a paid API
+key or enterprise license. Its planned replacement is an Antigravity CLI
+hooks adapter on that product's five-event contract — see the
+[plan amendment](plans/2026-07-25-agent-capture-expansion.md#priority-5--add-gemini-cli-hooks)
+and [Antigravity research](research/2026-08-07-antigravity-capture-surface-research.md).
+Pi and GitHub Copilot CLI are not installed, so their adapter milestones also
+remain blocked by the plan's real-fixture STOP condition. No payload is
+invented to claim support.
 
 Claude `WorktreeCreate` is deliberately not installed: registering that hook
 replaces Claude's built-in worktree creation, and a neutral observer cannot

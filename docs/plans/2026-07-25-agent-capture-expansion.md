@@ -576,6 +576,38 @@ adapter is down.
 
 ## Priority 5 — Add Gemini CLI hooks
 
+> **Amendment (2026-08-07): blocked as written; replaced by an Antigravity
+> hooks milestone.** Google decommissioned classic Gemini CLI service for
+> individual accounts on 2026-06-18; the locally installed 0.46.0 client
+> fails auth with `IneligibleTierError UNSUPPORTED_CLIENT`, so the required
+> real 11-hook fixture matrix cannot be captured without a paid API key or
+> enterprise license — the fixture/auth STOP applies. Full findings:
+> [Antigravity capture surface research](../research/2026-08-07-antigravity-capture-surface-research.md).
+>
+> The milestone below is **shelved, not deleted**: the 11-hook contract
+> survives upstream (gemini-cli remains maintained; enterprise/API-key tiers
+> still serve it) and this design becomes executable again if such
+> credentials are ever authorized.
+>
+> **Replacement milestone — Antigravity CLI hooks
+> (`internal/adapters/antigravity/`):** Antigravity (`agy` 1.1.x) documents a
+> five-event hook contract (`PreToolUse`, `PostToolUse`, `PreInvocation`,
+> `PostInvocation`, `Stop`) configured in `~/.gemini/config/hooks.json`, with
+> `conversationId`, `workspacePaths`, `modelName`, `transcriptPath`, and
+> `artifactDirectoryPath` inputs. Constraints carried over from this plan:
+> real `agy` fixtures first (no invented payloads; record observed version);
+> post-event-only install — `PostToolUse` and `PostInvocation` by default,
+> no `PreToolUse` (its output is a permission decision), and `Stop` only
+> after its neutral non-blocking response is fixture-proven, since Stop
+> output is a termination decision with documented hang bugs; merge-with-
+> backup and idempotent install into the shared `hooks.json`, never
+> overwriting other tools' hooks; document that session start/end,
+> notification, compression, and tool-selection coverage does not exist in
+> this source. No local OTel route exists (Antigravity telemetry is
+> Google-bound only). Internal stores (conversation SQLite, `brain/`,
+> `history.jsonl`) stay out of scope per this plan's existing rule; the
+> research doc records the summaries-DB seam should that ever be re-scoped.
+
 ### Add a deep Gemini hook adapter
 
 **Goal:** Capture the safe metadata from Gemini's 11 official hooks using the
