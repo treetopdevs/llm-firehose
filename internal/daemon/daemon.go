@@ -335,14 +335,18 @@ func (s *Server) handleEmit(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "generic"
 	}
+	// `event` is an additive, optional parameter: sources whose payloads
+	// carry no event-name field (antigravity) supply the native hook event
+	// name here; every other source ignores it.
+	eventName := r.URL.Query().Get("event")
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// EmitLocal, never Emit: the daemon is the engine and must not proxy
-	// emits back to its own address.
-	if err := cli.EmitLocal(s.config(), source, raw); err != nil {
+	// EmitLocalNamed, never Emit: the daemon is the engine and must not
+	// proxy emits back to its own address.
+	if err := cli.EmitLocalNamed(s.config(), source, eventName, raw); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

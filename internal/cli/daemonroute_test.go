@@ -7,6 +7,7 @@ import (
 	"context"
 	"net"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,7 +64,7 @@ func TestHookForwardRoutesThroughDaemonAndReturnsNeutralJSON(t *testing.T) {
 	}
 	var out bytes.Buffer
 	raw := `{"session_id":"s-hook","turn_id":"t-hook","hook_event_name":"Stop","last_assistant_message":"done"}`
-	if err := cli.HookForward(cfg, "codex-hook", strings.NewReader(raw), &out); err != nil {
+	if err := cli.HookForward(cfg, "codex-hook", "", strings.NewReader(raw), &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "{}\n" {
@@ -225,5 +226,35 @@ func TestServeAndShutdown(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve did not shut down after cancel")
+	}
+}
+
+func TestHookForwardAntigravityThreadsEventNameThroughDaemonEmit(t *testing.T) {
+	daemonAddr, daemonSpool := startDaemon(t)
+	cfg := cli.Config{
+		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
+		PrivacyMode: "balanced",
+		DaemonAddr:  daemonAddr,
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "adapters", "antigravity", "testdata", "post_tool_use_run_command.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	// Antigravity payloads carry no event-name field; the additive `event`
+	// query parameter must carry it across /emit.
+	if err := cli.HookForward(cfg, "antigravity", "PostToolUse", bytes.NewReader(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "{}\n" {
+		t.Fatalf("hook stdout = %q", out.String())
+	}
+	evs, _ := spool.ReadLastN(daemonSpool, 10)
+	if len(evs) != 1 || evs[0].Source != "antigravity" || evs[0].Name != "PostToolUse:run_command" {
+		t.Fatalf("daemon spool = %+v", evs)
+	}
+	lEvs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	if len(lEvs) != 0 {
+		t.Fatalf("local spool must stay empty when daemon handled the emit: %+v", lEvs)
 	}
 }

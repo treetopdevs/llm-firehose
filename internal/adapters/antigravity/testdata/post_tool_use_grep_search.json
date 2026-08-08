@@ -1,0 +1,22 @@
+{
+ "artifactDirectoryPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+ "conversationId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+ "error": "",
+ "modelName": "gemini-3-flash-agent",
+ "stepIdx": 91,
+ "toolCall": {
+  "args": {
+   "IsRegex": false,
+   "MatchPerLine": true,
+   "Query": "SECRET-QUERY-MARKER",
+   "SearchPath": "/tmp/agent-firehose-agy-fixture/work",
+   "toolAction": "Searching for client.New",
+   "toolSummary": "SECRET-TOOLSUMMARY-MARKER"
+  },
+  "name": "grep_search"
+ },
+ "transcriptPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb/.system_generated/logs/transcript_full.jsonl",
+ "workspacePaths": [
+  "/tmp/agent-firehose-agy-fixture/work"
+ ]
+}

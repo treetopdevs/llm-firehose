@@ -121,6 +121,7 @@ Current mappings (details in [adapters.md](adapters.md)):
 | `claude-code` | hooks → fail-silent `hook-forward --source claude-code` | lifecycle hooks per event |
 | `codex` | durable rollout tail + observational `codex-hook` forwarding | rollout messages plus installable lifecycle/tool hooks |
 | `opencode` | plugin → fail-silent `hook-forward --source opencode` | bus events |
+| `antigravity` | hooks → fail-silent `hook-forward --source antigravity --event <name>` | post-only lifecycle/tool hooks; payloads carry no event-name field, so the forwarder tags each registration |
 | `generic` | `firehose ingest` / `emit --source generic` | envelope passthrough or meta-wrap |
 | `procwatch` | engine polls `ps` | agent process lifecycle |
 
@@ -138,7 +139,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /events?limit=N` | recent events, oldest first (default 500) |
 | `GET /events/stream` | live feed, Server-Sent Events (`data: <envelope JSON>`) |
 | `POST /events` | ingest NDJSON envelopes; returns `{ingested: n}` |
-| `POST /emit?source=S` | normalize one raw source payload; 204 on success |
+| `POST /emit?source=S` | normalize one raw source payload; 204 on success. Additive optional `event=<name>` parameter (schema v1): the native event name for sources whose payloads carry none (antigravity); other sources ignore it |
 | `POST /v1/logs` | opt-in loopback OTLP/HTTP JSON logs; `{}` on accepted batch |
 | `POST /v1/metrics` | opt-in loopback OTLP/HTTP JSON metrics; `{}` on accepted batch |
 | `GET /sessions` | session summaries (derived index), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
@@ -146,7 +147,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
-| `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode); `{ok, detail}` |
+| `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 
 Session, trace, and file queries are served from an in-memory index derived

@@ -620,7 +620,7 @@ func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) 
 	cfg := testConfig(t)
 	cfg.DaemonAddr = "127.0.0.1:1"
 	var out bytes.Buffer
-	if err := HookForward(cfg, "codex-hook", strings.NewReader(`{"session_id":"s1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hello"}`), &out); err != nil {
+	if err := HookForward(cfg, "codex-hook", "", strings.NewReader(`{"session_id":"s1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hello"}`), &out); err != nil {
 		t.Fatalf("HookForward: %v", err)
 	}
 	if out.String() != "{}\n" {
@@ -632,7 +632,7 @@ func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) 
 	}
 
 	out.Reset()
-	if err := HookForward(cfg, "claude-code", strings.NewReader(`not json`), &out); err != nil || out.String() != "{}\n" {
+	if err := HookForward(cfg, "claude-code", "", strings.NewReader(`not json`), &out); err != nil || out.String() != "{}\n" {
 		t.Fatalf("malformed hook must fail silently: err=%v out=%q", err, out.String())
 	}
 	evs, err = spool.ReadLastN(cfg.SpoolDir, 10)
@@ -679,7 +679,7 @@ func TestDoctorReportsChecks(t *testing.T) {
 	for _, c := range checks {
 		byName[c.Name] = c
 	}
-	for _, name := range []string{"claude-code hooks", "codex hooks", "opencode plugin", "codex sessions"} {
+	for _, name := range []string{"claude-code hooks", "codex hooks", "antigravity hooks", "opencode plugin", "codex sessions"} {
 		c := byName[name]
 		if c.Transport == "" || c.Fidelity == "" || c.SupportedEvents == 0 {
 			t.Errorf("%s missing additive capture metadata: %+v", name, c)
@@ -791,5 +791,279 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if cfg.PrivacyMode != "minimal" {
 		t.Errorf("privacy = %q, want minimal", cfg.PrivacyMode)
+	}
+}
+
+func antigravityFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "adapters", "antigravity", "testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestInstallAntigravityHooks(t *testing.T) {
+	bin := "/Applications/Agent Firehose/firehosed"
+	existing := `{"note":"keep me","other-tool":{"enabled":true,"Stop":[{"type":"command","command":"other hook"}]}}`
+	for _, tt := range []struct {
+		name    string
+		prior   string // "" = no pre-existing hooks.json
+		wantErr bool
+	}{
+		{name: "fresh install creates config dir, file, and backup"},
+		{name: "merge preserves every existing key", prior: existing},
+		{name: "invalid JSON is refused", prior: "{not json", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			hooksPath := filepath.Join(home, ".gemini", "config", "hooks.json")
+			if tt.prior != "" {
+				if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(hooksPath, []byte(tt.prior), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := InstallAntigravity(home, bin)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("InstallAntigravity accepted invalid JSON")
+				}
+				after, _ := os.ReadFile(hooksPath)
+				if string(after) != tt.prior {
+					t.Fatalf("refused install still modified hooks.json: %s", after)
+				}
+				if _, err := os.Stat(hooksPath + ".bak"); !os.IsNotExist(err) {
+					t.Fatal("refused install wrote a backup")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("InstallAntigravity: %v", err)
+			}
+
+			first, err := os.ReadFile(hooksPath)
+			if err != nil {
+				t.Fatalf("hooks.json missing: %v", err)
+			}
+			backup, err := os.ReadFile(hooksPath + ".bak")
+			if err != nil {
+				t.Fatalf("backup missing: %v", err)
+			}
+			if tt.prior != "" {
+				if string(backup) != tt.prior {
+					t.Fatalf("backup = %q, want original", backup)
+				}
+				if !strings.Contains(string(first), "keep me") || !strings.Contains(string(first), "other hook") {
+					t.Fatalf("existing configuration was not preserved: %s", first)
+				}
+			}
+
+			var doc map[string]any
+			if err := json.Unmarshal(first, &doc); err != nil {
+				t.Fatalf("hooks.json is not valid JSON: %v", err)
+			}
+			group, _ := doc["agent-firehose"].(map[string]any)
+			if group == nil || group["enabled"] != true {
+				t.Fatalf("agent-firehose group missing or disabled: %s", first)
+			}
+			// Only the post-only events are installed: PreToolUse output is a
+			// permission decision and pre-events add in-band latency.
+			for _, name := range []string{"PreToolUse", "PreInvocation"} {
+				if _, ok := group[name]; ok {
+					t.Errorf("pre-event %s must never be installed", name)
+				}
+			}
+			// Tool events use matcher+hooks nesting.
+			toolEntries, _ := group["PostToolUse"].([]any)
+			if len(toolEntries) != 1 {
+				t.Fatalf("PostToolUse entries = %v", group["PostToolUse"])
+			}
+			toolEntry, _ := toolEntries[0].(map[string]any)
+			if toolEntry["matcher"] != "*" {
+				t.Errorf("PostToolUse matcher = %v", toolEntry["matcher"])
+			}
+			toolHooks, _ := toolEntry["hooks"].([]any)
+			if len(toolHooks) != 1 {
+				t.Fatalf("PostToolUse hooks = %v", toolEntry["hooks"])
+			}
+			toolHook, _ := toolHooks[0].(map[string]any)
+			if toolHook["command"] != "'"+bin+"' hook-forward --source antigravity --event PostToolUse" {
+				t.Errorf("PostToolUse command = %v", toolHook["command"])
+			}
+			// PostInvocation and Stop entries are flat hook configs.
+			for _, name := range []string{"PostInvocation", "Stop"} {
+				entries, _ := group[name].([]any)
+				if len(entries) != 1 {
+					t.Fatalf("%s entries = %v", name, group[name])
+				}
+				entry, _ := entries[0].(map[string]any)
+				if _, nested := entry["hooks"]; nested {
+					t.Errorf("%s must be a flat hook entry, got %v", name, entry)
+				}
+				if entry["type"] != "command" || entry["timeout"] != float64(10) {
+					t.Errorf("%s handler = %v", name, entry)
+				}
+				want := "'" + bin + "' hook-forward --source antigravity --event " + name
+				if entry["command"] != want {
+					t.Errorf("%s command = %v, want %q", name, entry["command"], want)
+				}
+			}
+
+			// Idempotency: a second run changes nothing, including the backup.
+			if err := InstallAntigravity(home, bin); err != nil {
+				t.Fatalf("second InstallAntigravity: %v", err)
+			}
+			second, _ := os.ReadFile(hooksPath)
+			if string(first) != string(second) {
+				t.Fatal("Antigravity hook installation is not idempotent")
+			}
+			backupAfter, _ := os.ReadFile(hooksPath + ".bak")
+			if string(backupAfter) != string(backup) {
+				t.Fatalf("idempotent install replaced original backup: %q", backupAfter)
+			}
+		})
+	}
+}
+
+func TestAntigravityHooksConfiguredRequiresAllThreeEventsAndLiveExecutable(t *testing.T) {
+	home := t.TempDir()
+	bin := filepath.Join(home, "Agent Firehose", "firehosed")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if AntigravityHooksConfigured(home) {
+		t.Fatal("empty home reported configured")
+	}
+	if err := InstallAntigravity(home, bin); err != nil {
+		t.Fatal(err)
+	}
+	if !AntigravityHooksConfigured(home) {
+		t.Fatal("complete Antigravity installation reported unhealthy")
+	}
+
+	hooksPath := filepath.Join(home, ".gemini", "config", "hooks.json")
+	data, _ := os.ReadFile(hooksPath)
+	var doc map[string]any
+	_ = json.Unmarshal(data, &doc)
+	group := doc["agent-firehose"].(map[string]any)
+	delete(group, "Stop")
+	partial, _ := json.Marshal(doc)
+	_ = os.WriteFile(hooksPath, partial, 0o600)
+	if AntigravityHooksConfigured(home) {
+		t.Fatal("partial Antigravity installation reported healthy")
+	}
+}
+
+func TestEmitLocalNamedAntigravityRedactsAndRequiresEventName(t *testing.T) {
+	cfg := testConfig(t)
+	raw := antigravityFixture(t, "post_tool_use_list_dir.json")
+	if err := EmitLocalNamed(cfg, "antigravity", "", raw); err == nil {
+		t.Fatal("antigravity emit without an event name must fail: payloads carry no event-name field")
+	}
+	if err := EmitLocalNamed(cfg, "antigravity", "PostToolUse", raw); err != nil {
+		t.Fatalf("EmitLocalNamed: %v", err)
+	}
+	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("spool = %+v, %v", evs, err)
+	}
+	ev := evs[0]
+	if ev.Source != "antigravity" || ev.Name != "PostToolUse:list_dir" {
+		t.Errorf("wrong mapping: %+v", ev)
+	}
+	if ev.Raw != "" {
+		t.Error("balanced mode must drop raw payload")
+	}
+	safe, _ := json.Marshal(ev)
+	if strings.Contains(string(safe), "SECRET-") {
+		t.Errorf("balanced antigravity capture leaked sanitized secrets: %s", safe)
+	}
+}
+
+func TestRunHookForwardCommandAntigravityCarriesEventName(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".agentfirehose")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An unroutable daemon address keeps the test hermetic: emit falls back
+	// to the local spool instead of a live daemon on this machine.
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"daemon_addr":"127.0.0.1:1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	RunHookForwardCommand(home,
+		[]string{"--source", "antigravity", "--event", "PostToolUse"},
+		bytes.NewReader(antigravityFixture(t, "post_tool_use_run_command.json")), &out)
+	if out.String() != "{}\n" {
+		t.Fatalf("hook command stdout = %q", out.String())
+	}
+	spoolDir := filepath.Join(home, ".agentfirehose", "spool")
+	evs, err := spool.ReadLastN(spoolDir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Source != "antigravity" || evs[0].Name != "PostToolUse:run_command" {
+		t.Fatalf("captured hook = %+v", evs)
+	}
+
+	// Missing --event stays fail-silent: neutral "{}" plus a bounded
+	// hook_capture_error warning instead of a captured event.
+	out.Reset()
+	RunHookForwardCommand(home,
+		[]string{"--source", "antigravity"},
+		bytes.NewReader(antigravityFixture(t, "post_tool_use_run_command.json")), &out)
+	if out.String() != "{}\n" {
+		t.Fatalf("hook command stdout without --event = %q", out.String())
+	}
+	evs, err = spool.ReadLastN(spoolDir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[1].Name != "hook_capture_error" || evs[1].Severity != event.SeverityWarn {
+		t.Fatalf("missing --event warning = %+v", evs)
+	}
+}
+
+func TestDoctorReportsAntigravityHooks(t *testing.T) {
+	home := t.TempDir()
+	cfg := Config{SpoolDir: filepath.Join(home, ".agentfirehose", "spool"), PrivacyMode: "balanced"}
+	find := func() Check {
+		for _, c := range Doctor(cfg, home) {
+			if c.Name == "antigravity hooks" {
+				return c
+			}
+		}
+		t.Fatal("no antigravity hooks check")
+		return Check{}
+	}
+	c := find()
+	if c.OK {
+		t.Errorf("antigravity hooks should fail in empty home: %+v", c)
+	}
+	if !strings.Contains(c.Detail, "firehose install antigravity") {
+		t.Errorf("detail should recommend the installer: %+v", c)
+	}
+	if c.Transport != "hook" || c.Fidelity != string(capturemeta.SupportedInBandHook) || c.SupportedEvents != 5 {
+		t.Errorf("antigravity capture metadata = %+v", c)
+	}
+
+	bin := filepath.Join(home, "firehosed")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallAntigravity(home, bin); err != nil {
+		t.Fatal(err)
+	}
+	if c := find(); !c.OK {
+		t.Errorf("antigravity hooks should pass after install: %+v", c)
 	}
 }

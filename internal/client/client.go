@@ -68,7 +68,17 @@ func (c *Client) Recent(limit int) ([]event.Event, error) {
 
 // Emit sends one raw source payload for the daemon to normalize and spool.
 func (c *Client) Emit(source string, r io.Reader) error {
+	return c.EmitNamed(source, "", r)
+}
+
+// EmitNamed is Emit with an explicit native event name, carried in the
+// additive `event` query parameter for sources whose payloads do not name
+// their own event (antigravity). An empty eventName omits the parameter.
+func (c *Client) EmitNamed(source, eventName string, r io.Reader) error {
 	u := c.BaseURL + "/emit?source=" + url.QueryEscape(source)
+	if eventName != "" {
+		u += "&event=" + url.QueryEscape(eventName)
+	}
 	resp, err := c.http.Post(u, "application/json", r)
 	if err != nil {
 		return err

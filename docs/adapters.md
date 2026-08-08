@@ -167,6 +167,54 @@ outputs, titles, prompt text, and session titles remain only in full-mode
 raw input and are never copied into summaries or payloads; file paths are the
 deliberate exception so the timeline can say which file changed.
 
+## Antigravity (deep)
+
+Antigravity CLI (`agy`, Gemini CLI's successor for individual accounts)
+documents a five-event hook contract — `PreToolUse`, `PostToolUse`,
+`PreInvocation`, `PostInvocation`, `Stop` — configured in the shared
+`~/.gemini/config/hooks.json`. The parser maps all five families
+(`internal/adapters/antigravity`, fixtures from a real agy 1.1.10 capture);
+the installer wires only the three post-only events.
+
+**Hook payloads carry no event-name field.** Pre/PostInvocation shapes are
+byte-identical, so the event family is only knowable from which hook
+registration fired. Each installed hook therefore tags its registration
+explicitly: `hook-forward --source antigravity --event <name>`, carried to
+the daemon through the additive `event` parameter on `POST /emit`. Payloads
+arriving without an event name are rejected rather than guessed.
+
+`firehose install antigravity` merges a single Firehose-owned
+`"agent-firehose"` group into `hooks.json` (a `.bak` backup is written first;
+every existing key — other tools' hook groups included — is preserved;
+invalid JSON is refused; reruns are idempotent). Tool events use
+matcher+hooks nesting while `PostInvocation`/`Stop` entries are flat hook
+configs, matching the documented file shape. `PreToolUse` and `PreInvocation`
+are deliberately never installed: Antigravity hooks run in-band, and
+`PreToolUse` output is a permission *decision* (allow/deny/ask) — Firehose
+never sits in a decision path. `Stop` is installed because the fixture
+corpus records live proof that a neutral, no-`decision` response never
+blocks termination, which is exactly what `hook-forward`'s `{}` returns.
+
+The safe payload is a metadata allowlist: `conversationId` (session),
+model name, tool name, step index, phase/status, invocation counters,
+termination reason, and idle flag. `run_command` maps to `shell`;
+`view_file` maps to `file` with its `AbsolutePath` arg as `file_path` (the
+deliberate exception, following the Claude adapter); `list_dir` stays a
+plain tool because its path routinely points into internal stores. Command
+lines, tool summaries/actions, error text, and the
+`artifactDirectoryPath`/`transcriptPath` pointers into Antigravity's
+internal `brain/` store never enter summaries or payloads — they survive
+only in full-mode `raw`. An error-populated `PostToolUse`/`Stop` has not
+been observed in the wild (agy 1.1.10 left `error` empty even for a failing
+command); those branches are proven by value-substituted real fixtures and
+await genuine captures.
+
+Coverage gaps versus the shelved classic Gemini CLI adapter (11 hooks):
+Antigravity exposes no session start/end, notification, compression, or
+tool-selection events, and no local OTel route exists (`enableTelemetry` is
+Google-bound only). Unknown event names surface as bounded
+`adapter.unknown_event` drift warnings.
+
 ## Process watcher (shallow)
 
 The viewer polls `ps` every 2 s for known agent binaries (`claude`, `codex`,

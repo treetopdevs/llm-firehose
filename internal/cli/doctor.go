@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"agentfirehose/internal/adapters/antigravity"
 	"agentfirehose/internal/adapters/claudecode"
 	"agentfirehose/internal/adapters/claudeotel"
 	"agentfirehose/internal/adapters/codex"
@@ -80,6 +81,19 @@ func Doctor(cfg Config, home string) []Check {
 		Transport:       "hook",
 		Fidelity:        string(capturemeta.SupportedInBandHook),
 		SupportedEvents: len(CodexHookEvents),
+	})
+
+	// antigravity hooks present (the three installed post-only events of the
+	// five mapped families; pre-events stay uninstalled by design)
+	agOK := AntigravityHooksConfigured(home)
+	checks = append(checks, Check{
+		Name:            "antigravity hooks",
+		OK:              agOK,
+		Detail:          pick(agOK, "configured in ~/.gemini/config/hooks.json (post-only events)", "run: firehose install antigravity"),
+		Transport:       antigravity.Manifest.Transport,
+		Fidelity:        string(antigravity.Manifest.Fidelity),
+		SupportedEvents: len(antigravity.Manifest.Mapped),
+		FilteredEvents:  len(antigravity.Manifest.Filtered),
 	})
 
 	// opencode plugin present

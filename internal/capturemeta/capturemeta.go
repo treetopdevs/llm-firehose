@@ -125,6 +125,8 @@ func safeReason(reason string) string {
 		return "native hook event is not present in the Claude Code manifest"
 	case "native bus event is not present in the OpenCode manifest":
 		return "native bus event is not present in the OpenCode manifest"
+	case "native hook event is not present in the Antigravity manifest":
+		return "native hook event is not present in the Antigravity manifest"
 	default:
 		return "native event is not present in the adapter manifest"
 	}

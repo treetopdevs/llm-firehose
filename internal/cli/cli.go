@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"agentfirehose/internal/adapters/antigravity"
 	"agentfirehose/internal/adapters/claudecode"
 	"agentfirehose/internal/adapters/codexhook"
 	"agentfirehose/internal/adapters/generic"
@@ -98,18 +99,25 @@ func (c Config) mode() privacy.Mode {
 // engine owns all spool writes. When no daemon is reachable it falls back to
 // appending locally, so capture never depends on the daemon being up.
 func Emit(cfg Config, source string, r io.Reader) error {
+	return EmitNamed(cfg, source, "", r)
+}
+
+// EmitNamed is Emit carrying an explicit native event name for sources whose
+// payloads do not name their own event (Antigravity hook payloads carry no
+// event-name field). Other sources ignore eventName.
+func EmitNamed(cfg Config, source, eventName string, r io.Reader) error {
 	raw, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
 	if cfg.DaemonAddr != "" {
-		err := client.New("http://"+cfg.DaemonAddr).Emit(source, bytes.NewReader(raw))
+		err := client.New("http://"+cfg.DaemonAddr).EmitNamed(source, eventName, bytes.NewReader(raw))
 		var transport *url.Error
 		if !errors.As(err, &transport) {
 			return err // nil on success; daemon rejections surface as-is
 		}
 	}
-	return EmitLocal(cfg, source, raw)
+	return EmitLocalNamed(cfg, source, eventName, raw)
 }
 
 // EmitLocal normalizes one raw payload for source, applies the configured
@@ -117,8 +125,20 @@ func Emit(cfg Config, source string, r io.Reader) error {
 // deliberately skips is not an error. The daemon uses this path; everything
 // else should call Emit.
 func EmitLocal(cfg Config, source string, raw []byte) error {
+	return EmitLocalNamed(cfg, source, "", raw)
+}
+
+// EmitLocalNamed is EmitLocal with the explicit native event name required by
+// sources whose payloads carry none (see EmitNamed).
+func EmitLocalNamed(cfg Config, source, eventName string, raw []byte) error {
 	var ev *event.Event
 	switch source {
+	case antigravity.Source:
+		parsed, err := antigravity.Parse(eventName, raw)
+		if err != nil {
+			return err
+		}
+		ev = parsed
 	case claudecode.Source:
 		parsed, err := claudecode.Parse(raw)
 		if err != nil {
@@ -154,8 +174,10 @@ func EmitLocal(cfg Config, source string, raw []byte) error {
 // HookForward captures a hook observation without ever influencing the agent
 // session. It always writes the neutral hook response and returns success,
 // even when parsing, daemon delivery, or fallback persistence fails.
-func HookForward(cfg Config, source string, r io.Reader, w io.Writer) error {
-	if err := Emit(cfg, source, r); err != nil {
+// eventName is required for sources whose payloads carry no event-name field
+// (antigravity) and ignored by every other source.
+func HookForward(cfg Config, source, eventName string, r io.Reader, w io.Writer) error {
+	if err := EmitNamed(cfg, source, eventName, r); err != nil {
 		reportHookCaptureError(cfg, source, err)
 	}
 	_, _ = io.WriteString(w, "{}\n")
@@ -173,6 +195,7 @@ func RunHookForwardCommand(home string, args []string, r io.Reader, w io.Writer)
 	fs := flag.NewFlagSet("hook-forward", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	source := fs.String("source", codexhook.Source, "source adapter")
+	eventName := fs.String("event", "", "native hook event name (required for --source antigravity, ignored otherwise)")
 	flagErr := fs.Parse(args)
 	cfg, configErr := LoadConfig(home)
 	if flagErr != nil {
@@ -185,7 +208,9 @@ func RunHookForwardCommand(home string, args []string, r io.Reader, w io.Writer)
 		cfg.DaemonAddr = ""
 		reportHookCaptureError(cfg, *source, fmt.Errorf("load config: %w", configErr))
 	}
-	_ = HookForward(cfg, *source, r, w)
+	// A missing --event for antigravity fails inside Parse and is captured as
+	// a safe hook_capture_error warning; the neutral "{}" is still written.
+	_ = HookForward(cfg, *source, *eventName, r, w)
 }
 
 func reportHookCaptureError(cfg Config, source string, captureErr error) {

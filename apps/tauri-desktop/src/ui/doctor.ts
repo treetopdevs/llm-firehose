@@ -1,7 +1,7 @@
 import { doctor, install } from "../api";
 import { clear, el } from "../dom";
 
-const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode"];
+const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigravity"];
 
 // Adapter wiring status from /doctor, with one-click install per adapter.
 export function createDoctor(): { root: HTMLElement; refresh(): void } {

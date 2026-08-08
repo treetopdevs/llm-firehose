@@ -11,6 +11,7 @@ still being supplemental, partial, or unavailable.
 | Codex | `hook` | `supported-in-band-hook` | current installed hook matrix | 0 | current Codex hook contract |
 | Codex | `durable-jsonl` | `passive-internal-file` | rollout parser families | reasoning, duplicated messages, instruction bodies, complete world state | current local rollout JSONL |
 | OpenCode | `plugin` | `supported-passive-stream` | 13 | 1 | OpenCode 1.18.10 event callback captured locally; streaming text/reasoning parts, step-start markers, and nonterminal tool updates are also dropped inside `message.part.updated` |
+| Antigravity | `hook` | `supported-in-band-hook` | 5 mapped (3 installed) | 0 | Antigravity CLI 1.1.10 hook payloads captured locally; payloads carry no event-name field, so the forwarder tags each registration via `--event`; only the post-only `PostToolUse`/`PostInvocation`/`Stop` are installed — `PreToolUse` output is a permission decision and pre-events add in-band latency |
 | Process watcher | `process` | `process-only` | process start/stop | semantic activity | local process table |
 
 Counts describe native event families, not a promise that every locally
@@ -49,10 +50,19 @@ bounded drift warnings. The Gemini hook adapter is blocked as
 planned: Google decommissioned classic Gemini CLI service for individual
 accounts (the installed 0.46.0 client fails auth with `IneligibleTierError
 UNSUPPORTED_CLIENT`), so its 11-hook fixture matrix now requires a paid API
-key or enterprise license. Its planned replacement is an Antigravity CLI
-hooks adapter on that product's five-event contract — see the
+key or enterprise license. Its replacement, the Antigravity CLI hooks
+adapter, is built on that product's five-event contract — see the
 [plan amendment](plans/2026-07-25-agent-capture-expansion.md#priority-5--add-gemini-cli-hooks)
 and [Antigravity research](research/2026-08-07-antigravity-capture-surface-research.md).
+The Antigravity adapter maps all five hook families against the sanitized
+real agy 1.1.10 corpus (`internal/adapters/antigravity/testdata/`, eight
+fixtures with per-event provenance since the payloads name no event
+themselves). Error-populated `PostToolUse` and `Stop` variants were not
+triggerable live (a failing `run_command` still carried `error: ""`), so
+those branches are proven by value-substituted real fixtures and remain
+flagged until genuine captures exist; session start/end, notification,
+compression, and tool-selection coverage does not exist in this source, and
+Antigravity has no local OTel route.
 Pi and GitHub Copilot CLI are not installed, so their adapter milestones also
 remain blocked by the plan's real-fixture STOP condition. No payload is
 invented to claim support.

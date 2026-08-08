@@ -121,8 +121,14 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail = "Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak); review and trust them in Codex /hooks, then start a fresh task"
+	case "antigravity":
+		if err := cli.InstallAntigravity(s.home, bin); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		detail = "Antigravity hooks merged into ~/.gemini/config/hooks.json (backup: hooks.json.bak); start a fresh agy conversation to pick them up"
 	default:
-		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code, claude-otel, codex, or opencode)", adapter), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("unknown adapter %q (want antigravity, claude-code, claude-otel, codex, or opencode)", adapter), http.StatusNotFound)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "detail": detail})

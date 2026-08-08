@@ -527,3 +527,142 @@ func commandAvailable(command string) bool {
 func InstallOpenCode(home, binPath string) (string, error) {
 	return opencode.WritePlugin(filepath.Join(home, ".config", "opencode", "plugin"), binPath)
 }
+
+// AntigravityHookEvents are the post-only Antigravity events Firehose
+// installs, of the five the parser maps (see adapters/antigravity.Manifest).
+//
+// PreToolUse and PreInvocation are deliberately never installed: Antigravity
+// hooks run in-band, so pre-events add latency before every tool call and
+// model invocation, and PreToolUse output is a permission *decision*
+// (allow/deny/ask) — the plan's decision-path STOP forbids putting Firehose
+// there. Stop IS installed: the fixture README records live proof across
+// three agy 1.1.10 runs that a hook producing no stdout (or a neutral
+// response) on Stop never blocked termination, forced continuation, or hung
+// the loop, and hook-forward's `{}` output carries no `decision` field —
+// which the Antigravity hooks docs define as permitting termination.
+var AntigravityHookEvents = []string{"PostToolUse", "PostInvocation", "Stop"}
+
+const antigravityGroupKey = "agent-firehose"
+
+func antigravityCommand(binPath, eventName string) string {
+	// Antigravity payloads carry no event-name field, so each registration
+	// tags its event explicitly via --event (see adapters/antigravity).
+	return quoteCommandPath(binPath, runtime.GOOS) +
+		" hook-forward --source antigravity --event " + eventName
+}
+
+// antigravityHookGroup builds the single Firehose-owned group merged into
+// hooks.json. Shape note (documented, see the Antigravity research doc and
+// adapters/antigravity/testdata/README.md): tool events take matcher+hooks
+// nesting, while PostInvocation and Stop entries are flat hook configs.
+func antigravityHookGroup(binPath string) map[string]any {
+	handler := func(eventName string) map[string]any {
+		return map[string]any{
+			"type":    "command",
+			"command": antigravityCommand(binPath, eventName),
+			"timeout": 10,
+		}
+	}
+	return map[string]any{
+		"enabled": true,
+		"PostToolUse": []any{map[string]any{
+			"matcher": "*",
+			"hooks":   []any{handler("PostToolUse")},
+		}},
+		"PostInvocation": []any{handler("PostInvocation")},
+		"Stop":           []any{handler("Stop")},
+	}
+}
+
+// InstallAntigravity merges the Firehose hook group into the shared
+// <home>/.gemini/config/hooks.json (used by the Antigravity IDE, CLI, and
+// plugins). Every existing key is preserved, the prior file is backed up
+// once, invalid JSON is refused, and repeated installation is a no-op.
+func InstallAntigravity(home, binPath string) error {
+	hooksPath := filepath.Join(home, ".gemini", "config", "hooks.json")
+	doc := map[string]any{}
+	original := []byte("{}")
+	existed := false
+	if data, err := os.ReadFile(hooksPath); err == nil {
+		existed = true
+		original = data
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("existing %s is not valid JSON, refusing to modify: %w", hooksPath, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	group := antigravityHookGroup(binPath)
+	if existed {
+		// json.Marshal sorts map keys, so byte equality is a faithful
+		// idempotency check for the Firehose-owned group.
+		current, currentErr := json.Marshal(doc[antigravityGroupKey])
+		desired, desiredErr := json.Marshal(group)
+		if currentErr == nil && desiredErr == nil && string(current) == string(desired) {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(hooksPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(hooksPath+".bak", original, 0o600); err != nil {
+			return fmt.Errorf("backup: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	doc[antigravityGroupKey] = group
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(hooksPath, append(out, '\n'), 0o600)
+}
+
+// AntigravityHooksConfigured verifies the Firehose-owned group carries all
+// three installed post-only events and a live forwarding executable.
+func AntigravityHooksConfigured(home string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".gemini", "config", "hooks.json"))
+	if err != nil {
+		return false
+	}
+	var doc map[string]any
+	if json.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	group, _ := doc[antigravityGroupKey].(map[string]any)
+	if group == nil || group["enabled"] != true {
+		return false
+	}
+	for _, name := range AntigravityHookEvents {
+		entries, _ := group[name].([]any)
+		found := false
+		for _, rawEntry := range entries {
+			entry, _ := rawEntry.(map[string]any)
+			// Tool events nest handlers under "hooks"; the other events are
+			// flat hook configs.
+			handlers := []any{rawEntry}
+			if nested, ok := entry["hooks"].([]any); ok {
+				handlers = nested
+			}
+			suffix := " hook-forward --source antigravity --event " + name
+			for _, rawHandler := range handlers {
+				handler, _ := rawHandler.(map[string]any)
+				command, _ := handler["command"].(string)
+				if strings.HasSuffix(command, suffix) &&
+					commandAvailable(strings.TrimSuffix(command, " --source antigravity --event "+name)) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

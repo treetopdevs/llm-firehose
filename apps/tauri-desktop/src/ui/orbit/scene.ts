@@ -6,6 +6,7 @@ const FAMILY_HUE: Record<string, number> = {
   claude: 0.58,
   codex: 0.33,
   opencode: 0.78,
+  antigravity: 0.13,
   cluster: 0.1,
 };
 
