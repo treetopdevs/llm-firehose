@@ -39,6 +39,19 @@ Sanitization replaced session, prompt, and tool-use IDs, personal paths, prompt
 text, tool input/output strings, and free-form error text with bracketed
 `[sanitized …]` placeholders.
 
+## Cursor capture (inline in claudecode_test.go)
+
+The `postToolUse` payload embedded in `TestCursorPostToolUseCamelCase` was
+captured from a live Cursor 3.12.29 agent session on macOS arm64. Transport:
+Cursor command hooks (camelCase event names, `tool_output` instead of
+`tool_response`), delivered to `firehose hook-forward --source claude-code`.
+Trigger: a `Read` tool completion inside an interactive Cursor agent turn.
+The capture was taken during the 2026-07-25 capture-expansion work; the exact
+capture day was not recorded at capture time. Sanitization replaced the real
+conversation/session UUID with `cursor-conversation-fixture` and the personal
+workspace paths with `/tmp/agent-firehose-cursor-fixture` equivalents; keys,
+nesting, scalar types, and optional-field presence are unchanged.
+
 ## Known gap
 
 `PreCompact` is mapped by the parser (inherited from the daemon-desktop

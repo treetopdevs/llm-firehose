@@ -1,7 +1,9 @@
 package event
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -77,6 +79,8 @@ func TestSchemaDocMatchesCode(t *testing.T) {
 		}
 	}
 
+	assertNoDuplicateKeys(t, data)
+
 	for field, wantType := range map[string]string{
 		"upstream_event_id": "string",
 		"prompt_id":         "string",
@@ -96,4 +100,54 @@ func TestSchemaDocMatchesCode(t *testing.T) {
 			t.Errorf("schema property %q type = %q, want %q", field, property.Type, wantType)
 		}
 	}
+}
+
+// assertNoDuplicateKeys walks the raw schema document token stream. Duplicate
+// property keys are silently collapsed by json.Unmarshal (last entry wins), so
+// the struct-based assertions above would never notice one; other JSON Schema
+// consumers treat duplicates as invalid or ambiguous.
+func assertNoDuplicateKeys(t *testing.T, data []byte) {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var walkValue func(path string)
+	walkValue = func(path string) {
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("tokenize schema doc at %s: %v", path, err)
+		}
+		delim, ok := tok.(json.Delim)
+		if !ok {
+			return
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for dec.More() {
+				keyTok, err := dec.Token()
+				if err != nil {
+					t.Fatalf("tokenize schema doc key at %s: %v", path, err)
+				}
+				key, ok := keyTok.(string)
+				if !ok {
+					t.Fatalf("non-string object key at %s: %v", path, keyTok)
+				}
+				if seen[key] {
+					t.Errorf("duplicate key %q in schema doc object at %s", key, path)
+				}
+				seen[key] = true
+				walkValue(path + "/" + key)
+			}
+			if _, err := dec.Token(); err != nil {
+				t.Fatalf("close object at %s: %v", path, err)
+			}
+		case '[':
+			for i := 0; dec.More(); i++ {
+				walkValue(fmt.Sprintf("%s[%d]", path, i))
+			}
+			if _, err := dec.Token(); err != nil {
+				t.Fatalf("close array at %s: %v", path, err)
+			}
+		}
+	}
+	walkValue("$")
 }

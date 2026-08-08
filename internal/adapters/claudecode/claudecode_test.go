@@ -339,9 +339,12 @@ func TestUnknownHookIsMetaWarn(t *testing.T) {
 }
 
 // Cursor hooks use camelCase event names and tool_output (not Claude Code's
-// PascalCase + tool_response). Captured from a live Cursor agent session.
+// PascalCase + tool_response). Captured from a live Cursor agent session and
+// sanitized values-only: the real conversation/session UUID and personal paths
+// were replaced; keys, nesting, and optional-field presence are unchanged
+// (provenance in testdata/README.md).
 func TestCursorPostToolUseCamelCase(t *testing.T) {
-	ev := parse(t, `{"conversation_id":"e2bc0b89-8121-49b5-98f9-c497526a3c45","tool_name":"Read","tool_input":{"file_path":"/Users/nicholas/develop/llm-firehose/terminals/1937.txt"},"tool_output":"{\"content_length\":44896}","session_id":"e2bc0b89-8121-49b5-98f9-c497526a3c45","hook_event_name":"postToolUse","cursor_version":"3.12.29","workspace_roots":["/Users/nicholas/develop/llm-firehose"]}`)
+	ev := parse(t, `{"conversation_id":"cursor-conversation-fixture","tool_name":"Read","tool_input":{"file_path":"/tmp/agent-firehose-cursor-fixture/terminals/1937.txt"},"tool_output":"{\"content_length\":44896}","session_id":"cursor-conversation-fixture","hook_event_name":"postToolUse","cursor_version":"3.12.29","workspace_roots":["/tmp/agent-firehose-cursor-fixture"]}`)
 	if ev.Category != event.CategoryTool {
 		t.Errorf("category = %q, want tool", ev.Category)
 	}

@@ -6,8 +6,8 @@ still being supplemental, partial, or unavailable.
 
 | Source | Transport | Fidelity | Supported events | Deliberately filtered | Source schema |
 |---|---|---|---:|---:|---|
-| Claude Code | `hook` | `supported-in-band-hook` | 8 | 2 | Claude Code 2.1.218 hook payloads captured locally |
-| Claude Code | `otel-http` | `supported-passive-stream` | 14 | 0 | Claude Code 2.1.218 OTLP/HTTP JSON captured locally; identity/content attributes always dropped |
+| Claude Code | `hook` | `supported-in-band-hook` | 11 | 2 | Claude Code 2.1.218 hook payloads captured locally |
+| Claude Code | `otel-http` | `supported-passive-stream` | 5 | 0 | Claude Code 2.1.218 OTLP/HTTP JSON captured locally; identity/content attributes always dropped; nine further observed names await sanitized captures (see the claudeotel testdata README) |
 | Codex | `hook` | `supported-in-band-hook` | current installed hook matrix | 0 | current Codex hook contract |
 | Codex | `durable-jsonl` | `passive-internal-file` | rollout parser families | reasoning, duplicated messages, instruction bodies, complete world state | current local rollout JSONL |
 | OpenCode | `plugin` | `supported-passive-stream` | current parser families | streaming text/reasoning and nonterminal tool updates | OpenCode 1.18.0 event callback |
@@ -34,10 +34,11 @@ warning.
 ## Fixture status for the 2026-07-25 expansion
 
 The local baseline is OpenCode 1.18.0, Claude Code 2.1.218, and Gemini CLI
-0.46.0. The Claude hook installer is intentionally limited to the eight
-distinct event families represented by the real fixture corpus. Other
-documented Claude hooks remain coverage gaps until their payloads are
-observed. Deeper OpenCode mapping and the Gemini hook adapter remain
+0.46.0. The Claude hook adapter maps the eleven event families its manifest
+declares (the `supported_events` count doctor reports); ten are backed by the
+real fixture corpus, while `PreCompact` keeps its pre-merge mapping and awaits
+a captured payload (see the claudecode testdata README). Other documented
+Claude hooks remain coverage gaps until their payloads are observed. Deeper OpenCode mapping and the Gemini hook adapter remain
 fixture-blocked: the installed clients have no local event corpus, and no
 additional authenticated model run was authorized to capture one. Pi and
 GitHub Copilot CLI are not installed, so their adapter milestones also remain

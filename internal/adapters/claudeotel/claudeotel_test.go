@@ -101,6 +101,25 @@ func TestManifestIsValid(t *testing.T) {
 	}
 }
 
+// Every name the manifest claims as mapped must be proven by a checked-in
+// capture record: a log record whose event.name carries it or a metric named
+// by it. Observed-but-unevidenced names stay out of the manifest until a
+// sanitized capture lands (see testdata/README.md).
+func TestManifestMappedNamesAreFixtureProven(t *testing.T) {
+	proven := map[string]bool{}
+	for _, ev := range ParseLogs(fixture(t, "logs.json"), fixtureCaptureTime) {
+		proven[ev.Name] = true
+	}
+	for _, ev := range ParseMetrics(fixture(t, "metrics.json"), fixtureCaptureTime) {
+		proven[ev.Name] = true
+	}
+	for _, name := range Manifest.Mapped {
+		if !proven[name] {
+			t.Errorf("Manifest.Mapped claims %q but no checked-in capture record proves it", name)
+		}
+	}
+}
+
 func assertSanitized(t *testing.T, ev event.Event) {
 	t.Helper()
 	encoded, err := json.Marshal(ev)

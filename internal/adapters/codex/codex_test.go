@@ -131,7 +131,7 @@ func TestCurrentSanitizedRolloutFixture(t *testing.T) {
 		t.Errorf("latest assistant message = %+v", got)
 	}
 	if got := seen["custom_tool_call_output:exec"]; got.CallID != "call_mzb3w08qwqXmd2wsdauIzQ3p" ||
-		!strings.Contains(got.Payload["output"].(string), "llm-firehose") {
+		!strings.Contains(got.Payload["output"].(string), "agent-firehose-codex-fixture") {
 		t.Errorf("real tool output = %+v", got)
 	}
 	if got := seen["tool_search_call:tool_search"]; got.Payload["arguments"] !=
@@ -230,7 +230,7 @@ func TestFunctionCallMapping(t *testing.T) {
 
 func TestCurrentRolloutMetadataAndUsage(t *testing.T) {
 	p := newParser(t)
-	ev, err := p.ParseLine([]byte(`{"timestamp":"2026-07-24T12:00:52.180Z","type":"turn_context","payload":{"turn_id":"turn-2","cwd":"/Users/nicholas/develop/llm-firehose","workspace_roots":["/Users/nicholas/develop/llm-firehose"],"current_date":"2026-07-24","timezone":"America/New_York","approval_policy":"never","approvals_reviewer":"user","sandbox_policy":{"type":"danger-full-access"},"permission_profile":{"type":"disabled"},"model":"gpt-5.6-sol","personality":"friendly","collaboration_mode":{"mode":"default","settings":{"model":"gpt-5.6-sol","reasoning_effort":"high","developer_instructions":"secret instructions must not be copied"}},"effort":"high","summary":"fixture"}}`))
+	ev, err := p.ParseLine([]byte(`{"timestamp":"2026-07-24T12:00:52.180Z","type":"turn_context","payload":{"turn_id":"turn-2","cwd":"/tmp/agent-firehose-codex-fixture/work","workspace_roots":["/tmp/agent-firehose-codex-fixture/work"],"current_date":"2026-07-24","timezone":"America/New_York","approval_policy":"never","approvals_reviewer":"user","sandbox_policy":{"type":"danger-full-access"},"permission_profile":{"type":"disabled"},"model":"gpt-5.6-sol","personality":"friendly","collaboration_mode":{"mode":"default","settings":{"model":"gpt-5.6-sol","reasoning_effort":"high","developer_instructions":"secret instructions must not be copied"}},"effort":"high","summary":"fixture"}}`))
 	if err != nil || ev == nil {
 		t.Fatalf("turn_context parse: ev=%+v err=%v", ev, err)
 	}
@@ -447,6 +447,76 @@ func TestDurableManifestIsValid(t *testing.T) {
 	}
 }
 
+// The manifest must match the parser: every native type the checked-in
+// capture produces is declared as mapped, and no mapped name lacks a parser
+// handler (the parser reports handler-less types as unmapped drift, which
+// would contradict the doctor's mapped/filtered/unknown contract).
+func TestDurableManifestMatchesParserHandlers(t *testing.T) {
+	mapped := map[string]bool{}
+	for _, name := range DurableManifest.Mapped {
+		mapped[name] = true
+	}
+
+	// Native record scopes for probe construction. Everything else in Mapped
+	// is an event_msg subtype.
+	topLevel := map[string]bool{
+		"session_meta": true, "turn_context": true, "world_state": true,
+	}
+	responseItem := map[string]bool{
+		"function_call": true, "function_call_output": true,
+		"custom_tool_call": true, "custom_tool_call_output": true,
+		"tool_search_call": true, "tool_search_output": true,
+	}
+
+	// Fixture-proven native types must be declared as mapped.
+	f, err := os.Open(filepath.Join("testdata", "rollout_current_sanitized.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	p := NewFileParser()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		ev, err := p.ParseLine(scanner.Bytes())
+		if err != nil {
+			t.Fatalf("parse fixture line: %v", err)
+		}
+		if ev == nil {
+			continue
+		}
+		native := strings.SplitN(ev.Name, ":", 2)[0]
+		if native == "unmapped" {
+			t.Errorf("checked-in capture produced drift warning %q", ev.Name)
+			continue
+		}
+		if !mapped[native] {
+			t.Errorf("fixture-proven native type %q missing from DurableManifest.Mapped", native)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Every mapped name must dispatch to a handler instead of the unmapped
+	// drift path when probed at its native scope. Probes carry only the type
+	// discriminator; a parse error still proves a handler exists.
+	for _, name := range DurableManifest.Mapped {
+		var line string
+		switch {
+		case topLevel[name]:
+			line = `{"timestamp":"2026-07-24T12:00:00Z","type":"` + name + `","payload":{}}`
+		case responseItem[name]:
+			line = `{"timestamp":"2026-07-24T12:00:00Z","type":"response_item","payload":{"type":"` + name + `"}}`
+		default:
+			line = `{"timestamp":"2026-07-24T12:00:00Z","type":"event_msg","payload":{"type":"` + name + `"}}`
+		}
+		ev, _ := NewFileParser().ParseLine([]byte(line))
+		if ev != nil && strings.HasPrefix(ev.Name, "unmapped:") {
+			t.Errorf("DurableManifest.Mapped claims %q but the parser has no handler for it", name)
+		}
+	}
+}
+
 func TestWatcherStreamsNewSessionFile(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -553,7 +623,7 @@ func TestDurableWatcherBaselineKeepsContextForLaterAppends(t *testing.T) {
 	if err := w.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].SessionID != "019f944c-e8a2-7092-b9e2-1bdfe7ec4ded" || got[0].CWD != "/Users/nicholas/develop/llm-firehose" {
+	if len(got) != 1 || got[0].SessionID != "019f944c-e8a2-7092-b9e2-1bdfe7ec4ded" || got[0].CWD != "/tmp/agent-firehose-codex-fixture/work" {
 		t.Fatalf("baseline context was not retained: %+v", got)
 	}
 }

@@ -19,11 +19,12 @@ var DurableManifest = capturemeta.Manifest{
 	Transport: "durable-jsonl",
 	Fidelity:  capturemeta.PassiveInternalFile,
 	Mapped: []string{
-		"session_meta", "turn_context", "task_started", "task_complete",
-		"user_message", "agent_message", "exec_command_begin", "exec_command_end",
-		"patch_apply_begin", "patch_apply_end", "mcp_tool_call_begin", "mcp_tool_call_end",
-		"function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output",
-		"token_count", "context_compacted", "rate_limits", "error",
+		"session_meta", "turn_context", "world_state", "task_started", "task_complete",
+		"user_message", "agent_message", "exec_command_end", "patch_apply_end",
+		"mcp_tool_call_end", "function_call", "function_call_output",
+		"custom_tool_call", "custom_tool_call_output",
+		"tool_search_call", "tool_search_output",
+		"token_count", "context_compacted", "error",
 	},
 	Filtered: []string{
 		"reasoning", "encrypted_reasoning", "duplicate_response_item", "instruction_body",

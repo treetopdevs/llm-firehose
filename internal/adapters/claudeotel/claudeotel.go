@@ -21,26 +21,22 @@ const (
 	maxRecordsPerBatch     = 256
 )
 
-// Manifest contains only native names observed in genuine Claude Code
-// 2.1.218 OTLP/HTTP JSON batches.
+// Manifest contains only native names proven by the sanitized capture
+// records checked into testdata (see testdata/README.md). Further names
+// observed in genuine Claude Code 2.1.218 batches (assistant_response, the
+// hook/mcp/plugin lifecycle events, tool_decision, and the active_time/
+// session.count metrics) had their captured evidence discarded during
+// sanitization and stay out of the manifest until a sanitized record lands;
+// until then they surface as bounded unknown-event drift warnings.
 var Manifest = capturemeta.Manifest{
 	Source:    Source,
 	Transport: Transport,
 	Fidelity:  capturemeta.SupportedPassiveStream,
 	Mapped: []string{
 		"api_request",
-		"assistant_response",
-		"hook_execution_complete",
-		"hook_execution_start",
-		"hook_registered",
-		"mcp_server_connection",
-		"plugin_loaded",
-		"tool_decision",
 		"tool_result",
 		"user_prompt",
-		"claude_code.active_time.total",
 		"claude_code.cost.usage",
-		"claude_code.session.count",
 		"claude_code.token.usage",
 	},
 	SourceSchema: "claude-code-otel@2.1.218",
