@@ -399,3 +399,19 @@ func TestNoFixtureLeaksSecretsOrInternalStorePaths(t *testing.T) {
 		})
 	}
 }
+
+// A file tool whose allowlisted path arg is missing or not a string must not
+// emit an empty file_path (which would pollute the artifacts/files view) or a
+// summary naming "." from filepath.Base("").
+func TestFileToolWithoutPathArgFallsBackToPlainToolShape(t *testing.T) {
+	ev := parse(t, "PreToolUse", `{"conversationId":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","toolCall":{"name":"view_file","args":{}},"stepIdx":1,"workspacePaths":[]}`)
+	if _, ok := ev.Payload["file_path"]; ok {
+		t.Errorf("empty path must not enter payload: %+v", ev.Payload)
+	}
+	if strings.Contains(ev.Summary, " on .") {
+		t.Errorf("summary names filepath.Base of empty path: %q", ev.Summary)
+	}
+	if ev.Category != event.CategoryFile {
+		t.Errorf("category = %q, want file (tool identity is still known)", ev.Category)
+	}
+}

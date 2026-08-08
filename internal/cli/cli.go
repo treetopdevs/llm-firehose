@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -110,7 +111,7 @@ func EmitNamed(cfg Config, source, eventName string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if cfg.DaemonAddr != "" {
+	if daemonRouteAllowed(cfg.DaemonAddr) {
 		err := client.New("http://"+cfg.DaemonAddr).EmitNamed(source, eventName, bytes.NewReader(raw))
 		var transport *url.Error
 		if !errors.As(err, &transport) {
@@ -118,6 +119,26 @@ func EmitNamed(cfg Config, source, eventName string, r io.Reader) error {
 		}
 	}
 	return EmitLocalNamed(cfg, source, eventName, raw)
+}
+
+// daemonRouteAllowed reports whether the configured daemon address may
+// receive raw pre-redaction payloads. Only loopback qualifies: the daemon
+// speaks unauthenticated cleartext HTTP, so a remote daemon_addr — however it
+// got into config.json — must never see hook payloads. Rejected addresses
+// fall back to direct local spool writes, so capture is preserved.
+func daemonRouteAllowed(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // EmitLocal normalizes one raw payload for source, applies the configured

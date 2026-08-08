@@ -92,3 +92,36 @@ func TestUnknownEventIsStableBoundedAndSafe(t *testing.T) {
 		t.Errorf("unknown payload is not bounded: %d bytes", len(encoded))
 	}
 }
+
+func TestManifestValidateRequiresSourceSchema(t *testing.T) {
+	m := Manifest{
+		Source:    "test",
+		Transport: "hook",
+		Fidelity:  SupportedInBandHook,
+		Mapped:    []string{"A"},
+	}
+	if err := m.Validate(); err == nil {
+		t.Fatal("empty SourceSchema must not validate")
+	}
+	m.SourceSchema = "   "
+	if err := m.Validate(); err == nil {
+		t.Fatal("whitespace SourceSchema must not validate")
+	}
+	m.SourceSchema = "test@1.0"
+	if err := m.Validate(); err != nil {
+		t.Fatalf("valid manifest rejected: %v", err)
+	}
+}
+
+func TestUnknownEventIDDiffersByTransport(t *testing.T) {
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	a := UnknownEvent("codex", "hook", "SessionStart", "1.0", "r", now)
+	b := UnknownEvent("codex", "durable-jsonl", "SessionStart", "1.0", "r", now)
+	if a.ID == b.ID {
+		t.Fatalf("same ID %q across transports hides one transport's drift", a.ID)
+	}
+	c := UnknownEvent("codex", "hook", "SessionStart", "1.0", "r", now)
+	if a.ID != c.ID {
+		t.Fatalf("ID not stable for identical observation: %q vs %q", a.ID, c.ID)
+	}
+}

@@ -24,7 +24,7 @@ var DurableManifest = capturemeta.Manifest{
 		"mcp_tool_call_end", "function_call", "function_call_output",
 		"custom_tool_call", "custom_tool_call_output",
 		"tool_search_call", "tool_search_output",
-		"token_count", "context_compacted", "error",
+		"token_count", "context_compacted", "thread_settings_applied", "error",
 	},
 	Filtered: []string{
 		"reasoning", "encrypted_reasoning", "duplicate_response_item", "instruction_body",

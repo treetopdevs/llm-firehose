@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -104,7 +105,11 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			addr = cli.DefaultDaemonAddr
 		}
 		if err := cli.InstallClaudeOTel(s.home, addr, s.Environ); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
+			status := http.StatusInternalServerError
+			if errors.Is(err, cli.ErrClaudeOTelConflict) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		detail = "supplemental Claude OTLP/HTTP JSON enabled for the local daemon; restart running Claude Code sessions"

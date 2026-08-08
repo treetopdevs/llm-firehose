@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -29,6 +30,12 @@ func ClaudeOTelEnvironment(daemonAddr string) map[string]string {
 	}
 }
 
+// ErrClaudeOTelConflict marks install refusals caused by pre-existing
+// telemetry state (managed settings, process environment, or conflicting
+// user settings) as opposed to environmental failures; the daemon maps it
+// to 409 and everything else to 500.
+var ErrClaudeOTelConflict = errors.New("existing telemetry configuration conflict")
+
 // InstallClaudeOTel opts Claude Code into the daemon's supplemental local
 // OTLP/HTTP JSON receiver. Existing user, process, or managed telemetry
 // settings are a hard conflict and are never overwritten. The caller supplies
@@ -44,7 +51,7 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		original = data
 		if err := json.Unmarshal(data, &settings); err != nil {
-			return fmt.Errorf("existing %s is not valid JSON, refusing to modify: %w", settingsPath, err)
+			return fmt.Errorf("existing %s is not valid JSON, refusing to modify (%w): %w", settingsPath, ErrClaudeOTelConflict, err)
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -57,10 +64,10 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 		if data, err := os.ReadFile(managedPath); err == nil {
 			var managed any
 			if err := json.Unmarshal(data, &managed); err != nil {
-				return fmt.Errorf("managed Claude settings at %s are invalid; refusing to modify user telemetry: %w", managedPath, err)
+				return fmt.Errorf("managed Claude settings at %s are invalid; refusing to modify user telemetry (%w): %w", managedPath, ErrClaudeOTelConflict, err)
 			}
 			if containsTelemetrySetting(managed) {
-				return fmt.Errorf("managed Claude telemetry settings exist at %s; refusing to override", managedPath)
+				return fmt.Errorf("managed Claude telemetry settings exist at %s; refusing to override: %w", managedPath, ErrClaudeOTelConflict)
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("inspect managed Claude settings: %w", err)
@@ -69,7 +76,7 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 	for _, entry := range environ {
 		key, _, _ := strings.Cut(entry, "=")
 		if isClaudeTelemetryKey(key) {
-			return fmt.Errorf("process environment already configures %s; refusing to override", key)
+			return fmt.Errorf("process environment already configures %s; refusing to override: %w", key, ErrClaudeOTelConflict)
 		}
 	}
 
@@ -78,7 +85,7 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 		var valid bool
 		env, valid = existing.(map[string]any)
 		if !valid {
-			return fmt.Errorf("existing %s env value is not an object, refusing to modify", settingsPath)
+			return fmt.Errorf("existing %s env value is not an object, refusing to modify: %w", settingsPath, ErrClaudeOTelConflict)
 		}
 	} else {
 		env = map[string]any{}
@@ -108,7 +115,7 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 		if exact && telemetryEntries == len(target) {
 			return nil
 		}
-		return fmt.Errorf("existing Claude telemetry settings conflict; refusing to overwrite")
+		return fmt.Errorf("existing Claude telemetry settings conflict; refusing to overwrite: %w", ErrClaudeOTelConflict)
 	}
 	for key, value := range target {
 		env[key] = value

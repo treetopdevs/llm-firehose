@@ -131,6 +131,9 @@ func TestWatcherBaselinesExistingFilesAndReadsNewFilesFromStart(t *testing.T) {
 }
 
 func TestWatcherUnreadableFileDoesNotStarveLaterFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0 does not block reads for root")
+	}
 	root := t.TempDir()
 	state := filepath.Join(t.TempDir(), "state.json")
 	var got []event.Event
@@ -520,4 +523,102 @@ func appendRaw(path, value string) error {
 	defer file.Close()
 	_, err = file.WriteString(value)
 	return err
+}
+
+// A single bad file discovered mid-run (here: an old unreadable file whose
+// baseline fingerprint read fails) must not abort the poll for files sorted
+// after it.
+func TestWatcherDiscoveryFailureDoesNotStarveLaterFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0 does not block reads for root")
+	}
+	root := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state.json")
+	var got []event.Event
+	w := New(testOptions(t, root, state, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}))
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+
+	bad := filepath.Join(root, "a-bad.jsonl")
+	if err := os.WriteFile(bad, []byte(`{"session":"bad","text":"old"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(bad, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bad, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bad, 0o600) })
+
+	good := filepath.Join(root, "z-good.jsonl")
+	if err := os.WriteFile(good, []byte(`{"session":"live","text":"works"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatalf("bad discovered file aborted poll: %v", err)
+	}
+	var live *event.Event
+	for i := range got {
+		if got[i].SessionID == "live" {
+			live = &got[i]
+		}
+	}
+	if live == nil || live.Summary != "works" {
+		t.Fatalf("later file starved by discovery failure: %+v", got)
+	}
+}
+
+// If NewParser fails while rolling back after a sink failure, the watcher
+// must not be left with a nil parser that panics the next poll; the pending
+// line must still be re-deliverable.
+func TestWatcherSurvivesParserRollbackFailure(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state.json")
+	sinkFails := true
+	var delivered []event.Event
+	opts := testOptions(t, root, state, func(ev event.Event) error {
+		if sinkFails {
+			return errors.New("spool unavailable")
+		}
+		delivered = append(delivered, ev)
+		return nil
+	})
+	calls := 0
+	opts.NewParser = func(snapshot json.RawMessage) (Parser, error) {
+		calls++
+		if calls == 2 { // the rollback rehydration after the first sink failure
+			return nil, errors.New("snapshot rehydration failed")
+		}
+		return newTestParser(snapshot)
+	}
+	w := New(opts)
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "fresh.jsonl")
+	if err := os.WriteFile(path, []byte(`{"session":"s1","text":"retry me"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err == nil {
+		t.Fatal("expected sink failure")
+	}
+
+	sinkFails = false
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("second poll panicked on nil parser: %v", r)
+		}
+	}()
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatalf("second poll: %v", err)
+	}
+	if len(delivered) != 1 || delivered[0].Summary != "retry me" {
+		t.Fatalf("pending line lost after rollback failure: %+v", delivered)
+	}
 }

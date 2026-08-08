@@ -28,7 +28,7 @@ Evolution rules:
   `prompt_id` — optional, preserves the source-native prompt or interaction
   correlation id — and
   `call_id` — optional, the source-native tool/command correlation id;
-  `upstream_event_id`, `prompt_id`, `message_id`, `parent_id`, and
+  `upstream_event_id`, `message_id`, `parent_id`, and
   `request_id` — optional source-native correlation identifiers; `sequence`
   — an optional native ordering value within its documented source scope;
   `transport` and `source_version` — optional capture provenance;

@@ -239,7 +239,10 @@ func (w *Watcher) Poll(ctx context.Context) error {
 		if !ok {
 			info, err := os.Stat(path)
 			if err != nil {
-				return err
+				// A single undiscoverable file must not starve the rest of
+				// the scan; it is retried on the next poll.
+				w.Report(fmt.Errorf("discover %s: %w", filepath.Base(path), err))
+				continue
 			}
 			// The watermark exists to avoid importing history from old files
 			// moved into the watched tree — never to classify freshly created
@@ -253,19 +256,23 @@ func (w *Watcher) Poll(ctx context.Context) error {
 				info.ModTime().Before(w.discoveryWatermark.Add(-discoveryClockTolerance)) {
 				state, cursor, err := w.baseline(path)
 				if err != nil {
-					return err
+					w.Report(fmt.Errorf("baseline %s: %w", filepath.Base(path), err))
+					continue
 				}
 				w.files[path] = state
 				w.state.Files[path] = cursor
 				w.observed[path] = stampFor(info)
 				if err := w.save(); err != nil {
+					// State persistence failure stays fatal: advancing without
+					// a checkpoint would break append-before-checkpoint.
 					return err
 				}
 				continue
 			}
 			parser, err := w.options.NewParser(nil)
 			if err != nil {
-				return err
+				w.Report(fmt.Errorf("parser for %s: %w", filepath.Base(path), err))
+				continue
 			}
 			state = &fileState{parser: parser}
 			w.files[path] = state
@@ -381,20 +388,20 @@ func (w *Watcher) readAppends(ctx context.Context, path string, state *fileState
 				pending.PendingNext = next
 				w.state.Files[path] = pending
 				if err := w.save(); err != nil {
-					state.parser, _ = w.options.NewParser(before)
+					w.rollbackParser(state, before, path)
 					return err
 				}
 			}
 		}
 		if mapped != nil && w.options.Sink != nil {
 			if err := w.options.Sink(*mapped); err != nil {
-				state.parser, _ = w.options.NewParser(before)
+				w.rollbackParser(state, before, path)
 				return err
 			}
 		}
 		after, err := state.parser.Snapshot()
 		if err != nil {
-			state.parser, _ = w.options.NewParser(before)
+			w.rollbackParser(state, before, path)
 			return err
 		}
 		identity := state.identity
@@ -409,7 +416,7 @@ func (w *Watcher) readAppends(ctx context.Context, path string, state *fileState
 		}
 		w.state.Files[path] = cursor
 		if err := w.save(); err != nil {
-			state.parser, _ = w.options.NewParser(before)
+			w.rollbackParser(state, before, path)
 			w.state.Files[path] = pending
 			return err
 		}
@@ -428,6 +435,20 @@ func (w *Watcher) Report(err error) {
 	if sinkErr := w.options.Sink(w.options.CaptureWarning(err)); sinkErr == nil {
 		w.warned[err.Error()] = true
 	}
+}
+
+// rollbackParser restores the parser to the pre-line snapshot after a
+// persistence or sink failure. If the snapshot cannot be rehydrated the
+// already-advanced parser is kept instead of a nil one: a live parser cannot
+// panic the next poll, the durable cursor still points at the pre-line
+// state, and a restart rebuilds cleanly from the checkpoint.
+func (w *Watcher) rollbackParser(state *fileState, before json.RawMessage, path string) {
+	parser, err := w.options.NewParser(before)
+	if err != nil {
+		w.Report(fmt.Errorf("rollback parser %s: %w", filepath.Base(path), err))
+		return
+	}
+	state.parser = parser
 }
 
 func (w *Watcher) save() error {

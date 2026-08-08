@@ -65,6 +65,9 @@ func (m Manifest) Validate() error {
 	if !validFidelities[m.Fidelity] {
 		return fmt.Errorf("capture manifest: invalid fidelity %q", m.Fidelity)
 	}
+	if strings.TrimSpace(m.SourceSchema) == "" {
+		return fmt.Errorf("capture manifest: source schema is required")
+	}
 	seen := make(map[string]string, len(m.Mapped)+len(m.Filtered))
 	for _, group := range []struct {
 		name   string
@@ -91,7 +94,7 @@ func (m Manifest) Validate() error {
 // persistent drift forever.
 func UnknownEvent(source, transport, nativeName, sourceVersion, reason string, now time.Time) event.Event {
 	day := now.UTC().Format("2006-01-02")
-	sum := sha256.Sum256([]byte(strings.Join([]string{source, sourceVersion, nativeName, day}, "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join([]string{source, transport, sourceVersion, nativeName, day}, "\x00")))
 	bounded := safeReason(reason)
 	safeSource := truncateRunes(source, 80)
 	safeTransport := truncateRunes(transport, 32)

@@ -468,6 +468,18 @@ func TestDurableManifestMatchesParserHandlers(t *testing.T) {
 		"tool_search_call": true, "tool_search_output": true,
 	}
 
+	// Types proven only by inline sanitized payloads in this file (see
+	// testdata/README.md) must be declared as mapped too — the checked-in
+	// rollout capture does not carry them.
+	for _, name := range []string{
+		"exec_command_end", "patch_apply_end", "mcp_tool_call_end",
+		"context_compacted", "thread_settings_applied", "error",
+	} {
+		if !mapped[name] {
+			t.Errorf("inline-proven native type %q missing from DurableManifest.Mapped", name)
+		}
+	}
+
 	// Fixture-proven native types must be declared as mapped.
 	f, err := os.Open(filepath.Join("testdata", "rollout_current_sanitized.jsonl"))
 	if err != nil {

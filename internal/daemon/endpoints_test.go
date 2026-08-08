@@ -374,6 +374,25 @@ func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
 	}
 }
 
+func TestInstallEndpointClaudeOTelNonConflictFailureIs500(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DaemonAddr = "example.com:80" // non-loopback: an install failure that is not a settings conflict
+	home := t.TempDir()
+	srv := New(cfg, home, "test-version")
+	srv.Environ = []string{"PATH=/usr/bin"}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-otel: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for a non-conflict installer failure", resp.StatusCode)
+	}
+}
+
 func TestInstallEndpointOpenCode(t *testing.T) {
 	cfg := testConfig(t)
 	home := t.TempDir()

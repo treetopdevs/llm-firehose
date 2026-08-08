@@ -217,8 +217,12 @@ func mapToolEvent(ev *event.Event, p hookPayload, eventName string) {
 	case fileToolArgKeys[toolName] != "":
 		ev.Category = event.CategoryFile
 		path, _ := args[fileToolArgKeys[toolName]].(string)
-		ev.Summary = fmt.Sprintf("%s %s on %s", verb, toolName, filepath.Base(path))
-		ev.Payload["file_path"] = path
+		if path != "" {
+			ev.Summary = fmt.Sprintf("%s %s on %s", verb, toolName, filepath.Base(path))
+			ev.Payload["file_path"] = path
+		} else {
+			ev.Summary = fmt.Sprintf("%s %s", verb, toolName)
+		}
 	default:
 		ev.Category = event.CategoryTool
 		ev.Summary = fmt.Sprintf("%s tool %s", verb, toolName)

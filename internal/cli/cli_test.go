@@ -1067,3 +1067,34 @@ func TestDoctorReportsAntigravityHooks(t *testing.T) {
 		t.Errorf("antigravity hooks should pass after install: %+v", c)
 	}
 }
+
+// Raw hook payloads must never leave the machine: a non-loopback daemon_addr
+// (however it got into config.json) is ignored in favor of the local spool
+// rather than being sent cleartext to a remote host.
+func TestDaemonRouteRequiresLoopback(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:4517": true,
+		"localhost:4517": true,
+		"[::1]:4517":     true,
+		"example.com:80": false,
+		"10.0.0.5:4517":  false,
+		"0.0.0.0:4517":   false,
+		"no-port-at-all": false,
+	} {
+		if got := daemonRouteAllowed(addr); got != want {
+			t.Errorf("daemonRouteAllowed(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+func TestEmitWithNonLoopbackDaemonStillCapturesLocally(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DaemonAddr = "example.com:4517"
+	if err := EmitNamed(cfg, "generic", "", strings.NewReader(`{"category":"meta","summary":"s"}`)); err != nil {
+		t.Fatalf("EmitNamed: %v", err)
+	}
+	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	if len(evs) != 1 {
+		t.Fatalf("local spool events = %d, want 1", len(evs))
+	}
+}

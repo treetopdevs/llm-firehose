@@ -41,8 +41,10 @@ export const AgentFirehose = async ({ directory }) => {
       });
       proc.stdin.write(JSON.stringify(payload));
       proc.stdin.end();
+      return true;
     } catch (_) {
       // never break the agent because the viewer is missing
+      return false;
     }
   };
   return {
@@ -59,7 +61,11 @@ export const AgentFirehose = async ({ directory }) => {
       }
       if (!mappedTypes.has(type)) {
         if (warnedUnknownTypes.has(type)) return;
-        warnedUnknownTypes.add(type);
+        // Mark warned only when the spawn handed off without throwing, so a
+        // transiently missing forwarder does not permanently swallow the one
+        // drift observation this type gets per plugin run.
+        if (forward({ ...event, directory })) warnedUnknownTypes.add(type);
+        return;
       }
       forward({ ...event, directory });
     },
