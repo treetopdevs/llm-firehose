@@ -25,6 +25,8 @@ Evolution rules:
   MUST ignore unknown fields. (Examples: `trace_id` — optional, groups
   causally related events across sessions when a source supplies one — and
   `turn_id` — optional, groups events within a source-native turn — and
+  `prompt_id` — optional, preserves the source-native prompt or interaction
+  correlation id — and
   `call_id` — optional, the source-native tool/command correlation id;
   `upstream_event_id`, `prompt_id`, `message_id`, `parent_id`, and
   `request_id` — optional source-native correlation identifiers; `sequence`
@@ -92,6 +94,8 @@ An adapter maps a source's native payloads to canonical envelopes. Rules:
 
 - Set `source` to the agent family and preserve the source's own session
   identifier in `session_id` whenever one exists.
+- Preserve source-native prompt and tool correlation identifiers in
+  `prompt_id` and `call_id` whenever the source supplies them.
 - Preserve a supplied clock in `source_time`, assign `capture_time` at
   observation, and leave `source_time` absent when the source has no clock.
 - Attach `repo_id` and `worktree_id` only when `cwd` makes local Git identity
@@ -100,6 +104,9 @@ An adapter maps a source's native payloads to canonical envelopes. Rules:
   `tool`, `file`, `permission`, `shell`, `error`, `meta`.
 - Put structured details in `payload`; never pre-truncate — privacy redaction
   is the engine's job.
+- Content-bearing source fields may be deliberately excluded from the safe
+  payload. In particular, an adapter may retain correlation/outcome metadata
+  while omitting prompt/message bodies and sensitive tool inputs/outputs.
 - An adapter may deliberately skip payloads that carry no signal; a skip is
   not an error.
 - Deep adapters publish a capability manifest declaring source schema,

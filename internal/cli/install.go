@@ -193,11 +193,14 @@ func containsTelemetrySetting(value any) bool {
 	return false
 }
 
-// ClaudeHookEvents is the fixture-proven observational Claude Code hook
-// surface Firehose installs. Additional documented hook names stay parser-only
-// until a real local payload can prove their shape and behavior.
+// ClaudeHookEvents is the observational Claude Code hook surface Firehose
+// installs. Every event except PreCompact is fixture-proven; PreCompact keeps
+// its inherited install coverage while a real capture is pending (see
+// adapters/claudecode/testdata/README.md). Additional documented hook names
+// stay parser-only until a real local payload can prove their shape.
 var ClaudeHookEvents = []string{
 	"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+	"PostToolUseFailure", "StopFailure", "PreCompact",
 	"Notification", "SubagentStop", "Stop", "SessionEnd",
 }
 
@@ -208,6 +211,8 @@ var claudeHooksWithoutMatchers = map[string]bool{
 	"Notification":     true,
 	"SubagentStop":     true,
 	"Stop":             true,
+	"StopFailure":      true,
+	"PreCompact":       true,
 }
 
 // CodexHookEvents is the complete lifecycle/tool hook surface supported by

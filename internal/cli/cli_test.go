@@ -43,8 +43,8 @@ func TestEmitClaudeCodeWritesRedactedEvent(t *testing.T) {
 	if ev.Raw != "" {
 		t.Error("balanced mode must drop raw payload")
 	}
-	if p, _ := ev.Payload["prompt"].(string); len([]rune(p)) > 241 {
-		t.Errorf("balanced mode must truncate payload, len=%d", len([]rune(p)))
+	if _, ok := ev.Payload["prompt"]; ok || strings.Contains(ev.Summary, strings.Repeat("x", 20)) {
+		t.Errorf("balanced Claude capture must exclude prompt bodies: %+v", ev)
 	}
 }
 
@@ -206,6 +206,7 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 	}
 	expected := []string{
 		"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"PostToolUseFailure", "StopFailure", "PreCompact",
 		"Notification", "SubagentStop", "Stop", "SessionEnd",
 	}
 	for _, evName := range expected {
@@ -215,10 +216,10 @@ func TestInstallClaudeCodeMergesSettings(t *testing.T) {
 	}
 	for _, omitted := range []string{
 		"Setup", "UserPromptExpansion", "PermissionRequest", "PermissionDenied",
-		"PostToolUseFailure", "PostToolBatch", "SubagentStart", "TaskCreated",
-		"TaskCompleted", "StopFailure", "TeammateIdle", "InstructionsLoaded",
+		"PostToolBatch", "SubagentStart", "TaskCreated",
+		"TaskCompleted", "TeammateIdle", "InstructionsLoaded",
 		"ConfigChange", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
-		"PreCompact", "PostCompact", "Elicitation", "ElicitationResult",
+		"PostCompact", "Elicitation", "ElicitationResult",
 		"FileChanged", "MessageDisplay",
 	} {
 		if strings.Contains(s, `"`+omitted+`"`) {

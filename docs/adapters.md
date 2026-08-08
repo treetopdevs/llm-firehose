@@ -6,10 +6,15 @@ Every capture path produces the same normalized envelope (`internal/event`):
 {
   "id": "…", "time": "…", "capture_time": "…",
   "source": "claude-code", "agent": "claude",
-  "session_id": "…", "category": "shell", "name": "PostToolUse:Bash",
-  "severity": "info", "summary": "ran: go test ./...",
+  "session_id": "…", "prompt_id": "…", "call_id": "…",
+  "category": "shell", "name": "PostToolUse:Bash",
+  "severity": "info", "summary": "Bash completed",
   "cwd": "/repo", "repo_id": "/repo/.git", "worktree_id": "/repo",
-  "payload": { }, "raw": "…"
+  "payload": {
+    "tool_name": "Bash", "phase": "end", "status": "success",
+    "duration_ms": 4652
+  },
+  "raw": "…"
 }
 ```
 
@@ -46,21 +51,27 @@ asynchronous and pipes its JSON payload to
 never makes a policy decision, and records a best-effort warning when the
 spool remains writable.
 
-Firehose installs only the fixture-proven event families: `SessionStart`,
-`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`,
-`SubagentStop`, `Stop`, and `SessionEnd`. Tool-name matchers are added only to
-the two tool hooks. Other documented hook families remain visible coverage
-gaps until a genuine payload is captured. `WorktreeCreate` is filtered because
-merely registering that hook replaces Claude's built-in worktree
-implementation and requires a path result; `FileChanged` is filtered until a
-bounded filename watch list is configured.
+Firehose installs the event families `SessionStart`, `UserPromptSubmit`,
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `StopFailure`,
+`PreCompact`, `Notification`, `SubagentStop`, `Stop`, and `SessionEnd`. All
+are fixture-proven except `PreCompact`, whose inherited metadata-only mapping
+awaits a real capture. Tool-name matchers are added only to the three tool
+hooks. Other documented hook families remain visible coverage gaps until a
+genuine payload is captured. `WorktreeCreate` is filtered because merely
+registering that hook replaces Claude's built-in worktree implementation and
+requires a path result; `FileChanged` is filtered until a bounded filename
+watch list is configured.
 
-The safe payload is an explicit metadata allowlist: native prompt/tool/agent
-IDs, permission mode, effort, tool name/status/duration/interruption,
-notification type, and file path for file tools. Prompt text, assistant text,
-tool arguments/results, notification bodies, transcript paths, titles, and
-elicitation values remain only in `raw`, so balanced/minimal persistence
-drops them. `Bash` tools map to `shell`; file tools map to `file`.
+The safe payload is an explicit metadata allowlist: native
+prompt/turn/message/tool/agent IDs, permission mode, effort, tool
+name/phase/status/duration/interruption, notification type, and file path for
+file tools. `StopFailure` retains only Anthropic's documented bounded API
+error class, mapping future unknown values to `unknown`. Prompt text,
+assistant text, tool arguments/results, notification bodies, transcript
+paths, titles, detailed error text, and elicitation values remain only in
+`raw`, so balanced/minimal persistence drops them. `Bash` tools map to
+`shell`; file tools map to `file`; a single failing tool is `warn` severity,
+while `StopFailure` maps to the `error` category as a session-level failure.
 
 ### Claude local OpenTelemetry (supplemental)
 

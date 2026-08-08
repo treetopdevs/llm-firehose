@@ -1,0 +1,1285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Firehose — Calm Supervision Product Map</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f4ef;
+    --surface: #ffffff;
+    --surface-2: #eeece5;
+    --ink: #171a1f;
+    --muted: #5d6570;
+    --line: #d8d5cc;
+    --accent: #c44b12;
+    --accent-soft: #fae3d5;
+    --cyan: #0a7284;
+    --cyan-soft: #d9eef1;
+    --good: #167447;
+    --good-soft: #dbefe4;
+    --warn: #a65c00;
+    --warn-soft: #f8e8c8;
+    --danger: #b3262d;
+    --danger-soft: #f7dcde;
+    --unknown: #6c5aa7;
+    --unknown-soft: #e8e2f5;
+    --shadow: 0 14px 40px rgba(37, 31, 23, .08);
+    --mono: "SFMono-Regular", "SF Mono", "Cascadia Code", "Roboto Mono", ui-monospace, monospace;
+    --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0c1015;
+    --surface: #141a21;
+    --surface-2: #1b222b;
+    --ink: #eef1f5;
+    --muted: #9ca7b4;
+    --line: #2b3541;
+    --accent: #ff7a32;
+    --accent-soft: #3b241b;
+    --cyan: #54c5d8;
+    --cyan-soft: #16323a;
+    --good: #62cf91;
+    --good-soft: #183328;
+    --warn: #f1bb5a;
+    --warn-soft: #382d19;
+    --danger: #ff7b82;
+    --danger-soft: #3d2024;
+    --unknown: #baa9f2;
+    --unknown-soft: #29243b;
+    --shadow: 0 18px 48px rgba(0, 0, 0, .28);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c1015;
+      --surface: #141a21;
+      --surface-2: #1b222b;
+      --ink: #eef1f5;
+      --muted: #9ca7b4;
+      --line: #2b3541;
+      --accent: #ff7a32;
+      --accent-soft: #3b241b;
+      --cyan: #54c5d8;
+      --cyan-soft: #16323a;
+      --good: #62cf91;
+      --good-soft: #183328;
+      --warn: #f1bb5a;
+      --warn-soft: #382d19;
+      --danger: #ff7b82;
+      --danger-soft: #3d2024;
+      --unknown: #baa9f2;
+      --unknown-soft: #29243b;
+      --shadow: 0 18px 48px rgba(0, 0, 0, .28);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(circle at 8% -8%, var(--accent-soft), transparent 30rem),
+      radial-gradient(circle at 92% 0%, var(--cyan-soft), transparent 28rem),
+      var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 var(--sans);
+  }
+
+  button, input, select { font: inherit; }
+
+  button {
+    min-height: 44px;
+    color: inherit;
+  }
+
+  button:focus-visible, a:focus-visible {
+    outline: 3px solid var(--cyan);
+    outline-offset: 3px;
+  }
+
+  .page {
+    width: min(1180px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 1rem 0 5rem;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 54px;
+  }
+
+  .wordmark {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: .08em;
+  }
+
+  .theme-toggle {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    padding: .5rem .85rem;
+    cursor: pointer;
+  }
+
+  .hero {
+    padding: clamp(3rem, 8vw, 7rem) 0 clamp(2rem, 5vw, 4rem);
+    max-width: 920px;
+  }
+
+  .kicker {
+    margin: 0 0 .8rem;
+    color: var(--accent);
+    font: 700 .78rem/1.2 var(--mono);
+    letter-spacing: .11em;
+    text-transform: uppercase;
+  }
+
+  h1, h2, h3, p { margin-top: 0; }
+
+  h1 {
+    margin-bottom: 1.2rem;
+    font-size: clamp(2.7rem, 7vw, 5.8rem);
+    line-height: .98;
+    letter-spacing: -.055em;
+  }
+
+  h1 span { color: var(--accent); }
+
+  .lede {
+    max-width: 760px;
+    color: var(--muted);
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
+  }
+
+  .invariants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .55rem;
+    margin-top: 1.6rem;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    min-height: 34px;
+    padding: .35rem .7rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 84%, transparent);
+    font: 600 .84rem/1.2 var(--mono);
+  }
+
+  .pill::before {
+    content: "";
+    width: .5rem;
+    height: .5rem;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .view-tabs {
+    position: sticky;
+    top: .6rem;
+    z-index: 20;
+    display: flex;
+    gap: .35rem;
+    width: fit-content;
+    max-width: 100%;
+    padding: .35rem;
+    margin-bottom: 2.5rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
+  }
+
+  .view-tab {
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    padding: .55rem .9rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .view-tab[aria-selected="true"] {
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  .view { display: none; }
+  .view.is-active { display: block; }
+
+  .section-head {
+    display: grid;
+    grid-template-columns: minmax(0, .8fr) minmax(280px, 1.2fr);
+    gap: 2rem;
+    align-items: end;
+    margin: 0 0 1.5rem;
+  }
+
+  .section-head h2 {
+    margin-bottom: 0;
+    font-size: clamp(1.8rem, 4vw, 3rem);
+    line-height: 1.05;
+    letter-spacing: -.035em;
+  }
+
+  .section-head p { margin-bottom: .2rem; color: var(--muted); }
+
+  .eyebrow {
+    display: block;
+    margin-bottom: .45rem;
+    color: var(--accent);
+    font: 700 .75rem/1.2 var(--mono);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+  }
+
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .flow-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .flow-column { padding: clamp(1rem, 3vw, 1.5rem); }
+
+  .flow-column h3 {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    margin-bottom: 1rem;
+    font-size: 1rem;
+  }
+
+  .status-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    border-radius: 50%;
+    font: 800 .82rem/1 var(--mono);
+  }
+
+  .status-mark.problem { color: var(--danger); background: var(--danger-soft); }
+  .status-mark.target { color: var(--good); background: var(--good-soft); }
+
+  .flow {
+    display: grid;
+    gap: .7rem;
+  }
+
+  .flow-step {
+    position: relative;
+    padding: .8rem .9rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface-2);
+  }
+
+  .flow-step + .flow-step::before {
+    content: "↓";
+    position: absolute;
+    left: 1rem;
+    top: -1.02rem;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  .flow-step strong {
+    display: block;
+    margin-bottom: .12rem;
+  }
+
+  .flow-step small { color: var(--muted); }
+
+  .flow-step.problem { border-left: 4px solid var(--danger); }
+  .flow-step.target { border-left: 4px solid var(--good); }
+
+  .decision-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .75rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .decision {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: .8rem;
+    padding: 1rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .decision:first-child, .decision:nth-child(2) { border-top: 0; }
+
+  .priority {
+    width: 2.35rem;
+    color: var(--accent);
+    font: 800 .78rem/1.2 var(--mono);
+  }
+
+  .decision h3 { margin-bottom: .2rem; font-size: 1rem; }
+  .decision p { margin: 0; color: var(--muted); font-size: .92rem; }
+
+  .mode-layout {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .mode-picker {
+    display: grid;
+    align-content: start;
+    gap: .45rem;
+    padding: .8rem;
+  }
+
+  .mode-button {
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    padding: .7rem .8rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .mode-button span {
+    display: block;
+    color: var(--muted);
+    font-size: .78rem;
+  }
+
+  .mode-button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .mode-detail {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(220px, .85fr);
+    gap: 1.5rem;
+    min-height: 270px;
+    padding: clamp(1.2rem, 4vw, 2rem);
+  }
+
+  .mode-detail h3 {
+    margin-bottom: .6rem;
+    font-size: clamp(1.5rem, 3vw, 2.3rem);
+    line-height: 1.08;
+  }
+
+  .mode-detail p { color: var(--muted); }
+
+  .question {
+    display: block;
+    margin: 1rem 0;
+    padding: 1rem;
+    border-left: 4px solid var(--cyan);
+    background: var(--cyan-soft);
+    font-size: 1.05rem;
+  }
+
+  .mode-facts {
+    display: grid;
+    gap: .6rem;
+    align-content: start;
+  }
+
+  .fact {
+    padding: .8rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .fact:first-child { border-top: 0; }
+  .fact span { display: block; color: var(--muted); font-size: .78rem; }
+  .fact strong { font-family: var(--mono); }
+
+  .prototype-block { margin-bottom: 2.5rem; }
+
+  .prototype-head {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: .8rem;
+  }
+
+  .prototype-head h3 { margin-bottom: 0; }
+
+  .scenario-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+  }
+
+  .scenario-button {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    padding: .45rem .75rem;
+    cursor: pointer;
+  }
+
+  .scenario-button[aria-pressed="true"] {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  .app-shell {
+    overflow: hidden;
+    border: 1px solid #303944;
+    border-radius: 18px;
+    background: #0d1117;
+    color: #dce4ec;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
+    font: 13px/1.45 var(--mono);
+  }
+
+  .app-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .65rem .8rem;
+    border-bottom: 1px solid #2d3640;
+    background: #121820;
+  }
+
+  .app-brand { color: #ff7a32; font-weight: 800; letter-spacing: .09em; }
+  .engine { color: #78d99f; }
+
+  .app-main {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr) 300px;
+    min-height: 480px;
+  }
+
+  .app-nav {
+    padding: .65rem;
+    border-right: 1px solid #2d3640;
+    background: #10151c;
+  }
+
+  .app-nav-item {
+    display: block;
+    width: 100%;
+    min-height: 36px;
+    margin-bottom: .25rem;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #9ba7b4;
+    text-align: left;
+    cursor: default;
+  }
+
+  .app-nav-item.active {
+    background: #202832;
+    color: #ff8a4d;
+  }
+
+  .app-feed { min-width: 0; padding: .7rem; }
+
+  .attention-strip {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: .8rem;
+    align-items: center;
+    min-height: 72px;
+    margin-bottom: .7rem;
+    padding: .65rem .8rem;
+    border: 1px solid #375366;
+    border-left: 4px solid #54c5d8;
+    border-radius: 10px;
+    background: #14232c;
+  }
+
+  .attention-strip[data-state="calm"] {
+    border-color: #315441;
+    border-left-color: #62cf91;
+    background: #14241c;
+  }
+
+  .attention-strip[data-state="collision"] {
+    border-color: #68562d;
+    border-left-color: #f1bb5a;
+    background: #2a2417;
+  }
+
+  .attention-strip[data-state="failure"] {
+    border-color: #6a343a;
+    border-left-color: #ff7b82;
+    background: #2c1a1e;
+  }
+
+  .attention-icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    font-weight: 800;
+  }
+
+  .attention-title { font-weight: 800; }
+  .attention-meta { color: #97a4b1; }
+
+  .attention-action {
+    min-height: 36px;
+    border: 1px solid #69798a;
+    border-radius: 7px;
+    background: transparent;
+    color: #e7edf3;
+    padding: .35rem .65rem;
+  }
+
+  .feed-toolbar {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+    padding: .25rem 0 .55rem;
+    color: #97a4b1;
+  }
+
+  .feed-toolbar strong { color: #e7edf3; }
+  .feed-toolbar .spacer { flex: 1; }
+
+  .feed-row {
+    display: grid;
+    grid-template-columns: 64px 94px 76px minmax(0, 1fr);
+    gap: .55rem;
+    padding: .34rem .35rem;
+    border-top: 1px solid #202832;
+  }
+
+  .feed-row:first-of-type { border-top: 0; }
+  .feed-row .time, .feed-row .kind { color: #7f8c99; }
+  .feed-row .agent { color: #ff8a4d; }
+  .feed-row .summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-row.is-derived .summary::before { content: "≈ "; color: #baa9f2; }
+  .feed-row.is-highlighted { background: #1b2530; }
+
+  .app-detail {
+    padding: .8rem;
+    border-left: 1px solid #2d3640;
+    background: #11171e;
+  }
+
+  .app-detail h4 {
+    margin: 0 0 .7rem;
+    color: #f2f5f8;
+    font-size: 1rem;
+  }
+
+  .detail-label {
+    display: block;
+    margin-top: .7rem;
+    color: #81909e;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+
+  .evidence {
+    margin-top: .5rem;
+    padding: .65rem;
+    border: 1px solid #2d3640;
+    border-radius: 8px;
+    background: #0d1117;
+    color: #c7d0da;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: .7rem;
+    color: var(--muted);
+    font-size: .86rem;
+  }
+
+  .legend strong { color: var(--ink); font-family: var(--mono); }
+
+  .disclosure {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: .7rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .disclosure-step {
+    position: relative;
+    padding: 1rem;
+    border-top: 3px solid var(--line);
+  }
+
+  .disclosure-step + .disclosure-step::before {
+    content: "→";
+    position: absolute;
+    left: -.7rem;
+    top: .8rem;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  .disclosure-step span {
+    display: block;
+    color: var(--accent);
+    font: 800 .75rem/1.2 var(--mono);
+  }
+
+  .disclosure-step strong { display: block; margin: .25rem 0; }
+  .disclosure-step small { color: var(--muted); }
+
+  .roadmap {
+    position: relative;
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .roadmap::before {
+    content: "";
+    position: absolute;
+    left: 25px;
+    top: 28px;
+    bottom: 28px;
+    width: 2px;
+    background: var(--line);
+  }
+
+  .phase {
+    position: relative;
+    display: grid;
+    grid-template-columns: 52px 180px minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+    padding: 1.1rem;
+  }
+
+  .phase-number {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin: .1rem auto 0;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--accent);
+    font: 800 .78rem/1 var(--mono);
+  }
+
+  .phase-title h3 { margin-bottom: .2rem; }
+  .phase-title p { margin: 0; color: var(--muted); font-size: .86rem; }
+
+  .phase-items {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .55rem;
+  }
+
+  .phase-item {
+    padding: .7rem .8rem;
+    border-left: 3px solid var(--cyan);
+    background: var(--surface-2);
+  }
+
+  .phase-item strong { display: block; }
+  .phase-item small { color: var(--muted); }
+
+  .gates {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr);
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .gate-panel { padding: 1.25rem; }
+  .gate-panel h3 { margin-bottom: .8rem; }
+
+  .gate-list {
+    display: grid;
+    gap: .5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .gate-list li {
+    display: grid;
+    grid-template-columns: 1.3rem 1fr;
+    gap: .5rem;
+  }
+
+  .gate-list li::before {
+    content: "✓";
+    color: var(--good);
+    font-weight: 800;
+  }
+
+  .parked {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+
+  .parked span {
+    padding: .4rem .65rem;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: .82rem;
+  }
+
+  .footer-note {
+    margin-top: 3rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: .88rem;
+  }
+
+  @media (max-width: 900px) {
+    .app-main { grid-template-columns: 100px minmax(0, 1fr); }
+    .app-detail { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #2d3640; }
+    .mode-detail { grid-template-columns: 1fr; }
+    .phase { grid-template-columns: 52px 1fr; }
+    .phase-items { grid-column: 2; }
+  }
+
+  @media (max-width: 720px) {
+    .page { width: min(100% - 1rem, 1180px); }
+    .topbar { padding: 0 .25rem; }
+    .hero { padding-top: 3rem; }
+    .view-tabs { width: 100%; overflow-x: auto; }
+    .view-tab { flex: 1; }
+    .section-head, .flow-compare, .decision-list, .mode-layout, .gates {
+      grid-template-columns: 1fr;
+    }
+    .decision:nth-child(2) { border-top: 1px solid var(--line); }
+    .mode-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .prototype-head { align-items: stretch; flex-direction: column; }
+    .app-main { grid-template-columns: 1fr; }
+    .app-nav {
+      display: flex;
+      gap: .2rem;
+      overflow-x: auto;
+      border-right: 0;
+      border-bottom: 1px solid #2d3640;
+    }
+    .app-nav-item { width: auto; white-space: nowrap; }
+    .attention-strip { grid-template-columns: auto 1fr; }
+    .attention-action { grid-column: 1 / -1; }
+    .feed-row { grid-template-columns: 56px 80px minmax(0, 1fr); }
+    .feed-row .kind { display: none; }
+    .disclosure { grid-template-columns: 1fr 1fr; }
+    .disclosure-step:nth-child(3)::before { display: none; }
+    .phase { grid-template-columns: 42px 1fr; gap: .5rem; padding: .8rem; }
+    .phase-items { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 460px) {
+    h1 { font-size: 2.65rem; }
+    .mode-picker, .disclosure { grid-template-columns: 1fr; }
+    .disclosure-step + .disclosure-step::before { display: none; }
+    .feed-row { grid-template-columns: 52px minmax(0, 1fr); }
+    .feed-row .agent { display: none; }
+    .app-top { align-items: flex-start; flex-direction: column; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+
+  @media print {
+    .theme-toggle, .view-tabs, .scenario-controls { display: none; }
+    .view { display: block !important; break-before: page; }
+    .view:first-of-type { break-before: auto; }
+    body { background: #fff; }
+    .card, .app-shell { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="topbar">
+    <div class="wordmark">AGENT FIREHOSE</div>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">Toggle theme</button>
+  </div>
+
+  <header class="hero">
+    <p class="kicker">Post-v0.1 product map · July 2026</p>
+    <h1>From watching agents to <span>calm supervision.</span></h1>
+    <p class="lede">The feed remains the soul of the product. The product hierarchy changes around it: surface only the interruptions that earn attention, attach evidence, and let the user look away safely.</p>
+    <div class="invariants" aria-label="Product invariants">
+      <span class="pill">Live is home</span>
+      <span class="pill">Attention is inline</span>
+      <span class="pill">Evidence travels with claims</span>
+      <span class="pill">Unknown is a valid answer</span>
+    </div>
+  </header>
+
+  <nav class="view-tabs" aria-label="Product map views">
+    <button class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="decision-map" id="tab-decision" data-view="decision-map">Decision map</button>
+    <button class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="experience-map" id="tab-experience" data-view="experience-map">Experience map</button>
+    <button class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="roadmap-map" id="tab-roadmap" data-view="roadmap-map">Phase 0–2</button>
+  </nav>
+
+  <main>
+    <section class="view is-active" id="decision-map" role="tabpanel" aria-labelledby="tab-decision">
+      <div class="section-head">
+        <h2><span class="eyebrow">Hierarchy correction</span>The strategy is right. The shell is upside down.</h2>
+        <p>The current desktop app opens on an unexplained spatial view and treats Live as one peer among many. The target makes the feed primary, places urgency above it, and turns every other surface into progressive disclosure.</p>
+      </div>
+
+      <div class="flow-compare">
+        <article class="flow-column card">
+          <h3><span class="status-mark problem">×</span>Current journey</h3>
+          <div class="flow">
+            <div class="flow-step problem"><strong>Choose privacy label</strong><small>Minimal, balanced, or full—without consequences.</small></div>
+            <div class="flow-step problem"><strong>Verify adapters</strong><small>Wiring health, not observation limits.</small></div>
+            <div class="flow-step problem"><strong>“Start watching”</strong><small>Lands back on Doctor.</small></div>
+            <div class="flow-step problem"><strong>Orbit is home</strong><small>Moving bodies, no legend, reason hidden behind hover.</small></div>
+            <div class="flow-step problem"><strong>Sessions is history</strong><small>Thousands of cards, raw IDs, no attention-ranked queue.</small></div>
+          </div>
+        </article>
+
+        <article class="flow-column card">
+          <h3><span class="status-mark target">✓</span>Target journey</h3>
+          <div class="flow">
+            <div class="flow-step target"><strong>Choose evidence posture</strong><small>Each mode states what will later be observable or lost.</small></div>
+            <div class="flow-step target"><strong>Verify capabilities</strong><small>Per-adapter observed, redacted, missing, and gap facts.</small></div>
+            <div class="flow-step target"><strong>Start on Live</strong><small>One orientation to pause, filter, and attention.</small></div>
+            <div class="flow-step target"><strong>Needs you is inline</strong><small>Reason, evidence quality, elapsed time, inspect or snooze.</small></div>
+            <div class="flow-step target"><strong>Drill down by intent</strong><small>Feed → event → session → artifact. Orbit remains optional.</small></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="section-head">
+        <h2><span class="eyebrow">Decisions to ratify</span>Seven rules that keep the roadmap honest.</h2>
+        <p>These are product invariants, not cosmetic preferences. Each reduces attention cost or prevents the interface from overstating what capture can prove.</p>
+      </div>
+
+      <div class="decision-list card">
+        <article class="decision"><div class="priority">P0</div><div><h3>Live is the primary surface</h3><p>Default route, return destination, and visual center of gravity.</p></div></article>
+        <article class="decision"><div class="priority">P0</div><div><h3>The interrupt is self-contained</h3><p>Who, why, when, evidence quality, inspect, and snooze—without navigation.</p></div></article>
+        <article class="decision"><div class="priority">P1</div><div><h3>Capture honesty begins in onboarding</h3><p>Privacy choices explain irreversible evidence loss before saving.</p></div></article>
+        <article class="decision"><div class="priority">P1</div><div><h3>Correct is not always interrupt-worthy</h3><p>Finished is passive by default; high-confidence blocking states may interrupt.</p></div></article>
+        <article class="decision"><div class="priority">P1</div><div><h3>Sessions is a working set</h3><p>Active and needs-attention first; history sits behind search and scope.</p></div></article>
+        <article class="decision"><div class="priority">P1</div><div><h3>No false precision</h3><p>Use capability facts and explicit unknowns, not invented completeness percentages.</p></div></article>
+        <article class="decision"><div class="priority">P2</div><div><h3>Every spatial state has a text path</h3><p>Keyboard activation, readable labels, and equivalent non-canvas triage.</p></div></article>
+      </div>
+    </section>
+
+    <section class="view" id="experience-map" role="tabpanel" aria-labelledby="tab-experience" hidden>
+      <div class="section-head">
+        <h2><span class="eyebrow">Attention states</span>Design for the user’s mode, not the feature list.</h2>
+        <p>A supervising developer moves between four modes. The interface should change the amount of information and interruption—not the underlying evidence.</p>
+      </div>
+
+      <div class="mode-layout">
+        <div class="mode-picker card" role="group" aria-label="Choose an attention mode">
+          <button class="mode-button" type="button" aria-pressed="true" data-mode="peripheral"><strong>Peripheral</strong><span>Working elsewhere</span></button>
+          <button class="mode-button" type="button" aria-pressed="false" data-mode="triage"><strong>Triage</strong><span>Ten-second decision</span></button>
+          <button class="mode-button" type="button" aria-pressed="false" data-mode="forensic"><strong>Forensic</strong><span>Investigating failure</span></button>
+          <button class="mode-button" type="button" aria-pressed="false" data-mode="ambient"><strong>Ambient</strong><span>Watching the flow</span></button>
+        </div>
+
+        <article class="mode-detail card" aria-live="polite">
+          <div>
+            <span class="eyebrow" id="mode-eyebrow">Peripheral mode</span>
+            <h3 id="mode-title">Let me stop watching.</h3>
+            <p id="mode-description">The user is doing their real work while agents run in the background. Silence is the default; the system speaks only when the expected value of interruption is high.</p>
+            <strong class="question" id="mode-question">“Is everything fine, or does somebody need me?”</strong>
+          </div>
+          <div class="mode-facts">
+            <div class="fact"><span>Time budget</span><strong id="mode-time">1–2 seconds</strong></div>
+            <div class="fact"><span>Primary surface</span><strong id="mode-surface">Tray + notification</strong></div>
+            <div class="fact"><span>Show</span><strong id="mode-show">State, repo, reason</strong></div>
+            <div class="fact"><span>Avoid</span><strong id="mode-avoid">Routine completion noise</strong></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="prototype-block">
+        <div class="prototype-head">
+          <div>
+            <span class="eyebrow">Target desktop hierarchy</span>
+            <h3>One feed, four attention states.</h3>
+          </div>
+          <div class="scenario-controls" role="group" aria-label="Preview attention state">
+            <button class="scenario-button" type="button" aria-pressed="true" data-scenario="calm">Calm</button>
+            <button class="scenario-button" type="button" aria-pressed="false" data-scenario="needs">Needs input</button>
+            <button class="scenario-button" type="button" aria-pressed="false" data-scenario="collision">Collision</button>
+            <button class="scenario-button" type="button" aria-pressed="false" data-scenario="failure">Failure</button>
+          </div>
+        </div>
+
+        <div class="app-shell" aria-label="Conceptual Agent Firehose desktop layout">
+          <div class="app-top">
+            <span class="app-brand">AGENT FIREHOSE</span>
+            <span class="engine">● engine live · schema v1</span>
+          </div>
+          <div class="app-main">
+            <nav class="app-nav" aria-label="Conceptual app navigation">
+              <button class="app-nav-item active" type="button">live</button>
+              <button class="app-nav-item" type="button">sessions</button>
+              <button class="app-nav-item" type="button">files</button>
+              <button class="app-nav-item" type="button">orbit</button>
+              <button class="app-nav-item" type="button">doctor</button>
+              <button class="app-nav-item" type="button">settings</button>
+            </nav>
+
+            <section class="app-feed" aria-label="Conceptual live feed">
+              <div class="attention-strip" id="attention-strip" data-state="calm">
+                <div class="attention-icon" id="attention-icon">✓</div>
+                <div>
+                  <div class="attention-title" id="attention-title">All clear · 3 active sessions</div>
+                  <div class="attention-meta" id="attention-meta">No session currently needs you · last checked now</div>
+                </div>
+                <button class="attention-action" id="attention-action" type="button">View sessions</button>
+              </div>
+
+              <div class="feed-toolbar"><strong>live</strong><span>all repos</span><span>all agents</span><span class="spacer"></span><span>pause · / filter</span></div>
+              <div class="feed-row"><span class="time">17:42:08</span><span class="agent">[claude]</span><span class="kind">[file]</span><span class="summary">edited internal/index/attention.go</span></div>
+              <div class="feed-row"><span class="time">17:42:11</span><span class="agent">[codex]</span><span class="kind">[tool]</span><span class="summary">ran go test ./internal/index</span></div>
+              <div class="feed-row is-derived" id="derived-row"><span class="time">17:42:12</span><span class="agent">[firehose]</span><span class="kind">[state]</span><span class="summary" id="derived-summary">session state: working · evidence attached</span></div>
+              <div class="feed-row"><span class="time">17:42:18</span><span class="agent">[opencode]</span><span class="kind">[shell]</span><span class="summary">ran pnpm test · 24 passed</span></div>
+              <div class="feed-row"><span class="time">17:42:23</span><span class="agent">[claude]</span><span class="kind">[session]</span><span class="summary">agent finished responding</span></div>
+            </section>
+
+            <aside class="app-detail" aria-label="Conceptual evidence detail">
+              <h4 id="detail-heading">Supervision status</h4>
+              <span class="detail-label">Observed</span>
+              <div id="detail-observed">3 sessions emitted activity in the last 90 seconds.</div>
+              <span class="detail-label">Derived</span>
+              <div id="detail-derived">No high-confidence blocking signal.</div>
+              <span class="detail-label">Capture</span>
+              <div id="detail-capture">Claude rich · Codex partial · responses redacted</div>
+              <div class="evidence" id="detail-evidence">No intervention recommended.</div>
+            </aside>
+          </div>
+        </div>
+
+        <div class="legend" aria-label="Evidence legend">
+          <span><strong>○ observed</strong> — emitted by an adapter</span>
+          <span><strong>≈ derived</strong> — computed from supporting event IDs</span>
+          <span><strong>? unknown</strong> — evidence cannot justify a conclusion</span>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <h2><span class="eyebrow">Progressive disclosure</span>One keypress deeper; one keypress back.</h2>
+        <p>Do not multiply top-level destinations. Let evidence expand in place until the user chooses a dedicated forensic surface.</p>
+      </div>
+
+      <div class="disclosure">
+        <div class="disclosure-step"><span>01</span><strong>Feed row</strong><small>One-line fact or derived signal.</small></div>
+        <div class="disclosure-step"><span>02</span><strong>Evidence detail</strong><small>Reason, confidence, support, gaps.</small></div>
+        <div class="disclosure-step"><span>03</span><strong>Session view</strong><small>Ordered actions and unresolved state.</small></div>
+        <div class="disclosure-step"><span>04</span><strong>Artifact / replay</strong><small>Payload, diff, output, or event-scoped history.</small></div>
+      </div>
+    </section>
+
+    <section class="view" id="roadmap-map" role="tabpanel" aria-labelledby="tab-roadmap" hidden>
+      <div class="section-head">
+        <h2><span class="eyebrow">Sequenced foundations</span>Earn the interrupt before adding analysis.</h2>
+        <p>Every later promise depends on canonical capture, stable identity, gap semantics, and explicit adapter capability. The roadmap is a dependency chain, not a feature menu.</p>
+      </div>
+
+      <div class="roadmap">
+        <article class="phase card">
+          <div class="phase-number">0</div>
+          <div class="phase-title"><h3>Repair truth</h3><p>Canonical capture before derived UX.</p></div>
+          <div class="phase-items">
+            <div class="phase-item"><strong>Spool every source</strong><small>Codex and procwatch join durable history.</small></div>
+            <div class="phase-item"><strong>Stable native identity</strong><small>Preserve call, turn, source, and capture time.</small></div>
+            <div class="phase-item"><strong>Gap markers</strong><small>Completeness can change during a session.</small></div>
+            <div class="phase-item"><strong>Repo / worktree identity</strong><small>Required before honest collision claims.</small></div>
+          </div>
+        </article>
+
+        <article class="phase card">
+          <div class="phase-number">1</div>
+          <div class="phase-title"><h3>Make supervision calm</h3><p>The retention loop.</p></div>
+          <div class="phase-items">
+            <div class="phase-item"><strong>Capture-quality layer</strong><small>Starts in onboarding; follows every claim.</small></div>
+            <div class="phase-item"><strong>Attention strip</strong><small>Needs input, confident failure, collision.</small></div>
+            <div class="phase-item"><strong>Feed craft</strong><small>Live is home; pause, density, stable identity.</small></div>
+            <div class="phase-item"><strong>Fact-only grouping</strong><small>Native turns first; no semantic phases.</small></div>
+            <div class="phase-item"><strong>Hotkey lenses</strong><small>Built-ins + substring, no custom grammar.</small></div>
+            <div class="phase-item"><strong>Collision evidence</strong><small>Derived feed event, no radar surface.</small></div>
+          </div>
+        </article>
+
+        <article class="phase card">
+          <div class="phase-number">2</div>
+          <div class="phase-title"><h3>Explain history honestly</h3><p>Forensics after trust.</p></div>
+          <div class="phase-items">
+            <div class="phase-item"><strong>Durable derivations</strong><small>Rule version, evidence IDs, confidence, invalidation.</small></div>
+            <div class="phase-item"><strong>Deterministic autopsy</strong><small>Facts, failures, repo impact, unresolved state.</small></div>
+            <div class="phase-item"><strong>Event-scoped replay</strong><small>No claim of reconstructed repo state.</small></div>
+            <div class="phase-item"><strong>Why cards</strong><small>Native-ID chains; no graph theater.</small></div>
+            <div class="phase-item"><strong>Evidence bundle</strong><small>Events, artifacts, hashes, privacy manifest.</small></div>
+            <div class="phase-item"><strong>Adapter fixture CLI</strong><small>Golden replay keeps derivations testable.</small></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="gates">
+        <section class="gate-panel card">
+          <span class="eyebrow">Phase 1 exit gate</span>
+          <h3>The user can safely look away.</h3>
+          <ul class="gate-list">
+            <li>Live opens by default and remains readable during heavy capture.</li>
+            <li>Every interrupt states why it fired and what evidence supports it.</li>
+            <li>Partial capture visibly degrades the claim instead of hiding uncertainty.</li>
+            <li>Feed rows, session rows, and attention actions work by keyboard.</li>
+            <li>Routine completion never becomes notification spam by default.</li>
+          </ul>
+        </section>
+
+        <section class="gate-panel card">
+          <span class="eyebrow">Park until earned</span>
+          <h3>Written triggers, no ambient scope creep.</h3>
+          <div class="parked">
+            <span>semantic phases</span>
+            <span>runaway detector</span>
+            <span>query grammar</span>
+            <span>radar tree</span>
+            <span>repo reconstruction</span>
+            <span>graph UI</span>
+            <span>enforce mode</span>
+            <span>arena</span>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer-note">Grounded in the post-v0.1 design review, lead HCI analysis, current desktop audit, and the project’s local-first evidence constraints. This document is explanatory; it does not change runtime behavior.</footer>
+</div>
+
+<script>
+  (() => {
+    const root = document.documentElement;
+    const themeToggle = document.getElementById("theme-toggle");
+    const storedTheme = localStorage.getItem("firehose-design-map-theme");
+    if (storedTheme === "light" || storedTheme === "dark") {
+      root.dataset.theme = storedTheme;
+      themeToggle.setAttribute("aria-pressed", String(storedTheme === "dark"));
+    }
+
+    themeToggle.addEventListener("click", () => {
+      const darkByPreference = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const current = root.dataset.theme || (darkByPreference ? "dark" : "light");
+      const next = current === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      localStorage.setItem("firehose-design-map-theme", next);
+      themeToggle.setAttribute("aria-pressed", String(next === "dark"));
+    });
+
+    const tabs = [...document.querySelectorAll(".view-tab")];
+    const views = [...document.querySelectorAll(".view")];
+
+    function showView(viewId, updateHash = true) {
+      tabs.forEach((tab) => {
+        const active = tab.dataset.view === viewId;
+        tab.setAttribute("aria-selected", String(active));
+      });
+      views.forEach((view) => {
+        const active = view.id === viewId;
+        view.classList.toggle("is-active", active);
+        view.hidden = !active;
+      });
+      if (updateHash) history.replaceState(null, "", `#${viewId}`);
+    }
+
+    tabs.forEach((tab) => tab.addEventListener("click", () => showView(tab.dataset.view)));
+    if (location.hash && document.querySelector(location.hash + ".view")) {
+      showView(location.hash.slice(1), false);
+    }
+
+    const modes = {
+      peripheral: {
+        eyebrow: "Peripheral mode",
+        title: "Let me stop watching.",
+        description: "The user is doing their real work while agents run in the background. Silence is the default; the system speaks only when the expected value of interruption is high.",
+        question: "“Is everything fine, or does somebody need me?”",
+        time: "1–2 seconds",
+        surface: "Tray + notification",
+        show: "State, repo, reason",
+        avoid: "Routine completion noise"
+      },
+      triage: {
+        eyebrow: "Triage mode",
+        title: "Give me the decision, not a destination.",
+        description: "A signal has fired. The user needs enough evidence to ignore, snooze, or inspect without decoding a visualization or navigating through history.",
+        question: "“Why did you interrupt me, and what should I do?”",
+        time: "About 10 seconds",
+        surface: "Attention strip → feed",
+        show: "Reason, evidence, action",
+        avoid: "Navigation before context"
+      },
+      forensic: {
+        eyebrow: "Forensic mode",
+        title: "Show the record and its limits.",
+        description: "The user is willing to investigate. Progressive disclosure can reveal session history, outputs, diffs, artifacts, and explicit unknowns without manufacturing causality.",
+        question: "“What happened, what supports that, and what is still unknown?”",
+        time: "5–20 minutes",
+        surface: "Session + event replay",
+        show: "Facts, gaps, provenance",
+        avoid: "False causal confidence"
+      },
+      ambient: {
+        eyebrow: "Ambient mode",
+        title: "Make the firehose worth watching.",
+        description: "The raw flow is a first-class pleasure surface. Density, stable identity, pause-on-scroll, and restrained color make it legible without pretending that watching is required.",
+        question: "“Can I feel the system working without losing my place?”",
+        time: "Open-ended",
+        surface: "Live feed",
+        show: "Flow, recency, identity",
+        avoid: "Color and motion overload"
+      }
+    };
+
+    const modeButtons = [...document.querySelectorAll(".mode-button")];
+    const modeFields = {
+      eyebrow: document.getElementById("mode-eyebrow"),
+      title: document.getElementById("mode-title"),
+      description: document.getElementById("mode-description"),
+      question: document.getElementById("mode-question"),
+      time: document.getElementById("mode-time"),
+      surface: document.getElementById("mode-surface"),
+      show: document.getElementById("mode-show"),
+      avoid: document.getElementById("mode-avoid")
+    };
+
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        modeButtons.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+        const mode = modes[button.dataset.mode];
+        Object.entries(modeFields).forEach(([key, element]) => { element.textContent = mode[key]; });
+      });
+    });
+
+    const scenarios = {
+      calm: {
+        icon: "✓",
+        title: "All clear · 3 active sessions",
+        meta: "No session currently needs you · last checked now",
+        action: "View sessions",
+        derived: "session state: working · evidence attached",
+        heading: "Supervision status",
+        observed: "3 sessions emitted activity in the last 90 seconds.",
+        conclusion: "No high-confidence blocking signal.",
+        capture: "Claude rich · Codex partial · responses redacted",
+        evidence: "No intervention recommended."
+      },
+      needs: {
+        icon: "!",
+        title: "NEEDS YOU · Claude · llm-firehose",
+        meta: "Waiting for Bash permission · observed 18s ago",
+        action: "Inspect · Enter",
+        derived: "≈ needs input · native permission event",
+        heading: "Why this needs you",
+        observed: "Claude emitted a permission request for Bash.",
+        conclusion: "Session cannot continue without a user decision.",
+        capture: "Rich hook coverage · response content redacted",
+        evidence: "High confidence · one native event · no inferred causality."
+      },
+      collision: {
+        icon: "↔",
+        title: "COLLISION · 2 sessions · schema.sql",
+        meta: "Claude and Codex both wrote the same worktree path within 42s",
+        action: "Compare evidence",
+        derived: "≈ collision · two file writes · same worktree",
+        heading: "Why this may collide",
+        observed: "Two write events name the same normalized path.",
+        conclusion: "Concurrent edits may overwrite or conflict.",
+        capture: "Both paths observed · file contents not compared",
+        evidence: "High path confidence · outcome remains unknown."
+      },
+      failure: {
+        icon: "×",
+        title: "FAILED · Codex · payment-api",
+        meta: "Session ended after an error event · observed 31s ago",
+        action: "Open session",
+        derived: "≈ failed · native error followed by session end",
+        heading: "Why this is marked failed",
+        observed: "An error event was followed by a native session-end event.",
+        conclusion: "The session ended without a later success signal.",
+        capture: "Transcript partial · exit status unavailable",
+        evidence: "Failure signal is strong; task outcome is unknown."
+      }
+    };
+
+    const scenarioButtons = [...document.querySelectorAll(".scenario-button")];
+    const scenarioElements = {
+      strip: document.getElementById("attention-strip"),
+      icon: document.getElementById("attention-icon"),
+      title: document.getElementById("attention-title"),
+      meta: document.getElementById("attention-meta"),
+      action: document.getElementById("attention-action"),
+      derived: document.getElementById("derived-summary"),
+      row: document.getElementById("derived-row"),
+      heading: document.getElementById("detail-heading"),
+      observed: document.getElementById("detail-observed"),
+      conclusion: document.getElementById("detail-derived"),
+      capture: document.getElementById("detail-capture"),
+      evidence: document.getElementById("detail-evidence")
+    };
+
+    scenarioButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        scenarioButtons.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+        const key = button.dataset.scenario;
+        const scenario = scenarios[key];
+        scenarioElements.strip.dataset.state = key;
+        scenarioElements.icon.textContent = scenario.icon;
+        scenarioElements.title.textContent = scenario.title;
+        scenarioElements.meta.textContent = scenario.meta;
+        scenarioElements.action.textContent = scenario.action;
+        scenarioElements.derived.textContent = scenario.derived;
+        scenarioElements.heading.textContent = scenario.heading;
+        scenarioElements.observed.textContent = scenario.observed;
+        scenarioElements.conclusion.textContent = scenario.conclusion;
+        scenarioElements.capture.textContent = scenario.capture;
+        scenarioElements.evidence.textContent = scenario.evidence;
+        scenarioElements.row.classList.toggle("is-highlighted", key !== "calm");
+      });
+    });
+  })();
+</script>
+</body>
+</html>

@@ -51,9 +51,13 @@
       "type": "string",
       "description": "Source-native identifier grouping events within one agent turn. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
     },
+    "prompt_id": {
+      "type": "string",
+      "description": "Source-native prompt or interaction correlation identifier. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
     "call_id": {
       "type": "string",
-      "description": "Source-native tool/command correlation id (e.g. a Codex call_id). Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+      "description": "Source-native tool/command correlation id (e.g. a Codex call_id or Claude Code tool_use_id). Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
     },
     "upstream_event_id": {
       "type": "string",

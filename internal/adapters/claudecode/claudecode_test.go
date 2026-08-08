@@ -36,6 +36,31 @@ func parse(t *testing.T, raw string) event.Event {
 	return ev
 }
 
+func envelopeField(t *testing.T, ev event.Event, name string) any {
+	t.Helper()
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields[name]
+}
+
+func safeDetails(t *testing.T, ev event.Event) string {
+	t.Helper()
+	data, err := json.Marshal(struct {
+		Summary string         `json:"summary"`
+		Payload map[string]any `json:"payload"`
+	}{ev.Summary, ev.Payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestUserPromptSubmit(t *testing.T) {
 	raw := fixture(t, "user_prompt_submit.json")
 	ev := parse(t, raw)
@@ -50,6 +75,89 @@ func TestUserPromptSubmit(t *testing.T) {
 	}
 	if strings.Contains(ev.Summary, "SECRET-PROMPT-MARKER") {
 		t.Errorf("summary leaked prompt: %q", ev.Summary)
+	}
+}
+
+func TestRealUserPromptFixturePreservesCorrelationWithoutBody(t *testing.T) {
+	ev := parse(t, fixture(t, "user_prompt_submit_bypass.json"))
+	if ev.Category != event.CategoryPrompt {
+		t.Errorf("category = %q, want prompt", ev.Category)
+	}
+	if ev.SessionID != "claude-fixture-session" ||
+		ev.CWD != "/tmp/agent-firehose-hook-fixture/work" {
+		t.Errorf("context lost: %+v", ev)
+	}
+	if got := envelopeField(t, ev, "prompt_id"); got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("prompt_id = %v", got)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "sanitized prompt body") ||
+		strings.Contains(got, "transcript.jsonl") {
+		t.Errorf("safe prompt details contain a body or transcript path: %s", got)
+	}
+}
+
+func TestRealToolFixturesPreserveCorrelationTimingAndOutcomeWithoutBodies(t *testing.T) {
+	pre := parse(t, fixture(t, "pre_tool_use.json"))
+	post := parse(t, fixture(t, "post_tool_use.json"))
+
+	for _, ev := range []event.Event{pre, post} {
+		if ev.CallID != "toolu_fixture_01" {
+			t.Errorf("%s call_id = %q", ev.Name, ev.CallID)
+		}
+		if got := envelopeField(t, ev, "prompt_id"); got != "550e8400-e29b-41d4-a716-446655440000" {
+			t.Errorf("%s prompt_id = %v", ev.Name, got)
+		}
+		if got := safeDetails(t, ev); strings.Contains(got, "sanitized tool input") ||
+			strings.Contains(got, "sanitized tool output") ||
+			strings.Contains(got, "transcript.jsonl") {
+			t.Errorf("%s safe details contain sensitive hook fields: %s", ev.Name, got)
+		}
+	}
+	if pre.Payload["phase"] != "start" || pre.Payload["status"] != "started" {
+		t.Errorf("pre outcome = %+v", pre.Payload)
+	}
+	if post.Payload["phase"] != "end" || post.Payload["status"] != "success" {
+		t.Errorf("post outcome = %+v", post.Payload)
+	}
+	if post.Payload["interrupted"] != false {
+		t.Errorf("post interrupted = %#v", post.Payload["interrupted"])
+	}
+	if post.Payload["duration_ms"] != float64(4652) {
+		t.Errorf("duration_ms = %#v", post.Payload["duration_ms"])
+	}
+}
+
+// A single failing tool stays warn-level, matching the opencode and codex
+// adapters: it must not flip the session's error overlay, which is reserved
+// for session-level failures such as StopFailure.
+func TestRealToolFailureKeepsOutcomeNotErrorBody(t *testing.T) {
+	ev := parse(t, fixture(t, "post_tool_use_failure.json"))
+	if ev.Name != "PostToolUseFailure:Read" || ev.Severity != event.SeverityWarn {
+		t.Errorf("failure envelope = %+v", ev)
+	}
+	if ev.CallID != "toolu_fixture_failure_01" ||
+		ev.Payload["phase"] != "end" || ev.Payload["status"] != "error" ||
+		ev.Payload["interrupted"] != false ||
+		ev.Payload["duration_ms"] != float64(3) {
+		t.Errorf("failure outcome = %+v", ev.Payload)
+	}
+	if _, ok := ev.Payload["error_class"]; ok {
+		t.Errorf("free-form tool error must not be promoted to a class: %+v", ev.Payload)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "sanitized tool error") ||
+		strings.Contains(got, "sanitized tool input") {
+		t.Errorf("failure details contain an error or tool body: %s", got)
+	}
+}
+
+func TestRealStopFailureKeepsOnlyOfficialErrorClass(t *testing.T) {
+	ev := parse(t, fixture(t, "stop_failure.json"))
+	if ev.Category != event.CategoryError || ev.Severity != event.SeverityError ||
+		ev.Payload["status"] != "error" || ev.Payload["error_class"] != "model_not_found" {
+		t.Errorf("stop failure = %+v", ev)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "sanitized error") {
+		t.Errorf("stop failure contains error details or rendered message: %s", got)
 	}
 }
 
@@ -77,6 +185,9 @@ func TestPostToolUseBashIsShell(t *testing.T) {
 	if ev.Category != event.CategoryShell {
 		t.Errorf("category = %q, want shell", ev.Category)
 	}
+	if strings.Contains(ev.Summary, "SECRET-TOOL-INPUT-MARKER") {
+		t.Errorf("summary contains command input: %q", ev.Summary)
+	}
 	if ev.Name != "PostToolUse:Bash" {
 		t.Errorf("name = %q", ev.Name)
 	}
@@ -94,7 +205,15 @@ func TestPreToolUseEditIsFile(t *testing.T) {
 		t.Errorf("category = %q, want file", ev.Category)
 	}
 	if !strings.Contains(ev.Summary, "main.go") {
-		t.Errorf("summary should show file, got %q", ev.Summary)
+		t.Errorf("summary lost the file base name: %q", ev.Summary)
+	}
+	// The full path must survive into the payload: index.EventFilePaths feeds
+	// the artifacts/files view from payload.file_path.
+	if ev.Payload["file_path"] != "/tmp/agent-firehose-fixture/work/main.go" {
+		t.Errorf("file_path lost from payload: %+v", ev.Payload)
+	}
+	if strings.Contains(safeDetails(t, ev), "SECRET-") {
+		t.Errorf("file event leaked tool body: %s", safeDetails(t, ev))
 	}
 }
 
@@ -149,6 +268,13 @@ func TestRealFixtureFamilies(t *testing.T) {
 	}
 }
 
+func TestStopCarriesCompletedOutcome(t *testing.T) {
+	ev := parse(t, fixture(t, "stop.json"))
+	if ev.Payload["phase"] != "end" || ev.Payload["status"] != "completed" {
+		t.Errorf("stop outcome = %+v", ev.Payload)
+	}
+}
+
 func TestGenericToolUse(t *testing.T) {
 	ev := parse(t, `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"WebSearch","tool_input":{"query":"golang"}}`)
 	if ev.Category != event.CategoryTool {
@@ -178,6 +304,9 @@ func TestNotificationIsPermission(t *testing.T) {
 	}
 	if ev.Severity != event.SeverityNotice {
 		t.Errorf("severity = %q, want notice", ev.Severity)
+	}
+	if strings.Contains(safeDetails(t, ev), "SECRET-NOTIFICATION-MARKER") {
+		t.Errorf("notification message body was retained: %+v", ev)
 	}
 }
 
@@ -263,12 +392,15 @@ func TestManifestIsValid(t *testing.T) {
 	if err := Manifest.Validate(); err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
+	// Every mapped hook except PreCompact is fixture-proven; PreCompact keeps
+	// its pre-merge mapping and awaits a real capture (see testdata/README.md).
 	want := []string{
 		"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"PostToolUseFailure", "StopFailure", "PreCompact",
 		"Notification", "SubagentStop", "Stop", "SessionEnd",
 	}
 	if !reflect.DeepEqual(Manifest.Mapped, want) {
-		t.Fatalf("mapped hooks = %v, want fixture-proven %v", Manifest.Mapped, want)
+		t.Fatalf("mapped hooks = %v, want %v", Manifest.Mapped, want)
 	}
 }
 

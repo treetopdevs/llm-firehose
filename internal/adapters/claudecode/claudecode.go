@@ -27,6 +27,7 @@ var Manifest = capturemeta.Manifest{
 	Fidelity:  capturemeta.SupportedInBandHook,
 	Mapped: []string{
 		"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"PostToolUseFailure", "StopFailure", "PreCompact",
 		"Notification", "SubagentStop", "Stop", "SessionEnd",
 	},
 	Filtered:     []string{"WorktreeCreate", "FileChanged"},
@@ -34,24 +35,26 @@ var Manifest = capturemeta.Manifest{
 }
 
 type hookPayload struct {
-	HookEventName    string         `json:"hook_event_name"`
-	SessionID        string         `json:"session_id"`
-	CWD              string         `json:"cwd"`
-	PromptID         string         `json:"prompt_id"`
-	TurnID           string         `json:"turn_id"`
-	MessageID        string         `json:"message_id"`
-	ToolName         string         `json:"tool_name"`
-	ToolUseID        string         `json:"tool_use_id"`
-	ToolInput        map[string]any `json:"tool_input"`
-	DurationMS       float64        `json:"duration_ms"`
-	IsInterrupt      *bool          `json:"is_interrupt"`
-	Source           string         `json:"source"` // SessionStart source
-	Reason           string         `json:"reason"` // SessionEnd reason
-	PermissionMode   string         `json:"permission_mode"`
-	NotificationType string         `json:"notification_type"`
-	AgentID          string         `json:"agent_id"`
-	AgentType        string         `json:"agent_type"`
-	Effort           map[string]any `json:"effort"`
+	HookEventName    string          `json:"hook_event_name"`
+	SessionID        string          `json:"session_id"`
+	CWD              string          `json:"cwd"`
+	PromptID         string          `json:"prompt_id"`
+	TurnID           string          `json:"turn_id"`
+	MessageID        string          `json:"message_id"`
+	ToolName         string          `json:"tool_name"`
+	ToolUseID        string          `json:"tool_use_id"`
+	ToolInput        map[string]any  `json:"tool_input"`
+	ToolResponse     json.RawMessage `json:"tool_response"`
+	DurationMS       *float64        `json:"duration_ms"`
+	IsInterrupt      *bool           `json:"is_interrupt"`
+	Error            string          `json:"error"`
+	Source           string          `json:"source"` // SessionStart source
+	Reason           string          `json:"reason"` // SessionEnd reason
+	PermissionMode   string          `json:"permission_mode"`
+	NotificationType string          `json:"notification_type"`
+	AgentID          string          `json:"agent_id"`
+	AgentType        string          `json:"agent_type"`
+	Effort           map[string]any  `json:"effort"`
 }
 
 var fileTools = map[string]bool{
@@ -120,38 +123,7 @@ func Parse(raw []byte) (*event.Event, error) {
 		ev.Summary = "user prompt submitted"
 
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure":
-		ev.Name = hook + ":" + p.ToolName
-		ev.Category = event.CategoryTool
-		verb := "will run"
-		if hook == "PostToolUse" {
-			verb = "ran"
-			ev.Payload["status"] = "success"
-		} else if hook == "PostToolUseFailure" {
-			verb = "failed"
-			ev.Payload["status"] = "error"
-			ev.Severity = event.SeverityWarn
-		} else {
-			ev.Payload["status"] = "started"
-		}
-		switch {
-		case p.ToolName == "Bash" || p.ToolName == "Shell":
-			ev.Category = event.CategoryShell
-			ev.Summary = verb + " shell tool"
-		case fileTools[p.ToolName]:
-			ev.Category = event.CategoryFile
-			path, _ := p.ToolInput["file_path"].(string)
-			ev.Summary = fmt.Sprintf("%s %s on %s", verb, p.ToolName, filepath.Base(path))
-			ev.Payload["file_path"] = path
-		default:
-			ev.Summary = fmt.Sprintf("%s tool %s", verb, p.ToolName)
-		}
-		ev.Payload["tool_name"] = p.ToolName
-		if p.DurationMS > 0 {
-			ev.Payload["duration_ms"] = p.DurationMS
-		}
-		if p.IsInterrupt != nil {
-			ev.Payload["interrupted"] = *p.IsInterrupt
-		}
+		mapToolEvent(ev, p, hook)
 
 	case "SessionStart":
 		ev.Category = event.CategorySession
@@ -166,6 +138,22 @@ func Parse(raw []byte) (*event.Event, error) {
 	case "Stop", "SubagentStop":
 		ev.Category = event.CategorySession
 		ev.Summary = lifecycleSummary(hook)
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "completed"
+
+	case "StopFailure":
+		// A failed agent response is a session-level failure: unlike a single
+		// failing tool it sets the session error overlay deliberately.
+		ev.Category = event.CategoryError
+		ev.Severity = event.SeverityError
+		ev.Summary = "agent response failed"
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "error"
+		ev.Payload["error_class"] = stopFailureClass(p.Error)
+
+	case "PreCompact":
+		ev.Category = event.CategoryMeta
+		ev.Summary = "context compaction"
 
 	case "Notification":
 		// Older Claude and Cursor payloads omit notification_type. Preserve the
@@ -213,6 +201,96 @@ func addCommonPayload(payload map[string]any, p hookPayload) {
 	}
 	if p.NotificationType != "" {
 		payload["notification_type"] = p.NotificationType
+	}
+}
+
+func mapToolEvent(ev *event.Event, p hookPayload, hook string) {
+	ev.Name = hook + ":" + p.ToolName
+	ev.Category = categoryForTool(p.ToolName)
+	ev.Payload["tool_name"] = p.ToolName
+
+	verb := "will run"
+	switch hook {
+	case "PreToolUse":
+		ev.Payload["phase"] = "start"
+		ev.Payload["status"] = "started"
+	case "PostToolUse":
+		verb = "ran"
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "success"
+		if interrupted := toolResponseInterrupted(p.ToolResponse); interrupted != nil {
+			ev.Payload["interrupted"] = *interrupted
+			if *interrupted {
+				ev.Payload["status"] = "interrupted"
+				verb = "interrupted"
+			}
+		}
+	case "PostToolUseFailure":
+		// A single failing tool is warn-level, matching the opencode and codex
+		// adapters; it must not flip the whole session's error overlay.
+		verb = "failed"
+		ev.Severity = event.SeverityWarn
+		ev.Payload["phase"] = "end"
+		ev.Payload["status"] = "error"
+		if p.IsInterrupt != nil {
+			ev.Payload["interrupted"] = *p.IsInterrupt
+			if *p.IsInterrupt {
+				ev.Payload["status"] = "interrupted"
+				verb = "interrupted"
+			}
+		}
+	}
+
+	switch {
+	case p.ToolName == "Bash" || p.ToolName == "Shell":
+		ev.Summary = verb + " shell tool"
+	case fileTools[p.ToolName]:
+		// The full path feeds the artifacts/files view (index.EventFilePaths);
+		// only the base name surfaces in the summary.
+		path, _ := p.ToolInput["file_path"].(string)
+		ev.Summary = fmt.Sprintf("%s %s on %s", verb, p.ToolName, filepath.Base(path))
+		ev.Payload["file_path"] = path
+	default:
+		ev.Summary = fmt.Sprintf("%s tool %s", verb, p.ToolName)
+	}
+
+	if p.DurationMS != nil && *p.DurationMS >= 0 {
+		ev.Payload["duration_ms"] = *p.DurationMS
+	}
+}
+
+func categoryForTool(name string) event.Category {
+	switch {
+	case name == "Bash" || name == "Shell":
+		return event.CategoryShell
+	case fileTools[name]:
+		return event.CategoryFile
+	default:
+		return event.CategoryTool
+	}
+}
+
+func toolResponseInterrupted(raw json.RawMessage) *bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	var safe struct {
+		Interrupted *bool `json:"interrupted"`
+	}
+	if err := json.Unmarshal(raw, &safe); err != nil {
+		return nil
+	}
+	return safe.Interrupted
+}
+
+func stopFailureClass(class string) string {
+	switch class {
+	case "rate_limit", "overloaded", "authentication_failed",
+		"oauth_org_not_allowed", "billing_error", "invalid_request",
+		"model_not_found", "server_error", "max_output_tokens":
+		return class
+	default:
+		return "unknown"
 	}
 }
 
