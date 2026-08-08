@@ -23,6 +23,13 @@ import (
 
 const maxFingerprintLine = 1 << 20
 
+// discoveryClockTolerance guards new-file discovery against filesystem mtime
+// granularity: Linux's coarse clock lags time.Now() by a jiffy (observed
+// ~1ms, spec allows ~10ms), and network/virtualized filesystems can be
+// coarser still. One second dwarfs every known lag while keeping genuinely
+// old moved-in files (hours or days) safely on the baseline path.
+const discoveryClockTolerance = time.Second
+
 // Parser maps one source line and serializes the source-specific context
 // required to parse the next line.
 type Parser interface {
@@ -234,7 +241,16 @@ func (w *Watcher) Poll(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if !w.discoveryWatermark.IsZero() && info.ModTime().Before(w.discoveryWatermark) {
+			// The watermark exists to avoid importing history from old files
+			// moved into the watched tree — never to classify freshly created
+			// files. Linux stamps mtimes from the kernel's coarse clock, which
+			// lags time.Now() by up to a few milliseconds, so a file created
+			// right after Initialize can stamp before the watermark. Baseline
+			// only files clearly older than the watermark; anything inside the
+			// tolerance reads from byte zero, and stable IDs deduplicate the
+			// bounded double-import that can cause.
+			if !w.discoveryWatermark.IsZero() &&
+				info.ModTime().Before(w.discoveryWatermark.Add(-discoveryClockTolerance)) {
 				state, cursor, err := w.baseline(path)
 				if err != nil {
 					return err

@@ -222,6 +222,38 @@ func TestWatcherFingerprintsOnlyWhenObservedFileStampChanges(t *testing.T) {
 	}
 }
 
+// On Linux, file mtimes come from the kernel's coarse clock and can lag
+// time.Now() by a jiffy (~1-4ms), so a file created immediately after
+// Initialize can stamp BEFORE the discovery watermark and be wrongly
+// baselined at EOF — losing its committed lines. Chtimes simulates that lag
+// deterministically on every OS.
+func TestWatcherReadsFileCreatedJustAfterStartDespiteCoarseClockLag(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state.json")
+	var got []event.Event
+	w := New(testOptions(t, root, state, func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}))
+	if err := w.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "fresh.jsonl")
+	if err := os.WriteFile(path, []byte(`{"session":"s1","text":"first"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lagged := time.Now().Add(-500 * time.Millisecond)
+	if err := os.Chtimes(path, lagged, lagged); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Summary != "first" {
+		t.Fatalf("coarse-clock-lagged new file was baselined instead of read: %+v", got)
+	}
+}
+
 func TestWatcherAppendsBeforeCheckpointAndReplaysStablePendingID(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(t.TempDir(), "state.json")
