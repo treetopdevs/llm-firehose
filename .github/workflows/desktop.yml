@@ -23,8 +23,12 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Go gate and the Linux desktop leg run on Namespace runners
+  # (namespace-profile-mmw, same profile as the org's other repos). The
+  # macOS/Windows legs have no Namespace profile and stay GitHub-hosted,
+  # which requires org Actions billing to be in good standing.
   go:
-    runs-on: ubuntu-24.04
+    runs-on: namespace-profile-mmw
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -44,7 +48,7 @@ jobs:
             triple: aarch64-apple-darwin
           - os: windows-2022
             triple: x86_64-pc-windows-msvc
-          - os: ubuntu-24.04
+          - os: namespace-profile-mmw
             triple: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     defaults:
