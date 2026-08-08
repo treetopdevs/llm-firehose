@@ -54,15 +54,40 @@ func Redact(ev event.Event, mode Mode) event.Event {
 }
 
 func truncateValue(v any) any {
-	s, ok := v.(string)
-	if !ok {
+	switch value := v.(type) {
+	case string:
+		r := []rune(value)
+		if len(r) <= balancedMaxRunes {
+			return value
+		}
+		return string(r[:balancedMaxRunes]) + "…"
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for key, nested := range value {
+			out[key] = truncateValue(nested)
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for i, nested := range value {
+			out[i] = truncateValue(nested)
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]string, len(value))
+		for key, nested := range value {
+			out[key] = truncateValue(nested).(string)
+		}
+		return out
+	case []string:
+		out := make([]string, len(value))
+		for i, nested := range value {
+			out[i] = truncateValue(nested).(string)
+		}
+		return out
+	default:
 		return v
 	}
-	r := []rune(s)
-	if len(r) <= balancedMaxRunes {
-		return s
-	}
-	return string(r[:balancedMaxRunes]) + "…"
 }
 
 func digestValue(v any) any {

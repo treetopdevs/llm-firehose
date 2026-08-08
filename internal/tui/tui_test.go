@@ -137,7 +137,7 @@ func TestSearchFiltersBySummary(t *testing.T) {
 	}
 }
 
-func TestBurstCoalescesInView(t *testing.T) {
+func TestDistinctBurstRemainsVisibleInView(t *testing.T) {
 	m := newTestModel()
 	for i := range 4 {
 		ev := mkEv(0, event.CategoryShell, "ran: ls")
@@ -146,8 +146,8 @@ func TestBurstCoalescesInView(t *testing.T) {
 		m = push(m, ev)
 	}
 	view := m.View()
-	if !strings.Contains(view, "×4") {
-		t.Errorf("burst should collapse with count:\n%s", view)
+	if strings.Contains(view, "×4") {
+		t.Errorf("distinct activity must not collapse:\n%s", view)
 	}
 }
 
@@ -167,5 +167,28 @@ func TestQuitKey(t *testing.T) {
 	}
 	if msg := cmd(); msg != tea.Quit() {
 		t.Errorf("expected quit msg, got %#v", msg)
+	}
+}
+
+func TestNeedsYouInHeader(t *testing.T) {
+	m := newTestModel()
+	m = push(m, mkEv(1, event.CategoryTool, "working"))
+	if strings.Contains(m.View(), "NEEDS YOU") {
+		t.Fatal("working session should not show NEEDS YOU")
+	}
+	perm := mkEv(2, event.CategoryPermission, "Claude needs your permission to use Bash")
+	perm.Name = "Notification"
+	perm.Severity = event.SeverityNotice
+	m = push(m, perm)
+	view := m.View()
+	if !strings.Contains(view, "NEEDS YOU · 1") {
+		t.Errorf("expected NEEDS YOU indicator:\n%s", view)
+	}
+	if !strings.Contains(view, "Claude needs your permission to use Bash") {
+		t.Errorf("expected reason in header:\n%s", view)
+	}
+	m = push(m, mkEv(3, event.CategoryTool, "resumed"))
+	if strings.Contains(m.View(), "NEEDS YOU") {
+		t.Error("activity should clear NEEDS YOU")
 	}
 }

@@ -6,9 +6,12 @@ package spool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/workspace"
 )
 
 // Writer appends events to the daily spool file in Dir.
@@ -29,10 +33,19 @@ func fileFor(dir string, t time.Time) string {
 	return filepath.Join(dir, t.UTC().Format("2006-01-02")+".ndjson")
 }
 
-// Append writes ev as one NDJSON line to today's spool file.
+// Append writes ev as one NDJSON line to today's spool file, stamping the
+// current schema version on events that don't carry one.
 func (w *Writer) Append(ev event.Event) error {
 	if err := ev.Validate(); err != nil {
 		return err
+	}
+	if ev.CaptureTime == nil {
+		captured := time.Now().UTC()
+		ev.CaptureTime = &captured
+	}
+	ev = workspace.Enrich(ev)
+	if ev.SchemaVersion == 0 {
+		ev.SchemaVersion = event.CurrentSchemaVersion
 	}
 	data, err := json.Marshal(ev)
 	if err != nil {
@@ -90,6 +103,26 @@ func ReadLastN(dir string, n int) ([]event.Event, error) {
 	return all, nil
 }
 
+// ReadDays returns all events from the named UTC day files (YYYY-MM-DD),
+// oldest first. Missing files are skipped so callers can pass index-derived
+// day lists without racing file rotation.
+func ReadDays(dir string, days []string) ([]event.Event, error) {
+	sorted := append([]string(nil), days...)
+	sort.Strings(sorted) // day names sort chronologically
+	var all []event.Event
+	for _, day := range sorted {
+		evs, err := readFile(filepath.Join(dir, day+".ndjson"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		all = append(all, evs...)
+	}
+	return all, nil
+}
+
 func readFile(path string) ([]event.Event, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -97,16 +130,22 @@ func readFile(path string) ([]event.Event, error) {
 	}
 	defer f.Close()
 	var evs []event.Event
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
+	reader := bufio.NewReader(f)
+	for {
+		line, _, err := readLine(reader, true)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
 		var ev event.Event
-		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+		if err := json.Unmarshal(line, &ev); err != nil {
 			continue // reader skips bad lines; the tailer surfaces them
 		}
 		evs = append(evs, ev)
 	}
-	return evs, sc.Err()
+	return evs, nil
 }
 
 // Tailer polls the spool directory and delivers newly appended events.
@@ -114,16 +153,22 @@ type Tailer struct {
 	Dir      string
 	Interval time.Duration
 	offsets  map[string]int64
+	primed   bool
 }
 
 func NewTailer(dir string, interval time.Duration) *Tailer {
 	return &Tailer{Dir: dir, Interval: interval, offsets: map[string]int64{}}
 }
 
-// Run polls until ctx is done, sending new events (and meta/warn events for
-// unparseable lines) on ch. Files existing at start are skipped to their end.
-func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
-	// Record initial offsets so we only stream lines appended after start.
+// Prime records current file sizes so Run only streams lines appended after
+// this call. Calling it before Run pins the snapshot boundary: a caller can
+// read the spool (e.g. an index rebuild) after Prime without losing events
+// appended in between. Not safe to call concurrently with Run.
+func (t *Tailer) Prime() {
+	if t.primed {
+		return
+	}
+	t.primed = true
 	if files, err := spoolFiles(t.Dir); err == nil {
 		for _, f := range files {
 			if fi, err := os.Stat(f); err == nil {
@@ -131,6 +176,13 @@ func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
 			}
 		}
 	}
+}
+
+// Run polls until ctx is done, sending new events (and meta/warn events for
+// unparseable lines) on ch. Files existing at start are skipped to their end
+// unless Prime already pinned an earlier boundary.
+func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
+	t.Prime()
 	ticker := time.NewTicker(t.Interval)
 	defer ticker.Stop()
 	for {
@@ -165,22 +217,29 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 			f.Close()
 			continue
 		}
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		reader := bufio.NewReader(f)
 		read := off
-		for sc.Scan() {
-			line := sc.Bytes()
-			read += int64(len(line)) + 1
+		for {
+			line, consumed, readErr := readLine(reader, false)
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				break
+			}
+			read += consumed
 			ev, perr := parseLine(line)
 			if perr != nil {
+				captured := time.Now().UTC()
 				ev = event.Event{
-					ID:       event.NewID(),
-					Time:     time.Now().UTC(),
-					Source:   "firehose",
-					Category: event.CategoryMeta,
-					Name:     "parse-error",
-					Severity: event.SeverityWarn,
-					Summary:  fmt.Sprintf("unparseable spool line in %s: %v", filepath.Base(path), perr),
+					ID:          event.NewID(),
+					Time:        captured,
+					CaptureTime: &captured,
+					Source:      "firehose",
+					Category:    event.CategoryMeta,
+					Name:        "parse-error",
+					Severity:    event.SeverityWarn,
+					Summary:     fmt.Sprintf("unparseable spool line in %s: %v", filepath.Base(path), perr),
 				}
 			}
 			select {
@@ -193,6 +252,21 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 		f.Close()
 		t.offsets[path] = read
 	}
+}
+
+// readLine returns one record and the exact number of bytes consumed. Snapshot
+// readers accept a legacy final record without a newline; live tailers leave
+// it unconsumed so a later append can complete it.
+func readLine(reader *bufio.Reader, acceptFinal bool) ([]byte, int64, error) {
+	raw, err := reader.ReadBytes('\n')
+	if err != nil {
+		if !errors.Is(err, io.EOF) || len(raw) == 0 || !acceptFinal {
+			return nil, 0, err
+		}
+	}
+	line := bytes.TrimSuffix(raw, []byte{'\n'})
+	line = bytes.TrimSuffix(line, []byte{'\r'})
+	return line, int64(len(raw)), nil
 }
 
 func parseLine(line []byte) (event.Event, error) {

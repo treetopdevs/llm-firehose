@@ -102,16 +102,18 @@ func (w *Watcher) poll(ctx context.Context, ch chan<- event.Event, baseline bool
 }
 
 func (w *Watcher) emit(ctx context.Context, ch chan<- event.Event, name, agent string, pid int, summary string) {
+	captured := time.Now().UTC()
 	ev := event.Event{
-		ID:       event.NewID(),
-		Time:     time.Now().UTC(),
-		Source:   Source,
-		Agent:    agent,
-		Category: event.CategorySession,
-		Name:     name,
-		Severity: event.SeverityNotice,
-		Summary:  summary,
-		Payload:  map[string]any{"pid": pid},
+		ID:          event.NewID(),
+		Time:        captured,
+		CaptureTime: &captured,
+		Source:      Source,
+		Agent:       agent,
+		Category:    event.CategorySession,
+		Name:        name,
+		Severity:    event.SeverityNotice,
+		Summary:     summary,
+		Payload:     map[string]any{"pid": pid},
 	}
 	select {
 	case ch <- ev:

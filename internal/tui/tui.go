@@ -8,12 +8,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/index"
 	"agentfirehose/internal/store"
 )
 
 const (
 	maxEvents      = 20000
-	coalesceWindow = 2 * time.Second
+	coalesceWindow = 5 * time.Second
 )
 
 // EventMsg delivers one new event into the model.
@@ -43,6 +44,8 @@ type Model struct {
 	width    int
 	height   int
 	ExportFn ExportFunc
+	// attention tracks derived session state for the NEEDS YOU indicator.
+	attention map[string]index.Attention
 }
 
 var categoryCycle = []event.Category{
@@ -52,7 +55,7 @@ var categoryCycle = []event.Category{
 }
 
 func NewModel(ch <-chan event.Event) Model {
-	return Model{ch: ch, cursor: -1, width: 80, height: 24}
+	return Model{ch: ch, cursor: -1, width: 80, height: 24, attention: map[string]index.Attention{}}
 }
 
 // Preload seeds the model with historical events (spool replay) so the
@@ -60,10 +63,14 @@ func NewModel(ch <-chan event.Event) Model {
 func (m Model) Preload(evs []event.Event) Model {
 	m.events = append(m.events, evs...)
 	m.total += len(evs)
+	if m.attention == nil {
+		m.attention = map[string]index.Attention{}
+	}
 	for _, ev := range evs {
 		if !hasSource(m.sources, ev.Source) {
 			m.sources = append(m.sources, ev.Source)
 		}
+		m.noteAttention(ev)
 	}
 	return m
 }
@@ -108,6 +115,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !hasSource(m.sources, msg.Event.Source) {
 			m.sources = append(m.sources, msg.Event.Source)
 		}
+		m.noteAttention(msg.Event)
 		if m.paused {
 			m.unread++
 		}
@@ -232,4 +240,50 @@ func (m Model) filteredEvents() []event.Event {
 
 func (m Model) visibleRows() []store.Row {
 	return store.Coalesce(m.filteredEvents(), coalesceWindow)
+}
+
+// noteAttention folds one event into the per-session attention map.
+// Synthetic firehose transitions are ignored — the TUI derives state itself
+// so daemon-optional mode stays consistent.
+func (m Model) noteAttention(ev event.Event) {
+	if ev.SessionID == "" || m.attention == nil {
+		return
+	}
+	if ev.Source == index.SourceFirehose && ev.Name == index.NameStateTransition {
+		return
+	}
+	prev, ok := m.attention[ev.SessionID]
+	if !ok {
+		prev = index.Attention{State: index.StateWorking, Since: ev.Time}
+	}
+	next, _ := index.Transition(prev, ev)
+	m.attention[ev.SessionID] = next
+}
+
+func (m Model) needsYouCount() int {
+	n := 0
+	for _, a := range m.attention {
+		if a.State == index.StateNeedsInput {
+			n++
+		}
+	}
+	return n
+}
+
+func (m Model) oldestNeedsYouReason() string {
+	var best index.Attention
+	found := false
+	for _, a := range m.attention {
+		if a.State != index.StateNeedsInput {
+			continue
+		}
+		if !found || a.Since.Before(best.Since) {
+			best = a
+			found = true
+		}
+	}
+	if !found {
+		return ""
+	}
+	return best.Reason
 }

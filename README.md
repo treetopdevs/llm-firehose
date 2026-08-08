@@ -26,20 +26,62 @@ Put the `firehose` binary on your `PATH`, then wire up the agents you use:
 
 ```sh
 firehose install claude-code   # merges hooks into ~/.claude/settings.json (backs it up first)
+firehose install claude-otel   # optional local-only Claude usage/diagnostic stream
+firehose install codex         # adds lifecycle/tool hooks; review trust in Codex /hooks
 firehose install opencode      # writes a plugin into ~/.config/opencode/plugin/
 firehose doctor                # verify everything is wired
 firehose                       # open the live view
 ```
 
-Codex needs no install step — the viewer tails `~/.codex/sessions` directly.
+Codex assistant messages need no hook: the engine durably tails
+`~/.codex/sessions`. Installing Codex hooks adds lifecycle, permission, and
+tool observations without replacing rollout message streaming.
+
+## The daemon
+
+The capture engine can run as a long-lived local daemon that owns the spool
+and serves a localhost API (default `127.0.0.1:4517`):
+
+```sh
+firehose daemon            # run the engine: watchers, spool writes, local API
+firehosed                  # same engine as a dedicated binary (used as the desktop sidecar)
+firehose status            # is it running? which version/schema?
+```
+
+When the daemon is running, `firehose emit` (and every installed adapter)
+routes payloads through it, and the TUI consumes its live stream instead of
+tailing files itself. When it isn't, everything falls back to direct spool
+access — capture never depends on the daemon being up. The API surface
+(events, live SSE stream, sessions, doctor, export) is documented in
+[docs/contracts.md](docs/contracts.md).
+
+## The desktop app
+
+A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
+for non-terminal users: live feed, session explorer, touched-file view,
+doctor with one-click adapter install, settings, and a first-run onboarding
+wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
+already running — a daemon you run yourself always wins.
+
+```sh
+scripts/build-sidecar.sh                    # compile firehosed into the sidecar slot
+pnpm -C apps/tauri-desktop install
+pnpm -C apps/tauri-desktop tauri dev        # develop
+pnpm -C apps/tauri-desktop tauri build      # package (.app / .msi / AppImage)
+```
+
+Packaging for macOS, Windows, and Linux is validated in CI
+([desktop workflow](.github/workflows/desktop.yml)); signing and the update
+feed are documented in the [release runbook](docs/release-runbook.md).
 
 ## Supported sources
 
 | Source | Depth | How it works |
 |---|---|---|
-| Claude Code | deep | hooks forward every lifecycle event to `firehose emit` |
-| Codex | deep | viewer tails rollout session JSONL files |
-| OpenCode | deep | plugin forwards bus events to `firehose emit` |
+| Claude Code | deep | asynchronous metadata-only hooks forward through a fail-silent local command |
+| Claude Code OTel | supplemental | opt-in loopback request/usage metadata; identity and content are discarded |
+| Codex | deep | crash-safe durable rollout tail plus optional lifecycle/tool hooks |
+| OpenCode | deep | manifest-filtered plugin forwards high-signal bus events and bounded drift warnings |
 | any process | shallow | process watcher emits start/stop for known agent binaries |
 | anything else | generic | pipe NDJSON into `firehose ingest`, or call `firehose emit` |
 
@@ -75,7 +117,15 @@ Or press `e` in the viewer to export exactly what you're looking at
 
 ## Docs
 
+- [Platform contract](docs/contracts.md) — frozen surfaces: envelope schema, spool/export formats, privacy semantics, local API
+- [Event schema](docs/event.schema.json) — JSON Schema for the normalized envelope
 - [Adapter guide](docs/adapters.md) — how each adapter works and how to add one
+- [Adapter capabilities](docs/adapter-capabilities.md) — transport fidelity, mapped/filtered coverage, and fixture status
+- [Migration plan](docs/agent-firehose-migration-plan.md) — daemon → desktop shell → optional cloud (with status)
+- [Compatibility](docs/compatibility.md) — daemon/UI schema-version rules
+- [Release runbook](docs/release-runbook.md) — signing, packaging, updater feed
+- [Pain review](docs/migration/pain-review.md) — Phase 4 engine decision framework
+- [Cloud control plane](docs/architecture/cloud-control-plane.md) — Phase 5 design (deferred)
 - [Contributing](CONTRIBUTING.md)
 
 ## License

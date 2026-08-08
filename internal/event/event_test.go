@@ -7,19 +7,33 @@ import (
 )
 
 func sample() Event {
+	sourceTime := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	captureTime := sourceTime.Add(2 * time.Second)
 	return Event{
-		ID:        "ev-1",
-		Time:      time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC),
-		Source:    "claude-code",
-		Agent:     "claude",
-		SessionID: "sess-abc",
-		Category:  CategoryTool,
-		Name:      "PostToolUse:Bash",
-		Severity:  SeverityInfo,
-		Summary:   "ran `go test ./...`",
-		Repo:      "llmlog",
-		CWD:       "/Users/x/llmlog",
-		Payload:   map[string]any{"command": "go test ./..."},
+		ID:              "ev-1",
+		Time:            sourceTime,
+		SourceTime:      &sourceTime,
+		CaptureTime:     &captureTime,
+		Source:          "claude-code",
+		Agent:           "claude",
+		SessionID:       "sess-abc",
+		UpstreamEventID: "native-1",
+		PromptID:        "prompt-1",
+		MessageID:       "message-1",
+		ParentID:        "parent-1",
+		RequestID:       "request-1",
+		Sequence:        int64ptr(42),
+		Transport:       "hook",
+		SourceVersion:   "2.1.218",
+		Category:        CategoryTool,
+		Name:            "PostToolUse:Bash",
+		Severity:        SeverityInfo,
+		Summary:         "ran `go test ./...`",
+		Repo:            "llmlog",
+		CWD:             "/Users/x/llmlog",
+		RepoID:          "/Users/x/llmlog/.git",
+		WorktreeID:      "/Users/x/llmlog",
+		Payload:         map[string]any{"command": "go test ./..."},
 	}
 }
 
@@ -35,13 +49,23 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 	if got.ID != ev.ID || !got.Time.Equal(ev.Time) || got.Source != ev.Source ||
 		got.SessionID != ev.SessionID || got.Category != ev.Category ||
+		got.UpstreamEventID != ev.UpstreamEventID || got.PromptID != ev.PromptID ||
+		got.MessageID != ev.MessageID || got.ParentID != ev.ParentID ||
+		got.RequestID != ev.RequestID || got.Sequence == nil || *got.Sequence != *ev.Sequence ||
+		got.Transport != ev.Transport || got.SourceVersion != ev.SourceVersion ||
 		got.Name != ev.Name || got.Severity != ev.Severity || got.Summary != ev.Summary ||
-		got.CWD != ev.CWD {
+		got.CWD != ev.CWD || got.SourceTime == nil || !got.SourceTime.Equal(*ev.SourceTime) ||
+		got.CaptureTime == nil || !got.CaptureTime.Equal(*ev.CaptureTime) ||
+		got.RepoID != ev.RepoID || got.WorktreeID != ev.WorktreeID {
 		t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, ev)
 	}
 	if got.Payload["command"] != "go test ./..." {
 		t.Errorf("payload lost: %+v", got.Payload)
 	}
+}
+
+func int64ptr(value int64) *int64 {
+	return &value
 }
 
 func TestValidate(t *testing.T) {
@@ -67,6 +91,60 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate() err=%v, wantErr=%v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestSchemaVersionSerializes(t *testing.T) {
+	if CurrentSchemaVersion != 1 {
+		t.Fatalf("CurrentSchemaVersion = %d, want 1", CurrentSchemaVersion)
+	}
+	ev := sample()
+	ev.SchemaVersion = CurrentSchemaVersion
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	if v, ok := raw["schema_version"].(float64); !ok || int(v) != 1 {
+		t.Errorf("schema_version = %v, want 1", raw["schema_version"])
+	}
+}
+
+func TestSchemaVersionAbsentIsZero(t *testing.T) {
+	// Pre-versioning spool lines have no schema_version field; they must
+	// still unmarshal, with SchemaVersion reporting zero.
+	line := `{"id":"a","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}`
+	var ev Event
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		t.Fatalf("unmarshal legacy line: %v", err)
+	}
+	if ev.SchemaVersion != 0 {
+		t.Errorf("SchemaVersion = %d, want 0 for legacy line", ev.SchemaVersion)
+	}
+	if err := ev.Validate(); err != nil {
+		t.Errorf("legacy event must stay valid: %v", err)
+	}
+}
+
+func TestPromptIDRoundTripsAdditivelyWithinVersionOne(t *testing.T) {
+	line := `{"id":"a","time":"2026-07-01T10:00:00Z","source":"claude-code","session_id":"s","prompt_id":"p","category":"prompt"}`
+	var ev Event
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["prompt_id"] != "p" {
+		t.Errorf("prompt_id = %v, want p", got["prompt_id"])
 	}
 }
 

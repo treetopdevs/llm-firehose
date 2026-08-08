@@ -1,0 +1,324 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Firehose — Product Design Review &amp; Phase 1–2 Plan</title>
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#ffffff; --ink:#1a1d21; --muted:#5c6570; --line:#e3e3de;
+  --accent:#c2410c; --accent2:#0e7490; --keep:#15803d; --reshape:#b45309; --cut:#b91c1c; --park:#6b7280;
+  --code-bg:#f1f1ec; --quote:#eef4f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12141a; --panel:#191c24; --ink:#e6e4de; --muted:#9aa3ad; --line:#2a2e38;
+  --accent:#fb923c; --accent2:#22d3ee; --keep:#4ade80; --reshape:#fbbf24; --cut:#f87171; --park:#9ca3af;
+  --code-bg:#0e1015; --quote:#151d22; }
+}
+:root[data-theme="dark"]{ --bg:#12141a; --panel:#191c24; --ink:#e6e4de; --muted:#9aa3ad; --line:#2a2e38;
+  --accent:#fb923c; --accent2:#22d3ee; --keep:#4ade80; --reshape:#fbbf24; --cut:#f87171; --park:#9ca3af;
+  --code-bg:#0e1015; --quote:#151d22; }
+:root[data-theme="light"]{ --bg:#f7f7f5; --panel:#ffffff; --ink:#1a1d21; --muted:#5c6570; --line:#e3e3de;
+  --accent:#c2410c; --accent2:#0e7490; --keep:#15803d; --reshape:#b45309; --cut:#b91c1c; --park:#6b7280;
+  --code-bg:#f1f1ec; --quote:#eef4f6; }
+body{background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:0}
+.wrap{max-width:960px;margin:0 auto;padding:2.5rem 1.5rem 6rem}
+h1{font-size:2rem;line-height:1.2;margin:0 0 .3rem}
+h2{font-size:1.45rem;margin:3rem 0 .8rem;padding-top:1rem;border-top:2px solid var(--line)}
+h3{font-size:1.12rem;margin:1.8rem 0 .5rem}
+h4{font-size:1rem;margin:1.3rem 0 .4rem}
+p{margin:.6rem 0}
+.sub{color:var(--muted);font-size:.95rem;margin-bottom:2rem}
+.kicker{color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.75rem}
+code,pre{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code-bg);padding:1rem;border-radius:8px;overflow-x:auto;line-height:1.5}
+pre code{background:none;padding:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.1rem 1.3rem;margin:1rem 0}
+.badge{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;padding:.15em .6em;border-radius:99px;vertical-align:middle;margin-left:.5rem}
+.b-keep{color:var(--keep);border:1.5px solid var(--keep)}
+.b-reshape{color:var(--reshape);border:1.5px solid var(--reshape)}
+.b-cut{color:var(--cut);border:1.5px solid var(--cut)}
+.b-park{color:var(--park);border:1.5px solid var(--park)}
+blockquote{margin:.8rem 0;padding:.7rem 1rem;background:var(--quote);border-left:3px solid var(--accent2);border-radius:0 8px 8px 0;font-size:.95rem}
+blockquote .who{display:block;font-size:.75rem;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin:1rem 0}
+.tablewrap{overflow-x:auto}
+th,td{border:1px solid var(--line);padding:.45rem .7rem;text-align:left;vertical-align:top}
+th{background:var(--code-bg)}
+.toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.5rem;columns:2;column-gap:2rem;font-size:.92rem}
+.toc a{display:block;color:var(--ink);text-decoration:none;padding:.15rem 0}
+.toc a:hover{color:var(--accent)}
+@media (max-width:640px){.toc{columns:1}}
+.pill{font-size:.78rem;color:var(--muted)}
+.verdict{font-weight:600}
+.tui{background:#0d1117;color:#c9d1d9;border-radius:8px;padding:1rem;font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:.8rem;line-height:1.55;overflow-x:auto;white-space:pre}
+.tui .g{color:#3fb950}.tui .y{color:#d29922}.tui .r{color:#f85149}.tui .b{color:#58a6ff}.tui .d{color:#8b949e}.tui .m{color:#bc8cff}
+hr{border:0;border-top:1px solid var(--line);margin:2rem 0}
+.small{font-size:.85rem;color:var(--muted)}
+ul{padding-left:1.3rem}
+li{margin:.25rem 0}
+.warn{border-left:3px solid var(--cut);padding-left:1rem}
+</style>
+
+<div class="wrap">
+
+<span class="kicker">Agent Firehose · design review · July 2026</span>
+<h1>From Firehose to Interrupt System</h1>
+<p class="sub">Product design &amp; HCI/UX analysis of the 13-feature post-v0.1 roadmap · adversarial reviews from three independent models (Claude, Codex, Antigravity/Gemini) · revised Phase 1 &amp; 2 plans. Written against the actual repo state on <code>feat/daemon-desktop-migration</code>.</p>
+
+<div class="toc">
+<a href="#tldr">0 · TL;DR</a>
+<a href="#goals">1 · Design goals &amp; framing</a>
+<a href="#features">2 · The 13 features, adjudicated</a>
+<a href="#hci">3 · HCI/UX deep dive</a>
+<a href="#reviews">4 · Adversarial reviews</a>
+<a href="#matrix">5 · Convergence matrix</a>
+<a href="#phase1">6 · Revised Phase 1</a>
+<a href="#phase2">7 · Revised Phase 2</a>
+<a href="#parked">8 · Parked, with triggers</a>
+<a href="#open">9 · Open decisions</a>
+</div>
+
+<h2 id="tldr">0 · TL;DR</h2>
+<div class="card">
+<p><strong>All three reviewers and the lead analysis converged on the same reframe:</strong> the roadmap is written for <em>watching</em> agents, but the durable value of this product is letting the user safely <em>stop watching</em>. The headline feature is not the feed — it's the <strong>interrupt system</strong>: "session 3 is blocked on a permission prompt; sessions 1 and 2 are about to collide on <code>schema.sql</code>." Judge every feature by whether it improves the precision of that one interrupt.</p>
+<p><strong>But — explicit design goal from the author:</strong> the detail-rich raw firehose (timeline / flow, watchable like good logs) is a first-class, permanent surface. It is the soul of the tool and the reason it exists; it's just not the <em>headline</em>. This resolves the biggest UX dispute cleanly: <strong>raw feed stays the default view</strong>, threads become a toggle, and craft investment in the feed (density, flow, color discipline, pause-on-scroll) is legitimate product work, not indulgence.</p>
+<p><strong>Sequencing correction all reviewers demanded:</strong> capture-quality honesty metadata moves from last-in-Phase-1 to <em>first</em> — every derived feature (threads, detectors, autopsy, weather) must degrade honestly on partial capture, and capture fidelity varies wildly by adapter (rich Claude Code hooks → blind procwatch).</p>
+<p><strong>Cut or parked by consensus:</strong> Arena, Capsules-as-handoff, Watchtower enforce mode, the <code>.afrec</code> repo-state reconstruction, the custom query language, the standalone menu-bar app. Each has a written revival trigger in §8.</p>
+<p><strong>Codex's forensic pass added a Phase 0 nobody else saw:</strong> the spool — contractually "the canonical source of truth" — currently excludes Codex and procwatch events entirely (broadcast-only, never persisted), and the codex adapter discards the native <code>call_id</code> that Threads would need. Before any derived feature, capture integrity itself must be repaired: spool everything, preserve native IDs, mark gaps. Its reframe sharpens the whole thesis: the trust boundary is <em>epistemic</em> — the product that always tells you what was observed, what wasn't observable, and which conclusions the evidence justifies, with <code>unknown</code> as a first-class result.</p>
+</div>
+
+<h2 id="goals">1 · Design goals &amp; framing</h2>
+
+<h3>1.1 Stated goals</h3>
+<ul>
+<li><strong>The firehose itself is a goal, not a means.</strong> The author likes watching logs. A detail-rich, aesthetically excellent live timeline/flow view is intrinsic to the product identity — comparable to how <code>htop</code> or a good tmux dashboard is partly a pleasure object. Keep and polish it forever.</li>
+<li>Local-first, free OSS, macOS-first, 1–2 maintainers at side-project pace.</li>
+<li>Never break the agent; capture fails silently; five frozen contract surfaces.</li>
+</ul>
+
+<h3>1.2 The supervisory-control lens</h3>
+<p>Agent Firehose is an attention product. A developer running 2–4 agents is in a classic supervisory-control loop, and the roadmap's four questions map onto Endsley's situation-awareness levels: perception (what's happening) → comprehension (what does it mean) → projection (is it progressing) → control (should I intervene). The plan's blind spot: it organizes by <em>features</em>, not by the user's <em>attention states</em>:</p>
+<div class="tablewrap"><table>
+<tr><th>Mode</th><th>User state</th><th>Needs</th><th>Surface</th></tr>
+<tr><td><strong>Peripheral</strong></td><td>Working on something else; agents in background</td><td>Calm, glanceable "fine / needs me / broken"</td><td>Notification, tray/status line</td></tr>
+<tr><td><strong>Triage</strong></td><td>Pinged; 10-second decision</td><td>The reason + evidence, one screen, zero navigation</td><td>Attention list → feed</td></tr>
+<tr><td><strong>Forensic</strong></td><td>Something went wrong; will spend 5–20 min</td><td>Replay, provenance, autopsy</td><td>Session drill-down</td></tr>
+<tr><td><strong>Ambient watching</strong></td><td>The author's stated pleasure mode: feed on a second monitor</td><td>Flow, density, beauty, pause-on-scroll</td><td>The raw firehose</td></tr>
+</table></div>
+<p>The original Phase 1 served forensic + ambient modes; daily retention comes from peripheral + triage. Revised Phase 1 (§6) serves all four, with ambient-watching craft explicitly budgeted rather than smuggled in.</p>
+
+<h3>1.3 The wedge</h3>
+<p>The one thing agents' own UIs structurally cannot do: <strong>cross-agent, cross-session awareness on one machine</strong>. Claude Code shows its own session beautifully; nothing shows four sessions from three vendors, ranked by who needs you, with collision warnings. Notably, the repo has already started voting for this — <code>internal/index/attention.go</code> exists on the current branch before this review was written.</p>
+
+<h2 id="features">2 · The 13 features, adjudicated</h2>
+<p class="small">Verdicts synthesize the lead analysis and all three adversarial reviews. KEEP = build as scoped · RESHAPE = build a materially different version · PARK = written trigger in §8 · CUT = drop from roadmap.</p>
+
+<div class="card"><h4>1 · Threads <span class="badge b-reshape">RESHAPE</span></h4>
+<p>Right instinct, wrong default and wrong ambition. Ship <strong>turn-scoped grouping only</strong> — group strictly by native session/turn/tool_call IDs (zero inference), call them "turns," as an opt-in toggle (<code>t</code>) over the raw feed. No semantic phases; outcome labels limited to facts (<code>active/ended</code>). "Abandoned" is unknowable — it's also what "user went to lunch" looks like. Grouping quality varies by adapter (rich for Claude Code hooks, guesswork for Codex tailing, impossible for procwatch), so threads must display per-session capture fidelity. A mis-grouped thread on day one poisons trust in every later derived feature; derived views must <em>earn</em> default status.</p></div>
+
+<div class="card"><h4>2 · Flight Recorder <span class="badge b-reshape">RESHAPE</span></h4>
+<p>Visual replay yes; repo-state reconstruction no. The deep version is a correctness tarpit: Firehose doesn't observe every mutation (user edits, formatters, unhooked subshells, out-of-band git), and balanced-privacy mode truncates payloads to 240 runes — a truncated diff is an unappliable diff. First divergence → hash mismatch → lie or "reconstruction failed" for most real sessions. Honest v1: <strong>event-scoped replay</strong> — step/scrub through a session's events showing each event's own captured output/diff, with an explicit "repo state is not reconstructed" disclaimer. Cut the <code>.afrec</code> portable format (a sixth frozen surface the contract would carry forever); the Capsule bundle (§2.9) covers portability.</p></div>
+
+<div class="card"><h4>3 · Why View / provenance graph <span class="badge b-reshape">RESHAPE</span></h4>
+<p>No graph UI — a graph in a character grid is unreadable past ~10 nodes, and even in the GUI it's Langfuse-shaped work. The edge taxonomy overreaches: <code>failed-because</code> and <code>resolved</code> are semantic claims that temporal adjacency cannot earn — "fabrication with a confidence score stapled on." Honest v1: <strong>"why" cards</strong> — press <code>w</code> on any event, get an indented linear chain built only from native-ID edges (same tool_call_id, same turn, same file). The provenance <em>data model</em> (relationship fields) goes in the foundation; the graph visualization may never need to exist.</p></div>
+
+<div class="card"><h4>4 · Workspace Radar <span class="badge b-reshape">RESHAPE</span></h4>
+<p>The collision kernel is the single most differentiated idea in the list; the full radar surface is not. Two reviewers noted most local agent use is still serial, and IDEs already show changed files. Ship <strong>collision + ownership signals as derived events in the main feed</strong> ("⚠ codex-2 and claude-1 both edited <code>src/auth/token.go</code> in the last 4m") — same data, no new surface, immediate value. The tree-view radar becomes a desktop-shell feature later, if multi-agent usage data justifies it.</p></div>
+
+<div class="card"><h4>5 · Progress Intelligence <span class="badge b-park">PARK (mostly)</span></h4>
+<p>Good detector list, catastrophic alert-fatigue math. "Same command failing repeatedly" fires on normal TDD — <em>the workflow this repo mandates</em>; "tests re-run on unchanged repo" fires on flake-hunting. Even 95% per-firing precision yields several false alarms/hour across 3 agents, and users hard-ignore a WARN channel after ~3 false alarms. Phase 1 ships only the 2–3 near-zero-FP detectors as <em>attention events</em> (blocked-on-permission, erroring, silent-too-long); the full detector framework waits for post-Autopsy demand, ships off-by-default, with per-detector precision fixtures, coalescing per session, and one-key "this was wrong" feedback.</p></div>
+
+<div class="card"><h4>6 · Arena <span class="badge b-cut">CUT</span></h4>
+<p>Unanimous cut. Methodologically bankrupt across heterogeneous adapters: Claude Code hooks vs. Codex transcript-tailing are <em>different measurement instruments</em>, so every comparison is confounded by capture fidelity before model nondeterminism even enters. Presumes a rare workflow (deliberately racing agents), needs task-identity ceremony, and serves agent researchers, not engineers shipping code. If demand ever materializes, <code>firehose compare sess_a sess_b</code> is a weekend table on top of Autopsy metrics — it never needs to be a "lab."</p></div>
+
+<div class="card"><h4>7 · Session Autopsy <span class="badge b-keep">KEEP</span></h4>
+<p>High value, deterministic-first is the whole feature. Two additions: the report <em>leads</em> with capture fidelity ("covers ~83% of observable actions; responses redacted") — an autopsy that overclaims is worse than none — and v1 drops the pluggable summarizer entirely (no model dependency). Markdown/JSON export. Bonus: the autopsy is the naturally shareable artifact that markets the tool.</p></div>
+
+<div class="card"><h4>8 · Watchtower <span class="badge b-cut">ENFORCE: CUT</span> <span class="badge b-park">OBSERVE: PARK</span></h4>
+<p>Enforce mode contradicts the project's own prime directive ("never break the agent; fail silently") and is unenforceable by architecture on the codex adapter (post-hoc tailing — Firehose learns of actions <em>after they happen</em>; TOCTOU everywhere else). Partial enforcement users believe is total is <em>negative</em> safety, plus unbounded liability for a free tool. Enforcement belongs upstream in the agents' own permission systems. Observe-mode collapses into derived warn events (i.e., Lenses/detector rules with a warn action) — parked with them. See §8 for the gateway-architecture trigger.</p></div>
+
+<div class="card"><h4>9 · Capsules <span class="badge b-reshape">RESHAPE</span></h4>
+<p>Cross-agent handoff is a losing race against vendors (native resume/session-sharing are vendor roadmap items), and a continuation prompt generated from redacted, truncated payloads will be lossy garbage exactly when it matters. The durable core is the <strong>neutral evidence bundle</strong>: extend <code>/export</code> to a directory bundle — <code>autopsy.md + events.ndjson + patches/ + manifest.sha256 + privacy manifest</code>. Let the ecosystem write converters. No continuation-prompt generator.</p></div>
+
+<div class="card"><h4>10 · Lenses / query language <span class="badge b-reshape">RESHAPE</span></h4>
+<p>All reviewers rejected the custom grammar — a parser, grammar doc, error messages, completion, and a forever-compat surface for an audience fully served by hotkeys. Evidence from the field: <code>lnav</code>, <code>k9s</code>, <code>htop</code> thrive on hotkeys + <code>/</code> fuzzy filter; tools with real query languages have docs teams and query builders. The claim "Lenses are the substrate" conflates the <em>internal predicate engine</em> (yes — build it; detectors need it) with the user-facing language (defer; revisit only as familiar <code>key:value</code> pairs, never an invented grammar). Ship: 5–7 hotkey lenses (errors-only, current-repo, shell-only, active-sessions, warnings) + substring filter + a named-views TOML.</p></div>
+
+<div class="card"><h4>11 · Control Room <span class="badge b-reshape">RESHAPE</span></h4>
+<p>The plan buried the cheap half under the expensive half. The <em>glanceable</em> half — active-sessions list ranked by needs-attention, with conflicts — is Phase-1-worthy and is exactly what <code>attention.go</code> starts. The <em>actions</em> half (pause/terminate/approve) stays last, and per the Watchtower verdict may live upstream forever; tmux and Activity Monitor already cover kill.</p></div>
+
+<div class="card"><h4>12 · Repository Weather <span class="badge b-reshape">RESHAPE</span></h4>
+<p>Keep the concept as a <strong>status line</strong> in the TUI header and desktop shell (state + expandable evidence); cut the standalone menu-bar companion app (a second release pipeline for a status gimmick — though the Tauri tray icon gets the count for free). Weather states are derived data and obey the same honesty rules: every state expandable to evidence, degraded gracefully under partial capture.</p></div>
+
+<div class="card"><h4>13 · Adapter Lab <span class="badge b-reshape">RESHAPE</span></h4>
+<p>Right idea, wrong packaging: not a UI — a <strong>CLI + golden-fixture contract</strong> (<code>firehose adapter dev --replay fixtures/</code>, coverage report, redaction preview). Contributors live in the terminal and CI; a workbench UI serves ~5 people. This is also self-defense: adapter rot against quarterly upstream format changes is the roadmap's true competitor, so anything that cheapens adapter maintenance pays rent forever.</p></div>
+
+<h3>2.1 The hidden foundation — confirmed, reordered</h3>
+<p>All reviewers endorsed the foundation section and demanded it move <em>ahead</em> of the features: capture-quality metadata first (it's the honesty layer everything degrades against), then relationship fields (<code>tool_call_id</code>, <code>parent_event_id</code>, <code>thread_id</code> — all schema-additive, so no version bump), then the derived-data store (separate NDJSON, never rewriting the spool), then the artifact registry. One contract warning surfaced: <em>the moment the desktop app renders a derived structure over the daemon API, its semantics become a de facto frozen surface</em> — the plan treats derived data as freely revisable while also making it UI-load-bearing. Resolution: derived data is exposed under an explicitly versioned, explicitly unstable API namespace (<code>/derived/*</code>, marked experimental in contracts.md) until it earns stability.</p>
+
+<h2 id="hci">3 · HCI/UX deep dive</h2>
+
+<h3>3.1 Trust architecture: observed vs. derived</h3>
+<p>The single most important UI convention in the entire product: <strong>every inferred row carries one consistent visual mark</strong> (e.g., <code>≈</code> prefix + dimmed style) — thread outcomes, detector warnings, why-chains, weather states. Users generalize a single visible inference error to all derived data (automation-bias literature is symmetric: one bad output causes disuse). One glyph, applied everywhere, carries the whole trust story. Corollary: evidence-expansion UX ("every conclusion expandable") is 3–5× the cost of computing conclusions — budget it per feature or the transparency promise is marketing.</p>
+
+<h3>3.2 The feed as craft object</h3>
+<p>Since ambient watching is a stated goal, the feed deserves deliberate design, not defaults:</p>
+<ul>
+<li><strong>Pause-on-scroll is mandatory</strong> (like <code>less +F</code>): reading in a moving feed is the #1 firehose UX failure. <code>space</code> pauses; new-event count accumulates in the header; <code>G</code> resumes tail.</li>
+<li><strong>Color discipline:</strong> severity gets color; recency gets position; each session gets a stable glyph/color pair; everything else monochrome. If &gt;~10% of rows are colored, the pre-attentive channel is dead.</li>
+<li><strong>Density ladder (progressive disclosure):</strong> feed row (1 line) → expanded event (inline, n lines) → session view (full screen) → artifact/diff (pager). One keypress in (<code>enter</code>), one out (<code>esc</code>), no modal stacks.</li>
+<li><strong>Burst aesthetics:</strong> the existing <code>×N</code> coalescing is the right primitive — extend it into turn grouping rather than replacing it.</li>
+<li><strong>Flow rendering:</strong> a subtle per-session left-gutter thread line (│ ├ └) gives the "flow" feel without a graph engine.</li>
+</ul>
+<div class="tui"><span class="d">14:03:12</span> <span class="b">CLAUDE·a91</span> <span class="m">api</span>  │ <span class="g">✓</span> go test ./internal/auth        <span class="d">1.2s</span>
+<span class="d">14:03:14</span> <span class="b">CLAUDE·a91</span> <span class="m">api</span>  ├ edit  middleware.go              <span class="d">+18 −4</span>
+<span class="d">14:03:19</span> <span class="y">CODEX·c13</span>  <span class="m">api</span>  │ read  token.go
+<span class="d">14:03:21</span> <span class="y">CODEX·c13</span>  <span class="m">api</span>  ├ <span class="r">✗</span> npm run lint                   <span class="d">×3</span>
+<span class="d">14:03:30</span> <span class="d">≈ derived</span>       <span class="y">⚠ collision</span> a91 + c13 both writing src/auth/ <span class="d">(evidence: 4 events)</span>
+<span class="d">14:03:41</span> <span class="d">≈ derived</span>       <span class="r">● attention</span> c13 blocked on permission prompt <span class="d">2m 10s</span></div>
+<p class="small">Sketch: stable session colors, one derived-row glyph (<code>≈</code>), gutter flow lines, coalesced bursts (<code>×3</code>), monochrome bulk.</p>
+
+<h3>3.3 Keyboard contract &amp; discoverability</h3>
+<p>A TUI keymap budget is ~20 mnemonics before discoverability collapses. Reserve now: <code>/</code> filter · <code>1–7</code> lenses · <code>t</code> turn-grouping toggle · <code>enter/esc</code> zoom ladder · <code>w</code> why · <code>a</code> autopsy · <code>space</code> pause · <code>g/G</code> top/tail · <code>?</code> help. When the map approaches budget, the answer is a command palette (<code>⌘K</code>-equivalent, e.g. <code>:</code>) — which is itself a feature to schedule, not an afterthought.</p>
+
+<h3>3.4 Performance as trust</h3>
+<div class="tablewrap"><table>
+<tr><th>Interaction</th><th>Target</th><th>Note</th></tr>
+<tr><td>Feed append (perceived)</td><td>&lt;16ms</td><td>never drop below terminal frame cadence</td></tr>
+<tr><td>Filter/lens apply</td><td>&lt;50ms</td><td>at 100k events, via in-memory index</td></tr>
+<tr><td>Session open / autopsy render</td><td>&lt;100ms / &lt;1s</td><td>Linear-speed trust signal</td></tr>
+</table></div>
+
+<h3>3.5 The two-surface question (TUI vs. Tauri)</h3>
+<p>Two reviewers flagged split-personality risk: chasing parity ships two mediocre interfaces. Decision rule adopted: <strong>the TUI is the canonical, complete surface for feed + attention + autopsy; visually-heavy forensics (replay scrubber, any future radar/graph) are desktop-only</strong> — and each desktop-only feature must justify the daemon-API surface it adds. Never build an ASCII approximation of a feature that is naturally graphical.</p>
+
+<h2 id="reviews">4 · Adversarial reviews</h2>
+<p class="small">Three independent models reviewed the same corpus with instructions to attack. Full texts preserved in the session; below are the load-bearing findings.</p>
+
+<h3>4.1 Claude (grounded in the repo)</h3>
+<blockquote><span class="who">Claude · most damning</span>The plan builds an inference tower on a capture foundation that varies from rich (Claude Code hooks) to blind (procwatch), and sequences the honesty layer — capture-quality metadata — behind the features that need it.</blockquote>
+<blockquote><span class="who">Claude · on Watchtower</span>Watchtower enforce mode contradicts the project's own prime directive ("never break the agent, fail silently") and is unenforceable on the codex adapter by architecture… It converts a passive observer with zero liability into a safety product with unbounded liability.</blockquote>
+<blockquote><span class="who">Claude · reframing insight</span>The roadmap is written for watching agents; the durable value is in <em>not</em> watching them… The product that wins is an interrupt system — the tool that stays silent for 47 minutes and then says exactly one true thing… The console framing optimizes for time-in-app; the correct metric is time <em>saved out of</em> app.</blockquote>
+<ul>
+<li>Sized the gap: ~5KLOC pipeline today vs. an order-of-magnitude larger proposal; 13 features ≈ a 3-year solo backlog against upstream formats that break quarterly — "the roadmap's true competitor is adapter rot."</li>
+<li>Honest-TAM argument: single-agent interactive users already have a supervision UI (the agent's own); the real audience is multi-agent hands-off operators — thousands, not hundreds of thousands.</li>
+<li>Noticed <code>internal/index/attention.go</code> already on the branch: "the codebase has already voted for the wedge; the ideation corpus hasn't noticed."</li>
+<li>Cut list: Arena, Capsules, enforce-mode, menu-bar app, <code>.afrec</code>/reconstruction, causal edge taxonomy, custom query language.</li>
+<li>Minimal roadmap: capture-quality honesty layer → attention &amp; collision → threads-as-toggle (Claude Code sessions first) → plain filters + saved views → deterministic autopsy.</li>
+</ul>
+
+<h3>4.2 Antigravity / Gemini (outside-in, competitive)</h3>
+<blockquote><span class="who">agy · reframing insight</span>Agent Firehose should not be an out-of-band observer retroactively trying to control agents — it should act as a local gateway sitting <em>between</em> the agent and the OS… This reframes the product from a "nice-to-have visual logger" into a must-have local firewall and cost-containment gateway.</blockquote>
+<blockquote><span class="who">agy · on the wedge</span>Retro-analysis observability is low-frequency… The real, immediate pain is uncontrolled token burn and loop death (an agent running <code>npm test</code> 40 times, one variable changed each time, $15 burned).</blockquote>
+<ul>
+<li>"Fallacy of the multi-agent orchestrator": local agent usage today is overwhelmingly serial — collision tooling solves a problem most developers don't have <em>yet</em>. (Adjudication in §5: partially accepted; collision ships as cheap feed events, not a dedicated surface.)</li>
+<li>"Tailing catastrophe": adapters are hostage to upstream stdout/schema changes; a minor CLI release breaks parsers; without stable contracts, adapter maintenance overwhelms a small team.</li>
+<li>Split-personality UI bottleneck (TUI vs. Tauri parity) — adopted as decision rule §3.5.</li>
+<li>"Write-path illusion": out-of-band detection means <code>rm -rf</code> completes before a block prompt can render; true enforcement requires proxying the execution path. (This is the strongest single argument for cutting enforce-mode.)</li>
+<li>Competitive: Langfuse/Phoenix/OTel already do trace graphs locally via Docker; agent-native UIs will always beat an outside observer on in-session fidelity; the differentiated lane is local-first agent-aware security/cost awareness.</li>
+<li>Cut list: Arena, Repository Weather (menu-bar), Capsules. Proposed roadmap centers a stdio-wrapper protocol (<code>af-run</code>), loop/token firewall with SIGSTOP, secrets guardrails, a Tauri-only session viewer, git-native checkpoints.</li>
+</ul>
+
+<h3>4.3 Codex (engineering realism — deepest repo forensics)</h3>
+<blockquote><span class="who">Codex · most damning</span>The canonical history excludes a flagship supported agent. Codex can appear live while remaining absent from the spool, index, export, and future derivations. This invalidates Threads, Flight Recorder, Autopsy, Arena, and historical detectors before their algorithms are considered.</blockquote>
+<blockquote><span class="who">Codex · reframing insight</span>The product's real trust boundary is epistemic, not technical: Agent Firehose should be the system that tells users exactly what was observed, what was not observable, and which conclusions are justified by that evidence. Make <code>unknown</code> a first-class result.</blockquote>
+<p><strong>Concrete code-level defects found</strong> (each verified against the current branch):</p>
+<ul>
+<li><strong>The spool is not canonical.</strong> Codex and procwatch events are broadcast-only — skipped at watcher start, streamed live, never spooled, never indexed (<code>watcher.go:33</code>, <code>stream.go:68-82</code>). "Two different truth models" pretending to be one product with varying capture quality.</li>
+<li><strong>Native correlation IDs are being thrown away.</strong> A real Codex fixture contains <code>call_id</code>, but the parser doesn't decode it, and <code>exec_command</code> call records are dropped in favor of completion records with no preserved ID (<code>codex.go:170</code>). Codex event IDs are re-randomized on every parse — not stable evidence anchors. Threads' prerequisite data is being discarded <em>today</em>.</li>
+<li><strong><code>attention.go</code> already exhibits the source-dependent-falsehood problem:</strong> it treats every permission event as <code>needs_input</code> (but OpenCode maps both <code>permission.updated</code> and <code>permission.replied</code> there), recognizes only Claude-style completion names, and its 90-second idle heuristic marks any build longer than 90s as idle.</li>
+<li><strong>"Immutable raw events" contradicts the frozen privacy contract.</strong> The spool holds privacy-redacted events (balanced mode drops <code>raw</code>, truncates strings); future rules can't re-derive discarded information, and keeping an unredacted parallel log would violate frozen semantics. The foundation must say "immutable privacy-filtered observations." The balanced truncator is also shallow (nested maps pass through unchanged) — the artifact registry needs its own recursive privacy contract.</li>
+<li><strong>The index won't carry the proposed query load:</strong> <code>index.Build</code> reads the entire history into memory (<code>ReadLastN(…, math.MaxInt)</code>); <code>/events</code> has no cursor, time range, or server-side predicates; session queries scan whole day-files; SSE silently drops events past a 256-event buffer with no sequence numbers or gap markers — so capture-quality can't be a static badge; completeness changes mid-session.</li>
+<li><strong>Timestamps aren't one clock:</strong> Claude/OpenCode events get local capture time, Codex preserves source time; the spool preserves append order, not causal order — another reason inferred causal edges overreach.</li>
+<li><strong>Detector-by-detector capability audit:</strong> most "deterministic" detectors require state that isn't captured (no exit-status normalization for Claude Bash, no repo fingerprint, no content hashes, no normalized permission path for Codex). Each detector needs an adapter-capability predicate and an <code>unknown</code> result.</li>
+</ul>
+<p><strong>Codex's scope verdict:</strong> the plan is not 13 features — it's at least six hidden platforms (event-sourcing/derivation engine, query language + analytical index, filesystem recorder, inference framework, policy enforcement, portable formats/visualizations), each a permanent compatibility surface, proposed for a team already spanning Go, TS, Rust, multiple adapters, and two clients. Its minimal roadmap: <em>Canonical Capture v2</em> (spool everything, preserve native IDs, gap markers, capability metadata) → <em>Adapter Lab Lite</em> → <em>Durable Query Foundation</em> → <em>Flight Recorder Lite</em> → <em>Evidence Signals + Autopsy Lite</em>. Notably it places Adapter Lab in the <em>foundation</em>, because fixture replay is how every later inference gets tested.</p>
+
+<h2 id="matrix">5 · Convergence matrix</h2>
+<div class="tablewrap"><table>
+<tr><th>Claim</th><th>Lead</th><th>Claude</th><th>agy</th><th>Codex</th><th>Adjudication</th></tr>
+<tr><td>Capture-quality metadata must ship first</td><td>✓</td><td>✓ (strongest)</td><td>✓</td><td>✓ (+ dynamic, not a static badge)</td><td class="verdict">Adopted — Phase 1 item #1</td></tr>
+<tr><td>Capture integrity itself is broken (Codex not spooled; call_id discarded)</td><td>—</td><td>—</td><td>—</td><td>✓ (found it)</td><td class="verdict">Adopted as Phase 1 item #0 — precedes even the honesty layer</td></tr>
+<tr><td>Raw feed stays default; threads opt-in, native-ID-only</td><td>✓</td><td>✓</td><td>✓</td><td>✓ (+ <code>unknown</code> outcome, never manufactured)</td><td class="verdict">Adopted — also matches author's ambient-watching goal</td></tr>
+<tr><td>Custom query language: don't build a grammar</td><td>✓</td><td>✓</td><td>✓</td><td>✓ (durable index before any DSL)</td><td class="verdict">Adopted — hotkey lenses + substring + saved-views file; disk-backed index in Phase 2 foundation</td></tr>
+<tr><td>Cut Arena</td><td>✓</td><td>✓</td><td>✓</td><td>✓ (measures adapter coverage, not agents)</td><td class="verdict">Cut — unanimous</td></tr>
+<tr><td>Cut / defang Watchtower enforce</td><td>✓ (observe-only until sync hooks)</td><td>✓ (cut permanently)</td><td>✓ (impossible without proxying)</td><td>✓ (hooks return no policy decision; separate product)</td><td class="verdict">Cut from roadmap — unanimous; revival trigger = gateway architecture (§8)</td></tr>
+<tr><td>Repo-state reconstruction is a tarpit</td><td>✓</td><td>✓</td><td>△ (do it git-native instead)</td><td>✓ (no fs journal; patches not even captured)</td><td class="verdict">Cut; event-scoped replay only. Git-native checkpoints noted as the honest path if ever revived</td></tr>
+<tr><td>Causal edges (<code>failed-because</code>, <code>resolved</code>) overreach</td><td>✓</td><td>✓ ("fabrication with a confidence score")</td><td>△</td><td>✓ (+ mixed clocks: capture time vs source time)</td><td class="verdict">Adopted — why-cards from native-ID edges only</td></tr>
+<tr><td>Wedge = attention/interrupt + collision</td><td>✓</td><td>✓</td><td>✗ (wedge = cost/loop firewall)</td><td>✗ (wedge = epistemic honesty)</td><td class="verdict">Attention/interrupt adopted as the <em>feature</em> wedge; Codex's epistemic honesty adopted as the <em>brand</em> wedge (they compose: the interrupt is only valuable because it's trustworthy). agy's token-burn pain folded in as a runaway attention-event class</td></tr>
+<tr><td>Multi-agent collision is premature</td><td>✗</td><td>✗</td><td>✓</td><td>△ (path-string ≠ collision without worktree identity)</td><td class="verdict">Ship as cheap feed events, no dedicated surface; add repo/worktree identity fields first (Phase 1 #0)</td></tr>
+<tr><td>Gateway/proxy architecture reframe</td><td>—</td><td>— (enforcement belongs upstream)</td><td>✓ (central thesis)</td><td>— (enforce = separate interception architecture)</td><td class="verdict">Not adopted as product direction (violates "never break the agent"; huge scope; vendors own the loop). Recorded as the one credible v2.0 pivot</td></tr>
+<tr><td>TUI/Tauri split needs an explicit ownership rule</td><td>△</td><td>✓</td><td>✓</td><td>△ (portable formats multiply surfaces)</td><td class="verdict">Adopted — §3.5 decision rule</td></tr>
+<tr><td>Detector alert fatigue will kill the WARN channel</td><td>✓</td><td>✓ (TDD false-positive callout)</td><td>✓</td><td>✓ (capability-gated, <code>unknown</code>-aware detectors)</td><td class="verdict">Adopted — only 2–3 near-zero-FP attention events in Phase 1; framework parked with per-detector capability predicates</td></tr>
+<tr><td>Adapter fixture tooling belongs in the foundation</td><td>△ (Phase 2)</td><td>△ (self-defense)</td><td>✓ (tailing catastrophe)</td><td>✓ (it's how every inference is tested)</td><td class="verdict">Promoted — moves from Phase 2 tail to Phase 2 item #1, interleaved with foundation work</td></tr>
+</table></div>
+
+<h2 id="phase1">6 · Revised Phase 1 — "Make supervision calm" <span class="pill">(~12–16 solo weeks)</span></h2>
+<p>Exit criterion: a user running two agents keeps the tool because it <em>pings them correctly</em>, the feed is skimmable in triage mode, and beautiful in ambient mode. No telemetry — validate via GitHub discussions.</p>
+
+<div class="card"><h4>0 · Capture integrity repair <span class="pill">~2–3 wk · from Codex's forensics</span></h4>
+<p>Precedes everything: (a) <strong>spool Codex and procwatch events</strong> — the contract says the spool is canonical, and today it isn't (broadcast-only paths in <code>stream.go</code>); (b) <strong>stop discarding native <code>call_id</code></strong> in the codex adapter and preserve turn/tool IDs everywhere they exist (additive envelope fields); (c) stable event identity across reprocessing (no re-randomized IDs); (d) distinguish source time from capture time; (e) repo/worktree identity fields (prerequisite for honest collision detection); (f) fix the known <code>attention.go</code> semantic bugs (permission-replied ≠ needs-input; non-Claude completion names; 90s idle heuristic vs. long builds). All additive — no schema bump.</p></div>
+
+<div class="card"><h4>1 · Capture-quality honesty layer <span class="pill">~1–2 wk</span></h4>
+<p>Per-session fidelity fields (hook coverage rich/partial, transcript partial, responses-redacted…) on the index + <code>/sessions</code>; TUI session-header badge; a degrade-gracefully rule table every later derived feature must consult. Additive envelope fields only — no schema bump.</p></div>
+
+<div class="card"><h4>2 · Attention events + macOS surfaces <span class="pill">~2 wk</span></h4>
+<p>Three near-zero-FP derived events: <em>needs-approval</em> (blocked on permission), <em>failed</em> (session-level error), <em>finished</em>. Plus one agy-inspired class: <em>runaway</em> (same command failed N× with no intervening file change — the narrowest loop signature, coalesced per session). Delivery: macOS notification (osascript/terminal-notifier from the daemon), Tauri tray count, TUI attention strip. Finishes what <code>attention.go</code> starts. <strong>This is the retention feature.</strong></p></div>
+
+<div class="card"><h4>3 · Feed craft pass (ambient mode) <span class="pill">~1–2 wk</span></h4>
+<p>Pause-on-scroll with accumulating counter; stable per-session color/glyph; gutter flow lines; the universal <code>≈</code> derived-row mark; color-discipline audit; latency budget enforcement at 100k events. This line item exists because the watchable firehose is a stated design goal — it's product work, budgeted.</p></div>
+
+<div class="card"><h4>4 · Turn grouping (Threads v0) <span class="pill">~2 wk</span></h4>
+<p>Opt-in toggle <code>t</code>. Native-ID grouping only; Claude Code sessions first (where tool_call correlation is real); collapse/expand extends the existing <code>×N</code> coalescing; outcomes limited to active/ended; per-thread capture-fidelity inheritance.</p></div>
+
+<div class="card"><h4>5 · Hotkey lenses + filter + saved views <span class="pill">~1 wk</span></h4>
+<p>Keys <code>1–7</code>: errors-only, current-repo, shell-only, files-only, active-sessions, warnings, all. <code>/</code> substring filter. Named views in a TOML file (composition without a grammar). Internal predicate engine structured enough for detectors to reuse later.</p></div>
+
+<div class="card"><h4>6 · Collision events <span class="pill">~1–2 wk</span></h4>
+<p>Two active sessions writing the same path within a window → one coalesced <code>≈ ⚠ collision</code> feed event with evidence links. No radar surface. Doubles as the first proof of the derived-data store.</p></div>
+
+<h2 id="phase2">7 · Revised Phase 2 — "Make history explainable, honestly" <span class="pill">(~9–12 solo weeks)</span></h2>
+
+<div class="card"><h4>1 · Foundation: derived-data store + relationship fields + artifact registry <span class="pill">~2–3 wk</span></h4>
+<p>Additive envelope fields (<code>tool_call_id</code>, <code>parent_event_id</code>, <code>thread_id</code>); derivations in a separate NDJSON keyed to supporting event IDs with rule version + confidence + invalidation; artifacts addressable by hash (with an explicit recursive privacy + retention contract — Codex showed the balanced truncator doesn't recurse into nested payloads). Spool remains untouched canonical truth — reworded per Codex to "immutable <em>privacy-filtered</em> observations." Includes the <strong>durable query substrate</strong>: incremental disk-backed offsets so <code>index.Build</code> stops loading full history into memory, and cursors + time/session/source predicates on <code>/events</code>. Derived API under an explicitly-experimental <code>/derived/*</code> namespace. The <strong>adapter fixture CLI</strong> (item 6) starts here in parallel — fixture replay is how every derivation gets tested.</p></div>
+
+<div class="card"><h4>2 · Deterministic Session Autopsy <span class="pill">~2 wk</span></h4>
+<p>Markdown/JSON, leads with capture fidelity, sections: outcome (facts only) · actions · failures &amp; retries · repo impact · permissions · unresolved. No summarizer plugin in v1. <code>a</code> from any session.</p></div>
+
+<div class="card"><h4>3 · Event-scoped replay <span class="pill">~2 wk</span></h4>
+<p>Step/scrub through a session's events with captured outputs and diffs, pager-style in the TUI; richer scrubber later in the desktop shell per §3.5. Explicit "repo state not reconstructed" framing. No <code>.afrec</code>.</p></div>
+
+<div class="card"><h4>4 · Why cards <span class="pill">~1–2 wk</span></h4>
+<p><code>w</code> on any event → indented causal chain from native-ID edges only. No inferred edge types, no graph. If it can't build a high-confidence chain it says so ("no linked events captured").</p></div>
+
+<div class="card"><h4>5 · Session bundle export (Capsule v0) <span class="pill">~1 wk</span></h4>
+<p><code>/export</code> → directory bundle: <code>autopsy.md · events.ndjson · patches/ · manifest.sha256 · privacy-manifest.json</code>. No continuation prompts, no adapter resume commands.</p></div>
+
+<div class="card"><h4>6 · Adapter fixture CLI <span class="pill">~1–2 wk, interleaved</span></h4>
+<p><code>firehose adapter dev --replay fixtures/</code> + coverage report. Justified inside Phase 2 as self-defense: adapter rot is the roadmap's true competitor, and Phase 2's derived features multiply the damage of silent capture drift.</p></div>
+
+<h2 id="parked">8 · Parked features, with revival triggers</h2>
+<div class="tablewrap"><table>
+<tr><th>Feature</th><th>Status</th><th>Build when…</th></tr>
+<tr><td>Semantic thread phases / outcome inference</td><td>Parked</td><td>Turn grouping ships and mis-grouping reports are quiet for a full release cycle</td></tr>
+<tr><td>Detector framework (full Progress Intelligence)</td><td>Parked</td><td>Autopsy demand shows users read post-hoc analysis; each detector ships with precision fixtures &amp; off-by-default</td></tr>
+<tr><td>Workspace Radar surface (tree view)</td><td>Parked</td><td>Collision feed events fire regularly for real users (evidence multi-agent-on-one-repo is common)</td></tr>
+<tr><td>Query language (key:value)</td><td>Parked</td><td>≥3 distinct users ask for boolean composition the hotkey lenses can't express</td></tr>
+<tr><td>Repository Weather status model</td><td>Parked</td><td>Attention events prove reliable; Weather is then a rollup of proven signals</td></tr>
+<tr><td>Repo-state reconstruction</td><td>Cut</td><td>Only via git-native checkpoints (agy's framing) <em>and</em> an fsevents watcher — a separate product decision</td></tr>
+<tr><td>Watchtower enforce / Control-Room actions</td><td>Cut</td><td>Only if agent vendors standardize a synchronous interception point, or the project deliberately pivots to agy's gateway architecture (a v2.0-scale decision, not a feature)</td></tr>
+<tr><td>Arena</td><td>Cut</td><td><code>firehose compare</code> table if ever demanded; never a "lab"</td></tr>
+<tr><td>Continuation-prompt generation (Capsules)</td><td>Cut</td><td>Vendors' native resume owns this; bundle export covers the neutral-evidence need</td></tr>
+</table></div>
+
+<h2 id="open">9 · Open decisions for the author</h2>
+<ul>
+<li><strong>Notification transport:</strong> osascript vs. terminal-notifier vs. Tauri-only. Recommendation: daemon-emitted osascript (works without desktop shell), tray count when shell is running.</li>
+<li><strong>Attention-event thresholds:</strong> "silent-too-long" default (5m? configurable per repo?). Recommendation: ship conservative (10m) + one-key snooze; tune from feedback.</li>
+<li><strong>Token/cost capture:</strong> agy's token-burn pain is real, but cost data availability varies by adapter. Decide whether <em>runaway</em> attention events are enough for now (recommended) or whether cost fields join the envelope (additive, safe, but chases vendor formats).</li>
+<li><strong>Desktop-only feature list:</strong> ratify §3.5 (TUI canonical for feed/attention/autopsy; scrubber &amp; any future radar desktop-only) in contracts or CONTRIBUTING so drift doesn't creep in.</li>
+<li><strong>The gateway question:</strong> agy's proxy reframe is the one credible bigger-product pivot on the table. It contradicts the current soul of the project (silent observer). Worth a deliberate written ADR saying "not now, and here's the trigger," so it stops resurfacing.</li>
+</ul>
+
+<hr>
+<p class="small">Sources: ideation corpus (13 features + hidden foundation + phase plan) · lead HCI analysis · adversarial reviews by Claude (repo-grounded), Antigravity/Gemini (competitive), Codex (engineering realism) · repo state on <code>feat/daemon-desktop-migration</code> including <code>internal/index/attention.go</code> · HCI patterns: supervisory control &amp; situation awareness (Endsley), automation bias / cry-wolf alarm literature, pre-attentive processing, Hick's law, progressive disclosure.</p>
+
+</div>

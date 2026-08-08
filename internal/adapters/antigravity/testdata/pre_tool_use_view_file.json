@@ -1,0 +1,14 @@
+{
+ "artifactDirectoryPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+ "conversationId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+ "modelName": "gemini-3-flash-agent",
+ "stepIdx": 10,
+ "toolCall": {
+  "args": {
+   "AbsolutePath": "/tmp/definitely-absent-9x7.txt"
+  },
+  "name": "view_file"
+ },
+ "transcriptPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb/.system_generated/logs/transcript_full.jsonl",
+ "workspacePaths": []
+}

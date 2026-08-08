@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/agentfirehose/agentfirehose/docs/event.schema.json",
+  "title": "Agent Firehose event envelope",
+  "description": "The normalized envelope every capture source is mapped into before display, persistence, or export. Spool files and exports are NDJSON: one envelope per line. Consumers MUST ignore unknown fields so the schema can grow additively.",
+  "type": "object",
+  "required": ["id", "time", "source", "category"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Envelope schema version, stamped at spool-append time. Absent on spool lines written before versioning existed; readers treat absent/0 as version 1."
+    },
+    "id": {
+      "type": "string",
+      "description": "Random 16-byte hex identifier, unique per event."
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event timestamp (RFC 3339, UTC preferred)."
+    },
+    "source_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp supplied by the observed source, when one exists. Added additively within schema version 1."
+    },
+    "capture_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when Agent Firehose observed the event. Added additively within schema version 1."
+    },
+    "source": {
+      "type": "string",
+      "description": "Agent family that produced the event.",
+      "examples": ["claude-code", "codex", "opencode", "generic", "procwatch", "firehose"]
+    },
+    "agent": {
+      "type": "string",
+      "description": "Specific agent or binary name within the source family."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Stable identifier grouping events of one agent session."
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "Identifier grouping causally related events, possibly across sessions. Present only when the source supplies one; adapters preserve it verbatim."
+    },
+    "turn_id": {
+      "type": "string",
+      "description": "Source-native identifier grouping events within one agent turn. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
+    "call_id": {
+      "type": "string",
+      "description": "Source-native tool/command correlation id (e.g. a Codex call_id or Claude Code tool_use_id). Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
+    "upstream_event_id": {
+      "type": "string",
+      "description": "Stable identifier assigned to the native event record, when supplied. Added additively within schema version 1."
+    },
+    "prompt_id": {
+      "type": "string",
+      "description": "Source-native prompt or interaction correlation identifier. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
+    "message_id": {
+      "type": "string",
+      "description": "Source-native user or assistant message identifier, when supplied. Added additively within schema version 1."
+    },
+    "parent_id": {
+      "type": "string",
+      "description": "Source-native parent record, message, or session identifier, when supplied. Added additively within schema version 1."
+    },
+    "request_id": {
+      "type": "string",
+      "description": "Source-native model or API request identifier, when supplied. Added additively within schema version 1."
+    },
+    "sequence": {
+      "type": "integer",
+      "description": "Native ordering value within the source's documented scope, when supplied. Added additively within schema version 1."
+    },
+    "transport": {
+      "type": "string",
+      "description": "Capture transport: hook, plugin, otel-http, otel-jsonl, durable-jsonl, or process. Added additively within schema version 1."
+    },
+    "source_version": {
+      "type": "string",
+      "description": "Upstream product or schema version when actually supplied or observed. Added additively within schema version 1."
+    },
+    "category": {
+      "type": "string",
+      "enum": ["session", "prompt", "message", "tool", "file", "permission", "shell", "error", "meta"],
+      "description": "Canonical classification used for display grouping and filtering."
+    },
+    "name": {
+      "type": "string",
+      "description": "Source-specific event name, e.g. a hook or bus event name.",
+      "examples": ["UserPromptSubmit", "PostToolUse:Bash", "file.edited"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "notice", "warn", "error"],
+      "description": "Display prominence. Absent means info."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One-line human-readable description."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Repository name the activity happened in, when known."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Working directory of the agent, when known."
+    },
+    "repo_id": {
+      "type": "string",
+      "description": "Canonical local path of the Git common directory, identifying one repository across linked worktrees when observable. Added additively within schema version 1."
+    },
+    "worktree_id": {
+      "type": "string",
+      "description": "Canonical local path of the containing Git worktree root when observable. Added additively within schema version 1."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Source-specific structured details. Subject to privacy-mode redaction: values may be truncated strings (balanced) or {sha256, len} digests (minimal).",
+      "additionalProperties": true
+    },
+    "raw": {
+      "type": "string",
+      "description": "Original source payload. Present only in full privacy mode."
+    }
+  }
+}

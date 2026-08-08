@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "desktop-frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["-C", "apps/tauri-desktop", "dev", "--port", "1420"],
+      "port": 1420,
+      "env": { "PATH": "/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/bin:/bin" }
+    }
+  ]
+}

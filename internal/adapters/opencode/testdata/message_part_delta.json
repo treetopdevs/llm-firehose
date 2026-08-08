@@ -1,0 +1,1 @@
+{"id":"evt_fixture05","type":"message.part.delta","properties":{"sessionID":"ses_fixture01","messageID":"msg_fixture01","partID":"prt_fixture01","field":"text","delta":"SECRET-DELTA-MARKER"},"directory":"/tmp/agent-firehose-opencode-fixture/work"}

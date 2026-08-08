@@ -70,7 +70,7 @@ func TestFilterDimensions(t *testing.T) {
 	}
 }
 
-func TestCoalesceBursts(t *testing.T) {
+func TestCoalesceKeepsDistinctBursts(t *testing.T) {
 	r := NewRing(100)
 	// five identical shell events within 2s, then a different one
 	for i := range 5 {
@@ -79,17 +79,24 @@ func TestCoalesceBursts(t *testing.T) {
 	r.Add(ev("other", "codex", "s1", event.CategoryPrompt, "user_message", "hi", t0.Add(5*time.Second)))
 
 	rows := Coalesce(r.Snapshot(), 2*time.Second)
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2 (burst grouped): %+v", len(rows), rows)
+	if len(rows) != 6 {
+		t.Fatalf("got %d rows, want all distinct observations: %+v", len(rows), rows)
 	}
-	if rows[0].Count != 5 {
-		t.Errorf("burst count = %d, want 5", rows[0].Count)
-	}
-	if rows[0].Event.ID != "b4" {
-		t.Errorf("group should keep latest event, got %s", rows[0].Event.ID)
-	}
-	if rows[1].Count != 1 {
-		t.Errorf("singleton count = %d", rows[1].Count)
+}
+
+func TestCoalesceCorrelatedObservationsButNotPhases(t *testing.T) {
+	start := ev("start", "codex", "s1", event.CategoryShell, "PreToolUse", "start", t0)
+	start.TurnID, start.CallID = "t1", "c1"
+	start.Payload = map[string]any{"phase": "start", "tool_name": "exec_command"}
+	rolloutEnd := ev("rollout", "codex", "s1", event.CategoryShell, "function_call_output", "end", t0.Add(time.Second))
+	rolloutEnd.TurnID, rolloutEnd.CallID = "t1", "c1"
+	rolloutEnd.Payload = map[string]any{"phase": "end", "tool_name": "exec_command"}
+	hookEnd := ev("hook", "codex", "s1", event.CategoryShell, "PostToolUse", "end", t0.Add(2*time.Second))
+	hookEnd.TurnID, hookEnd.CallID = "t1", "c1"
+	hookEnd.Payload = map[string]any{"phase": "end", "tool_name": "exec_command"}
+	rows := Coalesce([]event.Event{start, rolloutEnd, hookEnd}, 5*time.Second)
+	if len(rows) != 2 || rows[0].Event.ID != "start" || rows[1].Count != 2 {
+		t.Fatalf("correlated rows = %+v", rows)
 	}
 }
 

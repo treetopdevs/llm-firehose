@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// CurrentSchemaVersion is stamped into every event at spool-append time.
+// Version 0 means a pre-versioning spool line; readers treat it as v1.
+const CurrentSchemaVersion = 1
+
 // Category classifies an event for display grouping and filtering.
 type Category string
 
@@ -46,19 +50,35 @@ var validSeverities = map[Severity]bool{
 
 // Event is the common envelope for all agent activity.
 type Event struct {
-	ID        string         `json:"id"`
-	Time      time.Time      `json:"time"`
-	Source    string         `json:"source"`               // agent family: claude-code, codex, opencode, generic, procwatch
-	Agent     string         `json:"agent,omitempty"`      // specific agent/binary name
-	SessionID string         `json:"session_id,omitempty"`
-	Category  Category       `json:"category"`
-	Name      string         `json:"name,omitempty"` // source-specific event name
-	Severity  Severity       `json:"severity,omitempty"`
-	Summary   string         `json:"summary,omitempty"`
-	Repo      string         `json:"repo,omitempty"`
-	CWD       string         `json:"cwd,omitempty"`
-	Payload   map[string]any `json:"payload,omitempty"`
-	Raw       string         `json:"raw,omitempty"` // original source payload, privacy mode permitting
+	SchemaVersion   int            `json:"schema_version,omitempty"`
+	ID              string         `json:"id"`
+	Time            time.Time      `json:"time"`
+	SourceTime      *time.Time     `json:"source_time,omitempty"`  // source-supplied timestamp, when observable
+	CaptureTime     *time.Time     `json:"capture_time,omitempty"` // when Firehose observed the event
+	Source          string         `json:"source"`                 // agent family: claude-code, codex, opencode, generic, procwatch
+	Agent           string         `json:"agent,omitempty"`        // specific agent/binary name
+	SessionID       string         `json:"session_id,omitempty"`
+	TraceID         string         `json:"trace_id,omitempty"`          // groups causally related events across sessions, when the source supplies one
+	TurnID          string         `json:"turn_id,omitempty"`           // source-native turn identifier, when the source supplies one
+	CallID          string         `json:"call_id,omitempty"`           // source-native tool/command correlation id, when the source supplies one (added additively within schema v1)
+	UpstreamEventID string         `json:"upstream_event_id,omitempty"` // stable identifier assigned by the native source
+	PromptID        string         `json:"prompt_id,omitempty"`         // source-native prompt or interaction identifier
+	MessageID       string         `json:"message_id,omitempty"`        // source-native user or assistant message identifier
+	ParentID        string         `json:"parent_id,omitempty"`         // source-native parent record, message, or session identifier
+	RequestID       string         `json:"request_id,omitempty"`        // source-native model or API request identifier
+	Sequence        *int64         `json:"sequence,omitempty"`          // native ordering value within the source's documented scope
+	Transport       string         `json:"transport,omitempty"`         // capture transport used for this observation
+	SourceVersion   string         `json:"source_version,omitempty"`    // upstream version actually supplied or observed
+	Category        Category       `json:"category"`
+	Name            string         `json:"name,omitempty"` // source-specific event name
+	Severity        Severity       `json:"severity,omitempty"`
+	Summary         string         `json:"summary,omitempty"`
+	Repo            string         `json:"repo,omitempty"`
+	CWD             string         `json:"cwd,omitempty"`
+	RepoID          string         `json:"repo_id,omitempty"`     // canonical local Git common-directory path, when observable
+	WorktreeID      string         `json:"worktree_id,omitempty"` // canonical local Git worktree-root path, when observable
+	Payload         map[string]any `json:"payload,omitempty"`
+	Raw             string         `json:"raw,omitempty"` // original source payload, privacy mode permitting
 }
 
 // Validate reports whether the event has the minimum required shape.

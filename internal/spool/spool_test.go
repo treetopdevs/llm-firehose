@@ -2,9 +2,11 @@ package spool
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +46,30 @@ func TestAppendReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAppendReadRoundTripLargerThanScannerLimit(t *testing.T) {
+	dir := t.TempDir()
+	ev := mkEvent(1, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.Payload = map[string]any{"output": strings.Repeat("x", 5*1024*1024)}
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append large event: %v", err)
+	}
+	after := mkEvent(2, ev.Time.Add(time.Second))
+	if err := NewWriter(dir).Append(after); err != nil {
+		t.Fatalf("append event after large record: %v", err)
+	}
+
+	evs, err := ReadLastN(dir, 2)
+	if err != nil {
+		t.Fatalf("read large event: %v", err)
+	}
+	if len(evs) != 2 || evs[0].ID != ev.ID || evs[1].ID != after.ID {
+		t.Fatalf("large event did not round-trip: %+v", evs)
+	}
+	if got := evs[0].Payload["output"].(string); len(got) != 5*1024*1024 {
+		t.Fatalf("large payload length = %d", len(got))
+	}
+}
+
 func TestReadLastNAcrossFilesAndLimit(t *testing.T) {
 	dir := t.TempDir()
 	// two daily files written directly
@@ -61,6 +87,220 @@ func TestReadLastNAcrossFilesAndLimit(t *testing.T) {
 	}
 	if len(evs) != 2 || evs[0].ID != "b" || evs[1].ID != "c" {
 		t.Fatalf("lastN wrong: %+v", evs)
+	}
+}
+
+func TestAppendStampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir)
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	if ev.SchemaVersion != 0 {
+		t.Fatalf("precondition: fresh event should have zero version")
+	}
+	if err := w.Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].SchemaVersion != event.CurrentSchemaVersion {
+		t.Fatalf("spooled schema_version = %d, want %d", evs[0].SchemaVersion, event.CurrentSchemaVersion)
+	}
+}
+
+func TestAppendStampsMissingCaptureTime(t *testing.T) {
+	dir := t.TempDir()
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	before := time.Now().UTC()
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	after := time.Now().UTC()
+
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].CaptureTime == nil {
+		t.Fatalf("spooled capture_time = %v, want a timestamp", evs)
+	}
+	if evs[0].CaptureTime.Before(before) || evs[0].CaptureTime.After(after) {
+		t.Errorf("capture_time = %v, want append observation between %v and %v", evs[0].CaptureTime, before, after)
+	}
+	if evs[0].SourceTime != nil {
+		t.Errorf("source_time = %v, want absent when the producer did not identify one", evs[0].SourceTime)
+	}
+}
+
+func TestAppendObservesRepositoryAndWorktreeIdentity(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "project")
+	cwd := filepath.Join(repo, "nested", "package")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.CWD = cwd
+	ev.RepoID = "unverified-source-repo"
+	ev.WorktreeID = "unverified-source-worktree"
+	dir := filepath.Join(root, "spool")
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("spooled events = %d, want 1", len(evs))
+	}
+	wantRepo, err := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantWorktree, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evs[0].RepoID != wantRepo {
+		t.Errorf("repo_id = %q, want %q", evs[0].RepoID, wantRepo)
+	}
+	if evs[0].WorktreeID != wantWorktree {
+		t.Errorf("worktree_id = %q, want %q", evs[0].WorktreeID, wantWorktree)
+	}
+}
+
+func TestAppendDistinguishesLinkedWorktreesInOneRepository(t *testing.T) {
+	root := t.TempDir()
+	commonDir := filepath.Join(root, "main", ".git")
+	gitDir := filepath.Join(commonDir, "worktrees", "feature")
+	worktree := filepath.Join(root, "feature")
+	cwd := filepath.Join(worktree, "internal", "thing")
+	for _, dir := range []string{commonDir, gitDir, cwd} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.CWD = cwd
+	dir := filepath.Join(root, "spool")
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("read = %+v, %v", evs, err)
+	}
+	wantRepo, _ := filepath.EvalSymlinks(commonDir)
+	wantWorktree, _ := filepath.EvalSymlinks(worktree)
+	if evs[0].RepoID != wantRepo || evs[0].WorktreeID != wantWorktree {
+		t.Errorf("identity = repo %q worktree %q, want repo %q worktree %q",
+			evs[0].RepoID, evs[0].WorktreeID, wantRepo, wantWorktree)
+	}
+}
+
+func TestReadPreVersioningLines(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"old","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}` + "\n"
+	os.WriteFile(filepath.Join(dir, "2026-07-01.ndjson"), []byte(legacy), 0o644)
+	evs, err := ReadLastN(dir, 10)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].ID != "old" || evs[0].SchemaVersion != 0 {
+		t.Fatalf("legacy line misread: %+v", evs)
+	}
+}
+
+func TestReadLegacyFinalRecordWithoutNewline(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"old","time":"2026-07-01T10:00:00Z","source":"generic","category":"meta"}`
+	if err := os.WriteFile(filepath.Join(dir, "2026-07-01.ndjson"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := ReadLastN(dir, 10)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 || evs[0].ID != "old" {
+		t.Fatalf("legacy final record was not read: %+v", evs)
+	}
+}
+
+func TestReadDaysLimitsToNamedFiles(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir)
+	day1 := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	for i, ts := range []time.Time{day1, day1.Add(time.Minute), day2} {
+		if err := w.Append(mkEvent(i, ts)); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	evs, err := ReadDays(dir, []string{"2026-07-02"})
+	if err != nil {
+		t.Fatalf("ReadDays: %v", err)
+	}
+	if len(evs) != 2 || evs[0].ID != "ev-0" || evs[1].ID != "ev-1" {
+		t.Fatalf("day-1 events wrong: %+v", evs)
+	}
+
+	// Both days, oldest first regardless of input order.
+	evs, err = ReadDays(dir, []string{"2026-07-03", "2026-07-02"})
+	if err != nil {
+		t.Fatalf("ReadDays both: %v", err)
+	}
+	if len(evs) != 3 || evs[0].ID != "ev-0" || evs[2].ID != "ev-2" {
+		t.Fatalf("two-day events wrong: %+v", evs)
+	}
+
+	// Missing day files are skipped, not errors.
+	evs, err = ReadDays(dir, []string{"1999-01-01"})
+	if err != nil || len(evs) != 0 {
+		t.Fatalf("missing day: evs=%v err=%v", evs, err)
+	}
+}
+
+func TestTailerPrimeFixesSnapshotBoundary(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir)
+	if err := w.Append(mkEvent(0, time.Now().UTC())); err != nil {
+		t.Fatalf("append existing: %v", err)
+	}
+
+	tail := NewTailer(dir, 10*time.Millisecond)
+	tail.Prime() // snapshot boundary: everything before this is "existing"
+
+	// Appended after Prime but before Run: must still be delivered.
+	if err := w.Append(mkEvent(1, time.Now().UTC())); err != nil {
+		t.Fatalf("append post-prime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan event.Event, 16)
+	go tail.Run(ctx, ch)
+
+	select {
+	case ev := <-ch:
+		if ev.ID != "ev-1" {
+			t.Errorf("got %q, want ev-1 (pre-prime content must be skipped)", ev.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailer never delivered post-prime event")
 	}
 }
 
@@ -108,7 +348,89 @@ func TestTailerEmitsParseErrorEvent(t *testing.T) {
 		if ev.Category != event.CategoryMeta || ev.Severity != event.SeverityWarn {
 			t.Errorf("want meta/warn parse-error event, got %+v", ev)
 		}
+		if ev.CaptureTime == nil || !ev.Time.Equal(*ev.CaptureTime) {
+			t.Errorf("capture_time = %v, want parse observation time %v", ev.CaptureTime, ev.Time)
+		}
+		if ev.SourceTime != nil {
+			t.Errorf("source_time = %v, want absent for an unparseable source line", ev.SourceTime)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("tailer never surfaced parse failure")
+	}
+}
+
+func TestTailerWaitsForIncompleteFinalLine(t *testing.T) {
+	dir := t.TempDir()
+	tail := NewTailer(dir, time.Second)
+	tail.Prime()
+	ch := make(chan event.Event, 2)
+	ctx := context.Background()
+
+	ev := mkEvent(7, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	line, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "2026-07-02.ndjson")
+	cut := len(line) / 2
+	if err := os.WriteFile(path, line[:cut], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(ctx, ch)
+	select {
+	case got := <-ch:
+		t.Fatalf("incomplete line produced an event: %+v", got)
+	default:
+	}
+	if got := tail.offsets[path]; got != 0 {
+		t.Fatalf("incomplete line advanced offset to %d", got)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(line[cut:], '\n')); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(ctx, ch)
+	select {
+	case got := <-ch:
+		if got.ID != ev.ID {
+			t.Fatalf("completed line produced %+v", got)
+		}
+	default:
+		t.Fatal("completed line was not delivered")
+	}
+}
+
+func TestTailerAdvancesPastLargeRecord(t *testing.T) {
+	dir := t.TempDir()
+	tail := NewTailer(dir, time.Second)
+	tail.Prime()
+	ch := make(chan event.Event, 2)
+
+	large := mkEvent(8, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	large.Payload = map[string]any{"output": strings.Repeat("x", 5*1024*1024)}
+	after := mkEvent(9, large.Time.Add(time.Second))
+	writer := NewWriter(dir)
+	if err := writer.Append(large); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Append(after); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(context.Background(), ch)
+	first := <-ch
+	second := <-ch
+	if first.ID != large.ID || second.ID != after.ID {
+		t.Fatalf("tailer stopped at large record: first=%s second=%s", first.ID, second.ID)
 	}
 }

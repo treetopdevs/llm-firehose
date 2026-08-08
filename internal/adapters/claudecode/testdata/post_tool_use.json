@@ -1,0 +1,25 @@
+{
+  "session_id": "claude-fixture-session",
+  "transcript_path": "/tmp/agent-firehose-hook-fixture/transcript.jsonl",
+  "cwd": "/tmp/agent-firehose-hook-fixture/work",
+  "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "[sanitized tool input]",
+    "description": "[sanitized tool input]"
+  },
+  "tool_response": {
+    "stdout": "[sanitized tool output]",
+    "stderr": "[sanitized tool output]",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_fixture_01",
+  "duration_ms": 4652
+}
