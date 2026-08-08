@@ -19,7 +19,11 @@ import (
 
 func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httptest.Server {
 	t.Helper()
-	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	srv := New(cfg, home, "test-version")
+	// Hermetic: the host running the tests may itself export Claude
+	// telemetry variables, which must not leak into install decisions.
+	srv.Environ = []string{}
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -346,6 +350,27 @@ func TestInstallEndpoint(t *testing.T) {
 	unknown.Body.Close()
 	if unknown.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown adapter status = %d, want 404", unknown.StatusCode)
+	}
+}
+
+func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	srv := New(cfg, home, "test-version")
+	srv.Environ = []string{"PATH=/usr/bin", "CLAUDE_CODE_ENABLE_TELEMETRY=1"}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-otel: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 when the environment already configures telemetry", resp.StatusCode)
+	}
+	if cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+		t.Fatal("refused install still configured the local receiver")
 	}
 }
 

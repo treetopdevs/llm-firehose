@@ -103,7 +103,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		if addr == "" {
 			addr = cli.DefaultDaemonAddr
 		}
-		if err := cli.InstallClaudeOTel(s.home, addr); err != nil {
+		if err := cli.InstallClaudeOTel(s.home, addr, s.Environ); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}

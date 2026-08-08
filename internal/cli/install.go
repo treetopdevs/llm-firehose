@@ -31,8 +31,10 @@ func ClaudeOTelEnvironment(daemonAddr string) map[string]string {
 
 // InstallClaudeOTel opts Claude Code into the daemon's supplemental local
 // OTLP/HTTP JSON receiver. Existing user, process, or managed telemetry
-// settings are a hard conflict and are never overwritten.
-func InstallClaudeOTel(home, daemonAddr string) error {
+// settings are a hard conflict and are never overwritten. The caller supplies
+// its process environment as environ (normally os.Environ()) so tests can
+// inject a hermetic one; any telemetry key present there refuses the install.
+func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 	if err := validateClaudeOTelAddr(daemonAddr); err != nil {
 		return err
 	}
@@ -64,7 +66,7 @@ func InstallClaudeOTel(home, daemonAddr string) error {
 			return fmt.Errorf("inspect managed Claude settings: %w", err)
 		}
 	}
-	for _, entry := range os.Environ() {
+	for _, entry := range environ {
 		key, _, _ := strings.Cut(entry, "=")
 		if isClaudeTelemetryKey(key) {
 			return fmt.Errorf("process environment already configures %s; refusing to override", key)

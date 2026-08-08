@@ -117,7 +117,7 @@ func main() {
 			if addr == "" {
 				addr = cli.DefaultDaemonAddr
 			}
-			fatalIf(cli.InstallClaudeOTel(home, addr))
+			fatalIf(cli.InstallClaudeOTel(home, addr, os.Environ()))
 			fmt.Println("✓ supplemental Claude OTLP/HTTP JSON enabled for the local daemon")
 			fmt.Println("  restart running Claude Code sessions to pick it up")
 		case "opencode":

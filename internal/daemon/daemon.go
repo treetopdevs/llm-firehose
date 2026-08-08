@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -46,6 +47,10 @@ type Server struct {
 	// ProcLister supplies the process table for the agent process watcher;
 	// injectable for tests.
 	ProcLister procwatch.Lister
+
+	// Environ is the process environment consulted by install handlers;
+	// injectable for tests so host telemetry variables cannot leak in.
+	Environ []string
 }
 
 func (s *Server) launch(run func()) {
@@ -87,6 +92,7 @@ func New(cfg cli.Config, home, version string) *Server {
 		WatchInterval: 250 * time.Millisecond,
 		ProcInterval:  2 * time.Second,
 		ProcLister:    procwatch.PSLister{},
+		Environ:       os.Environ(),
 	}
 }
 

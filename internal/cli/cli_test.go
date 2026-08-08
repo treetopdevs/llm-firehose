@@ -385,7 +385,7 @@ func TestInstallClaudeOTelIsOptInPreservingAndIdempotent(t *testing.T) {
 	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(settingsPath)
@@ -412,7 +412,7 @@ func TestInstallClaudeOTelIsOptInPreservingAndIdempotent(t *testing.T) {
 	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
 		t.Fatal("installed Claude OTel settings reported unavailable")
 	}
-	if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(settingsPath)
@@ -432,7 +432,7 @@ func TestInstallClaudeOTelRefusesConflictsAndManagedSettings(t *testing.T) {
 		if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err == nil {
+		if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err == nil {
 			t.Fatal("existing user OTel destination was overwritten")
 		}
 		after, _ := os.ReadFile(settingsPath)
@@ -451,7 +451,7 @@ func TestInstallClaudeOTelRefusesConflictsAndManagedSettings(t *testing.T) {
 			[]byte(`{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://managed.example"}}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err == nil {
+		if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err == nil {
 			t.Fatal("managed OTel destination was ignored")
 		}
 	})
@@ -465,14 +465,30 @@ func TestInstallClaudeOTelRefusesConflictsAndManagedSettings(t *testing.T) {
 		if err := os.WriteFile(managed, []byte(`{"env":`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := InstallClaudeOTel(home, "127.0.0.1:4517"); err == nil {
+		if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err == nil {
 			t.Fatal("malformed managed settings were ignored")
 		}
 	})
 
 	t.Run("non-loopback", func(t *testing.T) {
-		if err := InstallClaudeOTel(t.TempDir(), "0.0.0.0:4517"); err == nil {
+		if err := InstallClaudeOTel(t.TempDir(), "0.0.0.0:4517", nil); err == nil {
 			t.Fatal("non-loopback OTel endpoint accepted")
+		}
+	})
+
+	t.Run("process environment telemetry", func(t *testing.T) {
+		for _, entry := range []string{
+			"CLAUDE_CODE_ENABLE_TELEMETRY=1",
+			"OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example",
+		} {
+			home := t.TempDir()
+			environ := []string{"PATH=/usr/bin", "HOME=" + home, entry}
+			if err := InstallClaudeOTel(home, "127.0.0.1:4517", environ); err == nil {
+				t.Fatalf("process environment telemetry %q was overridden", entry)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+				t.Fatalf("refused install still touched settings: %v", err)
+			}
 		}
 	})
 }
@@ -481,7 +497,7 @@ func TestDoctorReportsClaudeOTelAsSupplementalTransport(t *testing.T) {
 	home := t.TempDir()
 	cfg := testConfig(t)
 	cfg.DaemonAddr = "127.0.0.1:4517"
-	if err := InstallClaudeOTel(home, cfg.DaemonAddr); err != nil {
+	if err := InstallClaudeOTel(home, cfg.DaemonAddr, nil); err != nil {
 		t.Fatal(err)
 	}
 	var found *Check
