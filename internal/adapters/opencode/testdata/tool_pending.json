@@ -1,0 +1,1 @@
+{"id":"evt_fixture26","type":"message.part.updated","properties":{"sessionID":"ses_fixture01","part":{"id":"prt_fixture08","messageID":"msg_fixture01","sessionID":"ses_fixture01","type":"tool","tool":"glob","callID":"call_fixture03","state":{"status":"pending","input":{},"raw":""}},"time":1786151815489},"directory":"/tmp/agent-firehose-opencode-fixture/work"}

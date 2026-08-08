@@ -51,7 +51,7 @@ export const AgentFirehose = async ({ directory }) => {
       if (filteredTypes.has(type)) return;
       if (type === "message.part.updated") {
         const part = event?.properties?.part ?? {};
-        if (part.type === "text" || part.type === "reasoning") return;
+        if (part.type === "text" || part.type === "reasoning" || part.type === "step-start") return;
         if (part.type === "tool") {
           const status = part?.state?.status ?? "";
           if (status !== "completed" && status !== "error") return;

@@ -30,13 +30,23 @@ func TestWritePlugin(t *testing.T) {
 		`const warnedUnknownTypes = new Set()`,
 		`part.type === "text"`,
 		`part.type === "reasoning"`,
+		`part.type === "step-start"`,
 		`status !== "completed" && status !== "error"`,
+		`"message.part.delta"`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("plugin missing manifest-driven filter %q:\n%s", want, js)
 		}
 	}
-	if strings.Count(js, `"session.created"`) != 1 {
-		t.Errorf("mapped type list drifted or was duplicated:\n%s", js)
+	// The mapped set must carry every manifest family exactly once so the
+	// plugin filter and parser manifest cannot drift independently.
+	for _, mapped := range Manifest.Mapped {
+		want := 1
+		if mapped == "message.part.updated" {
+			want = 2 // once in the mapped set, once in the part-type filter
+		}
+		if strings.Count(js, `"`+mapped+`"`) != want {
+			t.Errorf("mapped type %q drifted or was duplicated:\n%s", mapped, js)
+		}
 	}
 }

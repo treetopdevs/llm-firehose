@@ -141,16 +141,31 @@ the exact binary that installed it using
 installs do not depend on a separate `firehose` binary being on `PATH`.
 
 The generated plugin is driven by the same mapped/filtered manifest lists as
-the Go parser. It drops text/reasoning deltas and nonterminal tool updates
-before spawning a process, forwards mapped event families, and forwards at
-most one observation per unknown native type per plugin run. The Go adapter
-turns that observation into a bounded `adapter.unknown_event` warning.
+the Go parser. It drops `message.part.delta`, text/reasoning/step-start
+parts, and nonterminal tool updates before spawning a process, forwards
+mapped event families, and forwards at most one observation per unknown
+native type per plugin run. The Go adapter turns that observation into a
+bounded `adapter.unknown_event` warning.
 
-Mapping highlights: `session.*` → session (errors → error), `message.updated`
-→ prompt/message by role, tool parts → shell/file/tool once they reach a
-terminal state (streaming text parts are skipped), `permission.*` →
-permission, `file.edited` → file. Shell command text remains only in full-mode
-raw input and is never copied into the summary.
+The mapped shapes are proven against the sanitized real OpenCode 1.18.10 bus
+captures in `internal/adapters/opencode/testdata/` (its README documents
+provenance and the families still awaiting a real capture). Every event
+carries the bus `id` as `upstream_event_id`, the plugin-injected `directory`
+as `cwd`, and a `source_time` whenever the payload nests one
+(`properties.time`, `info.time.created/completed/updated`).
+
+Mapping highlights: `session.created`/`session.updated`/`session.status`/
+`session.idle`/`session.diff`/`session.deleted` → session (`session.updated`
+adds cumulative tokens and cost; errors → error), `message.updated` →
+prompt/message by role with message/parent IDs and — once a finish reason
+appears — tokens and cost, tool parts → shell/file/tool once they reach a
+terminal state with the model's `callID`, duration, and exit code,
+`step-finish` parts → message with per-step tokens/cost/snapshot, `patch`
+parts → file with changed-file count and snapshot, `permission.*` →
+permission, `file.edited` and `file.watcher.updated` → file. Tool arguments,
+outputs, titles, prompt text, and session titles remain only in full-mode
+raw input and are never copied into summaries or payloads; file paths are the
+deliberate exception so the timeline can say which file changed.
 
 ## Process watcher (shallow)
 

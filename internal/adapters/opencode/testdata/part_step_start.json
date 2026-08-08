@@ -1,0 +1,1 @@
+{"id":"evt_fixture12","type":"message.part.updated","properties":{"sessionID":"ses_fixture01","part":{"id":"prt_fixture04","messageID":"msg_fixture01","sessionID":"ses_fixture01","snapshot":"f1x70000000000000000000000000000000000ce","type":"step-start"},"time":1786151813567},"directory":"/tmp/agent-firehose-opencode-fixture/work"}

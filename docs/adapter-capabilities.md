@@ -10,7 +10,7 @@ still being supplemental, partial, or unavailable.
 | Claude Code | `otel-http` | `supported-passive-stream` | 5 | 0 | Claude Code 2.1.218 OTLP/HTTP JSON captured locally; identity/content attributes always dropped; nine further observed names await sanitized captures (see the claudeotel testdata README) |
 | Codex | `hook` | `supported-in-band-hook` | current installed hook matrix | 0 | current Codex hook contract |
 | Codex | `durable-jsonl` | `passive-internal-file` | rollout parser families | reasoning, duplicated messages, instruction bodies, complete world state | current local rollout JSONL |
-| OpenCode | `plugin` | `supported-passive-stream` | current parser families | streaming text/reasoning and nonterminal tool updates | OpenCode 1.18.0 event callback |
+| OpenCode | `plugin` | `supported-passive-stream` | 13 | 1 | OpenCode 1.18.10 event callback captured locally; streaming text/reasoning parts, step-start markers, and nonterminal tool updates are also dropped inside `message.part.updated` |
 | Process watcher | `process` | `process-only` | process start/stop | semantic activity | local process table |
 
 Counts describe native event families, not a promise that every locally
@@ -33,13 +33,20 @@ warning.
 
 ## Fixture status for the 2026-07-25 expansion
 
-The local baseline is OpenCode 1.18.0, Claude Code 2.1.218, and Gemini CLI
+The local baseline is OpenCode 1.18.10, Claude Code 2.1.218, and Gemini CLI
 0.46.0. The Claude hook adapter maps the eleven event families its manifest
 declares (the `supported_events` count doctor reports); ten are backed by the
 real fixture corpus, while `PreCompact` keeps its pre-merge mapping and awaits
 a captured payload (see the claudecode testdata README). Other documented
-Claude hooks remain coverage gaps until their payloads are observed. Deeper OpenCode mapping and the Gemini hook adapter remain
-fixture-blocked: the installed clients have no local event corpus, and no
+Claude hooks remain coverage gaps until their payloads are observed. The
+OpenCode adapter maps thirteen bus families; nine are backed by the sanitized
+1.18.10 bus-event corpus, while `session.error`, `session.deleted`, and the
+two permission families keep their pre-corpus mappings as unproven inherited
+shapes (see the opencode testdata README). Five further observed bus types
+(`plugin.added`, `catalog.updated`, `integration.updated`,
+`reference.updated`, `project.directories.updated`) deliberately surface as
+bounded drift warnings. The Gemini hook adapter remains
+fixture-blocked: the installed client has no local event corpus, and no
 additional authenticated model run was authorized to capture one. Pi and
 GitHub Copilot CLI are not installed, so their adapter milestones also remain
 blocked by the plan's real-fixture STOP condition. No payload is invented to
