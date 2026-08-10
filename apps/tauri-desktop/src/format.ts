@@ -26,7 +26,7 @@ export function severityClass(severity: string | undefined): string {
 }
 
 export function shortPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
+  const parts = path.split(/[/\\]/).filter(Boolean);
   if (parts.length <= 2) {
     return path;
   }

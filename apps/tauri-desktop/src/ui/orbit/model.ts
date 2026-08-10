@@ -58,9 +58,15 @@ function activityRate(s: SessionSummary): number {
   return Math.min(1, Math.log10(Math.max(1, s.events)) / 2);
 }
 
+function parseStateSince(stateSince: string | undefined, now: number): number {
+  if (!stateSince) return now;
+  const parsed = Date.parse(stateSince);
+  return Number.isNaN(parsed) ? now : parsed;
+}
+
 function bodyFromSession(s: SessionSummary, now: number, jitter: number): OrbitBody {
   const state = s.state ?? "working";
-  const since = s.state_since ? Date.parse(s.state_since) : now;
+  const since = parseStateSince(s.state_since, now);
   const dwell = Math.max(0, now - since);
   const rate = activityRate(s);
   const base = sectorForRepo(s.repo ?? "");
@@ -99,7 +105,7 @@ function urgencyScore(b: OrbitBody): number {
 export function buildScene(sessions: SessionSummary[], now: number): OrbitBody[] {
   const live = sessions.filter((s) => {
     if (s.state !== "done") return true;
-    const since = s.state_since ? Date.parse(s.state_since) : now;
+    const since = parseStateSince(s.state_since, now);
     return now - since < DESPAWN_MS * 2;
   });
 

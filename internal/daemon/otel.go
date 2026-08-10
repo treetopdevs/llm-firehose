@@ -9,7 +9,7 @@ import (
 	"agentfirehose/internal/adapters/claudeotel"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/workspace"
 )
 
 const maxOTLPBodyBytes = 1 << 20
@@ -50,11 +50,10 @@ func (s *Server) handleOTLP(
 	if err != nil {
 		mode = privacy.ModeBalanced
 	}
-	writer := spool.NewWriter(s.config().SpoolDir)
 	for _, native := range parse(raw, captured) {
 		// Exporter-facing success never depends on the spool. Hooks remain the
 		// canonical daemon-optional baseline if this supplemental append fails.
-		_ = writer.Append(privacy.Redact(native, mode))
+		_ = s.writer.Append(privacy.Redact(workspace.Enrich(native), mode))
 	}
 	writeJSON(w, map[string]any{})
 }

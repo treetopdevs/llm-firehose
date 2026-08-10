@@ -39,7 +39,7 @@ func testDaemon(t *testing.T) (*httptest.Server, cli.Config) {
 func TestHealth(t *testing.T) {
 	ts, _ := testDaemon(t)
 	c := client.New(ts.URL)
-	h, err := c.Health()
+	h, err := c.Health(t.Context())
 	if err != nil {
 		t.Fatalf("Health: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestHealth(t *testing.T) {
 
 func TestHealthDaemonDown(t *testing.T) {
 	c := client.New("http://127.0.0.1:1")
-	if _, err := c.Health(); err == nil {
+	if _, err := c.Health(t.Context()); err == nil {
 		t.Fatal("Health must fail when no daemon is listening")
 	}
 }
@@ -67,7 +67,7 @@ func TestRecent(t *testing.T) {
 		}
 	}
 	c := client.New(ts.URL)
-	evs, err := c.Recent(2)
+	evs, err := c.Recent(t.Context(), 2)
 	if err != nil {
 		t.Fatalf("Recent: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestEmitNormalizesThroughDaemon(t *testing.T) {
 	ts, cfg := testDaemon(t)
 	c := client.New(ts.URL)
 	payload := `{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/repo","prompt":"hi"}`
-	if err := c.Emit("claude-code", strings.NewReader(payload)); err != nil {
+	if err := c.Emit(t.Context(), "claude-code", strings.NewReader(payload)); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
@@ -99,13 +99,34 @@ func TestStreamDeliversLiveEvents(t *testing.T) {
 		t.Fatalf("Stream: %v", err)
 	}
 
-	time.Sleep(30 * time.Millisecond) // let the tailer record initial offsets
+	// Readiness handshake: wait until the live stream delivers a probe so the
+	// tailer has recorded initial offsets before the event under test.
+	probe := `{"time":"2026-07-02T09:59:00Z","source":"probe","category":"meta","summary":"stream-ready"}`
+	if err := c.Emit(t.Context(), "generic", strings.NewReader(probe)); err != nil {
+		t.Fatalf("probe Emit: %v", err)
+	}
+	deadline := time.After(3 * time.Second)
+ready:
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("stream closed before probe")
+			}
+			if ev.Summary == "stream-ready" {
+				break ready
+			}
+		case <-deadline:
+			t.Fatal("stream not ready (probe not delivered)")
+		}
+	}
+
 	line := `{"time":"2026-07-02T10:00:00Z","source":"my-tool","category":"shell","summary":"via client"}`
-	if err := c.Emit("generic", strings.NewReader(line)); err != nil {
+	if err := c.Emit(t.Context(), "generic", strings.NewReader(line)); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 
-	deadline := time.After(3 * time.Second)
+	deadline = time.After(3 * time.Second)
 	for {
 		select {
 		case ev, ok := <-ch:
@@ -133,14 +154,15 @@ func TestStreamClosesOnCancel(t *testing.T) {
 		t.Fatalf("Stream: %v", err)
 	}
 	cancel()
-	select {
-	case _, ok := <-ch:
-		if ok {
-			// Drain any buffered event; channel must close soon after.
-			for range ch {
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
 			}
+		case <-deadline:
+			t.Fatal("stream channel not closed after cancel")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("stream channel not closed after cancel")
 	}
 }

@@ -8,6 +8,7 @@ export function createDoctor(): { root: HTMLElement; refresh(): void } {
   const root = el("section", { class: "doctor" });
 
   async function runInstall(adapter: string, status: HTMLElement) {
+    status.classList.remove("error");
     status.textContent = `installing ${adapter}…`;
     try {
       const res = await install(adapter);

@@ -69,13 +69,21 @@ func TestSchemaDocMatchesCode(t *testing.T) {
 	// Every envelope field must be documented: new struct fields may only
 	// ship together with their schema-doc entry (additive evolution rule).
 	et := reflect.TypeOf(Event{})
+	codeFields := map[string]bool{}
 	for i := range et.NumField() {
 		tag := strings.Split(et.Field(i).Tag.Get("json"), ",")[0]
 		if tag == "" || tag == "-" {
 			continue
 		}
+		codeFields[tag] = true
 		if _, ok := doc.Properties[tag]; !ok {
 			t.Errorf("envelope field %q missing from schema doc", tag)
+		}
+	}
+	// Bidirectional: every schema property must correspond to an Event field.
+	for prop := range doc.Properties {
+		if !codeFields[prop] {
+			t.Errorf("schema doc property %q missing from Event envelope", prop)
 		}
 	}
 

@@ -197,8 +197,8 @@ func TestArtifactFiles(t *testing.T) {
 	if !auth.LastTime.After(auth.FirstTime) {
 		t.Errorf("auth.go time range wrong: %+v", auth)
 	}
-	if files[len(files)-1].Path != "/repo/a.ts" && files[0].Path == "/repo/a.ts" {
-		t.Errorf("ordering wrong, a.ts is oldest by last touch: %+v", files)
+	if files[len(files)-1].Path != "/repo/a.ts" {
+		t.Errorf("ordering wrong, a.ts should be oldest by last touch: %+v", files)
 	}
 }
 
@@ -470,6 +470,9 @@ func TestExportEndpoint(t *testing.T) {
 			t.Errorf("export line %d schema_version = %d", n, ev.SchemaVersion)
 		}
 		n++
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("export scan: %v", err)
 	}
 	if n != 4 {
 		t.Errorf("exported %d lines, want 4", n)

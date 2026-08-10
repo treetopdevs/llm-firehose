@@ -149,4 +149,24 @@ describe("applyTransition", () => {
     expect(next[0].reason).toBe("waiting");
     expect(next[0].labelAlways).toBe(true);
   });
+
+  test("reviving a completed body clears despawnAt", () => {
+    const bodies = buildScene(
+      [sess({ id: "s1", state: "done", state_since: new Date(now - 1000).toISOString() })],
+      now,
+    );
+    expect(bodies[0].despawnAt).toBe(now - 1000 + DESPAWN_MS);
+    const ev = {
+      id: "t2",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      category: "meta",
+      name: "state.transition",
+      session_id: "s1",
+      payload: { state: "working", reason: "", has_error: false },
+    } as FirehoseEvent;
+    const next = applyTransition(bodies, ev, now);
+    expect(next[0].state).toBe("working");
+    expect(next[0].despawnAt).toBeUndefined();
+  });
 });

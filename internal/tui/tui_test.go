@@ -192,3 +192,47 @@ func TestNeedsYouInHeader(t *testing.T) {
 		t.Error("activity should clear NEEDS YOU")
 	}
 }
+
+func TestAttentionMapStaysBounded(t *testing.T) {
+	m := newTestModel()
+	const n = 500
+	for i := range n {
+		working := mkEv(i*2, event.CategoryTool, "working")
+		working.SessionID = fmt.Sprintf("session-%d", i)
+		m = push(m, working)
+		done := mkEv(i*2+1, event.CategorySession, "ended")
+		done.SessionID = working.SessionID
+		done.Name = "Stop"
+		m = push(m, done)
+	}
+	if len(m.attention) > 32 {
+		t.Fatalf("attention map grew unbounded: %d entries", len(m.attention))
+	}
+	// Active needs-input attention must still be retained.
+	perm := mkEv(n*2, event.CategoryPermission, "needs approval")
+	perm.SessionID = "active-needs-you"
+	perm.Name = "Notification"
+	perm.Severity = event.SeverityNotice
+	m = push(m, perm)
+	if got := m.attention["active-needs-you"]; got.State == "" {
+		t.Fatal("active needs-input attention was not retained")
+	}
+}
+
+func TestNeedsYouReasonStripsControlSequences(t *testing.T) {
+	m := newTestModel()
+	perm := mkEv(1, event.CategoryPermission, "ok\x1b[31mALERT\x1b[0m\x07"+strings.Repeat("x", 200))
+	perm.Name = "Notification"
+	perm.Severity = event.SeverityNotice
+	m = push(m, perm)
+	header := m.viewHeader()
+	if strings.Contains(header, "\x1b") || strings.Contains(header, "\x07") {
+		t.Fatalf("header leaked control sequences:\n%q", header)
+	}
+	if !strings.Contains(header, "NEEDS YOU · 1") {
+		t.Fatalf("expected NEEDS YOU indicator:\n%s", header)
+	}
+	if !strings.Contains(header, "okALERT") {
+		t.Fatalf("expected sanitized reason in header:\n%s", header)
+	}
+}

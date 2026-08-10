@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -14,7 +15,7 @@ func Status(cfg Config, w io.Writer) bool {
 	if addr == "" {
 		addr = DefaultDaemonAddr
 	}
-	h, err := client.New("http://" + addr).Health()
+	h, err := client.New("http://" + addr).Health(context.Background())
 	if err != nil {
 		fmt.Fprintf(w, "firehose daemon not running at %s (%v)\n", addr, err)
 		return false

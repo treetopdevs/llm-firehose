@@ -6,7 +6,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-TRIPLE="${1:-$(rustc -vV | sed -n 's/^host: //p')}"
+TRIPLE="${1:-}"
+if [ -z "$TRIPLE" ]; then
+  TRIPLE="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' || true)"
+fi
 if [ -z "$TRIPLE" ]; then
   echo "error: could not determine target triple (is rustc installed?)" >&2
   exit 1

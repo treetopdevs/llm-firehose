@@ -24,7 +24,10 @@ import (
 	"agentfirehose/internal/spool"
 )
 
-const defaultRecentLimit = 500
+const (
+	defaultRecentLimit = 500
+	maxRecentLimit     = 10000
+)
 
 // Server owns the capture engine behind the local API.
 type Server struct {
@@ -34,6 +37,7 @@ type Server struct {
 	home    string
 	version string
 	hub     *hub
+	writer  *spool.Writer // lifecycle-managed spool writer for capture paths
 
 	ixOnce sync.Once
 	ix     *index.Index
@@ -88,6 +92,7 @@ func New(cfg cli.Config, home, version string) *Server {
 		home:          home,
 		version:       version,
 		hub:           newHub(),
+		writer:        spool.NewWriter(cfg.SpoolDir),
 		TailInterval:  100 * time.Millisecond,
 		WatchInterval: 250 * time.Millisecond,
 		ProcInterval:  2 * time.Second,
@@ -160,7 +165,7 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 	if err := validateLoopbackAddr(addr); err != nil {
 		return "", nil, err
 	}
-	l, err := net.Listen("tcp", addr)
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		return "", nil, err
 	}
@@ -169,7 +174,13 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 		_ = l.Close()
 		return "", nil, fmt.Errorf("daemon address %q resolved outside loopback", addr)
 	}
-	srv := &http.Server{Handler: s.Handler()}
+	srv := &http.Server{
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// WriteTimeout intentionally unset: SSE /events/stream is long-lived.
+	}
 	srv.RegisterOnShutdown(s.hub.closeAll)
 	go func() {
 		<-ctx.Done()
@@ -256,6 +267,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // handleConfigUpdate persists a partial config update. Only privacy_mode is
 // applied to the running engine; other fields take effect on restart.
 func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxOTLPBodyBytes)
 	var patch cli.Config
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -310,6 +322,9 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
+	if limit > maxRecentLimit {
+		limit = maxRecentLimit
+	}
 	evs, err := spool.ReadLastN(s.config().SpoolDir, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -322,6 +337,7 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxOTLPBodyBytes)
 	n, err := cli.Ingest(s.config(), r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -339,6 +355,7 @@ func (s *Server) handleEmit(w http.ResponseWriter, r *http.Request) {
 	// carry no event-name field (antigravity) supply the native hook event
 	// name here; every other source ignores it.
 	eventName := r.URL.Query().Get("event")
+	r.Body = http.MaxBytesReader(w, r.Body, maxOTLPBodyBytes)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

@@ -622,3 +622,36 @@ func TestWatcherSurvivesParserRollbackFailure(t *testing.T) {
 		t.Fatalf("pending line lost after rollback failure: %+v", delivered)
 	}
 }
+
+func TestReportDedupsByStableErrorClassification(t *testing.T) {
+	var got []event.Event
+	w := New(testOptions(t, t.TempDir(), filepath.Join(t.TempDir(), "state.json"), func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}))
+
+	first := &os.PathError{Op: "rename", Path: "/tmp/a", Err: errors.New("cross-device")}
+	second := &os.PathError{Op: "rename", Path: "/tmp/b", Err: errors.New("cross-device")}
+	openErr := &os.PathError{Op: "open", Path: "/tmp/c", Err: errors.New("permission denied")}
+
+	w.Report(first)
+	w.Report(second)
+	w.Report(openErr)
+	if len(got) != 2 {
+		t.Fatalf("warnings = %d (%+v), want 2 distinct categories (rename once, open once)", len(got), got)
+	}
+
+	got = nil
+	sinkFail := New(testOptions(t, t.TempDir(), filepath.Join(t.TempDir(), "state.json"), func(ev event.Event) error {
+		return errors.New("sink down")
+	}))
+	sinkFail.Report(first)
+	sinkFail.options.Sink = func(ev event.Event) error {
+		got = append(got, ev)
+		return nil
+	}
+	sinkFail.Report(first)
+	if len(got) != 1 {
+		t.Fatalf("failed sink should not mark warned; retry delivered %d, want 1", len(got))
+	}
+}

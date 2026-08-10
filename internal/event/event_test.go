@@ -130,7 +130,7 @@ func TestSchemaVersionAbsentIsZero(t *testing.T) {
 }
 
 func TestPromptIDRoundTripsAdditivelyWithinVersionOne(t *testing.T) {
-	line := `{"id":"a","time":"2026-07-01T10:00:00Z","source":"claude-code","session_id":"s","prompt_id":"p","category":"prompt"}`
+	line := `{"schema_version":1,"id":"a","time":"2026-07-01T10:00:00Z","source":"claude-code","session_id":"s","prompt_id":"p","category":"prompt"}`
 	var ev Event
 	if err := json.Unmarshal([]byte(line), &ev); err != nil {
 		t.Fatal(err)
@@ -145,6 +145,9 @@ func TestPromptIDRoundTripsAdditivelyWithinVersionOne(t *testing.T) {
 	}
 	if got["prompt_id"] != "p" {
 		t.Errorf("prompt_id = %v, want p", got["prompt_id"])
+	}
+	if v, ok := got["schema_version"].(float64); !ok || int(v) != 1 {
+		t.Errorf("schema_version = %v, want 1", got["schema_version"])
 	}
 }
 

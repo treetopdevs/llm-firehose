@@ -3,7 +3,9 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -86,7 +88,7 @@ func (m Model) viewHeader() string {
 	parts := []string{headerStyle.Render("AGENT FIREHOSE"), mode, dimStyle.Render(fmt.Sprintf("%d events", m.total))}
 	if n := m.needsYouCount(); n > 0 {
 		label := fmt.Sprintf("NEEDS YOU · %d", n)
-		if reason := m.oldestNeedsYouReason(); reason != "" {
+		if reason := sanitizeNeedsYouReason(m.oldestNeedsYouReason()); reason != "" {
 			label += " · " + reason
 		}
 		parts = append(parts, needsStyle.Render(label))
@@ -210,4 +212,29 @@ func truncate(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+const needsYouReasonMaxRunes = 80
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-]`)
+
+// sanitizeNeedsYouReason strips terminal control sequences and bounds length
+// before the reason is appended to the header label.
+func sanitizeNeedsYouReason(reason string) string {
+	reason = ansiEscape.ReplaceAllString(reason, "")
+	reason = strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, reason)
+	reason = strings.Join(strings.Fields(reason), " ")
+	runes := []rune(reason)
+	if len(runes) > needsYouReasonMaxRunes {
+		reason = string(runes[:needsYouReasonMaxRunes]) + "…"
+	}
+	return reason
 }

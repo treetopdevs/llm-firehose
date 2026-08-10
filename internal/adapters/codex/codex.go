@@ -187,12 +187,10 @@ func (p *FileParser) ParseLine(line []byte) (*event.Event, error) {
 }
 
 func (p *FileParser) base(rl rolloutLine, cat event.Category, name string) *event.Event {
-	sourceTime := rl.Timestamp
 	captureTime := time.Now().UTC()
 	ev := event.Event{
 		ID:          event.NewID(),
-		Time:        sourceTime,
-		SourceTime:  &sourceTime,
+		Time:        captureTime,
 		CaptureTime: &captureTime,
 		Source:      Source,
 		Agent:       "codex",
@@ -202,6 +200,11 @@ func (p *FileParser) base(rl rolloutLine, cat event.Category, name string) *even
 		Name:        name,
 		Severity:    event.SeverityInfo,
 		Payload:     map[string]any{"transport": "rollout"},
+	}
+	if !rl.Timestamp.IsZero() {
+		sourceTime := rl.Timestamp
+		ev.Time = sourceTime
+		ev.SourceTime = &sourceTime
 	}
 	enriched := workspace.Enrich(ev)
 	return &enriched
@@ -255,7 +258,7 @@ func (p *FileParser) parseTurnContext(rl rolloutLine) (*event.Event, error) {
 	}
 	ev := p.base(rl, event.CategoryMeta, "turn_context")
 	ev.TurnID = m.TurnID
-	ev.Summary = compactJoin(m.Model, m.Effort, m.SandboxPolicy.Type, m.ApprovalPolicy+" approvals")
+	ev.Summary = compactJoin(m.Model, m.Effort, m.SandboxPolicy.Type, approvals(m.ApprovalPolicy))
 	ev.Payload["model"] = m.Model
 	ev.Payload["effort"] = m.Effort
 	ev.Payload["approval_policy"] = m.ApprovalPolicy
@@ -473,7 +476,7 @@ func (p *FileParser) threadSettings(rl rolloutLine, raw json.RawMessage) (*event
 		return nil, err
 	}
 	ev := p.base(rl, event.CategoryMeta, "thread_settings_applied")
-	ev.Summary = "settings: " + compactJoin(s.Model, s.Effort, s.Permission.Type, s.ApprovalPolicy+" approvals")
+	ev.Summary = "settings: " + compactJoin(s.Model, s.Effort, s.Permission.Type, approvals(s.ApprovalPolicy))
 	ev.Payload["model"] = s.Model
 	ev.Payload["service_tier"] = s.ServiceTier
 	ev.Payload["effort"] = s.Effort
@@ -506,6 +509,7 @@ func (p *FileParser) mcpToolEnd(rl rolloutLine, m eventMsgPayload) (*event.Event
 		ev.Severity = event.SeverityWarn
 		ev.Payload["status"] = "error"
 	}
+	delete(p.calls, m.CallID)
 	return ev, nil
 }
 
@@ -722,11 +726,19 @@ func excerpt(s string, max int) string {
 func compactJoin(parts ...string) string {
 	var out []string
 	for _, part := range parts {
-		if strings.TrimSpace(part) != "" && part != " approvals" {
+		if strings.TrimSpace(part) != "" {
 			out = append(out, part)
 		}
 	}
 	return strings.Join(out, " · ")
+}
+
+func approvals(policy string) string {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return ""
+	}
+	return policy + " approvals"
 }
 
 func int64FromAny(v any) int64 {

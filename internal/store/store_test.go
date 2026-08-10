@@ -109,3 +109,29 @@ func TestCoalesceRespectsGap(t *testing.T) {
 		t.Fatalf("events beyond window must not merge, got %d rows", len(rows))
 	}
 }
+
+func TestCoalesceKeepsLaterTimestampWithinWindow(t *testing.T) {
+	mk := func(id string, ts time.Time) event.Event {
+		e := ev(id, "codex", "s1", event.CategoryShell, "PostToolUse", "end", ts)
+		e.TurnID, e.CallID = "t1", "c1"
+		e.Payload = map[string]any{"phase": "end", "tool_name": "exec_command"}
+		return e
+	}
+	// Arrival order is not chronological: t+10s, t+7s, t+14s within a 5s window.
+	first := mk("a", t0.Add(10*time.Second))
+	earlier := mk("b", t0.Add(7*time.Second))
+	latest := mk("c", t0.Add(14*time.Second))
+	rows := Coalesce([]event.Event{first, earlier, latest}, 5*time.Second)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 coalesced row: %+v", len(rows), rows)
+	}
+	if rows[0].Count != 3 {
+		t.Errorf("count = %d, want 3", rows[0].Count)
+	}
+	if !rows[0].Event.Time.Equal(latest.Time) {
+		t.Errorf("row time = %v, want latest %v", rows[0].Event.Time, latest.Time)
+	}
+	if rows[0].Event.ID != latest.ID {
+		t.Errorf("row id = %s, want latest %s", rows[0].Event.ID, latest.ID)
+	}
+}

@@ -31,6 +31,7 @@ export function createOnboarding(onDone: () => void): HTMLElement {
     for (const mode of ["minimal", "balanced", "full"]) {
       const btn = el("button", { class: mode === "balanced" ? "primary" : "" }, mode);
       btn.addEventListener("click", async () => {
+        status.classList.remove("error");
         status.textContent = "saving…";
         try {
           await setConfig({ privacy_mode: mode });

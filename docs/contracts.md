@@ -60,11 +60,11 @@ the configured mode allows. The mode is applied at the engine boundary before
 emitted, ingested, rollout, or process observations are appended. In
 daemonless viewing, direct Codex observations are redacted before display.
 
-| Mode | `raw` | `payload` values | Metadata (source, category, name, source/capture times, ids, repo/worktree/cwd, summary) |
-|---|---|---|---|
-| `minimal` | dropped | replaced with `{"sha256": "...", "len": N}` digests | kept |
-| `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept |
-| `full` | kept | kept verbatim | kept |
+| Mode | `raw` | `payload` values | Metadata (source, category, name, source/capture times, ids, summary) | Path identity (`cwd`, `repo_id`, `worktree_id`) |
+|---|---|---|---|---|
+| `minimal` | dropped | replaced with `{"sha256": "...", "len": N}` digests | kept | replaced with sha256 hex digests |
+| `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept | replaced with sha256 hex digests |
+| `full` | kept | kept verbatim | kept | kept (canonical absolute paths) |
 
 ## Spool format
 

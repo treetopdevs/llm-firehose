@@ -39,8 +39,12 @@ type Health struct {
 	SchemaVersion int    `json:"schema_version"`
 }
 
-func (c *Client) getJSON(path string, v any) error {
-	resp, err := c.http.Get(c.BaseURL + path)
+func (c *Client) getJSON(ctx context.Context, path string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
@@ -53,33 +57,38 @@ func (c *Client) getJSON(path string, v any) error {
 }
 
 // Health reports whether a daemon is reachable and what it is running.
-func (c *Client) Health() (Health, error) {
+func (c *Client) Health(ctx context.Context) (Health, error) {
 	var h Health
-	err := c.getJSON("/health", &h)
+	err := c.getJSON(ctx, "/health", &h)
 	return h, err
 }
 
 // Recent returns up to limit most recent events, oldest first.
-func (c *Client) Recent(limit int) ([]event.Event, error) {
+func (c *Client) Recent(ctx context.Context, limit int) ([]event.Event, error) {
 	var evs []event.Event
-	err := c.getJSON("/events?limit="+fmt.Sprint(limit), &evs)
+	err := c.getJSON(ctx, "/events?limit="+fmt.Sprint(limit), &evs)
 	return evs, err
 }
 
 // Emit sends one raw source payload for the daemon to normalize and spool.
-func (c *Client) Emit(source string, r io.Reader) error {
-	return c.EmitNamed(source, "", r)
+func (c *Client) Emit(ctx context.Context, source string, r io.Reader) error {
+	return c.EmitNamed(ctx, source, "", r)
 }
 
 // EmitNamed is Emit with an explicit native event name, carried in the
 // additive `event` query parameter for sources whose payloads do not name
 // their own event (antigravity). An empty eventName omits the parameter.
-func (c *Client) EmitNamed(source, eventName string, r io.Reader) error {
+func (c *Client) EmitNamed(ctx context.Context, source, eventName string, r io.Reader) error {
 	u := c.BaseURL + "/emit?source=" + url.QueryEscape(source)
 	if eventName != "" {
 		u += "&event=" + url.QueryEscape(eventName)
 	}
-	resp, err := c.http.Post(u, "application/json", r)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, r)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}

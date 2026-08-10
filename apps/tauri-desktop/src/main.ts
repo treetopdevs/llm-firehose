@@ -6,6 +6,7 @@
 import { CLIENT_SCHEMA_VERSION, health, recent, stream } from "./api";
 import type { FirehoseEvent } from "./api";
 import { checkCompat } from "./compat";
+import { createConnector } from "./connect";
 import { clear, el } from "./dom";
 import { FeedState } from "./state";
 import { renderDetail } from "./ui/detail";
@@ -97,50 +98,34 @@ function onEvent(ev: FirehoseEvent) {
   }
 }
 
-let stopStream: (() => void) | null = null;
-
-async function connect() {
-  try {
-    const h = await health();
-    const compat = checkCompat(h, CLIENT_SCHEMA_VERSION);
-    if (!compat.compatible) {
-      compatBanner.textContent = `incompatible: ${compat.reason}`;
+const connector = createConnector({
+  health,
+  recent,
+  stream,
+  checkCompat,
+  clientSchemaVersion: CLIENT_SCHEMA_VERSION,
+  onEvent,
+  setStatus: ({ kind, text, compatReason }) => {
+    if (compatReason) {
+      compatBanner.textContent = compatReason;
       compatBanner.classList.add("visible");
-      statusDot.className = "status-dot err";
-      statusText.textContent = `daemon ${h.version} — blocked`;
-      return;
+    } else {
+      compatBanner.classList.remove("visible");
     }
-    compatBanner.classList.remove("visible");
-    statusDot.className = "status-dot ok";
-    statusText.textContent = `daemon ${h.version} · schema v${h.schema_version} · LIVE`;
-
-    if (!stopStream) {
-      const history = await recent(500);
-      for (const ev of history) {
-        onEvent(ev);
-      }
-      stopStream = stream(onEvent, (open) => {
-        statusDot.className = `status-dot ${open ? "ok" : "warn"}`;
-        if (open) {
-          statusText.textContent = `daemon ${h.version} · schema v${h.schema_version} · LIVE`;
-          if (active === "orbit") {
-            void orbitPanel.refresh();
-          }
-        } else {
-          statusText.textContent = "stream interrupted — reconnecting…";
-        }
-      });
+    statusDot.className = `status-dot ${kind}`;
+    statusText.textContent = text;
+  },
+  onStreamOpen: () => {
+    if (active === "orbit") {
+      void orbitPanel.refresh();
     }
-  } catch {
-    statusDot.className = "status-dot err";
-    statusText.textContent = "engine offline — waiting for firehosed…";
-    stopStream?.();
-    stopStream = null;
-  }
-}
+  },
+});
 
-connect();
-setInterval(connect, 3000);
+void connector.connect();
+setInterval(() => {
+  void connector.connect();
+}, 3000);
 show("orbit");
 
 if (!isOnboarded()) {

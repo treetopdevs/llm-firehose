@@ -63,11 +63,17 @@ describe("coalesce", () => {
     expect(rows).toHaveLength(3);
   });
 
-  test("different name breaks the group", () => {
+  test("different tool_name breaks the group", () => {
+    const common = {
+      session_id: "s1",
+      turn_id: "t1",
+      call_id: "c1",
+      payload: { phase: "start" },
+    };
     const rows = coalesce(
       [
-        ev({ id: "1", session_id: "s1", name: "Edit" }),
-        ev({ id: "2", session_id: "s1", name: "Bash" }),
+        ev({ id: "1", ...common, payload: { ...common.payload, tool_name: "Edit" } }),
+        ev({ id: "2", ...common, payload: { ...common.payload, tool_name: "Bash" } }),
       ],
       2000,
     );
@@ -75,10 +81,16 @@ describe("coalesce", () => {
   });
 
   test("a gap wider than the window breaks the group", () => {
+    const common = {
+      session_id: "s1",
+      turn_id: "t1",
+      call_id: "c1",
+      payload: { phase: "start", tool_name: "Edit" },
+    };
     const rows = coalesce(
       [
-        ev({ id: "1", session_id: "s1", name: "Edit", time: "2026-07-02T10:00:00Z" }),
-        ev({ id: "2", session_id: "s1", name: "Edit", time: "2026-07-02T10:00:10Z" }),
+        ev({ id: "1", ...common, time: "2026-07-02T10:00:00Z" }),
+        ev({ id: "2", ...common, time: "2026-07-02T10:00:10Z" }),
       ],
       2000,
     );

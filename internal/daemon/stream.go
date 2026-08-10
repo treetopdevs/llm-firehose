@@ -15,6 +15,7 @@ import (
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
+	"agentfirehose/internal/workspace"
 )
 
 // hub fans live events out to stream subscribers. Broadcast never blocks:
@@ -97,9 +98,10 @@ func (s *Server) Start(ctx context.Context) {
 				s.WatchInterval,
 				func(ev event.Event) error {
 					// Append is synchronous: the watcher checkpoints the line
-					// only after this returns success.
-					ev = privacy.Redact(ev, s.privacyMode())
-					return spool.NewWriter(s.config().SpoolDir).Append(ev)
+					// only after this returns success. Enrich before redaction
+					// so path digests cover observed identity.
+					ev = privacy.Redact(workspace.Enrich(ev), s.privacyMode())
+					return s.writer.Append(ev)
 				},
 			)
 			// Establish the legacy-file baseline before Start returns. A fresh
@@ -123,8 +125,8 @@ func (s *Server) Start(ctx context.Context) {
 			case ev := <-watched:
 				// Mode is re-read per event so POST /config privacy
 				// changes apply live to this capture path too.
-				ev = privacy.Redact(ev, s.privacyMode())
-				if err := spool.NewWriter(s.config().SpoolDir).Append(ev); err != nil {
+				ev = privacy.Redact(workspace.Enrich(ev), s.privacyMode())
+				if err := s.writer.Append(ev); err != nil {
 					// Capture must never go dark: an unwritable spool
 					// degrades to the old broadcast-only behavior.
 					s.hub.broadcast(ev)

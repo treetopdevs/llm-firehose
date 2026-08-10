@@ -50,7 +50,20 @@ func Redact(ev event.Event, mode Mode) event.Event {
 			out.Payload[k] = digestValue(v)
 		}
 	}
+	// Path-valued identity must not persist absolute filesystem locations
+	// outside full mode; digests keep correlation without leaking CWD paths.
+	out.CWD = digestPath(out.CWD)
+	out.RepoID = digestPath(out.RepoID)
+	out.WorktreeID = digestPath(out.WorktreeID)
 	return out
+}
+
+func digestPath(s string) string {
+	if s == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 func truncateValue(v any) any {

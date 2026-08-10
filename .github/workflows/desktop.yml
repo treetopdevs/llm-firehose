@@ -22,6 +22,10 @@ on:
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Go gate and the Linux desktop leg run on Namespace runners
   # (namespace-profile-mmw, same profile as the org's other repos). The

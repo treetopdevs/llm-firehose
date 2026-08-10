@@ -57,6 +57,9 @@ func Observe(cwd string) (repoID, worktreeID string) {
 				}
 			}
 			gitDir = canonical(gitDir)
+			if info, statErr := os.Stat(gitDir); statErr != nil || !info.IsDir() {
+				return "", ""
+			}
 			commonDir := gitDir
 			if data, readErr := os.ReadFile(filepath.Join(gitDir, "commondir")); readErr == nil {
 				value := strings.TrimSpace(string(data))
@@ -68,7 +71,11 @@ func Observe(cwd string) (repoID, worktreeID string) {
 					}
 				}
 			}
-			return canonical(commonDir), canonical(current)
+			commonDir = canonical(commonDir)
+			if info, statErr := os.Stat(commonDir); statErr != nil || !info.IsDir() {
+				return "", ""
+			}
+			return commonDir, canonical(current)
 		}
 
 		parent := filepath.Dir(current)

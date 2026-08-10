@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -218,9 +219,21 @@ func flatten(value any) string {
 func failed(value any) bool {
 	if text, ok := value.(string); ok {
 		lower := strings.ToLower(text)
-		return strings.Contains(lower, "process exited with code 1") ||
-			strings.Contains(lower, "process exited with code 2") ||
-			strings.Contains(lower, "error:")
+		if strings.Contains(lower, "error:") {
+			return true
+		}
+		if idx := strings.Index(lower, "process exited with code "); idx >= 0 {
+			rest := lower[idx+len("process exited with code "):]
+			end := 0
+			for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+				end++
+			}
+			if end > 0 {
+				code, err := strconv.Atoi(rest[:end])
+				return err == nil && code != 0
+			}
+		}
+		return false
 	}
 	m, ok := value.(map[string]any)
 	if !ok {

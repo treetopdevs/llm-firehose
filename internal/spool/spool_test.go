@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/workspace"
 )
 
 func mkEvent(i int, ts time.Time) event.Event {
@@ -149,7 +150,7 @@ func TestAppendObservesRepositoryAndWorktreeIdentity(t *testing.T) {
 	ev.RepoID = "unverified-source-repo"
 	ev.WorktreeID = "unverified-source-worktree"
 	dir := filepath.Join(root, "spool")
-	if err := NewWriter(dir).Append(ev); err != nil {
+	if err := NewWriter(dir).Append(workspace.Enrich(ev)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)
@@ -196,7 +197,7 @@ func TestAppendDistinguishesLinkedWorktreesInOneRepository(t *testing.T) {
 	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
 	ev.CWD = cwd
 	dir := filepath.Join(root, "spool")
-	if err := NewWriter(dir).Append(ev); err != nil {
+	if err := NewWriter(dir).Append(workspace.Enrich(ev)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)
@@ -432,5 +433,84 @@ func TestTailerAdvancesPastLargeRecord(t *testing.T) {
 	second := <-ch
 	if first.ID != large.ID || second.ID != after.ID {
 		t.Fatalf("tailer stopped at large record: first=%s second=%s", first.ID, second.ID)
+	}
+}
+
+func TestAppendAssignsMissingEventID(t *testing.T) {
+	dir := t.TempDir()
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.ID = ""
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	if evs[0].ID == "" {
+		t.Fatal("appended event missing id")
+	}
+	if len(evs[0].ID) != 32 {
+		t.Fatalf("id = %q, want NewID hex length", evs[0].ID)
+	}
+}
+
+func TestAppendPreservesProducerEventID(t *testing.T) {
+	dir := t.TempDir()
+	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	ev.ID = "producer-supplied-id"
+	if err := NewWriter(dir).Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	evs, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if evs[0].ID != "producer-supplied-id" {
+		t.Fatalf("id = %q, want producer-supplied-id", evs[0].ID)
+	}
+}
+
+func TestTailerQuarantinesOversizedRecord(t *testing.T) {
+	dir := t.TempDir()
+	tail := NewTailer(dir, time.Second)
+	tail.Prime()
+	ch := make(chan event.Event, 4)
+
+	path := filepath.Join(dir, "2026-07-02.ndjson")
+	// Oversized unfinished-then-completed record exceeding the live-tail bound,
+	// followed by a valid event the tailer must still deliver.
+	oversized := strings.Repeat("x", maxRecordBytes+1024) + "\n"
+	after := mkEvent(99, time.Date(2026, 7, 2, 10, 0, 1, 0, time.UTC))
+	afterLine, err := json.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append([]byte(oversized), append(afterLine, '\n')...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.poll(context.Background(), ch)
+	warn := <-ch
+	if warn.Category != event.CategoryMeta || warn.Severity != event.SeverityWarn {
+		t.Fatalf("want meta/warn quarantine event, got %+v", warn)
+	}
+	if !strings.Contains(warn.Summary, "oversized") {
+		t.Fatalf("warn summary = %q", warn.Summary)
+	}
+	got := <-ch
+	if got.ID != after.ID {
+		t.Fatalf("tailer did not advance past oversized record: got %s", got.ID)
+	}
+
+	// A second poll must not re-emit the oversized record.
+	tail.poll(context.Background(), ch)
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected re-read event: %+v", ev)
+	default:
 	}
 }

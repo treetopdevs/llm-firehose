@@ -5,6 +5,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -25,6 +26,7 @@ import (
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
+	"agentfirehose/internal/workspace"
 )
 
 // DefaultDaemonAddr is where the local daemon listens unless configured.
@@ -112,7 +114,7 @@ func EmitNamed(cfg Config, source, eventName string, r io.Reader) error {
 		return err
 	}
 	if daemonRouteAllowed(cfg.DaemonAddr) {
-		err := client.New("http://"+cfg.DaemonAddr).EmitNamed(source, eventName, bytes.NewReader(raw))
+		err := client.New("http://"+cfg.DaemonAddr).EmitNamed(context.Background(), source, eventName, bytes.NewReader(raw))
 		var transport *url.Error
 		if !errors.As(err, &transport) {
 			return err // nil on success; daemon rejections surface as-is
@@ -188,7 +190,7 @@ func EmitLocalNamed(cfg Config, source, eventName string, raw []byte) error {
 	if ev == nil {
 		return nil
 	}
-	redacted := privacy.Redact(*ev, cfg.mode())
+	redacted := privacy.Redact(workspace.Enrich(*ev), cfg.mode())
 	return spool.NewWriter(cfg.SpoolDir).Append(redacted)
 }
 
@@ -219,9 +221,6 @@ func RunHookForwardCommand(home string, args []string, r io.Reader, w io.Writer)
 	eventName := fs.String("event", "", "native hook event name (required for --source antigravity, ignored otherwise)")
 	flagErr := fs.Parse(args)
 	cfg, configErr := LoadConfig(home)
-	if flagErr != nil {
-		reportHookCaptureError(cfg, *source, fmt.Errorf("hook flags: %w", flagErr))
-	}
 	if configErr != nil {
 		// A malformed config still returns safe path defaults. Avoid routing
 		// through an address we could not successfully load and persist both
@@ -229,13 +228,22 @@ func RunHookForwardCommand(home string, args []string, r io.Reader, w io.Writer)
 		cfg.DaemonAddr = ""
 		reportHookCaptureError(cfg, *source, fmt.Errorf("load config: %w", configErr))
 	}
+	if flagErr != nil {
+		// Do not normalize with the default --source (codex-hook): an unknown
+		// flag left the source unset by the caller, so treating the payload as
+		// Codex would invent the wrong adapter mapping. Record the warning and
+		// return the neutral hook response without forwarding.
+		reportHookCaptureError(cfg, *source, fmt.Errorf("hook flags: %w", flagErr))
+		_, _ = io.WriteString(w, "{}\n")
+		return
+	}
 	// A missing --event for antigravity fails inside Parse and is captured as
 	// a safe hook_capture_error warning; the neutral "{}" is still written.
 	_ = HookForward(cfg, *source, *eventName, r, w)
 }
 
 func reportHookCaptureError(cfg Config, source string, captureErr error) {
-	_ = spool.NewWriter(cfg.SpoolDir).Append(event.Event{
+	ev := event.Event{
 		ID:       event.NewID(),
 		Time:     time.Now().UTC(),
 		Source:   "firehose",
@@ -247,7 +255,8 @@ func reportHookCaptureError(cfg Config, source string, captureErr error) {
 			"adapter_source": source,
 			"status":         "error",
 		},
-	})
+	}
+	_ = spool.NewWriter(cfg.SpoolDir).Append(privacy.Redact(ev, cfg.mode()))
 }
 
 // Ingest streams NDJSON lines from r into the spool, returning how many
@@ -267,7 +276,7 @@ func Ingest(cfg Config, r io.Reader) (int, error) {
 		if err != nil {
 			continue
 		}
-		if err := w.Append(privacy.Redact(ev, mode)); err != nil {
+		if err := w.Append(privacy.Redact(workspace.Enrich(ev), mode)); err != nil {
 			return n, err
 		}
 		n++

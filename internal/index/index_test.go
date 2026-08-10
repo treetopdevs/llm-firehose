@@ -351,8 +351,9 @@ func TestBuildMissingDirIsEmpty(t *testing.T) {
 
 func TestBuildSkipsCorruptLines(t *testing.T) {
 	dir := t.TempDir()
-	line := `{"id":"ok1","time":"2026-07-02T10:00:00Z","source":"generic","category":"meta","session_id":"s1"}`
-	data := line + "\n" + "{corrupt not json\n" + line + "\n"
+	line1 := `{"id":"ok1","time":"2026-07-02T10:00:00Z","source":"generic","category":"meta","session_id":"s1"}`
+	line2 := `{"id":"ok2","time":"2026-07-02T10:00:01Z","source":"generic","category":"meta","session_id":"s1"}`
+	data := line1 + "\n" + "{corrupt not json\n" + line2 + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "2026-07-02.ndjson"), []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +362,7 @@ func TestBuildSkipsCorruptLines(t *testing.T) {
 		t.Fatalf("Build with corrupt line: %v", err)
 	}
 	sessions := ix.Sessions()
-	if len(sessions) != 1 || sessions[0].Events != 1 {
-		t.Errorf("corrupt-line handling wrong (dup id counted once): %+v", sessions)
+	if len(sessions) != 1 || sessions[0].Events != 2 {
+		t.Errorf("corrupt-line handling wrong (want 2 distinct events): %+v", sessions)
 	}
 }

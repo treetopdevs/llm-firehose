@@ -291,6 +291,46 @@ func TestRealMCPStartEndUsesOneCorrelationKey(t *testing.T) {
 		start.Payload["tool_name"] != end.Payload["tool_name"] {
 		t.Fatalf("MCP correlation mismatch: start=%+v end=%+v", start, end)
 	}
+	if _, ok := p.Snapshot().Calls["call-mcp"]; ok {
+		t.Fatalf("mcp_tool_call_end left call context behind: %+v", p.Snapshot().Calls)
+	}
+}
+
+func TestAbsentRolloutTimestampUsesCaptureTimeOnly(t *testing.T) {
+	before := time.Now().UTC()
+	ev, err := NewFileParser().ParseLine([]byte(`{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}`))
+	after := time.Now().UTC()
+	if err != nil || ev == nil {
+		t.Fatalf("ParseLine = %+v, %v", ev, err)
+	}
+	if ev.SourceTime != nil {
+		t.Errorf("source_time = %v, want absent when rollout timestamp is missing", ev.SourceTime)
+	}
+	if ev.CaptureTime == nil || ev.CaptureTime.Before(before) || ev.CaptureTime.After(after) {
+		t.Errorf("capture_time = %v, want between %v and %v", ev.CaptureTime, before, after)
+	}
+	if !ev.Time.Equal(*ev.CaptureTime) {
+		t.Errorf("legacy time = %v, want capture time %v", ev.Time, *ev.CaptureTime)
+	}
+}
+
+func TestApprovalPolicyAppearsInSummaryOnlyWhenPresent(t *testing.T) {
+	p := newParser(t)
+	withPolicy, err := p.ParseLine([]byte(`{"timestamp":"2026-07-24T12:00:52Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5.6-sol","effort":"high","approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}`))
+	if err != nil || withPolicy == nil {
+		t.Fatalf("with policy: %+v, %v", withPolicy, err)
+	}
+	if !strings.Contains(withPolicy.Summary, "never approvals") {
+		t.Fatalf("summary with policy = %q", withPolicy.Summary)
+	}
+
+	emptyPolicy, err := p.ParseLine([]byte(`{"timestamp":"2026-07-24T12:00:53Z","type":"turn_context","payload":{"turn_id":"t2","model":"gpt-5.6-sol","effort":"high","sandbox_policy":{"type":"danger-full-access"}}}`))
+	if err != nil || emptyPolicy == nil {
+		t.Fatalf("empty policy: %+v, %v", emptyPolicy, err)
+	}
+	if strings.Contains(emptyPolicy.Summary, "approvals") {
+		t.Fatalf("summary without policy leaked approvals: %q", emptyPolicy.Summary)
+	}
 }
 
 func TestWorldStateIsSafeAndUnknownTypesWarnOnce(t *testing.T) {

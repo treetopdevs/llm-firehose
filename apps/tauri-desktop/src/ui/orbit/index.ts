@@ -21,6 +21,7 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
   let scene: OrbitScene | null = null;
   let bodies: OrbitBody[] = [];
   let summaries: SessionSummary[] = [];
+  let refreshGen = 0;
 
   function ensureScene() {
     if (!scene) {
@@ -104,12 +105,16 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
 
   async function refresh() {
     ensureScene();
+    const gen = ++refreshGen;
     try {
-      summaries = await sessions();
+      const next = await sessions();
+      if (gen !== refreshGen) return;
+      summaries = next;
       bodies = buildScene(summaries, Date.now());
       scene?.sync(bodies);
       paintLabels();
     } catch (err) {
+      if (gen !== refreshGen) return;
       clear(hoverCard);
       hoverCard.classList.remove("hidden");
       hoverCard.append(el("div", { class: "error" }, String(err)));
@@ -132,6 +137,7 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
   }
 
   function dispose() {
+    refreshGen++;
     scene?.dispose();
     scene = null;
   }

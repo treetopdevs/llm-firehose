@@ -1126,8 +1126,11 @@
     }
 
     tabs.forEach((tab) => tab.addEventListener("click", () => showView(tab.dataset.view)));
-    if (location.hash && document.querySelector(location.hash + ".view")) {
-      showView(location.hash.slice(1), false);
+    if (location.hash) {
+      const initial = document.getElementById(location.hash.slice(1));
+      if (initial?.classList.contains("view")) {
+        showView(initial.id, false);
+      }
     }
 
     const modes = {

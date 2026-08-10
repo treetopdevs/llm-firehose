@@ -27,7 +27,7 @@ means it is literally at screen center. Space itself answers "who needs me?"
 New per-session state machine in `internal/index` (derived layer, never the
 spool):
 
-```
+```text
 working → needs_input → working → … → done      (idle / error as overlays)
 ```
 
