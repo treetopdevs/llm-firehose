@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/workspace"
 )
 
 // Writer appends events to the daily spool file in Dir.
@@ -34,16 +33,19 @@ func fileFor(dir string, t time.Time) string {
 }
 
 // Append writes ev as one NDJSON line to today's spool file, stamping the
-// current schema version on events that don't carry one.
+// current schema version on events that don't carry one. Callers that need
+// repository identity must Enrich before privacy redaction and Append.
 func (w *Writer) Append(ev event.Event) error {
 	if err := ev.Validate(); err != nil {
 		return err
+	}
+	if ev.ID == "" {
+		ev.ID = event.NewID()
 	}
 	if ev.CaptureTime == nil {
 		captured := time.Now().UTC()
 		ev.CaptureTime = &captured
 	}
-	ev = workspace.Enrich(ev)
 	if ev.SchemaVersion == 0 {
 		ev.SchemaVersion = event.CurrentSchemaVersion
 	}
@@ -136,6 +138,9 @@ func readFile(path string) ([]event.Event, error) {
 		if errors.Is(err, io.EOF) {
 			break
 		}
+		if errors.Is(err, errOversizedRecord) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -195,6 +200,12 @@ func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
 	}
 }
 
+// maxRecordBytes caps a single NDJSON record during reads. It sits above the
+// 5 MiB large-record round-trip tests while still bounding live-tail memory.
+const maxRecordBytes = 8 << 20
+
+var errOversizedRecord = errors.New("spool: oversized record")
+
 func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 	files, err := spoolFiles(t.Dir)
 	if err != nil {
@@ -224,12 +235,13 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			if readErr != nil {
+			if readErr != nil && !errors.Is(readErr, errOversizedRecord) {
 				break
 			}
 			read += consumed
-			ev, perr := parseLine(line)
-			if perr != nil {
+			var ev event.Event
+			var perr error
+			if errors.Is(readErr, errOversizedRecord) {
 				captured := time.Now().UTC()
 				ev = event.Event{
 					ID:          event.NewID(),
@@ -239,7 +251,22 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 					Category:    event.CategoryMeta,
 					Name:        "parse-error",
 					Severity:    event.SeverityWarn,
-					Summary:     fmt.Sprintf("unparseable spool line in %s: %v", filepath.Base(path), perr),
+					Summary:     fmt.Sprintf("oversized spool record in %s (>%d bytes)", filepath.Base(path), maxRecordBytes),
+				}
+			} else {
+				ev, perr = parseLine(line)
+				if perr != nil {
+					captured := time.Now().UTC()
+					ev = event.Event{
+						ID:          event.NewID(),
+						Time:        captured,
+						CaptureTime: &captured,
+						Source:      "firehose",
+						Category:    event.CategoryMeta,
+						Name:        "parse-error",
+						Severity:    event.SeverityWarn,
+						Summary:     fmt.Sprintf("unparseable spool line in %s: %v", filepath.Base(path), perr),
+					}
 				}
 			}
 			select {
@@ -256,17 +283,57 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 
 // readLine returns one record and the exact number of bytes consumed. Snapshot
 // readers accept a legacy final record without a newline; live tailers leave
-// it unconsumed so a later append can complete it.
+// unfinished records unconsumed so a later append can complete them. Records
+// larger than maxRecordBytes are quarantined: the remainder through the next
+// newline (or EOF) is consumed and errOversizedRecord is returned.
 func readLine(reader *bufio.Reader, acceptFinal bool) ([]byte, int64, error) {
-	raw, err := reader.ReadBytes('\n')
-	if err != nil {
-		if !errors.Is(err, io.EOF) || len(raw) == 0 || !acceptFinal {
-			return nil, 0, err
+	var raw []byte
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		raw = append(raw, chunk...)
+		if len(raw) > maxRecordBytes {
+			consumed := int64(len(raw))
+			if len(chunk) == 0 || chunk[len(chunk)-1] != '\n' {
+				skipped, skipErr := discardThroughNewline(reader)
+				consumed += skipped
+				if skipErr != nil && !errors.Is(skipErr, io.EOF) {
+					return nil, consumed, skipErr
+				}
+			}
+			return nil, consumed, errOversizedRecord
 		}
+		if err == nil {
+			line := bytes.TrimSuffix(raw, []byte{'\n'})
+			line = bytes.TrimSuffix(line, []byte{'\r'})
+			return line, int64(len(raw)), nil
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			if len(raw) == 0 || !acceptFinal {
+				return nil, 0, io.EOF
+			}
+			line := bytes.TrimSuffix(raw, []byte{'\r'})
+			return line, int64(len(raw)), nil
+		}
+		return nil, 0, err
 	}
-	line := bytes.TrimSuffix(raw, []byte{'\n'})
-	line = bytes.TrimSuffix(line, []byte{'\r'})
-	return line, int64(len(raw)), nil
+}
+
+func discardThroughNewline(reader *bufio.Reader) (int64, error) {
+	var n int64
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		n += int64(len(chunk))
+		if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
+			return n, nil
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return n, err
+	}
 }
 
 func parseLine(line []byte) (event.Event, error) {

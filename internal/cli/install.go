@@ -523,7 +523,15 @@ func commandAvailable(command string) bool {
 	}
 	if filepath.IsAbs(bin) {
 		info, err := os.Stat(bin)
-		return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+		if err != nil || info.IsDir() {
+			return false
+		}
+		// Windows executability is not expressed as Unix mode bits; an
+		// absolute path that exists as a regular file is enough there.
+		if runtime.GOOS == "windows" {
+			return true
+		}
+		return info.Mode()&0o111 != 0
 	}
 	_, err := exec.LookPath(bin)
 	return err == nil

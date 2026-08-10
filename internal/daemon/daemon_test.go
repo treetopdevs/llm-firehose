@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +16,27 @@ import (
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/spool"
 )
+
+func testGET(t *testing.T, rawURL string) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	return http.DefaultClient.Do(req)
+}
+
+func testPOST(t *testing.T, rawURL, contentType string, body io.Reader) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return http.DefaultClient.Do(req)
+}
 
 func testConfig(t *testing.T) cli.Config {
 	t.Helper()
@@ -58,7 +80,7 @@ func TestRunServesUntilCanceled(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run never became ready")
 	}
-	resp, err := http.Get("http://" + bound + "/health")
+	resp, err := testGET(t, "http://"+bound+"/health")
 	if err != nil {
 		t.Fatalf("GET /health while running: %v", err)
 	}
@@ -148,7 +170,7 @@ func TestServeRejectsNonLoopbackAddresses(t *testing.T) {
 
 func TestHealth(t *testing.T) {
 	ts := testServer(t, testConfig(t))
-	resp, err := http.Get(ts.URL + "/health")
+	resp, err := testGET(t, ts.URL+"/health")
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}
@@ -172,7 +194,7 @@ func TestHealth(t *testing.T) {
 func TestConfigEndpoint(t *testing.T) {
 	cfg := testConfig(t)
 	ts := testServer(t, cfg)
-	resp, err := http.Get(ts.URL + "/config")
+	resp, err := testGET(t, ts.URL+"/config")
 	if err != nil {
 		t.Fatalf("GET /config: %v", err)
 	}
@@ -192,7 +214,7 @@ func TestConfigUpdateEndpoint(t *testing.T) {
 	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
 	t.Cleanup(ts.Close)
 
-	resp, err := http.Post(ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"minimal"}`))
+	resp, err := testPOST(t, ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"minimal"}`))
 	if err != nil {
 		t.Fatalf("POST /config: %v", err)
 	}
@@ -202,7 +224,7 @@ func TestConfigUpdateEndpoint(t *testing.T) {
 	}
 
 	// live: GET /config reflects the new mode immediately
-	get, err := http.Get(ts.URL + "/config")
+	get, err := testGET(t, ts.URL+"/config")
 	if err != nil {
 		t.Fatalf("GET /config: %v", err)
 	}
@@ -235,7 +257,7 @@ func TestConfigUpdateRestartRequiredFields(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	newSpool := filepath.Join(home, "elsewhere")
-	resp, err := http.Post(ts.URL+"/config", "application/json",
+	resp, err := testPOST(t, ts.URL+"/config", "application/json",
 		strings.NewReader(`{"spool_dir":"`+newSpool+`"}`))
 	if err != nil {
 		t.Fatalf("POST /config: %v", err)
@@ -251,7 +273,7 @@ func TestConfigUpdateRestartRequiredFields(t *testing.T) {
 		t.Errorf("restart_required = %v, want [spool_dir]", got.RestartRequired)
 	}
 	// runtime keeps the old spool dir; disk carries the new one
-	get, err := http.Get(ts.URL + "/config")
+	get, err := testGET(t, ts.URL+"/config")
 	if err != nil {
 		t.Fatalf("GET /config: %v", err)
 	}
@@ -269,7 +291,7 @@ func TestConfigUpdateRestartRequiredFields(t *testing.T) {
 
 func TestConfigUpdateRejectsBadMode(t *testing.T) {
 	ts := testServer(t, testConfig(t))
-	resp, err := http.Post(ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"everything"}`))
+	resp, err := testPOST(t, ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"everything"}`))
 	if err != nil {
 		t.Fatalf("POST /config: %v", err)
 	}
@@ -284,7 +306,7 @@ func TestIngestEndpoint(t *testing.T) {
 	ts := testServer(t, cfg)
 	body := `{"time":"2026-07-02T10:00:00Z","source":"my-tool","category":"shell","summary":"ran make"}` + "\n" +
 		`{"custom":"thing"}` + "\n"
-	resp, err := http.Post(ts.URL+"/events", "application/x-ndjson", strings.NewReader(body))
+	resp, err := testPOST(t, ts.URL+"/events", "application/x-ndjson", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /events: %v", err)
 	}
@@ -312,7 +334,7 @@ func TestIngestAppliesPrivacyMode(t *testing.T) {
 	cfg.PrivacyMode = "minimal"
 	ts := testServer(t, cfg)
 	body := `{"time":"2026-07-02T10:00:00Z","source":"my-tool","category":"shell","summary":"x","payload":{"secret":"hunter2"}}` + "\n"
-	resp, err := http.Post(ts.URL+"/events", "application/x-ndjson", strings.NewReader(body))
+	resp, err := testPOST(t, ts.URL+"/events", "application/x-ndjson", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /events: %v", err)
 	}
@@ -330,7 +352,7 @@ func TestEmitEndpointNormalizesRawPayload(t *testing.T) {
 	cfg := testConfig(t)
 	ts := testServer(t, cfg)
 	payload := `{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/repo","prompt":"hello"}`
-	resp, err := http.Post(ts.URL+"/emit?source=claude-code", "application/json", strings.NewReader(payload))
+	resp, err := testPOST(t, ts.URL+"/emit?source=claude-code", "application/json", strings.NewReader(payload))
 	if err != nil {
 		t.Fatalf("POST /emit: %v", err)
 	}
@@ -346,7 +368,7 @@ func TestEmitEndpointNormalizesRawPayload(t *testing.T) {
 
 func TestEmitEndpointBadPayload(t *testing.T) {
 	ts := testServer(t, testConfig(t))
-	resp, err := http.Post(ts.URL+"/emit?source=generic", "application/json", strings.NewReader("not json"))
+	resp, err := testPOST(t, ts.URL+"/emit?source=generic", "application/json", strings.NewReader("not json"))
 	if err != nil {
 		t.Fatalf("POST /emit: %v", err)
 	}
@@ -366,7 +388,7 @@ func TestRecentEvents(t *testing.T) {
 		}
 	}
 	ts := testServer(t, cfg)
-	resp, err := http.Get(ts.URL + "/events?limit=2")
+	resp, err := testGET(t, ts.URL+"/events?limit=2")
 	if err != nil {
 		t.Fatalf("GET /events: %v", err)
 	}
@@ -382,12 +404,37 @@ func TestRecentEvents(t *testing.T) {
 
 func TestRecentEventsBadLimit(t *testing.T) {
 	ts := testServer(t, testConfig(t))
-	resp, err := http.Get(ts.URL + "/events?limit=bogus")
+	resp, err := testGET(t, ts.URL+"/events?limit=bogus")
 	if err != nil {
 		t.Fatalf("GET /events: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestRecentEventsClampsMaxLimit(t *testing.T) {
+	cfg := testConfig(t)
+	w := spool.NewWriter(cfg.SpoolDir)
+	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	if err := w.Append(mkEvent(0, base)); err != nil {
+		t.Fatal(err)
+	}
+	ts := testServer(t, cfg)
+	resp, err := testGET(t, fmt.Sprintf("%s/events?limit=%d", ts.URL, maxRecentLimit+1))
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (oversized limit clamped)", resp.StatusCode)
+	}
+	var evs []event.Event
+	if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(evs) != 1 || evs[0].ID != "ev-0" {
+		t.Fatalf("clamped recent = %+v", evs)
 	}
 }

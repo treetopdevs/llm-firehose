@@ -129,3 +129,33 @@ func TestRedactBalancedTruncatesNestedStringsWithoutMutatingOriginal(t *testing.
 		t.Fatal("Redact mutated the original nested slice")
 	}
 }
+
+func TestRedactDigestsPathIdentityOutsideFullMode(t *testing.T) {
+	ev := sample()
+	ev.CWD = "/Users/me/project/nested"
+	ev.RepoID = "/Users/me/project/.git"
+	ev.WorktreeID = "/Users/me/project"
+
+	for _, mode := range []Mode{ModeMinimal, ModeBalanced} {
+		got := Redact(ev, mode)
+		for _, path := range []string{got.CWD, got.RepoID, got.WorktreeID} {
+			if path == "" {
+				t.Fatalf("%s cleared a path identity field", mode)
+			}
+			if strings.Contains(path, "/") || strings.Contains(path, "\\") {
+				t.Fatalf("%s persisted absolute path %q", mode, path)
+			}
+			if len(path) != 64 {
+				t.Fatalf("%s path digest length = %d, want 64: %q", mode, len(path), path)
+			}
+		}
+		if got.CWD == ev.CWD || got.RepoID == ev.RepoID || got.WorktreeID == ev.WorktreeID {
+			t.Fatalf("%s left path identity unchanged", mode)
+		}
+	}
+
+	full := Redact(ev, ModeFull)
+	if full.CWD != ev.CWD || full.RepoID != ev.RepoID || full.WorktreeID != ev.WorktreeID {
+		t.Fatalf("full mode altered path identity: %+v", full)
+	}
+}

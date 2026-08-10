@@ -103,8 +103,16 @@ func TestRealStopFixturePreservesSafeActivity(t *testing.T) {
 	if err != nil || ev.Name != "Stop" || ev.TurnID != "019f9488-turn" {
 		t.Fatalf("Stop = %+v, %v", ev, err)
 	}
-	if !strings.Contains(ev.Payload["output"].(string), "working directory") {
-		t.Fatalf("Stop output = %+v", ev.Payload)
+	if output, ok := ev.Payload["output"].(string); !ok || !strings.Contains(output, "working directory") {
+		t.Fatalf("Stop output = %#v", ev.Payload["output"])
+	}
+}
+
+func TestNonzeroProcessExitCodeIsFailed(t *testing.T) {
+	raw := []byte(`{"session_id":"s","hook_event_name":"PostToolUse","tool_name":"exec_command","tool_use_id":"c","tool_response":"Process exited with code 3\nFinal output:\nboom\n"}`)
+	ev, err := Parse(raw)
+	if err != nil || ev.Severity != event.SeverityError {
+		t.Fatalf("exit 3 = %+v, %v", ev, err)
 	}
 }
 

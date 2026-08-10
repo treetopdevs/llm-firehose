@@ -210,15 +210,28 @@ func runView(cfg cfgType) error {
 
 // viewFeed prefers the daemon's stream; without one it merges the spool
 // tailer, codex session watcher, and process watcher locally.
+//
+// Note (CodeRabbit): moving this local capture pipeline into internal/cli is
+// deferred — too large for the review-fix pass; keep wiring here for now.
 func viewFeed(ctx context.Context, cfg cfgType) (<-chan event.Event, []event.Event, error) {
 	if cfg.DaemonAddr != "" {
 		c := client.New("http://" + cfg.DaemonAddr)
-		if _, err := c.Health(); err == nil {
+		if h, err := c.Health(ctx); err == nil {
+			schema := h.SchemaVersion
+			if schema == 0 {
+				schema = 1
+			}
+			if schema != event.CurrentSchemaVersion {
+				return nil, nil, fmt.Errorf(
+					"daemon schema version %d is incompatible with client schema version %d",
+					schema, event.CurrentSchemaVersion,
+				)
+			}
 			stream, err := c.Stream(ctx)
 			if err != nil {
 				return nil, nil, err
 			}
-			history, err := c.Recent(500)
+			history, err := c.Recent(ctx, 500)
 			if err != nil {
 				return nil, nil, err
 			}

@@ -429,12 +429,28 @@ func (w *Watcher) readAppends(ctx context.Context, path string, state *fileState
 
 // Report persists a capture warning at most once per successful unique error.
 func (w *Watcher) Report(err error) {
-	if err == nil || w.options.Sink == nil || w.options.CaptureWarning == nil || w.warned[err.Error()] {
+	if err == nil || w.options.Sink == nil || w.options.CaptureWarning == nil {
+		return
+	}
+	key := warningKey(err)
+	if w.warned[key] {
 		return
 	}
 	if sinkErr := w.options.Sink(w.options.CaptureWarning(err)); sinkErr == nil {
-		w.warned[err.Error()] = true
+		w.warned[key] = true
 	}
+}
+
+func warningKey(err error) string {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return "fs:" + pathErr.Op
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return "fs:" + linkErr.Op
+	}
+	return err.Error()
 }
 
 // rollbackParser restores the parser to the pre-line snapshot after a
@@ -468,19 +484,19 @@ func (w *Watcher) save() error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	cleanup := func() { os.Remove(tmpPath) }
+	cleanup := func() { _ = os.Remove(tmpPath) }
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return err
 	}
 	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return err
 	}

@@ -136,7 +136,9 @@ func Coalesce(evs []event.Event, window time.Duration) []Row {
 					gap = -gap
 				}
 				if gap <= window {
-					row.Event = ev
+					if !ev.Time.Before(row.Event.Time) {
+						row.Event = ev
+					}
 					row.Count++
 					continue
 				}

@@ -65,6 +65,10 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
 
   const entries = new Map<string, MeshEntry>();
   const sparks: { mesh: THREE.Mesh; life: number }[] = [];
+  const sparkGeoMessage = new THREE.SphereGeometry(0.055, 6, 6);
+  const sparkGeoDefault = new THREE.SphereGeometry(0.08, 6, 6);
+  const MAX_SPARKS = 64;
+  const HALO_OPACITY = 0.22;
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
   let hoverId: string | null = null;
@@ -98,6 +102,11 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
       body.state === "needs_input" ? 0.4 : 0,
       Math.sin(body.sectorAngle) * r,
     );
+  }
+
+  function disposeHalo(halo: THREE.Mesh) {
+    halo.geometry.dispose();
+    (halo.material as THREE.Material).dispose();
   }
 
   function sync(bodies: OrbitBody[]) {
@@ -136,23 +145,31 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
           const halo = new THREE.Mesh(
             new THREE.SphereGeometry(1.6, 16, 16),
             new THREE.MeshBasicMaterial({
-              color: body.hasError && body.state !== "needs_input" ? 0xf85149 : 0xff9f43,
+              color: 0xff9f43,
               transparent: true,
-              opacity: 0.22,
+              opacity: HALO_OPACITY,
               depthWrite: false,
             }),
           );
           entry.mesh.add(halo);
           entry.halo = halo;
         }
+        const haloColor = body.hasError && body.state !== "needs_input" ? 0xf85149 : 0xff9f43;
+        (entry.halo.material as THREE.MeshBasicMaterial).color.setHex(haloColor);
         entry.halo.visible = true;
       } else if (entry.halo) {
         entry.halo.visible = false;
+        entry.halo.scale.setScalar(1);
+        (entry.halo.material as THREE.MeshBasicMaterial).opacity = HALO_OPACITY;
       }
     }
     for (const [id, entry] of entries) {
       if (!seen.has(id)) {
         scene.remove(entry.mesh);
+        if (entry.halo) {
+          entry.mesh.remove(entry.halo);
+          disposeHalo(entry.halo);
+        }
         entry.mesh.geometry.dispose();
         (entry.mesh.material as THREE.Material).dispose();
         entries.delete(id);
@@ -168,14 +185,20 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
         : category === "shell" ? 0x3fb950
           : category === "tool" ? 0x58a6ff
             : 0x8b949e;
-    const radius = category === "message" ? 0.055 : 0.08;
+    const geom = category === "message" ? sparkGeoMessage : sparkGeoDefault;
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(radius, 6, 6),
+      geom,
       new THREE.MeshBasicMaterial({ color: c, transparent: true }),
     );
     mesh.position.copy(entry.mesh.position);
     scene.add(mesh);
     sparks.push({ mesh, life: 1 });
+    while (sparks.length > MAX_SPARKS) {
+      const oldest = sparks.shift();
+      if (!oldest) break;
+      scene.remove(oldest.mesh);
+      (oldest.mesh.material as THREE.Material).dispose();
+    }
   }
 
   function pick(clientX: number, clientY: number): string | null {
@@ -205,7 +228,11 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
         const pulse = 1.4 + Math.sin(t * 4) * 0.25;
         entry.halo.scale.setScalar(pulse);
         (entry.halo.material as THREE.MeshBasicMaterial).opacity = 0.15 + Math.sin(t * 4) * 0.1;
-      } else if (entry.body.state !== "needs_input" && entry.body.state !== "idle" && entry.body.state !== "done") {
+      } else if (entry.halo && entry.body.state !== "needs_input") {
+        entry.halo.scale.setScalar(1);
+        (entry.halo.material as THREE.MeshBasicMaterial).opacity = HALO_OPACITY;
+      }
+      if (entry.body.state !== "needs_input" && entry.body.state !== "idle" && entry.body.state !== "done") {
         // Slow orbital drift for working agents.
         const angle = entry.body.sectorAngle + t * 0.15 * (0.4 + entry.body.activityRate);
         const r = entry.body.urgencyRadius * ORBIT_SCALE;
@@ -222,7 +249,6 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
       (s.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, s.life);
       if (s.life <= 0) {
         scene.remove(s.mesh);
-        s.mesh.geometry.dispose();
         (s.mesh.material as THREE.Material).dispose();
         sparks.splice(i, 1);
       }
@@ -237,10 +263,21 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
     ro.disconnect();
     for (const entry of entries.values()) {
       scene.remove(entry.mesh);
+      if (entry.halo) {
+        entry.mesh.remove(entry.halo);
+        disposeHalo(entry.halo);
+      }
       entry.mesh.geometry.dispose();
       (entry.mesh.material as THREE.Material).dispose();
     }
     entries.clear();
+    for (const s of sparks) {
+      scene.remove(s.mesh);
+      (s.mesh.material as THREE.Material).dispose();
+    }
+    sparks.length = 0;
+    sparkGeoMessage.dispose();
+    sparkGeoDefault.dispose();
     renderer.dispose();
     canvas.remove();
   }

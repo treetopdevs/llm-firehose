@@ -25,6 +25,9 @@ describe("shortPath", () => {
   test("keeps the last two segments", () => {
     expect(shortPath("/Users/me/dev/app")).toBe("…/dev/app");
   });
+  test("recognizes backslash separators", () => {
+    expect(shortPath("C:\\Users\\me\\dev\\app")).toBe("…/dev/app");
+  });
   test("short paths pass through", () => {
     expect(shortPath("/app")).toBe("/app");
     expect(shortPath("")).toBe("");

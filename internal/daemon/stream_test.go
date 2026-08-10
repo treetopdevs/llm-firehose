@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -38,7 +37,7 @@ func startedServer(t *testing.T, cfg cli.Config) *httptest.Server {
 // streamEvents connects to /events/stream and forwards decoded events.
 func streamEvents(t *testing.T, url string) <-chan event.Event {
 	t.Helper()
-	resp, err := http.Get(url + "/events/stream")
+	resp, err := testGET(t, url+"/events/stream")
 	if err != nil {
 		t.Fatalf("GET /events/stream: %v", err)
 	}
@@ -49,6 +48,7 @@ func streamEvents(t *testing.T, url string) <-chan event.Event {
 	ch := make(chan event.Event, 16)
 	go func() {
 		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -106,7 +106,7 @@ func TestStreamDeliversIngestedEvents(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond) // let the tailer record initial offsets
 	line := `{"time":"2026-07-02T10:00:00Z","source":"my-tool","category":"shell","summary":"stream me"}` + "\n"
-	resp, err := http.Post(ts.URL+"/events", "application/x-ndjson", strings.NewReader(line))
+	resp, err := testPOST(t, ts.URL+"/events", "application/x-ndjson", strings.NewReader(line))
 	if err != nil {
 		t.Fatalf("POST /events: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestStreamFanOutToMultipleSubscribers(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond)
 	line := `{"time":"2026-07-02T10:00:00Z","source":"my-tool","category":"shell","summary":"fan out"}` + "\n"
-	resp, err := http.Post(ts.URL+"/events", "application/x-ndjson", strings.NewReader(line))
+	resp, err := testPOST(t, ts.URL+"/events", "application/x-ndjson", strings.NewReader(line))
 	if err != nil {
 		t.Fatalf("POST /events: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestStreamBroadcastsStateTransition(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond)
 	line := `{"id":"p1","time":"2026-07-08T12:00:00Z","source":"claude-code","category":"permission","name":"Notification","session_id":"orb1","summary":"Claude needs your permission to use Bash","severity":"notice"}` + "\n"
-	resp, err := http.Post(ts.URL+"/events", "application/x-ndjson", strings.NewReader(line))
+	resp, err := testPOST(t, ts.URL+"/events", "application/x-ndjson", strings.NewReader(line))
 	if err != nil {
 		t.Fatalf("POST /events: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestStreamBroadcastsStateTransition(t *testing.T) {
 		}
 	}
 
-	resp, err = http.Get(ts.URL + "/sessions")
+	resp, err = testGET(t, ts.URL+"/sessions")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,6 +227,7 @@ waitPrompt:
 		}
 	}
 	quiet := time.After(300 * time.Millisecond)
+waitDup:
 	for {
 		select {
 		case ev := <-ch:
@@ -234,12 +235,12 @@ waitPrompt:
 				t.Fatal("codex event streamed twice")
 			}
 		case <-quiet:
+			break waitDup
 		}
-		break
 	}
 
 	// Persisted in the spool, redacted per the configured minimal mode.
-	resp, err := http.Get(ts.URL + "/events")
+	resp, err := testGET(t, ts.URL+"/events")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +264,7 @@ waitPrompt:
 	}
 
 	// Reached the derived index, so a rebuild sees the session too.
-	resp, err = http.Get(ts.URL + "/sessions")
+	resp, err = testGET(t, ts.URL+"/sessions")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +315,7 @@ func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing
 	}
 	readEvents := func(url string) []event.Event {
 		t.Helper()
-		resp, err := http.Get(url + "/events")
+		resp, err := testGET(t, url+"/events")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -403,7 +404,7 @@ func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		resp, err := http.Get(ts2.URL + "/sessions")
+		resp, err := testGET(t, ts2.URL+"/sessions")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -465,7 +466,7 @@ func TestProcwatchEventsPersistedToSpool(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		resp, err := http.Get(ts.URL + "/events")
+		resp, err := testGET(t, ts.URL+"/events")
 		if err != nil {
 			t.Fatal(err)
 		}

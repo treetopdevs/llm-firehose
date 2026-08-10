@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -104,7 +105,10 @@ func TestOpenCodeToolContentIsOnlyRetainedInFullMode(t *testing.T) {
 			if err != nil || len(evs) != 1 {
 				t.Fatalf("spool: events=%+v err=%v", evs, err)
 			}
-			data, _ := json.Marshal(evs[0])
+			data, err := json.Marshal(evs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
 			hasMarker := strings.Contains(string(data), "SECRET-OPENCODE")
 			if mode == privacy.ModeFull && !hasMarker {
 				t.Errorf("full mode lost raw OpenCode content: %s", data)
@@ -138,7 +142,10 @@ func TestEmitUnknownEventWritesSafeWarning(t *testing.T) {
 	if len(evs) != 1 || evs[0].Name != "adapter.unknown_event" {
 		t.Fatalf("unknown event warning missing: %+v", evs)
 	}
-	data, _ := json.Marshal(evs[0])
+	data, err := json.Marshal(evs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(string(data), "SECRET-RAW") {
 		t.Fatalf("unknown warning leaked raw input: %s", data)
 	}
@@ -300,7 +307,10 @@ func TestInstallClaudeCodeDoesNotMutateSharedUserEntry(t *testing.T) {
 			},
 		},
 	}
-	data, _ := json.Marshal(document)
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +376,10 @@ func TestClaudeHooksConfiguredRejectsPartialCoverage(t *testing.T) {
 	}
 	hooks := settings["hooks"].(map[string]any)
 	delete(hooks, "PostToolUse")
-	changed, _ := json.Marshal(settings)
+	changed, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, changed, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -668,6 +681,55 @@ func TestRunHookForwardCommandSurfacesConfigFailureAndForwards(t *testing.T) {
 	}
 }
 
+func TestRunHookForwardCommandInvalidFlagsSkipsDefaultCodexSource(t *testing.T) {
+	home := t.TempDir()
+	var out bytes.Buffer
+	// Claude-shaped payload would parse under the default --source=codex-hook;
+	// an unknown flag must not invent that mapping.
+	payload := `{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/repo","prompt":"hello"}`
+	RunHookForwardCommand(home, []string{"--bogus"}, strings.NewReader(payload), &out)
+	if out.String() != "{}\n" {
+		t.Fatalf("hook command stdout = %q", out.String())
+	}
+	evs, err := spool.ReadLastN(filepath.Join(home, ".agentfirehose", "spool"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Name != "hook_capture_error" {
+		t.Fatalf("want only flag warning, got %+v", evs)
+	}
+	for _, ev := range evs {
+		if ev.Source == "codex" || ev.Category == event.CategoryPrompt {
+			t.Fatalf("must not forward payload with default codex-hook source: %+v", ev)
+		}
+	}
+}
+
+func TestReportHookCaptureErrorRedactsBeforeSpool(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.PrivacyMode = string(privacy.ModeMinimal)
+	reportHookCaptureError(cfg, "claude-code", fmt.Errorf("boom"))
+	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("spool = %+v err=%v", evs, err)
+	}
+	ev := evs[0]
+	if ev.Name != "hook_capture_error" || ev.Severity != event.SeverityWarn {
+		t.Fatalf("warning fields lost after redact: %+v", ev)
+	}
+	if !strings.Contains(ev.Summary, "boom") {
+		t.Fatalf("summary must retain capture error: %+v", ev)
+	}
+	// Payload values are digested in minimal mode; adapter_source must not
+	// remain a bare string.
+	if _, isMap := ev.Payload["adapter_source"].(map[string]any); !isMap {
+		t.Fatalf("payload must be redacted before append: %+v", ev.Payload)
+	}
+	if _, ok := ev.Payload["status"].(map[string]any); !ok {
+		t.Fatalf("status must be digested in minimal mode: %+v", ev.Payload)
+	}
+}
+
 func TestDoctorReportsChecks(t *testing.T) {
 	home := t.TempDir()
 	cfg := Config{SpoolDir: filepath.Join(home, ".agentfirehose", "spool"), PrivacyMode: "balanced"}
@@ -724,15 +786,54 @@ func TestDoctorRequiresAllCodexHooksAndLiveExecutable(t *testing.T) {
 		t.Fatal("complete Codex installation reported unhealthy")
 	}
 
-	data, _ := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var doc map[string]any
-	_ = json.Unmarshal(data, &doc)
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
 	hooks := doc["hooks"].(map[string]any)
 	delete(hooks, "PostCompact")
-	partial, _ := json.Marshal(doc)
-	_ = os.WriteFile(filepath.Join(home, ".codex", "hooks.json"), partial, 0o600)
+	partial, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "hooks.json"), partial, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if CodexHooksConfigured(home) {
 		t.Fatal("partial Codex installation reported healthy")
+	}
+}
+
+func TestCommandAvailableAbsolutePathExecBit(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "firehose")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	// No Unix execute bits — Windows still treats an absolute regular file as available.
+	if err := os.WriteFile(bin, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := commandAvailable(bin)
+	if runtime.GOOS == "windows" {
+		if !got {
+			t.Fatal("windows absolute path must be accepted without unix exec bits")
+		}
+		home := t.TempDir()
+		if err := InstallCodex(home, bin); err != nil {
+			t.Fatalf("InstallCodex: %v", err)
+		}
+		if !CodexHooksConfigured(home) {
+			t.Fatal("CodexHooksConfigured must accept absolute windows executable path")
+		}
+		return
+	}
+	if got {
+		t.Fatal("non-windows absolute path without exec bits must be rejected")
 	}
 }
 

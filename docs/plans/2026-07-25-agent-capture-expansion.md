@@ -457,120 +457,22 @@ and final state. The delta text is never copied into the safe payload.
 
 ---
 
-## Priority 4 — Add Claude local OpenTelemetry
+## Priority 4 — Claude local OpenTelemetry (policy)
 
-### Add an opt-in localhost OTLP/HTTP JSON receiver
+**Status:** The localhost OTLP/HTTP JSON receiver (`internal/adapters/claudeotel`,
+`internal/daemon/otel.go`, `firehose install claude-otel`) already shipped as an
+**inbound-only loopback enrichment** path. Firehose does not export telemetry,
+open outbound collector connections, or require a network path beyond
+`127.0.0.1`.
 
-**Goal:** Enrich Claude events with request IDs, sequence, model, tokens, cost,
-retry, decisions, hook timing, compaction, and attribution without capturing
-content or depending on an external collector.
+**Policy gate for further work:** Any change that would make Firehose (or its
+installers) configure Claude to export to a non-loopback collector, enable
+content-bearing OTel options by default, or otherwise leave the machine, is a
+STOP requiring an explicit product/policy decision. Prefer passive local
+sources (hooks + durable files) when enrichment is optional.
 
-**Blocked by:** Expand Claude Code hook coverage.
-
-**Files:**
-
-- Add: `internal/adapters/claudeotel/claudeotel.go`
-- Add: `internal/adapters/claudeotel/claudeotel_test.go`
-- Add: `internal/adapters/claudeotel/testdata/*`
-- Add: `internal/daemon/otel.go`
-- Add: `internal/daemon/otel_test.go`
-- Modify: `internal/daemon/daemon.go`
-- Modify: `internal/cli/install.go`
-- Modify: `internal/cli/cli_test.go`
-- Modify: `internal/cli/doctor.go`
-- Modify: `cmd/firehose/main.go`
-- Modify: `internal/daemon/endpoints.go`
-- Modify: desktop onboarding/settings adapter lists as needed
-- Modify: `docs/contracts.md`
-- Modify: `docs/adapters.md`
-- Modify: `docs/adapter-capabilities.md`
-
-**Protocol decision:**
-
-- Accept OTLP `http/json` at `POST /v1/logs` and `POST /v1/metrics` on the
-  existing loopback-only daemon.
-- Do not implement gRPC or protobuf in this milestone.
-- Limit request bodies, attribute counts, nesting, and string sizes before
-  normalization.
-- Return an OTLP-success response quickly even when an individual record is
-  malformed; append a bounded Firehose warning rather than inducing exporter
-  retry pressure in Claude.
-
-**Allowlisted log metadata:**
-
-- session/prompt/message/tool/request/client-request IDs and sequence;
-- event name, model, query source, finish/error/retry class;
-- latency, tool duration/success/error type, byte counts;
-- input/output/cache token counts and cost;
-- permission decision and source, permission-mode changes;
-- skill/plugin/MCP/agent attribution without paths or identities;
-- hook lifecycle result/duration;
-- compaction trigger/result/pre-post token counts.
-
-**Allowlisted metrics:**
-
-- session count, token usage, cost usage, active time;
-- lines added/removed, commit and pull-request counts;
-- code-edit decisions.
-
-Never retain resource attributes for email, account, organization,
-installation/user identity, hostname, or machine identity.
-
-**Opt-in installer:**
-
-Add `firehose install claude-otel` and the matching daemon install target.
-It may add these settings only when no existing user/managed OTel destination
-is configured:
-
-```text
-CLAUDE_CODE_ENABLE_TELEMETRY=1
-OTEL_LOGS_EXPORTER=otlp
-OTEL_METRICS_EXPORTER=otlp
-OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/json
-OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/json
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4517/v1/logs
-OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4517/v1/metrics
-```
-
-Explicitly keep all content-bearing options disabled. Refuse to overwrite an
-existing endpoint, exporter, protocol, header, certificate, or managed
-telemetry setting. Do not edit shell profiles.
-
-**Daemon-optional rule:**
-
-Claude OTel is supplemental. If the daemon is absent, Claude hooks still
-capture the canonical lifecycle/tool baseline. Doctor and the UI report the
-telemetry enrichment as unavailable; they do not claim the whole Claude
-adapter is down.
-
-**TDD sequence:**
-
-1. Capture real `http/json` batches from local Claude into a temporary dumb
-   receiver before writing the parser.
-2. Add failing fixture tests for OTLP resource/scope/log and metric nesting.
-3. Add failing allowlist tests with identity and content marker attributes.
-4. Add failing HTTP tests for size limits, malformed partial records, quick
-   success responses, loopback/CORS policy, and spool persistence.
-5. Add failing installer conflict/idempotency tests.
-6. Implement logs first, then metrics.
-7. Correlate hook and OTel observations by prompt/tool/request IDs; never
-   coalesce different lifecycle phases.
-
-**Live acceptance:**
-
-- Enable the opt-in config against the local daemon.
-- Run one Claude prompt with a successful and failing tool.
-- Prove hook and OTel observations share prompt/tool IDs.
-- Prove token/cost/model data appears without prompt, response, tool body, or
-  identity data under balanced mode.
-- Stop the daemon and confirm Claude continues normally and hook capture
-  persists.
-- Run full Go and desktop gates.
-
-**Suggested commits:**
-
-- `feat(claude-otel): receive safe local OTLP log metadata`
-- `feat(claude-otel): capture usage metrics and opt-in configuration`
+Hooks remain the daemon-optional baseline; OTel enrichment is supplemental and
+unavailable when the daemon is down.
 
 ---
 

@@ -154,7 +154,8 @@ func TestEmitLocalWritesDirectly(t *testing.T) {
 // A daemon whose own config points at its own address (the normal case in
 // production) must write emits locally, not proxy them back to itself.
 func TestDaemonEmitDoesNotProxyToItself(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	lc := net.ListenConfig{}
+	l, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}

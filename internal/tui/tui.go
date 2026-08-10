@@ -244,7 +244,8 @@ func (m Model) visibleRows() []store.Row {
 
 // noteAttention folds one event into the per-session attention map.
 // Synthetic firehose transitions are ignored — the TUI derives state itself
-// so daemon-optional mode stays consistent.
+// so daemon-optional mode stays consistent. Entries are retained only while
+// they affect the NEEDS YOU indicator.
 func (m Model) noteAttention(ev event.Event) {
 	if ev.SessionID == "" || m.attention == nil {
 		return
@@ -257,7 +258,11 @@ func (m Model) noteAttention(ev event.Event) {
 		prev = index.Attention{State: index.StateWorking, Since: ev.Time}
 	}
 	next, _ := index.Transition(prev, ev)
-	m.attention[ev.SessionID] = next
+	if next.State == index.StateNeedsInput {
+		m.attention[ev.SessionID] = next
+		return
+	}
+	delete(m.attention, ev.SessionID)
 }
 
 func (m Model) needsYouCount() int {
