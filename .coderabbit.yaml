@@ -1,0 +1,9 @@
+# CodeRabbit configuration. The dashboard default only reviews PRs into
+# main; this repo stacks feature work (e.g. capture-expansion PRs target
+# feat/daemon-desktop-migration), so stacked PRs need review too.
+reviews:
+  auto_review:
+    enabled: true
+    base_branches:
+      - "feat/.*"
+      - "codex/.*"

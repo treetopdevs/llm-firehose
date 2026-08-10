@@ -26,6 +26,7 @@ Put the `firehose` binary on your `PATH`, then wire up the agents you use:
 
 ```sh
 firehose install claude-code   # merges hooks into ~/.claude/settings.json (backs it up first)
+firehose install claude-otel   # optional local-only Claude usage/diagnostic stream
 firehose install codex         # adds lifecycle/tool hooks; review trust in Codex /hooks
 firehose install opencode      # writes a plugin into ~/.config/opencode/plugin/
 firehose doctor                # verify everything is wired
@@ -77,9 +78,10 @@ feed are documented in the [release runbook](docs/release-runbook.md).
 
 | Source | Depth | How it works |
 |---|---|---|
-| Claude Code | deep | hooks forward lifecycle events through a fail-silent local command |
-| Codex | deep | durable rollout tail plus optional lifecycle/tool hooks |
-| OpenCode | deep | plugin forwards bus events through a fail-silent local command |
+| Claude Code | deep | asynchronous metadata-only hooks forward through a fail-silent local command |
+| Claude Code OTel | supplemental | opt-in loopback request/usage metadata; identity and content are discarded |
+| Codex | deep | crash-safe durable rollout tail plus optional lifecycle/tool hooks |
+| OpenCode | deep | manifest-filtered plugin forwards high-signal bus events and bounded drift warnings |
 | any process | shallow | process watcher emits start/stop for known agent binaries |
 | anything else | generic | pipe NDJSON into `firehose ingest`, or call `firehose emit` |
 
@@ -118,6 +120,7 @@ Or press `e` in the viewer to export exactly what you're looking at
 - [Platform contract](docs/contracts.md) — frozen surfaces: envelope schema, spool/export formats, privacy semantics, local API
 - [Event schema](docs/event.schema.json) — JSON Schema for the normalized envelope
 - [Adapter guide](docs/adapters.md) — how each adapter works and how to add one
+- [Adapter capabilities](docs/adapter-capabilities.md) — transport fidelity, mapped/filtered coverage, and fixture status
 - [Migration plan](docs/agent-firehose-migration-plan.md) — daemon → desktop shell → optional cloud (with status)
 - [Compatibility](docs/compatibility.md) — daemon/UI schema-version rules
 - [Release runbook](docs/release-runbook.md) — signing, packaging, updater feed

@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,11 +14,214 @@ import (
 	"agentfirehose/internal/adapters/opencode"
 )
 
-// hookedEvents are the Claude Code hook events the firehose subscribes to.
-var hookedEvents = []string{
-	"SessionStart", "SessionEnd", "UserPromptSubmit",
-	"PreToolUse", "PostToolUse", "PostToolUseFailure",
-	"Notification", "Stop", "StopFailure", "SubagentStop", "PreCompact",
+// ClaudeOTelEnvironment is the exact opt-in environment block Firehose adds
+// to Claude Code settings. It intentionally omits every content-bearing
+// telemetry option.
+func ClaudeOTelEnvironment(daemonAddr string) map[string]string {
+	base := "http://" + daemonAddr
+	return map[string]string{
+		"CLAUDE_CODE_ENABLE_TELEMETRY":        "1",
+		"OTEL_LOGS_EXPORTER":                  "otlp",
+		"OTEL_METRICS_EXPORTER":               "otlp",
+		"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL":    "http/json",
+		"OTEL_EXPORTER_OTLP_METRICS_PROTOCOL": "http/json",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":    base + "/v1/logs",
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": base + "/v1/metrics",
+	}
+}
+
+// ErrClaudeOTelConflict marks install refusals caused by pre-existing
+// telemetry state (managed settings, process environment, or conflicting
+// user settings) as opposed to environmental failures; the daemon maps it
+// to 409 and everything else to 500.
+var ErrClaudeOTelConflict = errors.New("existing telemetry configuration conflict")
+
+// InstallClaudeOTel opts Claude Code into the daemon's supplemental local
+// OTLP/HTTP JSON receiver. Existing user, process, or managed telemetry
+// settings are a hard conflict and are never overwritten. The caller supplies
+// its process environment as environ (normally os.Environ()) so tests can
+// inject a hermetic one; any telemetry key present there refuses the install.
+func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
+	if err := validateClaudeOTelAddr(daemonAddr); err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settings := map[string]any{}
+	original := []byte("{}")
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		original = data
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("existing %s is not valid JSON, refusing to modify (%w): %w", settingsPath, ErrClaudeOTelConflict, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	for _, managedPath := range []string{
+		filepath.Join(home, ".claude", "managed-settings.json"),
+		"/Library/Application Support/ClaudeCode/managed-settings.json",
+	} {
+		if data, err := os.ReadFile(managedPath); err == nil {
+			var managed any
+			if err := json.Unmarshal(data, &managed); err != nil {
+				return fmt.Errorf("managed Claude settings at %s are invalid; refusing to modify user telemetry (%w): %w", managedPath, ErrClaudeOTelConflict, err)
+			}
+			if containsTelemetrySetting(managed) {
+				return fmt.Errorf("managed Claude telemetry settings exist at %s; refusing to override: %w", managedPath, ErrClaudeOTelConflict)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect managed Claude settings: %w", err)
+		}
+	}
+	for _, entry := range environ {
+		key, _, _ := strings.Cut(entry, "=")
+		if isClaudeTelemetryKey(key) {
+			return fmt.Errorf("process environment already configures %s; refusing to override: %w", key, ErrClaudeOTelConflict)
+		}
+	}
+
+	var env map[string]any
+	if existing, ok := settings["env"]; ok {
+		var valid bool
+		env, valid = existing.(map[string]any)
+		if !valid {
+			return fmt.Errorf("existing %s env value is not an object, refusing to modify: %w", settingsPath, ErrClaudeOTelConflict)
+		}
+	} else {
+		env = map[string]any{}
+	}
+	target := ClaudeOTelEnvironment(daemonAddr)
+	telemetryEntries := 0
+	exact := true
+	for key, value := range env {
+		if !isClaudeTelemetryKey(key) {
+			continue
+		}
+		telemetryEntries++
+		want, targeted := target[key]
+		if !targeted || value != want {
+			exact = false
+		}
+	}
+	if telemetryEntries > 0 {
+		if exact && telemetryEntries == len(target) {
+			for key, value := range target {
+				if env[key] != value {
+					exact = false
+					break
+				}
+			}
+		}
+		if exact && telemetryEntries == len(target) {
+			return nil
+		}
+		return fmt.Errorf("existing Claude telemetry settings conflict; refusing to overwrite: %w", ErrClaudeOTelConflict)
+	}
+	for key, value := range target {
+		env[key] = value
+	}
+	settings["env"] = env
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(settingsPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(settingsPath+".bak", original, 0o600); err != nil {
+			return fmt.Errorf("backup: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
+}
+
+// ClaudeOTelConfigured reports whether the exact local, content-disabled
+// environment block is present.
+func ClaudeOTelConfigured(home, daemonAddr string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	env, _ := settings["env"].(map[string]any)
+	target := ClaudeOTelEnvironment(daemonAddr)
+	seen := 0
+	for key, value := range env {
+		if !isClaudeTelemetryKey(key) {
+			continue
+		}
+		seen++
+		if target[key] != value {
+			return false
+		}
+	}
+	return seen == len(target)
+}
+
+func validateClaudeOTelAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("Claude OTel daemon address %q: %w", addr, err)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("Claude OTel daemon address %q must use loopback", addr)
+	}
+	return nil
+}
+
+func isClaudeTelemetryKey(key string) bool {
+	return key == "CLAUDE_CODE_ENABLE_TELEMETRY" || strings.HasPrefix(key, "OTEL_")
+}
+
+func containsTelemetrySetting(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if isClaudeTelemetryKey(key) || containsTelemetrySetting(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if containsTelemetrySetting(nested) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ClaudeHookEvents is the observational Claude Code hook surface Firehose
+// installs. Every event except PreCompact is fixture-proven; PreCompact keeps
+// its inherited install coverage while a real capture is pending (see
+// adapters/claudecode/testdata/README.md). Additional documented hook names
+// stay parser-only until a real local payload can prove their shape.
+var ClaudeHookEvents = []string{
+	"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+	"PostToolUseFailure", "StopFailure", "PreCompact",
+	"Notification", "SubagentStop", "Stop", "SessionEnd",
+}
+
+var claudeHooksWithoutMatchers = map[string]bool{
+	"UserPromptSubmit": true,
+	"SessionStart":     true,
+	"SessionEnd":       true,
+	"Notification":     true,
+	"SubagentStop":     true,
+	"Stop":             true,
+	"StopFailure":      true,
+	"PreCompact":       true,
 }
 
 // CodexHookEvents is the complete lifecycle/tool hook surface supported by
@@ -33,40 +238,55 @@ var CodexHookEvents = []string{
 func InstallClaudeCode(home, binPath string) error {
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	settings := map[string]any{}
+	original := []byte("{}")
+	existed := false
 	if data, err := os.ReadFile(settingsPath); err == nil {
+		existed = true
+		original = data
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("existing %s is not valid JSON, refusing to modify: %w", settingsPath, err)
 		}
-		if err := os.WriteFile(settingsPath+".bak", data, 0o644); err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
-	} else {
-		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
-			return err
-		}
-		// still create a backup marker so the doctor/test flow is uniform
-		if err := os.WriteFile(settingsPath+".bak", []byte("{}"), 0o644); err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
 	command := quoteCommandPath(binPath, runtime.GOOS) + " hook-forward --source claude-code"
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
+	var hooks map[string]any
+	if existing, ok := settings["hooks"]; ok {
+		var valid bool
+		hooks, valid = existing.(map[string]any)
+		if !valid {
+			return fmt.Errorf("existing %s hooks value is not an object, refusing to modify", settingsPath)
+		}
+	} else {
 		hooks = map[string]any{}
 	}
-	for _, evName := range hookedEvents {
+	changed := false
+	for _, evName := range ClaudeHookEvents {
 		entries, _ := hooks[evName].([]any)
-		if hasCommand(entries, command) {
-			continue
+		matcher := ".*"
+		if claudeHooksWithoutMatchers[evName] {
+			matcher = ""
 		}
-		entry := map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": command}},
+		var entryChanged bool
+		entries, entryChanged = ensureClaudeHook(entries, command, matcher)
+		if entryChanged {
+			hooks[evName] = entries
+			changed = true
 		}
-		if evName == "PreToolUse" || evName == "PostToolUse" || evName == "PostToolUseFailure" {
-			entry["matcher"] = "*"
+	}
+	if !changed && existed {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(settingsPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(settingsPath+".bak", original, 0o600); err != nil {
+			return fmt.Errorf("backup: %w", err)
 		}
-		hooks[evName] = append(entries, entry)
+	} else if err != nil {
+		return fmt.Errorf("backup: %w", err)
 	}
 	settings["hooks"] = hooks
 
@@ -74,7 +294,53 @@ func InstallClaudeCode(home, binPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath, append(out, '\n'), 0o644)
+	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
+}
+
+func ensureClaudeHook(entries []any, command, matcher string) ([]any, bool) {
+	for _, rawEntry := range entries {
+		entry, _ := rawEntry.(map[string]any)
+		handlers, _ := entry["hooks"].([]any)
+		if len(handlers) != 1 {
+			continue
+		}
+		for _, rawHandler := range handlers {
+			handler, _ := rawHandler.(map[string]any)
+			if handler["command"] != command {
+				continue
+			}
+			changed := false
+			if handler["type"] != "command" {
+				handler["type"] = "command"
+				changed = true
+			}
+			if handler["async"] != true {
+				handler["async"] = true
+				changed = true
+			}
+			if matcher == "" {
+				if _, ok := entry["matcher"]; ok {
+					delete(entry, "matcher")
+					changed = true
+				}
+			} else if entry["matcher"] != matcher {
+				entry["matcher"] = matcher
+				changed = true
+			}
+			return entries, changed
+		}
+	}
+
+	handler := map[string]any{
+		"type":    "command",
+		"command": command,
+		"async":   true,
+	}
+	entry := map[string]any{"hooks": []any{handler}}
+	if matcher != "" {
+		entry["matcher"] = matcher
+	}
+	return append(entries, entry), true
 }
 
 func hasCommand(entries []any, command string) bool {
@@ -89,6 +355,53 @@ func hasCommand(entries []any, command string) bool {
 		}
 	}
 	return false
+}
+
+// ClaudeHooksConfigured verifies complete, current Firehose-owned Claude hook
+// coverage and a live forwarding executable.
+func ClaudeHooksConfigured(home string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	for _, name := range ClaudeHookEvents {
+		entries, _ := hooks[name].([]any)
+		found := false
+		for _, rawEntry := range entries {
+			entry, _ := rawEntry.(map[string]any)
+			if claudeHooksWithoutMatchers[name] {
+				if _, ok := entry["matcher"]; ok {
+					continue
+				}
+			} else if entry["matcher"] != ".*" {
+				continue
+			}
+			handlers, _ := entry["hooks"].([]any)
+			for _, rawHandler := range handlers {
+				handler, _ := rawHandler.(map[string]any)
+				command, _ := handler["command"].(string)
+				if strings.HasSuffix(command, " hook-forward --source claude-code") &&
+					handler["type"] == "command" &&
+					handler["async"] == true &&
+					commandAvailable(strings.TrimSuffix(command, " --source claude-code")) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // InstallCodex merges observational forwarding hooks into user-wide
@@ -220,4 +533,143 @@ func commandAvailable(command string) bool {
 // <home>/.config/opencode/plugin/ and returns its path.
 func InstallOpenCode(home, binPath string) (string, error) {
 	return opencode.WritePlugin(filepath.Join(home, ".config", "opencode", "plugin"), binPath)
+}
+
+// AntigravityHookEvents are the post-only Antigravity events Firehose
+// installs, of the five the parser maps (see adapters/antigravity.Manifest).
+//
+// PreToolUse and PreInvocation are deliberately never installed: Antigravity
+// hooks run in-band, so pre-events add latency before every tool call and
+// model invocation, and PreToolUse output is a permission *decision*
+// (allow/deny/ask) — the plan's decision-path STOP forbids putting Firehose
+// there. Stop IS installed: the fixture README records live proof across
+// three agy 1.1.10 runs that a hook producing no stdout (or a neutral
+// response) on Stop never blocked termination, forced continuation, or hung
+// the loop, and hook-forward's `{}` output carries no `decision` field —
+// which the Antigravity hooks docs define as permitting termination.
+var AntigravityHookEvents = []string{"PostToolUse", "PostInvocation", "Stop"}
+
+const antigravityGroupKey = "agent-firehose"
+
+func antigravityCommand(binPath, eventName string) string {
+	// Antigravity payloads carry no event-name field, so each registration
+	// tags its event explicitly via --event (see adapters/antigravity).
+	return quoteCommandPath(binPath, runtime.GOOS) +
+		" hook-forward --source antigravity --event " + eventName
+}
+
+// antigravityHookGroup builds the single Firehose-owned group merged into
+// hooks.json. Shape note (documented, see the Antigravity research doc and
+// adapters/antigravity/testdata/README.md): tool events take matcher+hooks
+// nesting, while PostInvocation and Stop entries are flat hook configs.
+func antigravityHookGroup(binPath string) map[string]any {
+	handler := func(eventName string) map[string]any {
+		return map[string]any{
+			"type":    "command",
+			"command": antigravityCommand(binPath, eventName),
+			"timeout": 10,
+		}
+	}
+	return map[string]any{
+		"enabled": true,
+		"PostToolUse": []any{map[string]any{
+			"matcher": "*",
+			"hooks":   []any{handler("PostToolUse")},
+		}},
+		"PostInvocation": []any{handler("PostInvocation")},
+		"Stop":           []any{handler("Stop")},
+	}
+}
+
+// InstallAntigravity merges the Firehose hook group into the shared
+// <home>/.gemini/config/hooks.json (used by the Antigravity IDE, CLI, and
+// plugins). Every existing key is preserved, the prior file is backed up
+// once, invalid JSON is refused, and repeated installation is a no-op.
+func InstallAntigravity(home, binPath string) error {
+	hooksPath := filepath.Join(home, ".gemini", "config", "hooks.json")
+	doc := map[string]any{}
+	original := []byte("{}")
+	existed := false
+	if data, err := os.ReadFile(hooksPath); err == nil {
+		existed = true
+		original = data
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("existing %s is not valid JSON, refusing to modify: %w", hooksPath, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	group := antigravityHookGroup(binPath)
+	if existed {
+		// json.Marshal sorts map keys, so byte equality is a faithful
+		// idempotency check for the Firehose-owned group.
+		current, currentErr := json.Marshal(doc[antigravityGroupKey])
+		desired, desiredErr := json.Marshal(group)
+		if currentErr == nil && desiredErr == nil && string(current) == string(desired) {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(hooksPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(hooksPath+".bak", original, 0o600); err != nil {
+			return fmt.Errorf("backup: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	doc[antigravityGroupKey] = group
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(hooksPath, append(out, '\n'), 0o600)
+}
+
+// AntigravityHooksConfigured verifies the Firehose-owned group carries all
+// three installed post-only events and a live forwarding executable.
+func AntigravityHooksConfigured(home string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".gemini", "config", "hooks.json"))
+	if err != nil {
+		return false
+	}
+	var doc map[string]any
+	if json.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	group, _ := doc[antigravityGroupKey].(map[string]any)
+	if group == nil || group["enabled"] != true {
+		return false
+	}
+	for _, name := range AntigravityHookEvents {
+		entries, _ := group[name].([]any)
+		found := false
+		for _, rawEntry := range entries {
+			entry, _ := rawEntry.(map[string]any)
+			// Tool events nest handlers under "hooks"; the other events are
+			// flat hook configs.
+			handlers := []any{rawEntry}
+			if nested, ok := entry["hooks"].([]any); ok {
+				handlers = nested
+			}
+			suffix := " hook-forward --source antigravity --event " + name
+			for _, rawHandler := range handlers {
+				handler, _ := rawHandler.(map[string]any)
+				command, _ := handler["command"].(string)
+				if strings.HasSuffix(command, suffix) &&
+					commandAvailable(strings.TrimSuffix(command, " --source antigravity --event "+name)) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

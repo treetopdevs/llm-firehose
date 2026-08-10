@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -98,6 +99,20 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail = "hooks merged into ~/.claude/settings.json (backup: settings.json.bak); restart running Claude Code sessions"
+	case "claude-otel":
+		addr := s.config().DaemonAddr
+		if addr == "" {
+			addr = cli.DefaultDaemonAddr
+		}
+		if err := cli.InstallClaudeOTel(s.home, addr, s.Environ); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, cli.ErrClaudeOTelConflict) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		detail = "supplemental Claude OTLP/HTTP JSON enabled for the local daemon; restart running Claude Code sessions"
 	case "opencode":
 		path, err := cli.InstallOpenCode(s.home, bin)
 		if err != nil {
@@ -111,8 +126,14 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail = "Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak); review and trust them in Codex /hooks, then start a fresh task"
+	case "antigravity":
+		if err := cli.InstallAntigravity(s.home, bin); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		detail = "Antigravity hooks merged into ~/.gemini/config/hooks.json (backup: hooks.json.bak); start a fresh agy conversation to pick them up"
 	default:
-		http.Error(w, fmt.Sprintf("unknown adapter %q (want claude-code, codex, or opencode)", adapter), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("unknown adapter %q (want antigravity, claude-code, claude-otel, codex, or opencode)", adapter), http.StatusNotFound)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "detail": detail})

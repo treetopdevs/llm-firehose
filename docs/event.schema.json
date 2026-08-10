@@ -51,13 +51,41 @@
       "type": "string",
       "description": "Source-native identifier grouping events within one agent turn. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
     },
+    "call_id": {
+      "type": "string",
+      "description": "Source-native tool/command correlation id (e.g. a Codex call_id or Claude Code tool_use_id). Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+    },
+    "upstream_event_id": {
+      "type": "string",
+      "description": "Stable identifier assigned to the native event record, when supplied. Added additively within schema version 1."
+    },
     "prompt_id": {
       "type": "string",
       "description": "Source-native prompt or interaction correlation identifier. Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
     },
-    "call_id": {
+    "message_id": {
       "type": "string",
-      "description": "Source-native tool/command correlation id (e.g. a Codex call_id or Claude Code tool_use_id). Present only when the source supplies one; adapters preserve it verbatim. Added additively within schema version 1."
+      "description": "Source-native user or assistant message identifier, when supplied. Added additively within schema version 1."
+    },
+    "parent_id": {
+      "type": "string",
+      "description": "Source-native parent record, message, or session identifier, when supplied. Added additively within schema version 1."
+    },
+    "request_id": {
+      "type": "string",
+      "description": "Source-native model or API request identifier, when supplied. Added additively within schema version 1."
+    },
+    "sequence": {
+      "type": "integer",
+      "description": "Native ordering value within the source's documented scope, when supplied. Added additively within schema version 1."
+    },
+    "transport": {
+      "type": "string",
+      "description": "Capture transport: hook, plugin, otel-http, otel-jsonl, durable-jsonl, or process. Added additively within schema version 1."
+    },
+    "source_version": {
+      "type": "string",
+      "description": "Upstream product or schema version when actually supplied or observed. Added additively within schema version 1."
     },
     "category": {
       "type": "string",

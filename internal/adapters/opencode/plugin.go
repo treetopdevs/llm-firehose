@@ -18,9 +18,20 @@ func pluginJS(binPath string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	mapped, err := json.Marshal(Manifest.Mapped)
+	if err != nil {
+		return nil, err
+	}
+	filtered, err := json.Marshal(Manifest.Filtered)
+	if err != nil {
+		return nil, err
+	}
 	return []byte(`// Agent Firehose forwarder — installed by ` + "`firehose install opencode`" + `.
 // Forwards OpenCode bus events to the local Agent Firehose spool.
 export const AgentFirehose = async ({ directory }) => {
+  const mappedTypes = new Set(` + string(mapped) + `);
+  const filteredTypes = new Set(` + string(filtered) + `);
+  const warnedUnknownTypes = new Set();
   const forward = (payload) => {
     try {
       const proc = Bun.spawn(` + string(command) + `, {
@@ -30,12 +41,32 @@ export const AgentFirehose = async ({ directory }) => {
       });
       proc.stdin.write(JSON.stringify(payload));
       proc.stdin.end();
+      return true;
     } catch (_) {
       // never break the agent because the viewer is missing
+      return false;
     }
   };
   return {
     event: async ({ event }) => {
+      const type = event?.type ?? "";
+      if (filteredTypes.has(type)) return;
+      if (type === "message.part.updated") {
+        const part = event?.properties?.part ?? {};
+        if (part.type === "text" || part.type === "reasoning" || part.type === "step-start") return;
+        if (part.type === "tool") {
+          const status = part?.state?.status ?? "";
+          if (status !== "completed" && status !== "error") return;
+        }
+      }
+      if (!mappedTypes.has(type)) {
+        if (warnedUnknownTypes.has(type)) return;
+        // Mark warned only when the spawn handed off without throwing, so a
+        // transiently missing forwarder does not permanently swallow the one
+        // drift observation this type gets per plugin run.
+        if (forward({ ...event, directory })) warnedUnknownTypes.add(type);
+        return;
+      }
       forward({ ...event, directory });
     },
   };

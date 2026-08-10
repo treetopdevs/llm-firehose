@@ -1,0 +1,1 @@
+{"id":"evt_fixture08","type":"message.updated","properties":{"sessionID":"ses_fixture01","info":{"id":"msg_fixture04","role":"user","sessionID":"ses_fixture01","time":{"created":1786151809122},"agent":"build","model":{"providerID":"openrouter","modelID":"mistralai/mistral-medium-3-5","variant":"high"}}},"directory":"/tmp/agent-firehose-opencode-fixture/work"}

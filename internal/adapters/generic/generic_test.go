@@ -41,6 +41,20 @@ func TestTraceIDPassthrough(t *testing.T) {
 	}
 }
 
+func TestCaptureMetadataPassthrough(t *testing.T) {
+	line := `{"time":"2026-07-02T10:00:00Z","source":"my-agent","category":"tool","upstream_event_id":"native-1","prompt_id":"p1","message_id":"m1","parent_id":"parent-1","request_id":"r1","sequence":7,"transport":"durable-jsonl","source_version":"3"}`
+	ev, err := Parse([]byte(line))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if ev.UpstreamEventID != "native-1" || ev.PromptID != "p1" ||
+		ev.MessageID != "m1" || ev.ParentID != "parent-1" ||
+		ev.RequestID != "r1" || ev.Sequence == nil || *ev.Sequence != 7 ||
+		ev.Transport != "durable-jsonl" || ev.SourceVersion != "3" {
+		t.Errorf("capture metadata lost: %+v", ev)
+	}
+}
+
 func TestCaptureOnlyEnvelopeDoesNotInventSourceTime(t *testing.T) {
 	line := `{"time":"2026-07-02T10:00:00Z","capture_time":"2026-07-02T10:00:00Z","source":"claude-code","category":"prompt"}`
 	ev, err := Parse([]byte(line))

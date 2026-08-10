@@ -28,6 +28,10 @@ Evolution rules:
   `prompt_id` — optional, preserves the source-native prompt or interaction
   correlation id — and
   `call_id` — optional, the source-native tool/command correlation id;
+  `upstream_event_id`, `message_id`, `parent_id`, and
+  `request_id` — optional source-native correlation identifiers; `sequence`
+  — an optional native ordering value within its documented source scope;
+  `transport` and `source_version` — optional capture provenance;
   `source_time` / `capture_time` — the source clock and Firehose observation
   clock; and `repo_id` / `worktree_id` — observable local Git identities —
   were added additively within version 1.)
@@ -105,6 +109,10 @@ An adapter maps a source's native payloads to canonical envelopes. Rules:
   while omitting prompt/message bodies and sensitive tool inputs/outputs.
 - An adapter may deliberately skip payloads that carry no signal; a skip is
   not an error.
+- Deep adapters publish a capability manifest declaring source schema,
+  transport, fidelity, mapped native events, and deliberately filtered
+  events. Unknown native types surface as bounded `adapter.unknown_event`
+  warnings rather than disappearing silently.
 
 Current mappings (details in [adapters.md](adapters.md)):
 
@@ -113,6 +121,7 @@ Current mappings (details in [adapters.md](adapters.md)):
 | `claude-code` | hooks → fail-silent `hook-forward --source claude-code` | lifecycle hooks per event |
 | `codex` | durable rollout tail + observational `codex-hook` forwarding | rollout messages plus installable lifecycle/tool hooks |
 | `opencode` | plugin → fail-silent `hook-forward --source opencode` | bus events |
+| `antigravity` | hooks → fail-silent `hook-forward --source antigravity --event <name>` | post-only lifecycle/tool hooks; payloads carry no event-name field, so the forwarder tags each registration |
 | `generic` | `firehose ingest` / `emit --source generic` | envelope passthrough or meta-wrap |
 | `procwatch` | engine polls `ps` | agent process lifecycle |
 
@@ -130,13 +139,15 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /events?limit=N` | recent events, oldest first (default 500) |
 | `GET /events/stream` | live feed, Server-Sent Events (`data: <envelope JSON>`) |
 | `POST /events` | ingest NDJSON envelopes; returns `{ingested: n}` |
-| `POST /emit?source=S` | normalize one raw source payload; 204 on success |
+| `POST /emit?source=S` | normalize one raw source payload; 204 on success. Additive optional `event=<name>` parameter (schema v1): the native event name for sources whose payloads carry none (antigravity); other sources ignore it |
+| `POST /v1/logs` | opt-in loopback OTLP/HTTP JSON logs; `{}` on accepted batch |
+| `POST /v1/metrics` | opt-in loopback OTLP/HTTP JSON metrics; `{}` on accepted batch |
 | `GET /sessions` | session summaries (derived index), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
 | `GET /sessions/{id}` | all events for one session, oldest first |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
-| `GET /doctor` | adapter wiring checks `[{name, ok, detail}]` |
-| `POST /install/{adapter}` | wire an adapter (claude-code \| codex \| opencode); `{ok, detail}` |
+| `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
+| `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 
 Session, trace, and file queries are served from an in-memory index derived
@@ -151,6 +162,8 @@ CORS: browser origins are allowlisted to the desktop shell
 Requests carrying any other browser origin are rejected with `403` — a random
 website must not read or write the local event feed. Non-browser clients are
 unaffected. The daemon refuses to bind a non-loopback listen address.
+The OTLP endpoints reject every browser `Origin`, accept only bounded
+`application/json` bodies, and never retain raw OTLP or resource attributes.
 
 Compatibility rule for clients: see [compatibility.md](compatibility.md).
 

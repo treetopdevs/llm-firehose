@@ -1,0 +1,1 @@
+{"id":"evt_fixture13","type":"message.part.updated","properties":{"sessionID":"ses_fixture01","part":{"type":"text","text":"SECRET-TEXT-MARKER","messageID":"msg_fixture04","sessionID":"ses_fixture01","id":"prt_fixture05"},"time":1786151809128},"directory":"/tmp/agent-firehose-opencode-fixture/work"}

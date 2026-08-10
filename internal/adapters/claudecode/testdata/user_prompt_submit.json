@@ -1,9 +1,1 @@
-{
-  "session_id": "claude-fixture-session",
-  "transcript_path": "/tmp/agent-firehose-hook-fixture/transcript.jsonl",
-  "cwd": "/tmp/agent-firehose-hook-fixture/work",
-  "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
-  "permission_mode": "bypassPermissions",
-  "hook_event_name": "UserPromptSubmit",
-  "prompt": "[sanitized prompt body]"
-}
+{"session_id":"session-fixture","transcript_path":"/tmp/agent-firehose-fixture/transcript.jsonl","cwd":"/tmp/agent-firehose-fixture/work","prompt_id":"prompt-fixture","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"SECRET-PROMPT-MARKER","session_title":"SECRET-TITLE-MARKER"}

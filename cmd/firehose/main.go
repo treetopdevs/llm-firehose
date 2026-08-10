@@ -34,10 +34,11 @@ Usage:
   firehose daemon [--addr A]   run the capture engine and its local API
   firehose status              report whether the daemon is running
   firehose emit --source S     normalize one payload from stdin (via daemon when running)
+                               (--event NAME names the hook event for antigravity)
   firehose ingest              stream NDJSON events from stdin into the spool
   firehose export [-o FILE]    dump captured events as NDJSON (default stdout)
   firehose hook-forward        fail-silent adapter hook capture
-  firehose install AGENT       wire an adapter (claude-code | codex | opencode)
+  firehose install AGENT       wire an adapter (claude-code | claude-otel | codex | opencode | antigravity)
   firehose doctor              validate adapter wiring
   firehose version             print version
 `
@@ -78,9 +79,10 @@ func main() {
 		}
 	case "emit":
 		fs := flag.NewFlagSet("emit", flag.ExitOnError)
-		source := fs.String("source", "generic", "source adapter (claude-code | codex-hook | opencode | generic)")
+		source := fs.String("source", "generic", "source adapter (claude-code | codex-hook | opencode | antigravity | generic)")
+		eventName := fs.String("event", "", "native hook event name (required for antigravity, ignored otherwise)")
 		fs.Parse(args)
-		fatalIf(cli.Emit(cfg, *source, os.Stdin))
+		fatalIf(cli.EmitNamed(cfg, *source, *eventName, os.Stdin))
 	case "ingest":
 		n, err := cli.Ingest(cfg, os.Stdin)
 		fatalIf(err)
@@ -101,7 +103,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "exported %d events\n", n)
 	case "install":
 		if len(args) != 1 {
-			fatal(fmt.Errorf("usage: firehose install <claude-code|codex|opencode>"))
+			fatal(fmt.Errorf("usage: firehose install <claude-code|claude-otel|codex|opencode|antigravity>"))
 		}
 		bin, err := os.Executable()
 		if err != nil {
@@ -112,6 +114,14 @@ func main() {
 			fatalIf(cli.InstallClaudeCode(home, bin))
 			fmt.Println("✓ hooks merged into ~/.claude/settings.json (backup: settings.json.bak)")
 			fmt.Println("  restart running Claude Code sessions to pick them up")
+		case "claude-otel":
+			addr := cfg.DaemonAddr
+			if addr == "" {
+				addr = cli.DefaultDaemonAddr
+			}
+			fatalIf(cli.InstallClaudeOTel(home, addr, os.Environ()))
+			fmt.Println("✓ supplemental Claude OTLP/HTTP JSON enabled for the local daemon")
+			fmt.Println("  restart running Claude Code sessions to pick it up")
 		case "opencode":
 			path, err := cli.InstallOpenCode(home, bin)
 			fatalIf(err)
@@ -121,8 +131,12 @@ func main() {
 			fatalIf(cli.InstallCodex(home, bin))
 			fmt.Println("✓ Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak)")
 			fmt.Println("  open /hooks in Codex to review and trust them, then start a fresh task")
+		case "antigravity":
+			fatalIf(cli.InstallAntigravity(home, bin))
+			fmt.Println("✓ Antigravity hooks merged into ~/.gemini/config/hooks.json (backup: hooks.json.bak)")
+			fmt.Println("  post-only events (PostToolUse, PostInvocation, Stop); start a fresh agy conversation")
 		default:
-			fatal(fmt.Errorf("unknown adapter %q (want claude-code, codex, or opencode)", args[0]))
+			fatal(fmt.Errorf("unknown adapter %q (want claude-code, claude-otel, codex, opencode, or antigravity)", args[0]))
 		}
 	case "doctor":
 		bad := 0

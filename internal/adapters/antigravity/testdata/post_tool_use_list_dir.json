@@ -1,0 +1,17 @@
+{
+ "artifactDirectoryPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+ "conversationId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+ "error": "",
+ "modelName": "gemini-3-flash-agent",
+ "stepIdx": 6,
+ "toolCall": {
+  "args": {
+   "DirectoryPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+   "toolAction": "Listing directory content",
+   "toolSummary": "SECRET-TOOLSUMMARY-MARKER"
+  },
+  "name": "list_dir"
+ },
+ "transcriptPath": "/tmp/agent-firehose-agy-fixture/brain/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb/.system_generated/logs/transcript_full.jsonl",
+ "workspacePaths": []
+}

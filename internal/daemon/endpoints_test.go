@@ -19,7 +19,11 @@ import (
 
 func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httptest.Server {
 	t.Helper()
-	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	srv := New(cfg, home, "test-version")
+	// Hermetic: the host running the tests may itself export Claude
+	// telemetry variables, which must not leak into install decisions.
+	srv.Environ = []string{}
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -327,6 +331,18 @@ func TestInstallEndpoint(t *testing.T) {
 		t.Fatalf("desktop install did not use the sidecar-compatible forwarder: %s", settings)
 	}
 
+	otel, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-otel: %v", err)
+	}
+	otel.Body.Close()
+	if otel.StatusCode != http.StatusOK {
+		t.Fatalf("Claude OTel install status = %d, want 200", otel.StatusCode)
+	}
+	if !cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+		t.Fatal("desktop Claude OTel install did not configure the local receiver")
+	}
+
 	unknown, err := http.Post(ts.URL+"/install/emacs", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST /install/emacs: %v", err)
@@ -334,6 +350,46 @@ func TestInstallEndpoint(t *testing.T) {
 	unknown.Body.Close()
 	if unknown.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown adapter status = %d, want 404", unknown.StatusCode)
+	}
+}
+
+func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	srv := New(cfg, home, "test-version")
+	srv.Environ = []string{"PATH=/usr/bin", "CLAUDE_CODE_ENABLE_TELEMETRY=1"}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-otel: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 when the environment already configures telemetry", resp.StatusCode)
+	}
+	if cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+		t.Fatal("refused install still configured the local receiver")
+	}
+}
+
+func TestInstallEndpointClaudeOTelNonConflictFailureIs500(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DaemonAddr = "example.com:80" // non-loopback: an install failure that is not a settings conflict
+	home := t.TempDir()
+	srv := New(cfg, home, "test-version")
+	srv.Environ = []string{"PATH=/usr/bin"}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/claude-otel: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for a non-conflict installer failure", resp.StatusCode)
 	}
 }
 
@@ -417,5 +473,78 @@ func TestExportEndpoint(t *testing.T) {
 	}
 	if n != 4 {
 		t.Errorf("exported %d lines, want 4", n)
+	}
+}
+
+func TestInstallEndpointAntigravity(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	ts := httptestNewServerWithHome(t, cfg, home)
+
+	resp, err := http.Post(ts.URL+"/install/antigravity", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /install/antigravity: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got struct {
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.OK || !strings.Contains(got.Detail, ".gemini/config/hooks.json") {
+		t.Fatalf("install response = %+v", got)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".gemini", "config", "hooks.json"))
+	if err != nil {
+		t.Fatalf("hooks not installed: %v", err)
+	}
+	// The desktop sidecar path must carry the event name per registration:
+	// Antigravity payloads name no event themselves.
+	for _, name := range []string{"PostToolUse", "PostInvocation", "Stop"} {
+		if !strings.Contains(string(data), "hook-forward --source antigravity --event "+name) {
+			t.Errorf("missing %s forwarder in %s", name, data)
+		}
+	}
+	for _, name := range []string{"PreToolUse", "PreInvocation"} {
+		if strings.Contains(string(data), "--event "+name) {
+			t.Errorf("pre-event %s must never be installed: %s", name, data)
+		}
+	}
+}
+
+func TestEmitEndpointAntigravityUsesAdditiveEventParameter(t *testing.T) {
+	cfg := testConfig(t)
+	ts := testServer(t, cfg)
+	raw, err := os.ReadFile(filepath.Join("..", "adapters", "antigravity", "testdata", "post_tool_use_list_dir.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(ts.URL+"/emit?source=antigravity&event=PostToolUse", "application/json", strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatalf("POST /emit: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	if len(evs) != 1 || evs[0].Source != "antigravity" || evs[0].Name != "PostToolUse:list_dir" {
+		t.Fatalf("emit not normalized: %+v", evs)
+	}
+
+	// Without the event name the payload cannot be attributed; the daemon
+	// rejects it instead of guessing.
+	missing, err := http.Post(ts.URL+"/emit?source=antigravity", "application/json", strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatalf("POST /emit without event: %v", err)
+	}
+	missing.Body.Close()
+	if missing.StatusCode != http.StatusBadRequest {
+		t.Errorf("status without event = %d, want 400", missing.StatusCode)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -46,6 +47,10 @@ type Server struct {
 	// ProcLister supplies the process table for the agent process watcher;
 	// injectable for tests.
 	ProcLister procwatch.Lister
+
+	// Environ is the process environment consulted by install handlers;
+	// injectable for tests so host telemetry variables cannot leak in.
+	Environ []string
 }
 
 func (s *Server) launch(run func()) {
@@ -87,6 +92,7 @@ func New(cfg cli.Config, home, version string) *Server {
 		WatchInterval: 250 * time.Millisecond,
 		ProcInterval:  2 * time.Second,
 		ProcLister:    procwatch.PSLister{},
+		Environ:       os.Environ(),
 	}
 }
 
@@ -134,6 +140,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events/stream", s.handleStream)
 	mux.HandleFunc("POST /events", s.handleIngest)
 	mux.HandleFunc("POST /emit", s.handleEmit)
+	mux.HandleFunc("POST /v1/logs", s.handleOTLPLogs)
+	mux.HandleFunc("POST /v1/metrics", s.handleOTLPMetrics)
 	mux.HandleFunc("GET /sessions", s.handleSessions)
 	mux.HandleFunc("GET /sessions/{id}", s.handleSessionByID)
 	mux.HandleFunc("GET /traces/{id}", s.handleTraceByID)
@@ -327,14 +335,18 @@ func (s *Server) handleEmit(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "generic"
 	}
+	// `event` is an additive, optional parameter: sources whose payloads
+	// carry no event-name field (antigravity) supply the native hook event
+	// name here; every other source ignores it.
+	eventName := r.URL.Query().Get("event")
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// EmitLocal, never Emit: the daemon is the engine and must not proxy
-	// emits back to its own address.
-	if err := cli.EmitLocal(s.config(), source, raw); err != nil {
+	// EmitLocalNamed, never Emit: the daemon is the engine and must not
+	// proxy emits back to its own address.
+	if err := cli.EmitLocalNamed(s.config(), source, eventName, raw); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
