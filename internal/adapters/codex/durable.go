@@ -177,3 +177,83 @@ func parseWarning(state ParserState, err error) event.Event {
 		},
 	}
 }
+
+func (w *DurableWatcher) save() error {
+	w.state.SavedAt = time.Now().UTC()
+	data, err := json.MarshalIndent(w.state, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(w.StatePath), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(w.StatePath), ".codex-cursors-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { os.Remove(tmpPath) }
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpPath, w.StatePath); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+func baseline(path string) (*fileState, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	parser := NewFileParser()
+	reader := bufio.NewReader(f)
+	var offset int64
+	for {
+		line, err := reader.ReadBytes('\n')
+		if errors.Is(err, io.EOF) {
+			break // leave a partial final line for the first poll
+		}
+		if err != nil {
+			return nil, err
+		}
+		offset += int64(len(line))
+		line = bytes.TrimSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		_, _ = parser.ParseLine(line)
+	}
+	// Historical events are not imported, but their parser context is needed
+	// to correlate lines appended after activation.
+	return &fileState{offset: offset, parser: parser}, nil
+}
+
+func scanRollouts(root string) []string {
+	var paths []string
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".jsonl") {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	return paths
+}
