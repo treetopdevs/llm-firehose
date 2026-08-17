@@ -17,16 +17,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"agentfirehose/internal/adapters/antigravity"
-	"agentfirehose/internal/adapters/claudecode"
 	"agentfirehose/internal/adapters/codexhook"
 	"agentfirehose/internal/adapters/generic"
-	"agentfirehose/internal/adapters/opencode"
+	"agentfirehose/internal/adapters/push"
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/client"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
-	"agentfirehose/internal/workspace"
 )
 
 // DefaultDaemonAddr is where the local daemon listens unless configured.
@@ -154,44 +152,17 @@ func EmitLocal(cfg Config, source string, raw []byte) error {
 // EmitLocalNamed is EmitLocal with the explicit native event name required by
 // sources whose payloads carry none (see EmitNamed).
 func EmitLocalNamed(cfg Config, source, eventName string, raw []byte) error {
-	var ev *event.Event
-	switch source {
-	case antigravity.Source:
-		parsed, err := antigravity.Parse(eventName, raw)
-		if err != nil {
-			return err
-		}
-		ev = parsed
-	case claudecode.Source:
-		parsed, err := claudecode.Parse(raw)
-		if err != nil {
-			return err
-		}
-		ev = parsed // nil = deliberately filtered
-	case opencode.Source:
-		parsed, err := opencode.Parse(raw)
-		if err != nil {
-			return err
-		}
-		ev = parsed // nil = skipped
-	case codexhook.Source:
-		parsed, err := codexhook.Parse(raw)
-		if err != nil {
-			return err
-		}
-		ev = &parsed
-	default:
-		parsed, err := generic.Parse(raw)
-		if err != nil {
-			return err
-		}
-		ev = &parsed
+	ev, err := push.Parse(source, eventName, raw)
+	if err != nil {
+		return err
 	}
 	if ev == nil {
 		return nil
 	}
-	redacted := privacy.Redact(workspace.Enrich(*ev), cfg.mode())
-	_, err := spool.NewWriter(cfg.SpoolDir).Append(redacted)
+	_, err = capture.AdmitOnce(context.Background(), capture.OneShotOptions{
+		SpoolDir: cfg.SpoolDir,
+		Policy:   cfg.mode(),
+	}, *ev)
 	return err
 }
 
@@ -257,14 +228,15 @@ func reportHookCaptureError(cfg Config, source string, captureErr error) {
 			"status":         "error",
 		},
 	}
-	_, _ = spool.NewWriter(cfg.SpoolDir).Append(privacy.Redact(ev, cfg.mode()))
+	_, _ = capture.AdmitOnce(context.Background(), capture.OneShotOptions{
+		SpoolDir: cfg.SpoolDir,
+		Policy:   cfg.mode(),
+	}, ev)
 }
 
 // Ingest streams NDJSON lines from r into the spool, returning how many
 // events were written. Unparseable lines are counted as parse-error events.
 func Ingest(cfg Config, r io.Reader) (int, error) {
-	w := spool.NewWriter(cfg.SpoolDir)
-	mode := cfg.mode()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	n := 0
@@ -277,7 +249,10 @@ func Ingest(cfg Config, r io.Reader) (int, error) {
 		if err != nil {
 			continue
 		}
-		if _, err := w.Append(privacy.Redact(workspace.Enrich(ev), mode)); err != nil {
+		if _, err := capture.AdmitOnce(context.Background(), capture.OneShotOptions{
+			SpoolDir: cfg.SpoolDir,
+			Policy:   cfg.mode(),
+		}, ev); err != nil {
 			return n, err
 		}
 		n++
