@@ -4,9 +4,13 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,5 +168,62 @@ func TestStreamClosesOnCancel(t *testing.T) {
 		case <-deadline:
 			t.Fatal("stream channel not closed after cancel")
 		}
+	}
+}
+
+func TestFeedReconcilesHistoryBeforeReplacingClosedStream(t *testing.T) {
+	var histories, streams atomic.Int32
+	e1 := event.Event{ID: "history-1", Time: time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC), Source: "generic", Category: event.CategoryMeta}
+	e2 := event.Event{ID: "gap-2", Time: e1.Time.Add(time.Second), Source: "generic", Category: event.CategoryMeta}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			call := histories.Add(1)
+			if call == 1 {
+				_ = json.NewEncoder(w).Encode([]event.Event{e1})
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]event.Event{e1, e2})
+		case "/events/stream":
+			call := streams.Add(1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			if call == 1 {
+				data, _ := json.Marshal(e2)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				return
+			}
+			<-r.Context().Done()
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed, history, err := client.New(server.URL).Feed(ctx, 500, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].ID != e1.ID {
+		t.Fatalf("initial history = %+v", history)
+	}
+	select {
+	case got := <-feed:
+		if got.ID != e2.ID {
+			t.Fatalf("live event = %+v", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("first stream event missing")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for histories.Load() < 2 || streams.Load() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("feed did not reconcile and resubscribe: histories=%d streams=%d", histories.Load(), streams.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case duplicate := <-feed:
+		t.Fatalf("reconciliation duplicated a buffered id: %+v", duplicate)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

@@ -34,6 +34,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.run.running = true
 	e.run.mu.Unlock()
 	defer func() {
+		e.closeSubscriptions(nil)
 		e.run.mu.Lock()
 		e.run.running = false
 		e.run.mu.Unlock()

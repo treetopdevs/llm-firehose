@@ -131,7 +131,12 @@ export const install = (adapter: string) =>
 export function stream(onEvent: (ev: FirehoseEvent) => void, onStateChange?: (open: boolean) => void): () => void {
   const es = new EventSource(`${DAEMON_URL}/events/stream`);
   es.onopen = () => onStateChange?.(true);
-  es.onerror = () => onStateChange?.(false);
+  es.onerror = () => {
+    // EventSource otherwise reconnects by itself without first reconciling
+    // canonical history. The connector owns that recovery sequence.
+    es.close();
+    onStateChange?.(false);
+  };
   es.onmessage = (msg) => {
     try {
       onEvent(JSON.parse(msg.data) as FirehoseEvent);

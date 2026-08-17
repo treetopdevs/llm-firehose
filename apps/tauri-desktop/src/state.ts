@@ -76,6 +76,7 @@ function matches(ev: FirehoseEvent, f: Filter): boolean {
 
 export class FeedState {
   private buf: FirehoseEvent[] = [];
+  private seenIds = new Set<string>();
   private frozen: FirehoseEvent[] | null = null;
   private filter: Filter = {};
   private seenSources: string[] = [];
@@ -85,9 +86,14 @@ export class FeedState {
   constructor(private cap = 5000) {}
 
   push(ev: FirehoseEvent): void {
+    if (ev.id && this.seenIds.has(ev.id)) return;
+    if (ev.id) this.seenIds.add(ev.id);
     this.buf.push(ev);
     if (this.buf.length > this.cap) {
-      this.buf.splice(0, this.buf.length - this.cap);
+      const removed = this.buf.splice(0, this.buf.length - this.cap);
+      for (const old of removed) {
+        if (old.id) this.seenIds.delete(old.id);
+      }
     }
     if (ev.source && !this.seenSources.includes(ev.source)) {
       this.seenSources.push(ev.source);

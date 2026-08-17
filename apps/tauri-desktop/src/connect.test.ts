@@ -48,4 +48,30 @@ describe("createConnector", () => {
     expect(streamOpens).toBe(1);
     expect(statuses.some((s) => s.includes("schema v1"))).toBe(true);
   });
+
+	test("stream interruption reloads durable history before opening a replacement", async () => {
+		const order: string[] = [];
+		const states: Array<(open: boolean) => void> = [];
+		const connector = createConnector({
+			health: async () => ({ status: "ok", version: "test", schema_version: 1 }),
+			recent: async (limit) => {
+				order.push(`recent:${limit}`);
+				return [];
+			},
+			stream: (_onEvent, onOpenChange) => {
+				order.push("stream");
+				states.push(onOpenChange);
+				return () => order.push("stop");
+			},
+			checkCompat: () => ({ compatible: true }),
+			clientSchemaVersion: 1,
+			onEvent: () => {},
+			setStatus: () => {},
+		});
+
+		await connector.connect();
+		states[0](false);
+		await connector.connect();
+		expect(order).toEqual(["recent:500", "stream", "stop", "recent:10000", "stream"]);
+	});
 });

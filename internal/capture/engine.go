@@ -45,6 +45,8 @@ type Engine struct {
 	project  func(event.Event) error
 	tailer   *spool.Tailer
 	run      runtimeState
+	subMu    sync.Mutex
+	subs     map[*subscriber]struct{}
 }
 
 // New constructs an engine over the configured canonical spool.
@@ -68,6 +70,7 @@ func New(options Options) (*Engine, error) {
 		policy:   options.Policy,
 		index:    projection,
 		tailer:   tailer,
+		subs:     make(map[*subscriber]struct{}),
 	}
 	engine.project = engine.applyProjection
 	return engine, nil

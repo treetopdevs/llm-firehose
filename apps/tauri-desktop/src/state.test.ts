@@ -111,6 +111,16 @@ describe("coalesce", () => {
 });
 
 describe("FeedState", () => {
+	test("reconciliation does not duplicate an id already in the bounded buffer", () => {
+		const feed = new FeedState(3);
+		feed.push(ev({ id: "same", name: "first" }));
+		feed.pause();
+		feed.push(ev({ id: "same", name: "replayed" }));
+		expect(feed.rows()).toHaveLength(1);
+		expect(feed.rows()[0].event.name).toBe("first");
+		expect(feed.unread).toBe(0);
+	})
+
   test("bounded buffer drops oldest", () => {
     const feed = new FeedState(3);
     for (let i = 0; i < 5; i++) {

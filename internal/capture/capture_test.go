@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -296,5 +298,90 @@ func TestOneShotWriteReconcilesExactlyOnceIntoRunningEngine(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestLiveSubscriptionReceivesSerializedAdmissionsInOrder(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscription := engine.Subscribe(ctx)
+	for _, id := range []string{"ordered-1", "ordered-2", "ordered-3"} {
+		ev := observation()
+		ev.ID = id
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"ordered-1", "ordered-2", "ordered-3"} {
+		select {
+		case got := <-subscription.Events:
+			if got.ID != id {
+				t.Fatalf("live order got %q, want %q", got.ID, id)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("subscription did not receive %q", id)
+		}
+	}
+}
+
+func TestSlowSubscriptionTerminatesWithoutBlockingCapture(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := engine.Subscribe(context.Background())
+	healthy := engine.Subscribe(context.Background())
+	for i := range 300 {
+		ev := observation()
+		ev.ID = fmt.Sprintf("overflow-%03d", i)
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatalf("Admit %d: %v", i, err)
+		}
+		select {
+		case <-healthy.Events:
+		case <-time.After(time.Second):
+			t.Fatalf("healthy subscriber blocked at %d", i)
+		}
+	}
+	select {
+	case err := <-slow.Done:
+		if !errors.Is(err, capture.ErrSubscriptionOverflow) {
+			t.Fatalf("slow subscription ended with %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slow subscription was not terminated on overflow")
+	}
+
+	ev := observation()
+	ev.ID = "after-overflow"
+	if _, err := engine.Admit(context.Background(), ev); err != nil {
+		t.Fatalf("capture unhealthy after overflow: %v", err)
+	}
+}
+
+func TestLiveSubscriptionSuppressesStableIDReplay(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription := engine.Subscribe(context.Background())
+	ev := observation()
+	ev.ID = "live-replay"
+	for range 2 {
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := <-subscription.Events; got.ID != ev.ID {
+		t.Fatalf("first live event = %+v", got)
+	}
+	select {
+	case duplicate := <-subscription.Events:
+		t.Fatalf("stable replay was projected twice: %+v", duplicate)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

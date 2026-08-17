@@ -24,6 +24,8 @@ type Client struct {
 	stream  *http.Client // no overall timeout; streams live on request context
 }
 
+const feedSeenCapacity = 20000
+
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
@@ -138,4 +140,97 @@ func (c *Client) Stream(ctx context.Context) (<-chan event.Event, error) {
 		}
 	}()
 	return ch, nil
+}
+
+// Feed loads durable history, consumes one live stream, and on interruption
+// reloads durable history before opening a replacement stream. Exact stable
+// ids already inside the bounded presentation window are suppressed.
+func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-chan event.Event, []event.Event, error) {
+	history, err := c.Recent(ctx, initialLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	seen := newBoundedIDs(feedSeenCapacity)
+	history = deduplicate(history, seen)
+	stream, err := c.Stream(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make(chan event.Event, 256)
+	go func() {
+		defer close(out)
+		current := stream
+		for {
+			for ev := range current {
+				if ev.ID != "" && !seen.add(ev.ID) {
+					continue
+				}
+				select {
+				case out <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+
+			for {
+				recovered, historyErr := c.Recent(ctx, reconcileLimit)
+				if historyErr == nil {
+					for _, ev := range deduplicate(recovered, seen) {
+						select {
+						case out <- ev:
+						case <-ctx.Done():
+							return
+						}
+					}
+					current, historyErr = c.Stream(ctx)
+					if historyErr == nil {
+						break
+					}
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(250 * time.Millisecond):
+				}
+			}
+		}
+	}()
+	return out, history, nil
+}
+
+type boundedIDs struct {
+	capacity int
+	set      map[string]bool
+	order    []string
+}
+
+func newBoundedIDs(capacity int) *boundedIDs {
+	return &boundedIDs{capacity: capacity, set: make(map[string]bool)}
+}
+
+func (s *boundedIDs) add(id string) bool {
+	if s.set[id] {
+		return false
+	}
+	s.set[id] = true
+	s.order = append(s.order, id)
+	if len(s.order) > s.capacity {
+		delete(s.set, s.order[0])
+		s.order = s.order[1:]
+	}
+	return true
+}
+
+func deduplicate(events []event.Event, seen *boundedIDs) []event.Event {
+	out := make([]event.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.ID != "" && !seen.add(ev.ID) {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
 }

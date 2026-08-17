@@ -227,11 +227,7 @@ func viewFeed(ctx context.Context, cfg cfgType) (<-chan event.Event, []event.Eve
 					schema, event.CurrentSchemaVersion,
 				)
 			}
-			stream, err := c.Stream(ctx)
-			if err != nil {
-				return nil, nil, err
-			}
-			history, err := c.Recent(ctx, 500)
+			stream, history, err := c.Feed(ctx, 500, 10000)
 			if err != nil {
 				return nil, nil, err
 			}

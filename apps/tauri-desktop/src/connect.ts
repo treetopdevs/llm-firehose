@@ -36,6 +36,7 @@ export function normalizeSchemaVersion(raw: number | undefined): number {
 export function createConnector(deps: ConnectDeps): Connector {
   let stopStream: (() => void) | null = null;
   let inFlight: Promise<void> | null = null;
+  let reconnecting = false;
 
   async function attempt(): Promise<void> {
     try {
@@ -56,7 +57,7 @@ export function createConnector(deps: ConnectDeps): Connector {
       });
 
       if (!stopStream) {
-        const history = await deps.recent(500);
+        const history = await deps.recent(reconnecting ? 10000 : 500);
         for (const ev of history) {
           deps.onEvent(ev);
         }
@@ -68,6 +69,10 @@ export function createConnector(deps: ConnectDeps): Connector {
             });
             deps.onStreamOpen?.();
           } else {
+			const stop = stopStream;
+			stopStream = null;
+			reconnecting = true;
+			stop?.();
             deps.setStatus({
               kind: "warn",
               text: "stream interrupted — reconnecting…",
