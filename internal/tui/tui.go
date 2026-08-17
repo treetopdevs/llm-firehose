@@ -8,13 +8,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/index"
 	"agentfirehose/internal/store"
 )
 
 const (
-	maxEvents      = 20000
-	coalesceWindow = 5 * time.Second
+	maxEvents       = 20000
+	coalesceWindow  = 5 * time.Second
+	stateNeedsInput = "needs_input"
 )
 
 // EventMsg delivers one new event into the model.
@@ -22,6 +22,20 @@ type EventMsg struct{ Event event.Event }
 
 // ExportFunc writes events somewhere and returns a description of where.
 type ExportFunc func([]event.Event) (string, error)
+
+// SessionAttention is the engine-owned Projection state needed by the view.
+type SessionAttention struct {
+	ID     string
+	State  string
+	Since  time.Time
+	Reason string
+}
+
+type attention struct {
+	State  string
+	Since  time.Time
+	Reason string
+}
 
 // Model is the Bubble Tea model for the firehose view.
 type Model struct {
@@ -45,7 +59,7 @@ type Model struct {
 	height   int
 	ExportFn ExportFunc
 	// attention tracks derived session state for the NEEDS YOU indicator.
-	attention map[string]index.Attention
+	attention map[string]attention
 }
 
 var categoryCycle = []event.Category{
@@ -55,7 +69,7 @@ var categoryCycle = []event.Category{
 }
 
 func NewModel(ch <-chan event.Event) Model {
-	return Model{ch: ch, cursor: -1, width: 80, height: 24, attention: map[string]index.Attention{}}
+	return Model{ch: ch, cursor: -1, width: 80, height: 24, attention: map[string]attention{}}
 }
 
 // Preload seeds the model with historical events (spool replay) so the
@@ -63,14 +77,27 @@ func NewModel(ch <-chan event.Event) Model {
 func (m Model) Preload(evs []event.Event) Model {
 	m.events = append(m.events, evs...)
 	m.total += len(evs)
-	if m.attention == nil {
-		m.attention = map[string]index.Attention{}
-	}
 	for _, ev := range evs {
 		if !hasSource(m.sources, ev.Source) {
 			m.sources = append(m.sources, ev.Source)
 		}
-		m.noteAttention(ev)
+	}
+	return m
+}
+
+// PreloadSessions seeds attention from the Capture Engine Projection. Durable
+// history is presentation data and is not folded a second time by the view.
+func (m Model) PreloadSessions(sessions []SessionAttention) Model {
+	if m.attention == nil {
+		m.attention = map[string]attention{}
+	}
+	for _, session := range sessions {
+		if session.ID == "" || session.State != stateNeedsInput {
+			continue
+		}
+		m.attention[session.ID] = attention{
+			State: session.State, Since: session.Since, Reason: session.Reason,
+		}
 	}
 	return m
 }
@@ -242,33 +269,30 @@ func (m Model) visibleRows() []store.Row {
 	return store.Coalesce(m.filteredEvents(), coalesceWindow)
 }
 
-// noteAttention folds one event into the per-session attention map.
-// Synthetic firehose transitions are ignored — the TUI derives state itself
-// so daemon-optional mode stays consistent. Entries are retained only while
-// they affect the NEEDS YOU indicator.
+// noteAttention applies engine-owned, live-only Projection transitions.
 func (m Model) noteAttention(ev event.Event) {
 	if ev.SessionID == "" || m.attention == nil {
 		return
 	}
-	if ev.Source == index.SourceFirehose && ev.Name == index.NameStateTransition {
+	if ev.Source != "firehose" || ev.Name != "state.transition" {
 		return
 	}
-	prev, ok := m.attention[ev.SessionID]
-	if !ok {
-		prev = index.Attention{State: index.StateWorking, Since: ev.Time}
-	}
-	next, _ := index.Transition(prev, ev)
-	if next.State == index.StateNeedsInput {
-		m.attention[ev.SessionID] = next
+	state, _ := ev.Payload["state"].(string)
+	if state != stateNeedsInput {
+		delete(m.attention, ev.SessionID)
 		return
 	}
-	delete(m.attention, ev.SessionID)
+	reason, _ := ev.Payload["reason"].(string)
+	if reason == "" {
+		reason = ev.Summary
+	}
+	m.attention[ev.SessionID] = attention{State: state, Since: ev.Time, Reason: reason}
 }
 
 func (m Model) needsYouCount() int {
 	n := 0
 	for _, a := range m.attention {
-		if a.State == index.StateNeedsInput {
+		if a.State == stateNeedsInput {
 			n++
 		}
 	}
@@ -276,10 +300,10 @@ func (m Model) needsYouCount() int {
 }
 
 func (m Model) oldestNeedsYouReason() string {
-	var best index.Attention
+	var best attention
 	found := false
 	for _, a := range m.attention {
-		if a.State != index.StateNeedsInput {
+		if a.State != stateNeedsInput {
 			continue
 		}
 		if !found || a.Since.Before(best.Since) {

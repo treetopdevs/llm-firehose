@@ -86,6 +86,22 @@ func TestRecent(t *testing.T) {
 	}
 }
 
+func TestSessionsReturnsProjectedAttention(t *testing.T) {
+	ts, _ := testDaemon(t)
+	c := client.New(ts.URL)
+	payload := `{"id":"permission-1","time":"2026-08-17T12:00:00Z","source":"claude-code","category":"permission","session_id":"waiting","summary":"approve Bash"}`
+	if err := c.Emit(t.Context(), "generic", strings.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := c.Sessions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "waiting" || sessions[0].State != "needs_input" {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+}
+
 func TestEmitNormalizesThroughDaemon(t *testing.T) {
 	ts, cfg := testDaemon(t)
 	c := client.New(ts.URL)

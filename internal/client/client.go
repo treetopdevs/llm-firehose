@@ -41,6 +41,14 @@ type Health struct {
 	SchemaVersion int    `json:"schema_version"`
 }
 
+// Session is the local API projection needed by presentation clients.
+type Session struct {
+	ID          string    `json:"id"`
+	State       string    `json:"state"`
+	StateSince  time.Time `json:"state_since"`
+	StateReason string    `json:"state_reason,omitempty"`
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
@@ -70,6 +78,13 @@ func (c *Client) Recent(ctx context.Context, limit int) ([]event.Event, error) {
 	var evs []event.Event
 	err := c.getJSON(ctx, "/events?limit="+fmt.Sprint(limit), &evs)
 	return evs, err
+}
+
+// Sessions returns the daemon's projected session state.
+func (c *Client) Sessions(ctx context.Context) ([]Session, error) {
+	var sessions []Session
+	err := c.getJSON(ctx, "/sessions", &sessions)
+	return sessions, err
 }
 
 // Emit sends one raw source payload for the daemon to normalize and spool.

@@ -33,6 +33,15 @@ func push(m Model, ev event.Event) Model {
 	return mm.(Model)
 }
 
+func stateTransition(i int, sessionID, state, reason string) event.Event {
+	return event.Event{
+		ID: fmt.Sprintf("transition-%d", i), Time: t0.Add(time.Duration(i) * time.Second),
+		Source: "firehose", SessionID: sessionID, Category: event.CategoryMeta,
+		Name: "state.transition", Summary: state,
+		Payload: map[string]any{"state": state, "reason": reason},
+	}
+}
+
 func key(m Model, k string) Model {
 	var msg tea.KeyMsg
 	switch k {
@@ -159,6 +168,17 @@ func TestPreloadShowsHistory(t *testing.T) {
 	}
 }
 
+func TestPreloadSessionsShowsProjectedAttention(t *testing.T) {
+	m := newTestModel()
+	m = m.PreloadSessions([]SessionAttention{{
+		ID: "waiting", State: "needs_input", Since: t0, Reason: "approve Bash",
+	}})
+	view := m.View()
+	if !strings.Contains(view, "NEEDS YOU · 1") || !strings.Contains(view, "approve Bash") {
+		t.Fatalf("projected attention missing:\n%s", view)
+	}
+}
+
 func TestQuitKey(t *testing.T) {
 	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
@@ -176,10 +196,7 @@ func TestNeedsYouInHeader(t *testing.T) {
 	if strings.Contains(m.View(), "NEEDS YOU") {
 		t.Fatal("working session should not show NEEDS YOU")
 	}
-	perm := mkEv(2, event.CategoryPermission, "Claude needs your permission to use Bash")
-	perm.Name = "Notification"
-	perm.Severity = event.SeverityNotice
-	m = push(m, perm)
+	m = push(m, stateTransition(2, "s1", "needs_input", "Claude needs your permission to use Bash"))
 	view := m.View()
 	if !strings.Contains(view, "NEEDS YOU · 1") {
 		t.Errorf("expected NEEDS YOU indicator:\n%s", view)
@@ -187,7 +204,7 @@ func TestNeedsYouInHeader(t *testing.T) {
 	if !strings.Contains(view, "Claude needs your permission to use Bash") {
 		t.Errorf("expected reason in header:\n%s", view)
 	}
-	m = push(m, mkEv(3, event.CategoryTool, "resumed"))
+	m = push(m, stateTransition(3, "s1", "working", ""))
 	if strings.Contains(m.View(), "NEEDS YOU") {
 		t.Error("activity should clear NEEDS YOU")
 	}
@@ -209,11 +226,7 @@ func TestAttentionMapStaysBounded(t *testing.T) {
 		t.Fatalf("attention map grew unbounded: %d entries", len(m.attention))
 	}
 	// Active needs-input attention must still be retained.
-	perm := mkEv(n*2, event.CategoryPermission, "needs approval")
-	perm.SessionID = "active-needs-you"
-	perm.Name = "Notification"
-	perm.Severity = event.SeverityNotice
-	m = push(m, perm)
+	m = push(m, stateTransition(n*2, "active-needs-you", "needs_input", "needs approval"))
 	if got := m.attention["active-needs-you"]; got.State == "" {
 		t.Fatal("active needs-input attention was not retained")
 	}
@@ -221,10 +234,7 @@ func TestAttentionMapStaysBounded(t *testing.T) {
 
 func TestNeedsYouReasonStripsControlSequences(t *testing.T) {
 	m := newTestModel()
-	perm := mkEv(1, event.CategoryPermission, "ok\x1b[31mALERT\x1b[0m\x07"+strings.Repeat("x", 200))
-	perm.Name = "Notification"
-	perm.Severity = event.SeverityNotice
-	m = push(m, perm)
+	m = push(m, stateTransition(1, "s1", "needs_input", "ok\x1b[31mALERT\x1b[0m\x07"+strings.Repeat("x", 200)))
 	header := m.viewHeader()
 	if strings.Contains(header, "\x1b") || strings.Contains(header, "\x07") {
 		t.Fatalf("header leaked control sequences:\n%q", header)
