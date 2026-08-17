@@ -21,7 +21,14 @@ type OneShotOptions struct {
 func (e *Engine) Admit(ctx context.Context, observation event.Event) (event.Event, error) {
 	e.sequence.Lock()
 	defer e.sequence.Unlock()
-	return admit(ctx, e.writer, e.activePolicy(), observation)
+	stored, err := admit(ctx, e.writer, e.activePolicy(), observation)
+	if err != nil {
+		return event.Event{}, err
+	}
+	// Append is the commit point. Projection failure is reconciled from the
+	// canonical spool and must never ask a durable Source Adapter to retry.
+	_ = e.project(stored)
+	return stored, nil
 }
 
 // AdmitOnce performs Admission for a short-lived process without constructing

@@ -191,6 +191,20 @@ func (t *Tailer) Prime() {
 // unparseable lines) on ch. Files existing at start are skipped to their end
 // unless Prime already pinned an earlier boundary.
 func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
+	t.RunAck(ctx, func(ev event.Event) error {
+		select {
+		case ch <- ev:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+}
+
+// RunAck polls until ctx is done and advances each file offset only after
+// deliver acknowledges the record. Capture reconciliation uses this to retry a
+// durable record after a transient Projection failure.
+func (t *Tailer) RunAck(ctx context.Context, deliver func(event.Event) error) {
 	t.Prime()
 	ticker := time.NewTicker(t.Interval)
 	defer ticker.Stop()
@@ -199,7 +213,7 @@ func (t *Tailer) Run(ctx context.Context, ch chan<- event.Event) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			t.poll(ctx, ch)
+			t.pollAck(ctx, deliver)
 		}
 	}
 }
@@ -211,6 +225,17 @@ const maxRecordBytes = 8 << 20
 var errOversizedRecord = errors.New("spool: oversized record")
 
 func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
+	t.pollAck(ctx, func(ev event.Event) error {
+		select {
+		case ch <- ev:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+}
+
+func (t *Tailer) pollAck(ctx context.Context, deliver func(event.Event) error) {
 	files, err := spoolFiles(t.Dir)
 	if err != nil {
 		return
@@ -235,6 +260,7 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 		reader := bufio.NewReader(f)
 		read := off
 		for {
+			recordStart := read
 			line, consumed, readErr := readLine(reader, false)
 			if errors.Is(readErr, io.EOF) {
 				break
@@ -273,15 +299,14 @@ func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
 					}
 				}
 			}
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
+			if err := deliver(ev); err != nil {
 				f.Close()
+				t.offsets[path] = recordStart
 				return
 			}
+			t.offsets[path] = read
 		}
 		f.Close()
-		t.offsets[path] = read
 	}
 }
 

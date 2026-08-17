@@ -1,7 +1,9 @@
 package capture_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -163,5 +165,136 @@ func TestAdmissionHonorsCancellationBeforeCommit(t *testing.T) {
 	}
 	if len(history) != 0 {
 		t.Fatalf("canceled observation reached history: %+v", history)
+	}
+}
+
+func TestAdmissionImmediatelyProjectsCapturedEvent(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := observation()
+	ev.ID = "projected-1"
+	ev.SessionID = "session-1"
+	ev.TraceID = "trace-1"
+	ev.Category = event.CategoryFile
+	ev.Payload = map[string]any{"file_path": "/repo/main.go"}
+	if _, err := engine.Admit(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := engine.Sessions()
+	if len(sessions) != 1 || sessions[0].ID != "session-1" || sessions[0].Events != 1 {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+	sessionEvents, err := engine.Session("session-1")
+	if err != nil || len(sessionEvents) != 1 || sessionEvents[0].ID != ev.ID {
+		t.Fatalf("Session = %+v, %v", sessionEvents, err)
+	}
+	traceEvents, err := engine.Trace("trace-1")
+	if err != nil || len(traceEvents) != 1 || traceEvents[0].ID != ev.ID {
+		t.Fatalf("Trace = %+v, %v", traceEvents, err)
+	}
+	files := engine.Files()
+	if len(files) != 1 || files[0].Path != "/repo/main.go" || files[0].Events != 1 {
+		t.Fatalf("files = %+v", files)
+	}
+}
+
+func TestPresentationDeduplicatesStableIDsWhileExportPreservesObservations(t *testing.T) {
+	dir := t.TempDir()
+	engine, err := capture.New(capture.Options{SpoolDir: dir, Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := observation()
+	ev.ID = "stable-replay"
+	ev.SessionID = "session-replay"
+	for range 2 {
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	history, err := engine.Recent(10)
+	if err != nil || len(history) != 1 {
+		t.Fatalf("Recent = %+v, %v", history, err)
+	}
+	sessions := engine.Sessions()
+	if len(sessions) != 1 || sessions[0].Events != 1 {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+	var exported bytes.Buffer
+	count, err := engine.Export(&exported)
+	if err != nil || count != 2 {
+		t.Fatalf("Export count=%d err=%v", count, err)
+	}
+	dec := json.NewDecoder(&exported)
+	for i := range 2 {
+		var got event.Event
+		if err := dec.Decode(&got); err != nil || got.ID != ev.ID {
+			t.Fatalf("export record %d = %+v, %v", i, got, err)
+		}
+	}
+}
+
+func TestNewRebuildsAllDerivedStateFromSpool(t *testing.T) {
+	dir := t.TempDir()
+	first, err := capture.New(capture.Options{SpoolDir: dir, Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := observation()
+	ev.ID = "restart-1"
+	ev.SessionID = "session-restart"
+	if _, err := first.Admit(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := capture.New(capture.Options{SpoolDir: dir, Policy: privacy.ModeMinimal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := restarted.Sessions()
+	if len(sessions) != 1 || sessions[0].ID != ev.SessionID || sessions[0].Events != 1 {
+		t.Fatalf("rebuilt sessions = %+v", sessions)
+	}
+}
+
+func TestOneShotWriteReconcilesExactlyOnceIntoRunningEngine(t *testing.T) {
+	dir := t.TempDir()
+	engine, err := capture.New(capture.Options{SpoolDir: dir, Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
+
+	ev := observation()
+	ev.ID = "one-shot-running"
+	ev.SessionID = "session-one-shot"
+	if _, err := capture.AdmitOnce(context.Background(), capture.OneShotOptions{
+		SpoolDir: dir,
+		Policy:   privacy.ModeFull,
+	}, ev); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		sessions := engine.Sessions()
+		if len(sessions) == 1 && sessions[0].Events == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("one-shot event was not reconciled once: %+v", sessions)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 }

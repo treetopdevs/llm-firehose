@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/index"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
@@ -40,6 +41,10 @@ type Engine struct {
 	sequence sync.Mutex
 	policyMu sync.RWMutex
 	policy   privacy.Mode
+	index    *index.Index
+	project  func(event.Event) error
+	tailer   *spool.Tailer
+	run      runtimeState
 }
 
 // New constructs an engine over the configured canonical spool.
@@ -50,12 +55,22 @@ func New(options Options) (*Engine, error) {
 	if _, err := privacy.ParseMode(string(options.Policy)); err != nil {
 		return nil, err
 	}
-	return &Engine{
+	tailer := spool.NewTailer(options.SpoolDir, defaultReconcileInterval)
+	tailer.Prime()
+	projection, err := index.Build(options.SpoolDir)
+	if err != nil {
+		return nil, fmt.Errorf("capture: rebuild projection: %w", err)
+	}
+	engine := &Engine{
 		spoolDir: options.SpoolDir,
 		writer:   spool.NewWriter(options.SpoolDir),
 		sources:  append([]Source(nil), options.Sources...),
 		policy:   options.Policy,
-	}, nil
+		index:    projection,
+		tailer:   tailer,
+	}
+	engine.project = engine.applyProjection
+	return engine, nil
 }
 
 // SetPolicy atomically changes the active Capture Policy for later Admissions.
@@ -76,5 +91,23 @@ func (e *Engine) Recent(limit int) ([]event.Event, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("capture: recent limit must be positive")
 	}
-	return spool.ReadLastN(e.spoolDir, limit)
+	events, err := spool.ReadLastN(e.spoolDir, int(^uint(0)>>1))
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	deduplicated := make([]event.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.ID != "" && seen[ev.ID] {
+			continue
+		}
+		if ev.ID != "" {
+			seen[ev.ID] = true
+		}
+		deduplicated = append(deduplicated, ev)
+	}
+	if len(deduplicated) > limit {
+		deduplicated = deduplicated[len(deduplicated)-limit:]
+	}
+	return deduplicated, nil
 }

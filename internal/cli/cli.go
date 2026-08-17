@@ -24,7 +24,6 @@ import (
 	"agentfirehose/internal/client"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
 )
 
 // DefaultDaemonAddr is where the local daemon listens unless configured.
@@ -266,15 +265,9 @@ const ExportVersion = 1
 
 // Export writes all spooled events to w as NDJSON, returning the count.
 func Export(cfg Config, w io.Writer) (int, error) {
-	evs, err := spool.ReadLastN(cfg.SpoolDir, 1<<31-1)
+	engine, err := capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: cfg.mode()})
 	if err != nil {
 		return 0, err
 	}
-	enc := json.NewEncoder(w)
-	for i, ev := range evs {
-		if err := enc.Encode(ev); err != nil {
-			return i, err
-		}
-	}
-	return len(evs), nil
+	return engine.Export(w)
 }

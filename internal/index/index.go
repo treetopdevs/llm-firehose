@@ -51,19 +51,13 @@ type FileArtifact struct {
 	LastTime  time.Time `json:"last_time"`
 }
 
-// seenCap bounds the recent-event-id set used to make Apply idempotent.
-// Startup overlaps (index build racing the spool tailer) span at most a few
-// hundred events; the cap only guards memory, not correctness of old history.
-const seenCap = 8192
-
 // Index is a thread-safe derived view over spooled events.
 type Index struct {
-	mu        sync.RWMutex
-	sessions  map[string]*sessionEntry
-	traces    map[string]*traceEntry
-	files     map[string]*fileEntry
-	seen      map[string]bool
-	seenOrder []string
+	mu       sync.RWMutex
+	sessions map[string]*sessionEntry
+	traces   map[string]*traceEntry
+	files    map[string]*fileEntry
+	seen     map[string]bool
 }
 
 type sessionEntry struct {
@@ -118,23 +112,26 @@ const NameStateTransition = "state.transition"
 // never double-count. When a session's attention state changes, Apply returns
 // a stream-only synthetic event (never spooled).
 func (ix *Index) Apply(ev event.Event) *event.Event {
+	transition, _ := ix.ApplyResult(ev)
+	return transition
+}
+
+// ApplyResult folds one event into the index and reports whether its stable id
+// was new. The seen set spans the lifetime of the Projection so an old replay
+// can never be counted twice.
+func (ix *Index) ApplyResult(ev event.Event) (*event.Event, bool) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
 	if ev.Source == SourceFirehose && ev.Name == NameStateTransition {
-		return nil
+		return nil, false
 	}
 
 	if ev.ID != "" {
 		if ix.seen[ev.ID] {
-			return nil
+			return nil, false
 		}
 		ix.seen[ev.ID] = true
-		ix.seenOrder = append(ix.seenOrder, ev.ID)
-		if len(ix.seenOrder) > seenCap {
-			delete(ix.seen, ix.seenOrder[0])
-			ix.seenOrder = ix.seenOrder[1:]
-		}
 	}
 
 	day := ev.Time.UTC().Format("2006-01-02")
@@ -248,7 +245,7 @@ func (ix *Index) Apply(ev event.Event) *event.Event {
 			f.Sources = append(f.Sources, ev.Source)
 		}
 	}
-	return transition
+	return transition, true
 }
 
 // AdvanceIdle moves quiet working sessions to idle and returns one synthetic
