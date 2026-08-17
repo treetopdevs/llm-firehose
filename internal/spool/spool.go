@@ -32,12 +32,13 @@ func fileFor(dir string, t time.Time) string {
 	return filepath.Join(dir, t.UTC().Format("2006-01-02")+".ndjson")
 }
 
-// Append writes ev as one NDJSON line to today's spool file, stamping the
-// current schema version on events that don't carry one. Callers that need
-// repository identity must Enrich before privacy redaction and Append.
-func (w *Writer) Append(ev event.Event) error {
+// Append writes ev as one NDJSON line to today's spool file and returns the
+// exact event represented by that durable record. The caller's value is not
+// mutated. Callers that need repository identity must Enrich before privacy
+// redaction and Append.
+func (w *Writer) Append(ev event.Event) (event.Event, error) {
 	if err := ev.Validate(); err != nil {
-		return err
+		return event.Event{}, err
 	}
 	if ev.ID == "" {
 		ev.ID = event.NewID()
@@ -51,18 +52,21 @@ func (w *Writer) Append(ev event.Event) error {
 	}
 	data, err := json.Marshal(ev)
 	if err != nil {
-		return fmt.Errorf("spool: marshal: %w", err)
+		return event.Event{}, fmt.Errorf("spool: marshal: %w", err)
 	}
 	if err := os.MkdirAll(w.Dir, 0o755); err != nil {
-		return fmt.Errorf("spool: mkdir: %w", err)
+		return event.Event{}, fmt.Errorf("spool: mkdir: %w", err)
 	}
 	f, err := os.OpenFile(fileFor(w.Dir, ev.Time), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return fmt.Errorf("spool: open: %w", err)
+		return event.Event{}, fmt.Errorf("spool: open: %w", err)
 	}
 	defer f.Close()
 	_, err = f.Write(append(data, '\n'))
-	return err
+	if err != nil {
+		return event.Event{}, err
+	}
+	return ev, nil
 }
 
 // spoolFiles returns the .ndjson files in dir, oldest first.

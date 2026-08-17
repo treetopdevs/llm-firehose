@@ -62,7 +62,7 @@ func TestRecent(t *testing.T) {
 	for i, id := range []string{"e0", "e1", "e2"} {
 		ev := event.Event{ID: id, Time: base.Add(time.Duration(i) * time.Second),
 			Source: "generic", Category: event.CategoryMeta}
-		if err := w.Append(ev); err != nil {
+		if _, err := w.Append(ev); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}

@@ -43,7 +43,7 @@ func seedSessions(t *testing.T, dir string) {
 			Category: event.CategoryMeta, Summary: "no session id"},
 	}
 	for _, ev := range evs {
-		if err := w.Append(ev); err != nil {
+		if _, err := w.Append(ev); err != nil {
 			t.Fatalf("seed append: %v", err)
 		}
 	}
@@ -160,7 +160,7 @@ func TestArtifactFiles(t *testing.T) {
 			Summary: "not a file event"},
 	}
 	for _, ev := range evs {
-		if err := w.Append(ev); err != nil {
+		if _, err := w.Append(ev); err != nil {
 			t.Fatalf("seed append: %v", err)
 		}
 	}
@@ -254,7 +254,7 @@ func TestSessionsLiveUpdateWhileRunning(t *testing.T) {
 	w := spool.NewWriter(cfg.SpoolDir)
 	ev := mkEvent(9, time.Now().UTC())
 	ev.SessionID = "s9"
-	if err := w.Append(ev); err != nil {
+	if _, err := w.Append(ev); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 

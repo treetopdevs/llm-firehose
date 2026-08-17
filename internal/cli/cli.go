@@ -191,7 +191,8 @@ func EmitLocalNamed(cfg Config, source, eventName string, raw []byte) error {
 		return nil
 	}
 	redacted := privacy.Redact(workspace.Enrich(*ev), cfg.mode())
-	return spool.NewWriter(cfg.SpoolDir).Append(redacted)
+	_, err := spool.NewWriter(cfg.SpoolDir).Append(redacted)
+	return err
 }
 
 // HookForward captures a hook observation without ever influencing the agent
@@ -256,7 +257,7 @@ func reportHookCaptureError(cfg Config, source string, captureErr error) {
 			"status":         "error",
 		},
 	}
-	_ = spool.NewWriter(cfg.SpoolDir).Append(privacy.Redact(ev, cfg.mode()))
+	_, _ = spool.NewWriter(cfg.SpoolDir).Append(privacy.Redact(ev, cfg.mode()))
 }
 
 // Ingest streams NDJSON lines from r into the spool, returning how many
@@ -276,7 +277,7 @@ func Ingest(cfg Config, r io.Reader) (int, error) {
 		if err != nil {
 			continue
 		}
-		if err := w.Append(privacy.Redact(workspace.Enrich(ev), mode)); err != nil {
+		if _, err := w.Append(privacy.Redact(workspace.Enrich(ev), mode)); err != nil {
 			return n, err
 		}
 		n++

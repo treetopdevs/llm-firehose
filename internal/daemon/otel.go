@@ -53,7 +53,7 @@ func (s *Server) handleOTLP(
 	for _, native := range parse(raw, captured) {
 		// Exporter-facing success never depends on the spool. Hooks remain the
 		// canonical daemon-optional baseline if this supplemental append fails.
-		_ = s.writer.Append(privacy.Redact(workspace.Enrich(native), mode))
+		_, _ = s.writer.Append(privacy.Redact(workspace.Enrich(native), mode))
 	}
 	writeJSON(w, map[string]any{})
 }

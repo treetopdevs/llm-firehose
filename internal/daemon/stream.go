@@ -101,7 +101,8 @@ func (s *Server) Start(ctx context.Context) {
 					// only after this returns success. Enrich before redaction
 					// so path digests cover observed identity.
 					ev = privacy.Redact(workspace.Enrich(ev), s.privacyMode())
-					return s.writer.Append(ev)
+					_, err := s.writer.Append(ev)
+					return err
 				},
 			)
 			// Establish the legacy-file baseline before Start returns. A fresh
@@ -126,7 +127,7 @@ func (s *Server) Start(ctx context.Context) {
 				// Mode is re-read per event so POST /config privacy
 				// changes apply live to this capture path too.
 				ev = privacy.Redact(workspace.Enrich(ev), s.privacyMode())
-				if err := s.writer.Append(ev); err != nil {
+				if _, err := s.writer.Append(ev); err != nil {
 					// Capture must never go dark: an unwritable spool
 					// degrades to the old broadcast-only behavior.
 					s.hub.broadcast(ev)

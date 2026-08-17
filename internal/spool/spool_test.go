@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +31,7 @@ func TestAppendReadRoundTrip(t *testing.T) {
 	w := NewWriter(dir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	for i := range 3 {
-		if err := w.Append(mkEvent(i, base.Add(time.Duration(i)*time.Second))); err != nil {
+		if _, err := w.Append(mkEvent(i, base.Add(time.Duration(i)*time.Second))); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
 	}
@@ -47,15 +49,94 @@ func TestAppendReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAppendReturnsExactStoredEvent(t *testing.T) {
+	dir := t.TempDir()
+	observation := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	observation.ID = ""
+
+	stored, err := NewWriter(dir).Append(observation)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if stored.ID == "" || stored.SchemaVersion != event.CurrentSchemaVersion || stored.CaptureTime == nil {
+		t.Fatalf("stored event was not completed at commit: %+v", stored)
+	}
+	if observation.ID != "" || observation.SchemaVersion != 0 || observation.CaptureTime != nil {
+		t.Fatalf("append mutated caller observation: %+v", observation)
+	}
+
+	events, err := ReadLastN(dir, 1)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	if got, want := events[0], stored; !reflect.DeepEqual(got, want) {
+		t.Fatalf("read event differs from commit result:\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestConcurrentAppendReturnsWholeOrderedRecords(t *testing.T) {
+	dir := t.TempDir()
+	writer := NewWriter(dir)
+	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	const count = 64
+
+	stored := make(chan event.Event, count)
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := range count {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ev := mkEvent(i, base)
+			ev.ID = ""
+			got, err := writer.Append(ev)
+			if err != nil {
+				errs <- err
+				return
+			}
+			stored <- got
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	close(stored)
+	for err := range errs {
+		t.Fatalf("concurrent append: %v", err)
+	}
+
+	byID := make(map[string]event.Event, count)
+	for ev := range stored {
+		if _, exists := byID[ev.ID]; exists {
+			t.Fatalf("duplicate assigned id %q", ev.ID)
+		}
+		byID[ev.ID] = ev
+	}
+	events, err := ReadLastN(dir, count)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(events) != count {
+		t.Fatalf("events = %d, want %d", len(events), count)
+	}
+	for _, ev := range events {
+		if want, ok := byID[ev.ID]; !ok || !reflect.DeepEqual(ev, want) {
+			t.Fatalf("record was interleaved or differed from append result: %+v", ev)
+		}
+	}
+}
+
 func TestAppendReadRoundTripLargerThanScannerLimit(t *testing.T) {
 	dir := t.TempDir()
 	ev := mkEvent(1, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
 	ev.Payload = map[string]any{"output": strings.Repeat("x", 5*1024*1024)}
-	if err := NewWriter(dir).Append(ev); err != nil {
+	if _, err := NewWriter(dir).Append(ev); err != nil {
 		t.Fatalf("append large event: %v", err)
 	}
 	after := mkEvent(2, ev.Time.Add(time.Second))
-	if err := NewWriter(dir).Append(after); err != nil {
+	if _, err := NewWriter(dir).Append(after); err != nil {
 		t.Fatalf("append event after large record: %v", err)
 	}
 
@@ -98,7 +179,7 @@ func TestAppendStampsSchemaVersion(t *testing.T) {
 	if ev.SchemaVersion != 0 {
 		t.Fatalf("precondition: fresh event should have zero version")
 	}
-	if err := w.Append(ev); err != nil {
+	if _, err := w.Append(ev); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)
@@ -114,7 +195,7 @@ func TestAppendStampsMissingCaptureTime(t *testing.T) {
 	dir := t.TempDir()
 	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
 	before := time.Now().UTC()
-	if err := NewWriter(dir).Append(ev); err != nil {
+	if _, err := NewWriter(dir).Append(ev); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	after := time.Now().UTC()
@@ -150,7 +231,7 @@ func TestAppendObservesRepositoryAndWorktreeIdentity(t *testing.T) {
 	ev.RepoID = "unverified-source-repo"
 	ev.WorktreeID = "unverified-source-worktree"
 	dir := filepath.Join(root, "spool")
-	if err := NewWriter(dir).Append(workspace.Enrich(ev)); err != nil {
+	if _, err := NewWriter(dir).Append(workspace.Enrich(ev)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)
@@ -197,7 +278,7 @@ func TestAppendDistinguishesLinkedWorktreesInOneRepository(t *testing.T) {
 	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
 	ev.CWD = cwd
 	dir := filepath.Join(root, "spool")
-	if err := NewWriter(dir).Append(workspace.Enrich(ev)); err != nil {
+	if _, err := NewWriter(dir).Append(workspace.Enrich(ev)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)
@@ -246,7 +327,7 @@ func TestReadDaysLimitsToNamedFiles(t *testing.T) {
 	day1 := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	day2 := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
 	for i, ts := range []time.Time{day1, day1.Add(time.Minute), day2} {
-		if err := w.Append(mkEvent(i, ts)); err != nil {
+		if _, err := w.Append(mkEvent(i, ts)); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -278,7 +359,7 @@ func TestReadDaysLimitsToNamedFiles(t *testing.T) {
 func TestTailerPrimeFixesSnapshotBoundary(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir)
-	if err := w.Append(mkEvent(0, time.Now().UTC())); err != nil {
+	if _, err := w.Append(mkEvent(0, time.Now().UTC())); err != nil {
 		t.Fatalf("append existing: %v", err)
 	}
 
@@ -286,7 +367,7 @@ func TestTailerPrimeFixesSnapshotBoundary(t *testing.T) {
 	tail.Prime() // snapshot boundary: everything before this is "existing"
 
 	// Appended after Prime but before Run: must still be delivered.
-	if err := w.Append(mkEvent(1, time.Now().UTC())); err != nil {
+	if _, err := w.Append(mkEvent(1, time.Now().UTC())); err != nil {
 		t.Fatalf("append post-prime: %v", err)
 	}
 
@@ -316,7 +397,7 @@ func TestTailerSeesNewLines(t *testing.T) {
 	go tail.Run(ctx, ch)
 
 	time.Sleep(30 * time.Millisecond) // let tailer record initial offsets
-	if err := w.Append(mkEvent(42, time.Now().UTC())); err != nil {
+	if _, err := w.Append(mkEvent(42, time.Now().UTC())); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 
@@ -421,10 +502,10 @@ func TestTailerAdvancesPastLargeRecord(t *testing.T) {
 	large.Payload = map[string]any{"output": strings.Repeat("x", 5*1024*1024)}
 	after := mkEvent(9, large.Time.Add(time.Second))
 	writer := NewWriter(dir)
-	if err := writer.Append(large); err != nil {
+	if _, err := writer.Append(large); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Append(after); err != nil {
+	if _, err := writer.Append(after); err != nil {
 		t.Fatal(err)
 	}
 
@@ -440,7 +521,7 @@ func TestAppendAssignsMissingEventID(t *testing.T) {
 	dir := t.TempDir()
 	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
 	ev.ID = ""
-	if err := NewWriter(dir).Append(ev); err != nil {
+	if _, err := NewWriter(dir).Append(ev); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)
@@ -462,7 +543,7 @@ func TestAppendPreservesProducerEventID(t *testing.T) {
 	dir := t.TempDir()
 	ev := mkEvent(0, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
 	ev.ID = "producer-supplied-id"
-	if err := NewWriter(dir).Append(ev); err != nil {
+	if _, err := NewWriter(dir).Append(ev); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	evs, err := ReadLastN(dir, 1)

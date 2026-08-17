@@ -126,7 +126,7 @@ func TestBuildEqualsFold(t *testing.T) {
 	w := spool.NewWriter(dir)
 	evs := seedEvents()
 	for _, ev := range evs {
-		if err := w.Append(ev); err != nil {
+		if _, err := w.Append(ev); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -317,7 +317,7 @@ func TestBuildAttentionDeterminism(t *testing.T) {
 			Category: event.CategorySession, Name: "Stop"},
 	}
 	for _, ev := range evs {
-		if err := w.Append(ev); err != nil {
+		if _, err := w.Append(ev); err != nil {
 			t.Fatal(err)
 		}
 	}

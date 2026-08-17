@@ -383,7 +383,7 @@ func TestRecentEvents(t *testing.T) {
 	w := spool.NewWriter(cfg.SpoolDir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	for i := range 3 {
-		if err := w.Append(mkEvent(i, base.Add(time.Duration(i)*time.Second))); err != nil {
+		if _, err := w.Append(mkEvent(i, base.Add(time.Duration(i)*time.Second))); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -418,7 +418,7 @@ func TestRecentEventsClampsMaxLimit(t *testing.T) {
 	cfg := testConfig(t)
 	w := spool.NewWriter(cfg.SpoolDir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
-	if err := w.Append(mkEvent(0, base)); err != nil {
+	if _, err := w.Append(mkEvent(0, base)); err != nil {
 		t.Fatal(err)
 	}
 	ts := testServer(t, cfg)
