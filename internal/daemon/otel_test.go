@@ -1,15 +1,19 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/testsupport/capturehistory"
 )
 
 func TestOTLPLogsPersistSanitizedEventsAndReturnSuccess(t *testing.T) {
@@ -31,7 +35,7 @@ func TestOTLPLogsPersistSanitizedEventsAndReturnSuccess(t *testing.T) {
 		t.Fatalf("OTLP success response: %v", err)
 	}
 
-	events, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	events, err := capturehistory.Recent(cfg.SpoolDir, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +43,44 @@ func TestOTLPLogsPersistSanitizedEventsAndReturnSuccess(t *testing.T) {
 		t.Fatalf("spooled logs = %d, want 3: %+v", len(events), events)
 	}
 	assertNoOTelSecrets(t, events)
+}
+
+func TestOTLPBatchCompletesAdmissionAfterRequestCancellation(t *testing.T) {
+	cfg := testConfig(t)
+	engine := testEngine(t, cfg)
+	server := New(engine, cfg, t.TempDir(), "test-version")
+	reader, writer := io.Pipe()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, "/v1/logs", reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.Handler().ServeHTTP(recorder, req)
+		close(done)
+	}()
+	if _, err := writer.Write(otelFixture(t, "logs.json")); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("OTLP batch did not finish after request cancellation")
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	events, err := engine.Recent(10)
+	if err != nil || len(events) != 3 {
+		t.Fatalf("OTLP history after cancellation = %+v, %v", events, err)
+	}
 }
 
 func TestOTLPMetricsPersistSanitizedEvents(t *testing.T) {
@@ -55,7 +97,7 @@ func TestOTLPMetricsPersistSanitizedEvents(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	events, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	events, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(events) != 2 || events[0].Name != "claude_code.token.usage" {
 		t.Fatalf("spooled metrics = %+v", events)
 	}
@@ -75,7 +117,7 @@ func TestOTLPMalformedRecordReturnsSuccessAndPersistsWarning(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("malformed batch status = %d, want OTLP success", resp.StatusCode)
 	}
-	events, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	events, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(events) != 1 || events[0].Name != "otel.parse_warning" ||
 		events[0].Severity != event.SeverityWarn {
 		t.Fatalf("malformed batch warning = %+v", events)

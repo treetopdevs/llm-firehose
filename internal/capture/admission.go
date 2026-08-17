@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
 	"agentfirehose/internal/workspace"
 )
 
@@ -43,7 +43,7 @@ func AdmitOnce(ctx context.Context, options OneShotOptions, observation event.Ev
 	return admit(ctx, spool.NewWriter(options.SpoolDir), options.Policy, observation)
 }
 
-func admit(ctx context.Context, writer *spool.Writer, policy privacy.Mode, observation event.Event) (event.Event, error) {
+func admit(ctx context.Context, writer appender, policy privacy.Mode, observation event.Event) (event.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return event.Event{}, err
 	}

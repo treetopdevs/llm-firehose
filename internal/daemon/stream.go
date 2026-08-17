@@ -23,6 +23,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	subscription := s.engine.Subscribe(r.Context())
 	for {
 		select {
+		case <-s.shutdown:
+			return
 		case <-r.Context().Done():
 			return
 		case <-subscription.Done:

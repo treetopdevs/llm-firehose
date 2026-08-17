@@ -54,7 +54,7 @@ when learning the codebase.
 Data flow:
 
 ```
-sources ──adapters──▶ event.Event ──privacy.Redact──▶ spool (NDJSON) ──▶ store/index ──▶ TUI / API
+sources ──adapters──▶ event.Event ──capture.Admit──▶ spool (NDJSON) ──▶ Projection ──▶ TUI / API
 ```
 
 - **`internal/event`** — the `Event` envelope + `CurrentSchemaVersion` (currently 1). The
@@ -63,16 +63,18 @@ sources ──adapters──▶ event.Event ──privacy.Redact──▶ spool 
   `Event`s. `claudecode` & `opencode` receive pushed payloads via `firehose emit`; `codex`
   *tails* `~/.codex/sessions` JSONL directly; `procwatch` polls the process list for known
   agent binaries; `generic` handles arbitrary NDJSON via `firehose ingest`.
-- **`internal/privacy`** — redaction applied **before persistence**, at the engine boundary.
+- **`internal/capture`** — the sole Admission and lifecycle boundary: validate, enrich
+  workspace identity, apply policy, append, immediately Project, and publish to bounded
+  Live Subscriptions. It owns queries, export, reconciliation, and production Sources.
+- **`internal/privacy`** — redaction semantics applied **before persistence** by Capture.
   Modes: `minimal` (values → `{sha256,len}`), `balanced` default (strings truncated to 240
   runes, `raw` dropped), `full`. The spool never holds more than the mode allows.
-- **`internal/spool`** — append-only NDJSON, one file per UTC day (`YYYY-MM-DD.ndjson`),
-  `O_APPEND` so concurrent producers never interleave. **This is the canonical source of
-  truth**; every derived store must be rebuildable from it. Also provides the tailer.
-- **`internal/index`** — derived in-memory index (sessions/traces/artifacts) built over the
-  spool; powers the daemon's query endpoints.
+- **`internal/capture/internal/spool`** — sealed append-only NDJSON and reconciliation.
+  Daily `O_APPEND` records remain the canonical source of truth.
+- **`internal/capture/internal/projection`** — sealed disposable session, trace, file, and
+  attention state rebuilt from the spool.
 - **`internal/store`** — ring buffer, filters, and burst coalescing (`×N` rows) for the TUI.
-- **`internal/daemon`** — the capture engine as a long-lived local API (`net/http`
+- **`internal/daemon`** — the Capture Engine's local HTTP adapter (`net/http`
   `mux.HandleFunc`, Go 1.22+ routing). Routes: `/health`, `/config`, `/events`,
   `/events/stream` (SSE), `/emit`, `/sessions[/{id}]`, `/traces/{id}`, `/artifacts/files`,
   `/doctor`, `/install/{adapter}`, `/export`.
@@ -84,8 +86,12 @@ sources ──adapters──▶ event.Event ──privacy.Redact──▶ spool 
 **Daemon-optional design (important):** capture NEVER depends on the daemon being up. When
 a daemon is running, `firehose emit` and adapters route through it and the TUI consumes its
 stream (`viewFeed` in `cmd/firehose/main.go` prefers the daemon). When it isn't, everything
-falls back to direct spool access — the TUI merges the spool tailer, codex watcher, and
-procwatch locally. A daemon the user runs themselves always wins over the desktop sidecar.
+falls back to One-shot Admission, while the TUI runs the same Capture Engine and production
+Sources in process. Codex and process observations are persisted in both modes. A daemon the
+user runs themselves always wins over the desktop sidecar. A crash-safe OS lock lets exactly
+one engine process run durable Sources; concurrent viewers reconcile the spool and dynamically
+inherit Source ownership after release. If a bounded live stream ends, clients bracket the
+replacement subscription with durable snapshots and exact-ID dedupe.
 
 ## Hard rules (from CONTRIBUTING.md and the frozen contract)
 

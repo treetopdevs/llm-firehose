@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -329,6 +331,45 @@ func TestLiveSubscriptionReceivesSerializedAdmissionsInOrder(t *testing.T) {
 	}
 }
 
+func TestConcurrentAdmissionsSerializeWholeCommitAndProjection(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 100
+	start := make(chan struct{})
+	errs := make(chan error, total)
+	var workers sync.WaitGroup
+	for i := range total {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			ev := observation()
+			ev.ID = fmt.Sprintf("concurrent-admission-%03d", i)
+			ev.SessionID = "concurrent-session"
+			_, err := engine.Admit(context.Background(), ev)
+			errs <- err
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := engine.Recent(total)
+	if err != nil || len(history) != total {
+		t.Fatalf("concurrent history = %d, %v", len(history), err)
+	}
+	sessions := engine.Sessions()
+	if len(sessions) != 1 || sessions[0].Events != total {
+		t.Fatalf("concurrent Projection = %+v", sessions)
+	}
+}
+
 func TestSlowSubscriptionTerminatesWithoutBlockingCapture(t *testing.T) {
 	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
 	if err != nil {
@@ -434,10 +475,19 @@ func TestOneFailingSourceDoesNotStopOtherCapturePaths(t *testing.T) {
 			t.Fatal(err)
 		}
 		seen := map[string]bool{}
+		var warning *event.Event
 		for _, ev := range history {
 			seen[ev.ID] = true
+			if ev.Source == "firehose" && ev.Name == "source_capture_error" {
+				copy := ev
+				warning = &copy
+			}
 		}
 		if seen[healthyEvent.ID] && seen[retriedEvent.ID] {
+			if warning == nil || strings.Contains(warning.Summary, "source unavailable") || warning.Payload["error"] != "source unavailable" {
+				cancel()
+				t.Fatalf("unsafe or missing Capture Warning: %+v", warning)
+			}
 			break
 		}
 		if time.Now().After(deadline) {

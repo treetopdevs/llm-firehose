@@ -32,11 +32,14 @@ const (
 
 // Server adapts an injected capture engine to the local API.
 type Server struct {
-	mu      sync.RWMutex // guards cfg
-	cfg     cli.Config
-	home    string
-	version string
-	engine  *capture.Engine
+	mu           sync.RWMutex // guards cfg
+	cfg          cli.Config
+	home         string
+	version      string
+	engine       *capture.Engine
+	setPolicy    func(privacy.Mode)
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 
 	// Environ is the process environment consulted by install handlers;
 	// injectable for tests so host telemetry variables cannot leak in.
@@ -45,11 +48,13 @@ type Server struct {
 
 func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
 	return &Server{
-		cfg:     cfg,
-		home:    home,
-		version: version,
-		engine:  engine,
-		Environ: os.Environ(),
+		cfg:       cfg,
+		home:      home,
+		version:   version,
+		engine:    engine,
+		setPolicy: engine.SetPolicy,
+		shutdown:  make(chan struct{}),
+		Environ:   os.Environ(),
 	}
 }
 
@@ -133,18 +138,16 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 		IdleTimeout:       60 * time.Second,
 		// WriteTimeout intentionally unset: SSE /events/stream is long-lived.
 	}
-	requestCtx, cancelRequests := context.WithCancel(context.Background())
-	srv.BaseContext = func(net.Listener) context.Context { return requestCtx }
 	go func() {
 		<-ctx.Done()
-		cancelRequests()
+		s.closeStreams()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 	}()
 	done := make(chan error, 1)
 	go func() {
-		defer cancelRequests()
+		defer s.closeStreams()
 		err := srv.Serve(l)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -152,6 +155,10 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 		done <- err
 	}()
 	return l.Addr().String(), done, nil
+}
+
+func (s *Server) closeStreams() {
+	s.shutdownOnce.Do(func() { close(s.shutdown) })
 }
 
 func validateLoopbackAddr(addr string) error {
@@ -235,11 +242,11 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfg.PrivacyMode = merged.PrivacyMode
-	s.mu.Unlock()
 	if patch.PrivacyMode != "" {
 		mode, _ := privacy.ParseMode(patch.PrivacyMode)
-		s.engine.SetPolicy(mode)
+		s.setPolicy(mode)
 	}
+	s.mu.Unlock()
 
 	if restart == nil {
 		restart = []string{}
@@ -284,7 +291,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if _, err := s.engine.Admit(r.Context(), observation); err != nil {
+		if _, err := s.engine.Admit(context.WithoutCancel(r.Context()), observation); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -318,8 +325,8 @@ func (s *Server) handleEmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if observation != nil {
-		if _, err := s.engine.Admit(r.Context(), *observation); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if _, err := s.engine.Admit(context.WithoutCancel(r.Context()), *observation); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 	}

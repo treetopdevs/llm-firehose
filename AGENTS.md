@@ -23,7 +23,7 @@ Desktop app uses pnpm (`pnpm -C apps/tauri-desktop test|build`) + `cargo test` i
 
 ## Architecture in one line
 
-`sources ──adapters──▶ event.Event ──privacy.Redact──▶ spool (NDJSON) ──▶ store/index ──▶ TUI / API`
+`sources ──adapters──▶ event.Event ──capture.Admit──▶ spool (NDJSON) ──▶ Projection ──▶ TUI / API`
 
 Everything funnels through one normalized envelope (`internal/event`). The spool
 (`~/.agentfirehose/spool/*.ndjson`) is the canonical, append-only source of truth; every

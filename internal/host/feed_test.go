@@ -137,6 +137,60 @@ func TestEngineFeedReloadsDurableHistoryAfterSubscriptionOverflow(t *testing.T) 
 	}
 }
 
+func TestEngineFeedReconcilesProjectedAttentionAfterOverflow(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)
+	permission := event.Event{
+		ID: "attention-open", Time: base, Source: "claude-code", SessionID: "attention-session",
+		Category: event.CategoryPermission, Summary: "approve Bash",
+	}
+	if _, err := engine.Admit(context.Background(), permission); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed, err := openEngineFeed(ctx, engine, 10, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feed.Sessions) != 1 || string(feed.Sessions[0].State) != "needs_input" {
+		t.Fatalf("initial attention = %+v", feed.Sessions)
+	}
+
+	for i := range 700 {
+		ev := event.Event{
+			ID: fmt.Sprintf("attention-overflow-%03d", i), Time: base.Add(time.Duration(i+1) * time.Second),
+			Source: "generic", Category: event.CategoryMeta,
+		}
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resumed := event.Event{
+		ID: "attention-resumed", Time: base.Add(800 * time.Second), Source: "claude-code",
+		SessionID: "attention-session", Category: event.CategoryTool, Summary: "resumed",
+	}
+	if _, err := engine.Admit(context.Background(), resumed); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-feed.Events:
+			if ev.Source == "firehose" && ev.Name == "state.transition" &&
+				ev.SessionID == "attention-session" && ev.Payload["state"] == "working" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("recovery did not refresh projected attention")
+		}
+	}
+}
+
 func TestDaemonAndDaemonlessAdmissionPersistEquivalentCapturedEvents(t *testing.T) {
 	raw := `{"schema_version":1,"id":"fixed-admission","time":"2026-08-17T14:00:00Z","capture_time":"2026-08-17T14:00:01Z","source":"generic","category":"meta","severity":"info","summary":"same boundary"}`
 	observation, err := generic.Parse([]byte(raw))

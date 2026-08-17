@@ -30,7 +30,7 @@ type subscriber struct {
 // overflow terminates only this subscription.
 func (e *Engine) Subscribe(ctx context.Context) *Subscription {
 	sub := &subscriber{
-		events:  make(chan event.Event, defaultSubscriptionCapacity),
+		events:  make(chan event.Event, e.subscriptionCapacity),
 		done:    make(chan error, 1),
 		stopped: make(chan struct{}),
 	}

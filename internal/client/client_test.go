@@ -20,7 +20,7 @@ import (
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/testsupport/capturehistory"
 )
 
 func testDaemon(t *testing.T) (*httptest.Server, cli.Config) {
@@ -67,7 +67,7 @@ func TestHealthDaemonDown(t *testing.T) {
 
 func TestRecent(t *testing.T) {
 	ts, cfg := testDaemon(t)
-	w := spool.NewWriter(cfg.SpoolDir)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	for i, id := range []string{"e0", "e1", "e2"} {
 		ev := event.Event{ID: id, Time: base.Add(time.Duration(i) * time.Second),
@@ -109,7 +109,7 @@ func TestEmitNormalizesThroughDaemon(t *testing.T) {
 	if err := c.Emit(t.Context(), "claude-code", strings.NewReader(payload)); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Source != "claude-code" || evs[0].Category != event.CategoryPrompt {
 		t.Fatalf("emitted event wrong: %+v", evs)
 	}
@@ -201,14 +201,18 @@ func TestFeedReconcilesHistoryBeforeReplacingClosedStream(t *testing.T) {
 		switch r.URL.Path {
 		case "/events":
 			call := histories.Add(1)
-			if call == 1 {
+			if call <= 2 {
 				_ = json.NewEncoder(w).Encode([]event.Event{e1})
 				return
 			}
 			_ = json.NewEncoder(w).Encode([]event.Event{e1, e2})
+		case "/sessions":
+			_ = json.NewEncoder(w).Encode([]client.Session{})
 		case "/events/stream":
 			call := streams.Add(1)
 			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
 			if call == 1 {
 				data, _ := json.Marshal(e2)
 				fmt.Fprintf(w, "data: %s\n\n", data)
@@ -237,7 +241,7 @@ func TestFeedReconcilesHistoryBeforeReplacingClosedStream(t *testing.T) {
 		t.Fatal("first stream event missing")
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	for histories.Load() < 2 || streams.Load() < 2 {
+	for histories.Load() < 4 || streams.Load() < 2 {
 		if time.Now().After(deadline) {
 			t.Fatalf("feed did not reconcile and resubscribe: histories=%d streams=%d", histories.Load(), streams.Load())
 		}
@@ -247,5 +251,79 @@ func TestFeedReconcilesHistoryBeforeReplacingClosedStream(t *testing.T) {
 	case duplicate := <-feed:
 		t.Fatalf("reconciliation duplicated a buffered id: %+v", duplicate)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestFeedRefreshesSessionAttentionAfterStreamInterruption(t *testing.T) {
+	var streams atomic.Int32
+	stateSince := time.Date(2026, 8, 17, 11, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			_ = json.NewEncoder(w).Encode([]event.Event{})
+		case "/sessions":
+			_ = json.NewEncoder(w).Encode([]client.Session{{
+				ID: "attention", State: "working", StateSince: stateSince,
+			}})
+		case "/events/stream":
+			call := streams.Add(1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			if call > 1 {
+				<-r.Context().Done()
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed, _, err := client.New(server.URL).Feed(ctx, 500, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-feed:
+		if ev.Source != "firehose" || ev.Name != "state.transition" ||
+			ev.SessionID != "attention" || ev.Payload["state"] != "working" {
+			t.Fatalf("attention reconciliation = %+v", ev)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("session attention was not refreshed")
+	}
+}
+
+func TestFeedPostSubscriptionSnapshotClosesHistoryLiveRace(t *testing.T) {
+	var histories atomic.Int32
+	gap := event.Event{
+		ID: "between-history-and-stream", Time: time.Date(2026, 8, 17, 11, 30, 0, 0, time.UTC),
+		Source: "generic", Category: event.CategoryMeta,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			if histories.Add(1) == 1 {
+				_ = json.NewEncoder(w).Encode([]event.Event{})
+			} else {
+				_ = json.NewEncoder(w).Encode([]event.Event{gap})
+			}
+		case "/events/stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, history, err := client.New(server.URL).Feed(ctx, 500, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].ID != gap.ID {
+		t.Fatalf("initial catchup = %+v", history)
 	}
 }

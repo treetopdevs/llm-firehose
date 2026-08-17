@@ -12,27 +12,75 @@ import (
 	"testing"
 	"time"
 
+	"agentfirehose/internal/adapters/codex"
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 )
+
+type codexOnlyTestSource struct {
+	watcher   *codex.DurableWatcher
+	ready     chan error
+	readyOnce sync.Once
+}
+
+func newCodexOnlyTestSource(root, statePath string) *codexOnlyTestSource {
+	return &codexOnlyTestSource{
+		watcher: codex.NewDurableWatcher(root, statePath, 10*time.Millisecond, nil),
+		ready:   make(chan error, 1),
+	}
+}
+
+func (*codexOnlyTestSource) Name() string { return codex.Source }
+
+func (s *codexOnlyTestSource) Run(ctx context.Context, sink capture.Sink) error {
+	s.watcher.Sink = func(ev event.Event) error {
+		_, err := sink.Admit(ctx, ev)
+		return err
+	}
+	err := s.watcher.Initialize()
+	s.readyOnce.Do(func() {
+		s.ready <- err
+		close(s.ready)
+	})
+	if err != nil {
+		return err
+	}
+	s.watcher.Run(ctx)
+	return nil
+}
+
+func (s *codexOnlyTestSource) waitReady(t *testing.T) {
+	t.Helper()
+	select {
+	case err := <-s.ready:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Codex test Source did not initialize")
+	}
+}
 
 // startedServer runs a daemon with capture started against fast pollers.
 func startedServer(t *testing.T, cfg cli.Config) *httptest.Server {
 	t.Helper()
 	home := t.TempDir()
 	var sources []capture.Source
+	var codexSource *codexOnlyTestSource
 	if cfg.CodexDir != "" {
-		sources = capture.LocalSources(capture.LocalSourceOptions{
-			CodexDir:       cfg.CodexDir,
-			CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
-		})
+		codexSource = newCodexOnlyTestSource(cfg.CodexDir,
+			filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"))
+		sources = []capture.Source{codexSource}
 	}
 	engine := testEngine(t, cfg, sources...)
 	s := New(engine, cfg, home, "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- engine.Run(ctx) }()
+	if codexSource != nil {
+		codexSource.waitReady(t)
+	}
 	t.Cleanup(func() {
 		cancel()
 		<-done
@@ -304,15 +352,14 @@ func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing
 	sessionLine := capturedCodexLine(t, `"type":"session_meta"`)
 
 	start := func() (*httptest.Server, func()) {
-		sources := capture.LocalSources(capture.LocalSourceOptions{
-			CodexDir:       cfg.CodexDir,
-			CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
-		})
-		engine := testEngine(t, cfg, sources...)
+		codexSource := newCodexOnlyTestSource(cfg.CodexDir,
+			filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"))
+		engine := testEngine(t, cfg, codexSource)
 		s := New(engine, cfg, home, "test-version")
 		ctx, cancel := context.WithCancel(context.Background())
 		engineDone := make(chan error, 1)
 		go func() { engineDone <- engine.Run(ctx) }()
+		codexSource.waitReady(t)
 		ts := httptest.NewServer(s.Handler())
 		var once sync.Once
 		stop := func() {

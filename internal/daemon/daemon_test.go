@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/testsupport/capturehistory"
 )
 
 func testGET(t *testing.T, rawURL string) (*http.Response, error) {
@@ -295,6 +296,80 @@ func TestConfigUpdateRejectsBadMode(t *testing.T) {
 	}
 }
 
+func TestConcurrentConfigUpdatesKeepPersistedAndActivePolicyOrdered(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	engine := testEngine(t, cfg)
+	server := New(engine, cfg, home, "test-version")
+	fullApplying := make(chan struct{})
+	releaseFull := make(chan struct{})
+	server.setPolicy = func(mode privacy.Mode) {
+		if mode == privacy.ModeFull {
+			close(fullApplying)
+			<-releaseFull
+		}
+		engine.SetPolicy(mode)
+	}
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	type result struct {
+		resp *http.Response
+		err  error
+	}
+	postMode := func(mode string) <-chan result {
+		done := make(chan result, 1)
+		go func() {
+			resp, err := testPOST(t, ts.URL+"/config", "application/json",
+				strings.NewReader(`{"privacy_mode":"`+mode+`"}`))
+			done <- result{resp: resp, err: err}
+		}()
+		return done
+	}
+	fullDone := postMode("full")
+	select {
+	case <-fullApplying:
+	case <-time.After(time.Second):
+		t.Fatal("full update never reached policy activation")
+	}
+	minimalDone := postMode("minimal")
+	select {
+	case got := <-minimalDone:
+		if got.resp != nil {
+			got.resp.Body.Close()
+		}
+		close(releaseFull)
+		<-fullDone
+		t.Fatal("second config update overtook policy activation")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFull)
+	for _, done := range []<-chan result{fullDone, minimalDone} {
+		got := <-done
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		got.resp.Body.Close()
+	}
+	saved, err := cli.LoadConfig(home)
+	if err != nil || saved.PrivacyMode != "minimal" {
+		t.Fatalf("saved policy = %q, %v", saved.PrivacyMode, err)
+	}
+	if _, err := engine.Admit(context.Background(), event.Event{
+		Time: time.Now(), Source: "generic", Category: event.CategoryMeta,
+		Payload: map[string]any{"secret": "value"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := engine.Recent(1)
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %+v, %v", history, err)
+	}
+	if _, protected := history[0].Payload["secret"].(map[string]any); !protected {
+		t.Fatalf("active policy diverged from persisted minimal mode: %+v", history[0].Payload)
+	}
+}
+
 func TestIngestEndpoint(t *testing.T) {
 	cfg := testConfig(t)
 	ts := testServer(t, cfg)
@@ -317,9 +392,70 @@ func TestIngestEndpoint(t *testing.T) {
 	if got.Ingested != 2 {
 		t.Errorf("ingested = %d, want 2", got.Ingested)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 2 {
 		t.Fatalf("spool has %d events, want 2", len(evs))
+	}
+}
+
+func TestEmitCompletesAdmissionAfterRequestCancellation(t *testing.T) {
+	cfg := testConfig(t)
+	engine := testEngine(t, cfg)
+	server := New(engine, cfg, t.TempDir(), "test-version")
+	reader, writer := io.Pipe()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, "/emit?source=generic", reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.Handler().ServeHTTP(recorder, req)
+		close(done)
+	}()
+	if _, err := io.WriteString(writer,
+		`{"time":"2026-08-17T12:00:00Z","source":"generic","category":"meta","summary":"survives shutdown"}`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emit did not finish after request cancellation")
+	}
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	history, err := engine.Recent(1)
+	if err != nil || len(history) != 1 || history[0].Summary != "survives shutdown" {
+		t.Fatalf("history = %+v, %v", history, err)
+	}
+}
+
+func TestEmitPersistenceFailureIsServiceUnavailable(t *testing.T) {
+	root := t.TempDir()
+	spoolDir := filepath.Join(root, "spool")
+	cfg := testConfig(t)
+	cfg.SpoolDir = spoolDir
+	engine := testEngine(t, cfg)
+	if err := os.WriteFile(spoolDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(engine, cfg, t.TempDir(), "test-version").Handler())
+	t.Cleanup(ts.Close)
+	resp, err := testPOST(t, ts.URL+"/emit?source=generic", "application/json",
+		strings.NewReader(`{"category":"meta","summary":"cannot persist"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
 }
 
@@ -333,7 +469,7 @@ func TestIngestAppliesPrivacyMode(t *testing.T) {
 		t.Fatalf("POST /events: %v", err)
 	}
 	resp.Body.Close()
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 {
 		t.Fatalf("spool has %d events, want 1", len(evs))
 	}
@@ -354,7 +490,7 @@ func TestEmitEndpointNormalizesRawPayload(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Source != "claude-code" || evs[0].Category != event.CategoryPrompt {
 		t.Fatalf("emit not normalized: %+v", evs)
 	}
@@ -374,7 +510,7 @@ func TestEmitEndpointBadPayload(t *testing.T) {
 
 func TestRecentEvents(t *testing.T) {
 	cfg := testConfig(t)
-	w := spool.NewWriter(cfg.SpoolDir)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	for i := range 3 {
 		if _, err := w.Append(mkEvent(i, base.Add(time.Duration(i)*time.Second))); err != nil {
@@ -410,7 +546,7 @@ func TestRecentEventsBadLimit(t *testing.T) {
 
 func TestRecentEventsClampsMaxLimit(t *testing.T) {
 	cfg := testConfig(t)
-	w := spool.NewWriter(cfg.SpoolDir)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	if _, err := w.Append(mkEvent(0, base)); err != nil {
 		t.Fatal(err)

@@ -16,6 +16,17 @@ import (
 	"agentfirehose/internal/workspace"
 )
 
+func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
+	t.pollAck(func(ev event.Event) error {
+		select {
+		case ch <- ev:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+}
+
 func mkEvent(i int, ts time.Time) event.Event {
 	return event.Event{
 		ID:       fmt.Sprintf("ev-%d", i),
@@ -169,6 +180,47 @@ func TestReadLastNAcrossFilesAndLimit(t *testing.T) {
 	}
 	if len(evs) != 2 || evs[0].ID != "b" || evs[1].ID != "c" {
 		t.Fatalf("lastN wrong: %+v", evs)
+	}
+}
+
+func TestReadLastDistinctNExpandsOnlyPastReplayDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	writer := NewWriter(dir)
+	for _, ev := range []event.Event{
+		mkEvent(1, base), mkEvent(2, base.Add(time.Second)),
+		mkEvent(2, base.Add(time.Second)), mkEvent(3, base.Add(2*time.Second)),
+	} {
+		if _, err := writer.Append(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	events, err := ReadLastDistinctN(dir, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[0].ID != "ev-1" || events[1].ID != "ev-2" || events[2].ID != "ev-3" {
+		t.Fatalf("distinct recent events = %+v", events)
+	}
+}
+
+func TestReadLastDistinctNDoesNotOpenOlderFilesWhenNewestWindowIsEnough(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "2026-07-01.ndjson")); err != nil {
+		t.Fatal(err)
+	}
+	day2 := filepath.Join(dir, "2026-07-02.ndjson")
+	line := `{"id":"new","time":"2026-07-02T10:00:00Z","source":"generic","category":"meta"}` + "\n"
+	if err := os.WriteFile(day2, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events, err := ReadLastDistinctN(dir, 1)
+	if err != nil {
+		t.Fatalf("bounded read opened older broken file: %v", err)
+	}
+	if len(events) != 1 || events[0].ID != "new" {
+		t.Fatalf("events = %+v", events)
 	}
 }
 
@@ -438,6 +490,35 @@ func TestTailerEmitsParseErrorEvent(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("tailer never surfaced parse failure")
+	}
+}
+
+func TestTailerProjectionFailureDoesNotStarveNewerFiles(t *testing.T) {
+	dir := t.TempDir()
+	tail := NewTailer(dir, time.Second)
+	tail.Prime()
+	writer := NewWriter(dir)
+	older := mkEvent(1, time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC))
+	newer := mkEvent(2, time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC))
+	if _, err := writer.Append(older); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Append(newer); err != nil {
+		t.Fatal(err)
+	}
+	var delivered []string
+	tail.pollAck(func(ev event.Event) error {
+		if ev.ID == older.ID {
+			return fmt.Errorf("projection unavailable")
+		}
+		delivered = append(delivered, ev.ID)
+		return nil
+	})
+	if len(delivered) != 1 || delivered[0] != newer.ID {
+		t.Fatalf("newer file was starved: %v", delivered)
+	}
+	if tail.offsets[fileFor(dir, older.Time)] != 0 {
+		t.Fatal("failed record offset advanced")
 	}
 }
 

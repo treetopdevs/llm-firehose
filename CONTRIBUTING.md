@@ -27,11 +27,14 @@ Package layout:
 
 - `internal/event` — the normalized envelope (start here)
 - `internal/privacy` — capture-mode redaction
-- `internal/spool` — NDJSON persistence + tailing
+- `internal/capture` — Admission, lifecycle, durable queries, and Live Subscriptions
+- `internal/capture/internal/*` — sealed spool and disposable Projection implementations
 - `internal/adapters/*` — one package per source
 - `internal/store` — ring buffer, filters, coalescing
 - `internal/tui` — Bubble Tea model/view
 - `internal/cli` — testable subcommand implementations
+- `internal/daemon` — local HTTP adapter over an injected Capture Engine
+- `internal/host` — shared daemon and daemonless composition
 - `cmd/firehose` — flag parsing and wiring only
 
 ## Adding an adapter

@@ -39,8 +39,8 @@ tool observations without replacing rollout message streaming.
 
 ## The daemon
 
-The capture engine can run as a long-lived local daemon that owns the spool
-and serves a localhost API (default `127.0.0.1:4517`):
+The capture engine can run as a long-lived local daemon host that serves a
+localhost API (default `127.0.0.1:4517`):
 
 ```sh
 firehose daemon            # run the engine: watchers, spool writes, local API
@@ -50,8 +50,14 @@ firehose status            # is it running? which version/schema?
 
 When the daemon is running, `firehose emit` (and every installed adapter)
 routes payloads through it, and the TUI consumes its live stream instead of
-tailing files itself. When it isn't, everything falls back to direct spool
-access — capture never depends on the daemon being up. The API surface
+running the engine in process. When it isn't, push adapters use the same
+One-shot Admission sequence and the TUI runs the same engine and Sources
+locally, including durable Codex and process capture. Capture never depends
+on the daemon being up. An OS lock grants Source ownership to exactly one
+daemon or daemonless host per user; additional viewers reconcile the shared
+spool without duplicating source observations and inherit ownership when it
+is released. Live clients bracket replacement streams with durable history
+snapshots when a bounded stream disconnects. The API surface
 (events, live SSE stream, sessions, doctor, export) is documented in
 [docs/contracts.md](docs/contracts.md).
 

@@ -113,8 +113,12 @@ func EmitNamed(cfg Config, source, eventName string, r io.Reader) error {
 	if daemonRouteAllowed(cfg.DaemonAddr) {
 		err := client.New("http://"+cfg.DaemonAddr).EmitNamed(context.Background(), source, eventName, bytes.NewReader(raw))
 		var transport *url.Error
-		if !errors.As(err, &transport) {
-			return err // nil on success; daemon rejections surface as-is
+		var response *client.HTTPError
+		if err == nil {
+			return nil
+		}
+		if !errors.As(err, &transport) && !(errors.As(err, &response) && response.StatusCode >= 500) {
+			return err // daemon parse/validation rejections never trigger a second write
 		}
 	}
 	return EmitLocalNamed(cfg, source, eventName, raw)
@@ -221,10 +225,11 @@ func reportHookCaptureError(cfg Config, source string, captureErr error) {
 		Category: event.CategoryMeta,
 		Name:     "hook_capture_error",
 		Severity: event.SeverityWarn,
-		Summary:  "Adapter hook capture warning: " + captureErr.Error(),
+		Summary:  source + " adapter hook capture warning",
 		Payload: map[string]any{
 			"adapter_source": source,
 			"status":         "error",
+			"error":          captureErr.Error(),
 		},
 	}
 	_, _ = capture.AdmitOnce(context.Background(), capture.OneShotOptions{
@@ -265,9 +270,5 @@ const ExportVersion = 1
 
 // Export writes all spooled events to w as NDJSON, returning the count.
 func Export(cfg Config, w io.Writer) (int, error) {
-	engine, err := capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: cfg.mode()})
-	if err != nil {
-		return 0, err
-	}
-	return engine.Export(w)
+	return capture.ExportOnce(cfg.SpoolDir, w)
 }

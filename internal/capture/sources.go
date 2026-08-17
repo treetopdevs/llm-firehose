@@ -20,6 +20,7 @@ const (
 type LocalSourceOptions struct {
 	CodexDir       string
 	CodexStatePath string
+	OwnershipPath  string
 }
 
 // LocalSources returns the production local Source Adapters without exposing
@@ -32,6 +33,12 @@ func LocalSources(options LocalSourceOptions) []Source {
 		}
 	}
 	sources = append(sources, newProcessSource(procwatch.PSLister{}, defaultProcInterval))
+	if options.OwnershipPath != "" {
+		lease := &sourceLease{path: options.OwnershipPath}
+		for i, source := range sources {
+			sources[i] = &leasedSource{lease: lease, source: source}
+		}
+	}
 	return sources
 }
 
@@ -46,7 +53,11 @@ func newCodexSource(root, statePath string, interval time.Duration) *codexSource
 
 func (*codexSource) Name() string { return codex.Source }
 
-func (s *codexSource) prepare() error {
+func (s *codexSource) prepare(sink Sink) error {
+	s.watcher.Sink = func(ev event.Event) error {
+		_, err := sink.Admit(context.Background(), ev)
+		return err
+	}
 	if s.prepared {
 		return nil
 	}

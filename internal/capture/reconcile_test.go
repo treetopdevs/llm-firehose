@@ -12,18 +12,20 @@ import (
 )
 
 func TestProjectionFailureAfterCommitReconcilesWithoutAdmissionRetry(t *testing.T) {
-	engine, err := New(Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	failed := false
+	engine, err := newEngine(Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull}, engineSeams{
+		projector: func(engine *Engine) func(event.Event) error {
+			return func(ev event.Event) error {
+				if !failed {
+					failed = true
+					return errors.New("injected projection failure")
+				}
+				return engine.applyProjection(ev)
+			}
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	realProject := engine.project
-	failed := false
-	engine.project = func(ev event.Event) error {
-		if !failed {
-			failed = true
-			return errors.New("injected projection failure")
-		}
-		return realProject(ev)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

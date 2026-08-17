@@ -28,6 +28,8 @@ export type Connector = {
   stop(): void;
 };
 
+const reconciliationPendingCapacity = 10000;
+
 /** Normalize daemon schema_version: 0/absent → 1 (docs/compatibility.md). */
 export function normalizeSchemaVersion(raw: number | undefined): number {
   return raw && raw > 0 ? raw : 1;
@@ -57,11 +59,17 @@ export function createConnector(deps: ConnectDeps): Connector {
       });
 
       if (!stopStream) {
-        const history = await deps.recent(reconnecting ? 10000 : 500);
-        for (const ev of history) {
-          deps.onEvent(ev);
-        }
-        stopStream = deps.stream(deps.onEvent, (open) => {
+        const limit = reconnecting ? 10000 : 500;
+        const history = await deps.recent(limit);
+        const pending: FirehoseEvent[] = [];
+        let reconciling = true;
+        let streamFailed = false;
+        const stop = deps.stream((ev) => {
+          if (reconciling) {
+            if (pending.length === reconciliationPendingCapacity) pending.shift();
+            pending.push(ev);
+          } else deps.onEvent(ev);
+        }, (open) => {
           if (open) {
             deps.setStatus({
               kind: "ok",
@@ -69,16 +77,29 @@ export function createConnector(deps: ConnectDeps): Connector {
             });
             deps.onStreamOpen?.();
           } else {
-			const stop = stopStream;
-			stopStream = null;
-			reconnecting = true;
-			stop?.();
+            streamFailed = true;
+            const active = stopStream;
+            stopStream = null;
+            reconnecting = true;
+            active?.();
             deps.setStatus({
               kind: "warn",
               text: "stream interrupted — reconnecting…",
             });
           }
         });
+        if (streamFailed) stop();
+        else stopStream = stop;
+
+        const catchup = await deps.recent(limit);
+        const reconciledIds = new Set<string>();
+        for (const ev of [...history, ...catchup, ...pending]) {
+          if (ev.id && reconciledIds.has(ev.id)) continue;
+          if (ev.id) reconciledIds.add(ev.id);
+          deps.onEvent(ev);
+        }
+        reconciling = false;
+        if (!streamFailed) reconnecting = false;
       }
     } catch {
       stopStream?.();

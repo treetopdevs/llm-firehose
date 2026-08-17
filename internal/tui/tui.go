@@ -130,6 +130,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case EventMsg:
+		m.noteAttention(msg.Event)
+		if isReconciledTransition(msg.Event) {
+			return m, m.wait()
+		}
 		m.events = append(m.events, msg.Event)
 		m.total++
 		if len(m.events) > maxEvents {
@@ -142,7 +146,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !hasSource(m.sources, msg.Event.Source) {
 			m.sources = append(m.sources, msg.Event.Source)
 		}
-		m.noteAttention(msg.Event)
 		if m.paused {
 			m.unread++
 		}
@@ -151,6 +154,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+func isReconciledTransition(ev event.Event) bool {
+	if ev.Source != "firehose" || ev.Name != "state.transition" {
+		return false
+	}
+	reconciled, _ := ev.Payload["reconciled"].(bool)
+	return reconciled
 }
 
 func hasSource(list []string, s string) bool {

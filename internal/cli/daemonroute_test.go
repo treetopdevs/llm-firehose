@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/testsupport/capturehistory"
 )
 
 func testCaptureEngine(t *testing.T, cfg cli.Config) *capture.Engine {
@@ -60,11 +61,11 @@ func TestEmitRoutesThroughDaemonWhenReachable(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	// The daemon owns the write: its spool has the event, the local one doesn't.
-	dEvs, _ := spool.ReadLastN(daemonSpool, 10)
+	dEvs, _ := capturehistory.Recent(daemonSpool, 10)
 	if len(dEvs) != 1 || dEvs[0].Summary != "through daemon" {
 		t.Fatalf("daemon spool = %+v, want the emitted event", dEvs)
 	}
-	lEvs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	lEvs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(lEvs) != 0 {
 		t.Fatalf("local spool must stay empty when daemon handled the emit: %+v", lEvs)
 	}
@@ -85,11 +86,11 @@ func TestHookForwardRoutesThroughDaemonAndReturnsNeutralJSON(t *testing.T) {
 	if out.String() != "{}\n" {
 		t.Fatalf("hook stdout = %q", out.String())
 	}
-	evs, _ := spool.ReadLastN(daemonSpool, 10)
+	evs, _ := capturehistory.Recent(daemonSpool, 10)
 	if len(evs) != 1 || evs[0].Source != "codex" || evs[0].Name != "Stop" {
 		t.Fatalf("daemon spool = %+v", evs)
 	}
-	if local, _ := spool.ReadLastN(cfg.SpoolDir, 10); len(local) != 0 {
+	if local, _ := capturehistory.Recent(cfg.SpoolDir, 10); len(local) != 0 {
 		t.Fatalf("hook was also written locally: %+v", local)
 	}
 }
@@ -104,7 +105,7 @@ func TestEmitFallsBackToLocalSpoolWhenDaemonDown(t *testing.T) {
 	if err := cli.Emit(cfg, "generic", strings.NewReader(line)); err != nil {
 		t.Fatalf("Emit must fall back, got: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Summary != "fallback" {
 		t.Fatalf("local spool = %+v, want the emitted event", evs)
 	}
@@ -120,11 +121,32 @@ func TestEmitBadPayloadIsNotSwallowedByFallback(t *testing.T) {
 	if err := cli.Emit(cfg, "generic", strings.NewReader("not json")); err == nil {
 		t.Fatal("bad payload must surface an error, not fall back silently")
 	}
-	if evs, _ := spool.ReadLastN(daemonSpool, 10); len(evs) != 0 {
+	if evs, _ := capturehistory.Recent(daemonSpool, 10); len(evs) != 0 {
 		t.Fatalf("bad payload spooled: %+v", evs)
 	}
-	if evs, _ := spool.ReadLastN(cfg.SpoolDir, 10); len(evs) != 0 {
+	if evs, _ := capturehistory.Recent(cfg.SpoolDir, 10); len(evs) != 0 {
 		t.Fatalf("bad payload spooled locally: %+v", evs)
+	}
+}
+
+func TestEmitDaemonPersistenceFailureFallsBackOnce(t *testing.T) {
+	cfg := cli.Config{
+		SpoolDir: filepath.Join(t.TempDir(), "local-spool"), PrivacyMode: "balanced",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "spool unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	cfg.DaemonAddr = strings.TrimPrefix(server.URL, "http://")
+
+	if err := cli.EmitNamed(cfg, "generic", "", strings.NewReader(
+		`{"time":"2026-08-17T12:00:00Z","source":"generic","category":"meta","summary":"fallback"}`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	events, err := capturehistory.Recent(cfg.SpoolDir, 10)
+	if err != nil || len(events) != 1 || events[0].Summary != "fallback" {
+		t.Fatalf("fallback history = %+v, %v", events, err)
 	}
 }
 
@@ -160,7 +182,7 @@ func TestEmitLocalWritesDirectly(t *testing.T) {
 	if err := cli.EmitLocal(cfg, "generic", []byte(line)); err != nil {
 		t.Fatalf("EmitLocal: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Category != event.CategoryShell {
 		t.Fatalf("spool = %+v", evs)
 	}
@@ -202,7 +224,7 @@ func TestDaemonEmitDoesNotProxyToItself(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Emit hung — daemon is proxying to itself")
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 {
 		t.Fatalf("spool has %d events, want exactly 1: %+v", len(evs), evs)
 	}
@@ -265,11 +287,11 @@ func TestHookForwardAntigravityThreadsEventNameThroughDaemonEmit(t *testing.T) {
 	if out.String() != "{}\n" {
 		t.Fatalf("hook stdout = %q", out.String())
 	}
-	evs, _ := spool.ReadLastN(daemonSpool, 10)
+	evs, _ := capturehistory.Recent(daemonSpool, 10)
 	if len(evs) != 1 || evs[0].Source != "antigravity" || evs[0].Name != "PostToolUse:run_command" {
 		t.Fatalf("daemon spool = %+v", evs)
 	}
-	lEvs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	lEvs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(lEvs) != 0 {
 		t.Fatalf("local spool must stay empty when daemon handled the emit: %+v", lEvs)
 	}

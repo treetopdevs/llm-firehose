@@ -1,7 +1,6 @@
-// Package spool persists normalized events as daily append-only NDJSON files
-// and tails them for live viewing. The spool is the local store: writers
-// (firehose emit, adapters) append single lines with O_APPEND so concurrent
-// producers never interleave, and the viewer tails the directory.
+// Package spool is the Capture Engine's sealed daily append-only NDJSON
+// persistence and reconciliation implementation. Capture Admission is its only
+// production writer; hosts and viewers use Capture queries and subscriptions.
 package spool
 
 import (
@@ -23,10 +22,20 @@ import (
 
 // Writer appends events to the daily spool file in Dir.
 type Writer struct {
-	Dir string
+	Dir   string
+	now   func() time.Time
+	newID func() string
 }
 
-func NewWriter(dir string) *Writer { return &Writer{Dir: dir} }
+func NewWriter(dir string) *Writer {
+	return NewWriterWithSeams(dir, time.Now, event.NewID)
+}
+
+// NewWriterWithSeams constructs sealed deterministic persistence for Capture
+// Engine tests without exposing clocks or identifiers through the public API.
+func NewWriterWithSeams(dir string, now func() time.Time, newID func() string) *Writer {
+	return &Writer{Dir: dir, now: now, newID: newID}
+}
 
 func fileFor(dir string, t time.Time) string {
 	return filepath.Join(dir, t.UTC().Format("2006-01-02")+".ndjson")
@@ -41,10 +50,10 @@ func (w *Writer) Append(ev event.Event) (event.Event, error) {
 		return event.Event{}, err
 	}
 	if ev.ID == "" {
-		ev.ID = event.NewID()
+		ev.ID = w.newID()
 	}
 	if ev.CaptureTime == nil {
-		captured := time.Now().UTC()
+		captured := w.now().UTC()
 		ev.CaptureTime = &captured
 	}
 	if ev.SchemaVersion == 0 {
@@ -107,6 +116,48 @@ func ReadLastN(dir string, n int) ([]event.Event, error) {
 		all = all[len(all)-n:]
 	}
 	return all, nil
+}
+
+// ReadLastDistinctN returns up to n recent logical events, oldest first. It
+// starts with a bounded physical window and expands only when crash-window
+// replay duplicates leave fewer than n stable IDs.
+func ReadLastDistinctN(dir string, n int) ([]event.Event, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+	physicalLimit := n
+	for {
+		events, err := ReadLastN(dir, physicalLimit)
+		if err != nil {
+			return nil, err
+		}
+		deduplicated := deduplicateStableIDs(events)
+		if len(deduplicated) >= n {
+			return deduplicated[len(deduplicated)-n:], nil
+		}
+		if len(events) < physicalLimit {
+			return deduplicated, nil
+		}
+		if physicalLimit > int(^uint(0)>>1)/2 {
+			return deduplicated, nil
+		}
+		physicalLimit *= 2
+	}
+}
+
+func deduplicateStableIDs(events []event.Event) []event.Event {
+	seen := make(map[string]bool, len(events))
+	out := make([]event.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.ID != "" && seen[ev.ID] {
+			continue
+		}
+		if ev.ID != "" {
+			seen[ev.ID] = true
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 // ReadDays returns all events from the named UTC day files (YYYY-MM-DD),
@@ -213,7 +264,7 @@ func (t *Tailer) RunAck(ctx context.Context, deliver func(event.Event) error) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			t.pollAck(ctx, deliver)
+			t.pollAck(deliver)
 		}
 	}
 }
@@ -224,18 +275,7 @@ const maxRecordBytes = 8 << 20
 
 var errOversizedRecord = errors.New("spool: oversized record")
 
-func (t *Tailer) poll(ctx context.Context, ch chan<- event.Event) {
-	t.pollAck(ctx, func(ev event.Event) error {
-		select {
-		case ch <- ev:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	})
-}
-
-func (t *Tailer) pollAck(ctx context.Context, deliver func(event.Event) error) {
+func (t *Tailer) pollAck(deliver func(event.Event) error) {
 	files, err := spoolFiles(t.Dir)
 	if err != nil {
 		return
@@ -300,9 +340,8 @@ func (t *Tailer) pollAck(ctx context.Context, deliver func(event.Event) error) {
 				}
 			}
 			if err := deliver(ev); err != nil {
-				f.Close()
 				t.offsets[path] = recordStart
-				return
+				break
 			}
 			t.offsets[path] = read
 		}

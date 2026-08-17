@@ -1,4 +1,4 @@
-package index
+package projection
 
 import (
 	"os"
@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/spool"
 )
 
 func seedEvents() []event.Event {
@@ -28,7 +28,7 @@ func seedEvents() []event.Event {
 	}
 }
 
-func foldIndex(evs []event.Event) *Index {
+func foldProjection(evs []event.Event) *Projection {
 	ix := New()
 	for _, ev := range evs {
 		ix.Apply(ev)
@@ -37,7 +37,7 @@ func foldIndex(evs []event.Event) *Index {
 }
 
 func TestSessionsAggregation(t *testing.T) {
-	ix := foldIndex(seedEvents())
+	ix := foldProjection(seedEvents())
 	sessions := ix.Sessions()
 	if len(sessions) != 2 {
 		t.Fatalf("got %d sessions, want 2: %+v", len(sessions), sessions)
@@ -65,7 +65,7 @@ func TestSessionsAggregation(t *testing.T) {
 }
 
 func TestSessionDaysSpanFiles(t *testing.T) {
-	ix := foldIndex(seedEvents())
+	ix := foldProjection(seedEvents())
 	days := ix.SessionDays("s1")
 	want := []string{"2026-07-02", "2026-07-03"}
 	if !reflect.DeepEqual(days, want) {
@@ -80,7 +80,7 @@ func TestSessionDaysSpanFiles(t *testing.T) {
 }
 
 func TestTracesAggregation(t *testing.T) {
-	ix := foldIndex(seedEvents())
+	ix := foldProjection(seedEvents())
 	traces := ix.Traces()
 	if len(traces) != 1 || traces[0].ID != "tr1" || traces[0].Events != 2 {
 		t.Fatalf("traces = %+v, want one tr1 with 2 events", traces)
@@ -97,7 +97,7 @@ func TestFilesAggregation(t *testing.T) {
 		SessionID: "s2", Category: event.CategoryFile,
 		Payload: map[string]any{"changes": map[string]any{"/repo/auth.go": map[string]any{}}},
 	})
-	ix := foldIndex(evs)
+	ix := foldProjection(evs)
 	files := ix.Files()
 	if len(files) != 1 {
 		t.Fatalf("files = %+v, want 1 artifact", files)
@@ -140,7 +140,7 @@ func TestBuildEqualsFold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	folded := foldIndex(written)
+	folded := foldProjection(written)
 	if !reflect.DeepEqual(built.Sessions(), folded.Sessions()) {
 		t.Errorf("Build sessions != fold sessions:\n%+v\n%+v", built.Sessions(), folded.Sessions())
 	}
@@ -329,7 +329,7 @@ func TestBuildAttentionDeterminism(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	folded := foldIndex(written)
+	folded := foldProjection(written)
 	if !reflect.DeepEqual(built.Sessions(), folded.Sessions()) {
 		t.Errorf("attention rebuild mismatch:\n%+v\n%+v", built.Sessions(), folded.Sessions())
 	}
@@ -345,7 +345,7 @@ func TestBuildMissingDirIsEmpty(t *testing.T) {
 		t.Fatalf("Build on missing dir: %v", err)
 	}
 	if len(ix.Sessions()) != 0 || len(ix.Files()) != 0 {
-		t.Errorf("missing dir must build an empty index")
+		t.Errorf("missing dir must build an empty Projection")
 	}
 }
 

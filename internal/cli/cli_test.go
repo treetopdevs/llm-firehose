@@ -13,7 +13,7 @@ import (
 	"agentfirehose/internal/capturemeta"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/testsupport/capturehistory"
 )
 
 func testConfig(t *testing.T) Config {
@@ -30,7 +30,7 @@ func TestEmitClaudeCodeWritesRedactedEvent(t *testing.T) {
 	if err := Emit(cfg, "claude-code", in); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, err := capturehistory.Recent(cfg.SpoolDir, 10)
 	if err != nil {
 		t.Fatalf("read spool: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestClaudeFixtureContentIsOnlyRetainedInFullMode(t *testing.T) {
 			if err := EmitLocal(cfg, "claude-code", raw); err != nil {
 				t.Fatal(err)
 			}
-			evs, err := spool.ReadLastN(cfg.SpoolDir, 1)
+			evs, err := capturehistory.Recent(cfg.SpoolDir, 1)
 			if err != nil || len(evs) != 1 {
 				t.Fatalf("spool: events=%+v err=%v", evs, err)
 			}
@@ -86,7 +86,7 @@ func TestEmitOpenCodeSource(t *testing.T) {
 	if err := Emit(cfg, "opencode", in); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Category != event.CategoryFile {
 		t.Fatalf("opencode emit wrong: %+v", evs)
 	}
@@ -101,7 +101,7 @@ func TestOpenCodeToolContentIsOnlyRetainedInFullMode(t *testing.T) {
 			if err := EmitLocal(cfg, "opencode", raw); err != nil {
 				t.Fatal(err)
 			}
-			evs, err := spool.ReadLastN(cfg.SpoolDir, 1)
+			evs, err := capturehistory.Recent(cfg.SpoolDir, 1)
 			if err != nil || len(evs) != 1 {
 				t.Fatalf("spool: events=%+v err=%v", evs, err)
 			}
@@ -126,7 +126,7 @@ func TestEmitSkippedEventWritesNothing(t *testing.T) {
 	if err := Emit(cfg, "opencode", in); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 0 {
 		t.Fatalf("skipped event must not be spooled: %+v", evs)
 	}
@@ -138,7 +138,7 @@ func TestEmitUnknownEventWritesSafeWarning(t *testing.T) {
 	if err := Emit(cfg, "opencode", in); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Name != "adapter.unknown_event" {
 		t.Fatalf("unknown event warning missing: %+v", evs)
 	}
@@ -163,7 +163,7 @@ func TestIngestStreamsLines(t *testing.T) {
 	if n != 2 {
 		t.Errorf("ingested %d, want 2", n)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 2 {
 		t.Fatalf("spool has %d events", len(evs))
 	}
@@ -639,7 +639,7 @@ func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) 
 	if out.String() != "{}\n" {
 		t.Fatalf("stdout = %q", out.String())
 	}
-	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, err := capturehistory.Recent(cfg.SpoolDir, 10)
 	if err != nil || len(evs) != 1 || evs[0].Source != "codex" {
 		t.Fatalf("fallback spool = %+v, %v", evs, err)
 	}
@@ -648,7 +648,7 @@ func TestHookForwardAlwaysReturnsEmptyDecisionAndFallsBackToSpool(t *testing.T) 
 	if err := HookForward(cfg, "claude-code", "", strings.NewReader(`not json`), &out); err != nil || out.String() != "{}\n" {
 		t.Fatalf("malformed hook must fail silently: err=%v out=%q", err, out.String())
 	}
-	evs, err = spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, err = capturehistory.Recent(cfg.SpoolDir, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -672,7 +672,7 @@ func TestRunHookForwardCommandSurfacesConfigFailureAndForwards(t *testing.T) {
 	if out.String() != "{}\n" {
 		t.Fatalf("hook command stdout = %q", out.String())
 	}
-	evs, err := spool.ReadLastN(filepath.Join(home, ".agentfirehose", "spool"), 10)
+	evs, err := capturehistory.Recent(filepath.Join(home, ".agentfirehose", "spool"), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -691,7 +691,7 @@ func TestRunHookForwardCommandInvalidFlagsSkipsDefaultCodexSource(t *testing.T) 
 	if out.String() != "{}\n" {
 		t.Fatalf("hook command stdout = %q", out.String())
 	}
-	evs, err := spool.ReadLastN(filepath.Join(home, ".agentfirehose", "spool"), 10)
+	evs, err := capturehistory.Recent(filepath.Join(home, ".agentfirehose", "spool"), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +709,7 @@ func TestReportHookCaptureErrorRedactsBeforeSpool(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.PrivacyMode = string(privacy.ModeMinimal)
 	reportHookCaptureError(cfg, "claude-code", fmt.Errorf("boom"))
-	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, err := capturehistory.Recent(cfg.SpoolDir, 10)
 	if err != nil || len(evs) != 1 {
 		t.Fatalf("spool = %+v err=%v", evs, err)
 	}
@@ -717,8 +717,8 @@ func TestReportHookCaptureErrorRedactsBeforeSpool(t *testing.T) {
 	if ev.Name != "hook_capture_error" || ev.Severity != event.SeverityWarn {
 		t.Fatalf("warning fields lost after redact: %+v", ev)
 	}
-	if !strings.Contains(ev.Summary, "boom") {
-		t.Fatalf("summary must retain capture error: %+v", ev)
+	if strings.Contains(ev.Summary, "boom") {
+		t.Fatalf("summary leaked capture error: %+v", ev)
 	}
 	// Payload values are digested in minimal mode; adapter_source must not
 	// remain a bare string.
@@ -727,6 +727,9 @@ func TestReportHookCaptureErrorRedactsBeforeSpool(t *testing.T) {
 	}
 	if _, ok := ev.Payload["status"].(map[string]any); !ok {
 		t.Fatalf("status must be digested in minimal mode: %+v", ev.Payload)
+	}
+	if _, ok := ev.Payload["error"].(map[string]any); !ok {
+		t.Fatalf("error must be digested in minimal mode: %+v", ev.Payload)
 	}
 }
 
@@ -1071,7 +1074,7 @@ func TestEmitLocalNamedAntigravityRedactsAndRequiresEventName(t *testing.T) {
 	if err := EmitLocalNamed(cfg, "antigravity", "PostToolUse", raw); err != nil {
 		t.Fatalf("EmitLocalNamed: %v", err)
 	}
-	evs, err := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, err := capturehistory.Recent(cfg.SpoolDir, 10)
 	if err != nil || len(evs) != 1 {
 		t.Fatalf("spool = %+v, %v", evs, err)
 	}
@@ -1108,7 +1111,7 @@ func TestRunHookForwardCommandAntigravityCarriesEventName(t *testing.T) {
 		t.Fatalf("hook command stdout = %q", out.String())
 	}
 	spoolDir := filepath.Join(home, ".agentfirehose", "spool")
-	evs, err := spool.ReadLastN(spoolDir, 10)
+	evs, err := capturehistory.Recent(spoolDir, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1125,7 +1128,7 @@ func TestRunHookForwardCommandAntigravityCarriesEventName(t *testing.T) {
 	if out.String() != "{}\n" {
 		t.Fatalf("hook command stdout without --event = %q", out.String())
 	}
-	evs, err = spool.ReadLastN(spoolDir, 10)
+	evs, err = capturehistory.Recent(spoolDir, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1194,7 +1197,7 @@ func TestEmitWithNonLoopbackDaemonStillCapturesLocally(t *testing.T) {
 	if err := EmitNamed(cfg, "generic", "", strings.NewReader(`{"category":"meta","summary":"s"}`)); err != nil {
 		t.Fatalf("EmitNamed: %v", err)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 {
 		t.Fatalf("local spool events = %d, want 1", len(evs))
 	}

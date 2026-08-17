@@ -57,8 +57,8 @@ observed; path equality alone is never promoted to a repository claim.
 
 Redaction happens **before persistence** — the spool never contains more than
 the configured mode allows. The mode is applied at the engine boundary before
-emitted, ingested, rollout, or process observations are appended. In
-daemonless viewing, direct Codex observations are redacted before display.
+emitted, ingested, rollout, or process observations are appended. Daemon and
+daemonless hosts use the same Admission path.
 
 | Mode | `raw` | `payload` values | Metadata (source, category, name, source/capture times, ids, summary) | Path identity (`cwd`, `repo_id`, `worktree_id`) |
 |---|---|---|---|---|
@@ -73,13 +73,18 @@ daemonless viewing, direct Codex observations are redacted before display.
 - Each line is one JSON event envelope; writers append whole lines with
   `O_APPEND` so concurrent producers never interleave.
 - The spool is the canonical, append-only source of truth. Derived stores
-  (indexes, caches) must be rebuildable from it.
+  (Projections, caches) must be rebuildable from it.
 - Capture is at-least-once across a crash window: the spool may contain the
-  same stable event `id` more than once after replay. Derived indexes and
+  same stable event `id` more than once after replay. Derived Projections and
   presentation deduplicate exact IDs; the append-only spool and export retain
   the observations as written.
 - Readers skip unparseable lines; the tailer surfaces them as `meta`/`warn`
   events instead of failing.
+- Capture Engine source-supervision and hook-capture Warning summaries contain
+  bounded source/status metadata only. Their potentially sensitive error detail
+  remains in `payload`, where the active privacy mode hashes, truncates, or
+  retains it according to this contract. Existing adapter capture- and
+  parse-warning summaries keep their established shapes.
 
 ## Export format (`export_version`)
 
@@ -142,7 +147,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `POST /emit?source=S` | normalize one raw source payload; 204 on success. Additive optional `event=<name>` parameter (schema v1): the native event name for sources whose payloads carry none (antigravity); other sources ignore it |
 | `POST /v1/logs` | opt-in loopback OTLP/HTTP JSON logs; `{}` on accepted batch |
 | `POST /v1/metrics` | opt-in loopback OTLP/HTTP JSON metrics; `{}` on accepted batch |
-| `GET /sessions` | session summaries (derived index), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
+| `GET /sessions` | session summaries (derived Projection), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
 | `GET /sessions/{id}` | all events for one session, oldest first |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
@@ -150,12 +155,20 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 
-Session, trace, and file queries are served from an in-memory index derived
+Session, trace, and file queries are served from an in-memory Projection derived
 from the spool (rebuilt at startup, updated from the tail); the spool stays
-the source of truth and the index is always disposable. Attention `state` is
+the source of truth and the Projection is always disposable. Attention `state` is
 derived only — never written to the spool. Stream-only `source=firehose`
 /`name=state.transition` frames on `/events/stream` announce transitions for
 live clients; they are never persisted or exported.
+
+Live streams are bounded presentation channels, not durable history. Queue
+overflow closes only the affected stream; clients close the failed transport,
+reload up to 10,000 durable events, open a replacement, and take a second
+durable snapshot before consuming it. Exact-ID deduplication merges both
+snapshots with buffered live frames without a history/live race. Browser
+EventSource clients disable implicit reconnect because it does not perform
+that history reconciliation.
 
 CORS: browser origins are allowlisted to the desktop shell
 (`tauri://localhost`, `http(s)://tauri.localhost`, `http://localhost:1420`).
@@ -172,6 +185,8 @@ Client rules:
 - Probe `GET /health` and compare `schema_version` before assuming
   compatibility.
 - `firehose emit` (and therefore all push adapters) routes through the daemon
-  when one is reachable and falls back to direct spool append when not —
-  capture never depends on the daemon being up.
+  when one is reachable and falls back to One-shot Admission on transport
+  failure or a daemon `5xx` persistence failure — capture never depends on the
+  daemon being up. An authoritative parse/validation rejection (`4xx`) is
+  returned and never triggers a second write.
 - The daemon writes emits locally; it never proxies them (no self-forwarding).

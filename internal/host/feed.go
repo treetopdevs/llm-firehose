@@ -38,12 +38,23 @@ func openEngineFeed(ctx context.Context, engine *capture.Engine, initialLimit, r
 	for _, ev := range history {
 		seen.add(ev.ID)
 	}
-	subscription := engine.Subscribe(ctx)
+	subscriptionCtx, stopSubscription := context.WithCancel(ctx)
+	subscription := engine.Subscribe(subscriptionCtx)
+	catchup, err := engine.Recent(initialLimit)
+	if err != nil {
+		stopSubscription()
+		return Feed{}, err
+	}
+	for _, ev := range catchup {
+		if seen.add(ev.ID) {
+			history = append(history, ev)
+		}
+	}
 	engineDone := make(chan error, 1)
 	go func() { engineDone <- engine.Run(ctx) }()
 
 	out := make(chan event.Event, 256)
-	go pumpEngineFeed(ctx, engine, subscription, engineDone, reconcileLimit, seen, out)
+	go pumpEngineFeed(ctx, engine, subscription, stopSubscription, engineDone, reconcileLimit, seen, out)
 	return Feed{Events: out, History: history, Sessions: sessions}, nil
 }
 
@@ -51,6 +62,7 @@ func pumpEngineFeed(
 	ctx context.Context,
 	engine *capture.Engine,
 	subscription *capture.Subscription,
+	stopSubscription context.CancelFunc,
 	engineDone <-chan error,
 	reconcileLimit int,
 	seen *feedIDs,
@@ -58,6 +70,8 @@ func pumpEngineFeed(
 ) {
 	defer close(out)
 	current := subscription
+	stopCurrent := stopSubscription
+	defer func() { stopCurrent() }()
 	for {
 		for current != nil {
 			select {
@@ -80,6 +94,7 @@ func pumpEngineFeed(
 				}
 			}
 		}
+		stopCurrent()
 
 		for current == nil {
 			if ctx.Err() != nil {
@@ -87,18 +102,36 @@ func pumpEngineFeed(
 			}
 			recovered, err := engine.Recent(reconcileLimit)
 			if err == nil {
-				for _, ev := range recovered {
-					if !seen.add(ev.ID) {
-						continue
+				replacementCtx, stopReplacement := context.WithCancel(ctx)
+				replacement := engine.Subscribe(replacementCtx)
+				catchup, catchupErr := engine.Recent(reconcileLimit)
+				if catchupErr != nil {
+					stopReplacement()
+				} else {
+					recovered = append(recovered, catchup...)
+					for _, ev := range recovered {
+						if !seen.add(ev.ID) {
+							continue
+						}
+						select {
+						case out <- ev:
+						case <-ctx.Done():
+							stopReplacement()
+							return
+						}
 					}
-					select {
-					case out <- ev:
-					case <-ctx.Done():
-						return
+					for _, ev := range projectedSessionTransitions(engine.Sessions()) {
+						select {
+						case out <- ev:
+						case <-ctx.Done():
+							stopReplacement()
+							return
+						}
 					}
+					current = replacement
+					stopCurrent = stopReplacement
+					break
 				}
-				current = engine.Subscribe(ctx)
-				break
 			}
 			select {
 			case <-ctx.Done():
@@ -109,6 +142,20 @@ func pumpEngineFeed(
 			}
 		}
 	}
+}
+
+func projectedSessionTransitions(sessions []capture.Session) []event.Event {
+	out := make([]event.Event, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, event.Event{
+			Time: session.StateSince, Source: "firehose", SessionID: session.ID,
+			Category: event.CategoryMeta, Name: "state.transition",
+			Payload: map[string]any{
+				"state": string(session.State), "reason": session.StateReason, "reconciled": true,
+			},
+		})
+	}
+	return out
 }
 
 type feedIDs struct {

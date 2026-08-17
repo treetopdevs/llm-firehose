@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"io"
 	"mime"
 	"net/http"
@@ -44,10 +45,11 @@ func (s *Server) handleOTLP(
 	}
 
 	captured := time.Now().UTC()
+	admitCtx := context.WithoutCancel(r.Context())
 	for _, native := range parse(raw, captured) {
 		// Exporter-facing success never depends on the spool. Hooks remain the
 		// canonical daemon-optional baseline if this supplemental append fails.
-		_, _ = s.engine.Admit(r.Context(), native)
+		_, _ = s.engine.Admit(admitCtx, native)
 	}
 	writeJSON(w, map[string]any{})
 }

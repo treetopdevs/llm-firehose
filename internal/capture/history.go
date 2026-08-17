@@ -7,9 +7,9 @@ import (
 	"io"
 	"math"
 
+	"agentfirehose/internal/capture/internal/projection"
+	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/index"
-	"agentfirehose/internal/spool"
 )
 
 // ErrNotFound reports an absent projected session or trace.
@@ -17,13 +17,13 @@ var ErrNotFound = errors.New("capture: not found")
 
 // Capture-owned query shapes retain the frozen local HTTP JSON representation.
 type (
-	Session      = index.Session
-	TraceSummary = index.Trace
-	FileArtifact = index.FileArtifact
+	Session      = projection.Session
+	TraceSummary = projection.Trace
+	FileArtifact = projection.FileArtifact
 )
 
 func (e *Engine) applyProjection(ev event.Event) error {
-	transition, applied := e.index.ApplyResult(ev)
+	transition, applied := e.projection.ApplyResult(ev)
 	if !applied {
 		return nil
 	}
@@ -37,14 +37,14 @@ func (e *Engine) applyProjection(ev event.Event) error {
 }
 
 // Sessions returns projected session summaries, most recently active first.
-func (e *Engine) Sessions() []Session { return e.index.Sessions() }
+func (e *Engine) Sessions() []Session { return e.projection.Sessions() }
 
 // Files returns projected file summaries, most recently touched first.
-func (e *Engine) Files() []FileArtifact { return e.index.Files() }
+func (e *Engine) Files() []FileArtifact { return e.projection.Files() }
 
 // Session returns presentation-deduplicated events for one session.
 func (e *Engine) Session(id string) ([]event.Event, error) {
-	days := e.index.SessionDays(id)
+	days := e.projection.SessionDays(id)
 	if len(days) == 0 {
 		return nil, fmt.Errorf("%w: session %q", ErrNotFound, id)
 	}
@@ -57,7 +57,7 @@ func (e *Engine) Session(id string) ([]event.Event, error) {
 
 // Trace returns presentation-deduplicated events sharing one trace id.
 func (e *Engine) Trace(id string) ([]event.Event, error) {
-	days := e.index.TraceDays(id)
+	days := e.projection.TraceDays(id)
 	if len(days) == 0 {
 		return nil, fmt.Errorf("%w: trace %q", ErrNotFound, id)
 	}
@@ -89,7 +89,20 @@ func filterDeduplicate(events []event.Event, keep func(event.Event) bool, notFou
 // Export writes every physical spool observation oldest first. Unlike
 // presentation queries, it intentionally retains stable-ID duplicates.
 func (e *Engine) Export(w io.Writer) (int, error) {
-	events, err := spool.ReadLastN(e.spoolDir, math.MaxInt)
+	return exportSpool(e.spoolDir, w)
+}
+
+// ExportOnce writes physical spool records without constructing a Projection
+// or starting Source Adapters.
+func ExportOnce(spoolDir string, w io.Writer) (int, error) {
+	if spoolDir == "" {
+		return 0, fmt.Errorf("capture: spool directory is required")
+	}
+	return exportSpool(spoolDir, w)
+}
+
+func exportSpool(spoolDir string, w io.Writer) (int, error) {
+	events, err := spool.ReadLastN(spoolDir, math.MaxInt)
 	if err != nil {
 		return 0, err
 	}

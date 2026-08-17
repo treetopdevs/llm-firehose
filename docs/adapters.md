@@ -28,18 +28,27 @@ for fidelity and deliberate-filter coverage.
 Categories: `session, prompt, message, tool, file, permission, shell, error, meta`.
 Severities: `info, notice, warn, error`.
 
-Events reach the viewer two ways:
+Every normalized Observation crosses Capture Admission before it reaches a
+viewer: validate, enrich workspace identity, apply the active privacy policy,
+append one canonical record, then update disposable Projections and bounded
+Live Subscriptions. There are two host paths into that same sequence:
 
-1. **Spool** — producers run `firehose emit --source <name>` with the raw
-   payload on stdin. Emit normalizes, applies the privacy mode, and appends
-   one NDJSON line to `~/.agentfirehose/spool/YYYY-MM-DD.ndjson`. The viewer
-   tails this directory. The spool *is* the local history.
-2. **Direct tail** — sources that already persist their own structured logs
-   (Codex) and the process watcher are tailed/polled by the engine. When the
-   daemon runs, it redacts these events per the privacy mode and appends them
-   to the spool like any other event, so the spool stays the canonical source
-   of truth; the daemonless TUI tails Codex files directly without
-   re-persisting them.
+1. **Push Admission** — producers run `firehose emit --source <name>` with the
+   raw payload on stdin. A reachable daemon parses and admits it. Transport
+   failure or a daemon `5xx` persistence failure falls back to lightweight
+   One-shot Admission; an authoritative parse/validation rejection (`4xx`)
+   never causes a second local write.
+2. **Engine Sources** — Codex durable files and the process watcher run as
+   supervised Capture Engine Sources. Both the daemon host and daemonless TUI
+   use the same source construction, and both persist their observations to
+   the spool before Projection or live delivery. A crash-safe OS lock grants
+   active Source ownership to only one host; concurrent viewers remain
+   reconcile-only until the owner exits.
+
+The spool remains the local history. Presentation queries deduplicate exact
+stable IDs; physical replay records remain in spool export. A slow live client
+is disconnected on queue overflow and brackets its replacement subscription
+with durable history snapshots.
 
 ## Claude Code (deep)
 
@@ -97,7 +106,7 @@ Codex has two complementary observational transports:
 - The engine tails `~/.codex/sessions/**/rollout-*.jsonl` through the reusable
   `internal/durablejsonl` core. On first activation it baselines existing
   files without importing history. Per-file offsets and parser context are
-  checkpointed only after a synchronous spool append, so lines written while
+  checkpointed only after successful Admission, so lines written while
   the daemon is down are recovered at least once after restart. Partial
   records wait for completion; truncation, replacement, and rotation reset
   only the affected cursor. A corrupt checkpoint is quarantined, safely
@@ -108,7 +117,7 @@ Codex has two complementary observational transports:
   It preserves existing hooks, writes `hooks.json.bak`, and is idempotent.
   Codex requires a separate trust review in `/hooks`. Both `firehose` and
   bundled `firehosed` expose a fail-silent `hook-forward` command that always
-  returns `{}` and falls back to direct spool writing if the daemon is down.
+  returns `{}` and falls back to One-shot Admission if the daemon is down.
 
 Rollouts map prompts, assistant messages, turn lifecycle, commands, patches,
 searches, MCP/functions/custom tools, outputs, and errors. They also surface
@@ -129,7 +138,7 @@ seconds while keeping start and completion phases separate.
 Rollout events preserve the rollout timestamp as both `time` and
 `source_time`, and separately stamp `capture_time`. If a daemon stops after a
 spool append but before advancing its cursor, restart may replay the same
-stable ID into the append-only spool; rebuilt/live indexes count that ID once
+stable ID into the append-only spool; rebuilt/live Projections count that ID once
 and still ingest later lines written while the daemon was down.
 
 ## OpenCode (deep)

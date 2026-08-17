@@ -70,6 +70,21 @@ func TestNewEventAppearsInView(t *testing.T) {
 	}
 }
 
+func TestReconciledAttentionTransitionDoesNotEnterTimeline(t *testing.T) {
+	m := newTestModel()
+	transition := stateTransition(1, "recovered", stateNeedsInput, "approve Bash")
+	transition.ID = ""
+	transition.Summary = ""
+	transition.Payload["reconciled"] = true
+	m = push(m, transition)
+	if len(m.events) != 0 || m.total != 0 {
+		t.Fatalf("reconciled transition entered timeline: %+v", m.events)
+	}
+	if got := m.attention["recovered"]; got.State != stateNeedsInput || got.Reason != "approve Bash" {
+		t.Fatalf("reconciled attention = %+v", got)
+	}
+}
+
 func TestPauseHoldsStreamAndCountsUnread(t *testing.T) {
 	m := newTestModel()
 	m = push(m, mkEv(1, event.CategoryShell, "first event"))

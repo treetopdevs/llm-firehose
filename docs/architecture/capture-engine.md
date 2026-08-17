@@ -314,9 +314,10 @@ It does not import Codex, process watching, privacy, spool, or index packages.
 
 ### CLI and hooks
 
-Pushed observations first attempt the daemon adapter. Transport failure falls back
-to One-shot Admission. A daemon rejection is returned as a real rejection and does
-not trigger a second local write.
+Pushed observations first attempt the daemon adapter. Transport failure or a daemon
+`5xx` persistence failure falls back to One-shot Admission. An authoritative
+parse/validation rejection (`4xx`) is returned as a real rejection and does not
+trigger a second local write.
 
 The existing neutral hook response remains outside the Capture Engine: the hook
 adapter catches capture errors, attempts a safe Capture Warning, writes `{}`, and

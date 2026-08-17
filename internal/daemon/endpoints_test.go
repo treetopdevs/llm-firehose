@@ -14,7 +14,7 @@ import (
 
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/spool"
+	"agentfirehose/internal/testsupport/capturehistory"
 )
 
 func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httptest.Server {
@@ -30,7 +30,7 @@ func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httpt
 
 func seedSessions(t *testing.T, dir string) {
 	t.Helper()
-	w := spool.NewWriter(dir)
+	w := capturehistory.NewAdmitter(dir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	evs := []event.Event{
 		{ID: "a1", Time: base, Source: "claude-code", Agent: "claude", SessionID: "s1",
@@ -147,7 +147,7 @@ func TestTraceByID(t *testing.T) {
 
 func TestArtifactFiles(t *testing.T) {
 	cfg := testConfig(t)
-	w := spool.NewWriter(cfg.SpoolDir)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
 	base := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	evs := []event.Event{
 		{ID: "f1", Time: base, Source: "claude-code", SessionID: "s1", Category: event.CategoryFile,
@@ -252,7 +252,7 @@ func TestSessionsLiveUpdateWhileRunning(t *testing.T) {
 		t.Fatalf("expected empty sessions, got %+v", got)
 	}
 
-	w := spool.NewWriter(cfg.SpoolDir)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
 	ev := mkEvent(9, time.Now().UTC())
 	ev.SessionID = "s9"
 	if _, err := w.Append(ev); err != nil {
@@ -536,7 +536,7 @@ func TestEmitEndpointAntigravityUsesAdditiveEventParameter(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
-	evs, _ := spool.ReadLastN(cfg.SpoolDir, 10)
+	evs, _ := capturehistory.Recent(cfg.SpoolDir, 10)
 	if len(evs) != 1 || evs[0].Source != "antigravity" || evs[0].Name != "PostToolUse:list_dir" {
 		t.Fatalf("emit not normalized: %+v", evs)
 	}

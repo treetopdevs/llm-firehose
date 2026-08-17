@@ -49,6 +49,19 @@ type Session struct {
 	StateReason string    `json:"state_reason,omitempty"`
 }
 
+// HTTPError reports a daemon response that reached the local HTTP adapter but
+// did not satisfy the requested operation.
+type HTTPError struct {
+	Operation  string
+	Status     string
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("client: %s: %s: %s", e.Operation, e.Status, e.Body)
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
@@ -112,7 +125,10 @@ func (c *Client) EmitNamed(ctx context.Context, source, eventName string, r io.R
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("client: POST /emit: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return &HTTPError{
+			Operation: "POST /emit", Status: resp.Status, StatusCode: resp.StatusCode,
+			Body: strings.TrimSpace(string(body)),
+		}
 	}
 	return nil
 }
@@ -158,8 +174,9 @@ func (c *Client) Stream(ctx context.Context) (<-chan event.Event, error) {
 }
 
 // Feed loads durable history, consumes one live stream, and on interruption
-// reloads durable history before opening a replacement stream. Exact stable
-// ids already inside the bounded presentation window are suppressed.
+// brackets a replacement stream with durable snapshots. The post-subscription
+// snapshot closes the history/live race; exact stable ids already inside the
+// bounded presentation window are suppressed.
 func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-chan event.Event, []event.Event, error) {
 	history, err := c.Recent(ctx, initialLimit)
 	if err != nil {
@@ -167,14 +184,24 @@ func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-
 	}
 	seen := newBoundedIDs(feedSeenCapacity)
 	history = deduplicate(history, seen)
-	stream, err := c.Stream(ctx)
+	streamCtx, stopStream := context.WithCancel(ctx)
+	stream, err := c.Stream(streamCtx)
 	if err != nil {
+		stopStream()
 		return nil, nil, err
 	}
+	catchup, err := c.Recent(ctx, initialLimit)
+	if err != nil {
+		stopStream()
+		return nil, nil, err
+	}
+	history = append(history, deduplicate(catchup, seen)...)
 	out := make(chan event.Event, 256)
 	go func() {
 		defer close(out)
 		current := stream
+		stopCurrent := stopStream
+		defer func() { stopCurrent() }()
 		for {
 			for ev := range current {
 				if ev.ID != "" && !seen.add(ev.ID) {
@@ -186,6 +213,8 @@ func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-
 					return
 				}
 			}
+			stopCurrent()
+			current = nil
 			if ctx.Err() != nil {
 				return
 			}
@@ -193,17 +222,39 @@ func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-
 			for {
 				recovered, historyErr := c.Recent(ctx, reconcileLimit)
 				if historyErr == nil {
-					for _, ev := range deduplicate(recovered, seen) {
-						select {
-						case out <- ev:
-						case <-ctx.Done():
-							return
+					replacementCtx, stopReplacement := context.WithCancel(ctx)
+					replacement, streamErr := c.Stream(replacementCtx)
+					if streamErr == nil {
+						catchup, catchupErr := c.Recent(ctx, reconcileLimit)
+						if catchupErr == nil {
+							recovered = append(recovered, catchup...)
+							for _, ev := range deduplicate(recovered, seen) {
+								select {
+								case out <- ev:
+								case <-ctx.Done():
+									stopReplacement()
+									return
+								}
+							}
+							if sessions, sessionsErr := c.Sessions(ctx); sessionsErr == nil {
+								for _, ev := range sessionTransitions(sessions) {
+									select {
+									case out <- ev:
+									case <-ctx.Done():
+										stopReplacement()
+										return
+									}
+								}
+							}
+							current = replacement
+							stopCurrent = stopReplacement
+							break
 						}
 					}
-					current, historyErr = c.Stream(ctx)
-					if historyErr == nil {
-						break
-					}
+					stopReplacement()
+				}
+				if current != nil {
+					break
 				}
 				select {
 				case <-ctx.Done():
@@ -214,6 +265,20 @@ func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-
 		}
 	}()
 	return out, history, nil
+}
+
+func sessionTransitions(sessions []Session) []event.Event {
+	out := make([]event.Event, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, event.Event{
+			Time: session.StateSince, Source: "firehose", SessionID: session.ID,
+			Category: event.CategoryMeta, Name: "state.transition",
+			Payload: map[string]any{
+				"state": session.State, "reason": session.StateReason, "reconciled": true,
+			},
+		})
+	}
+	return out
 }
 
 type boundedIDs struct {

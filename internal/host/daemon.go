@@ -20,6 +20,7 @@ func NewEngine(cfg cli.Config, home string) (*capture.Engine, error) {
 	sources := capture.LocalSources(capture.LocalSourceOptions{
 		CodexDir:       cfg.CodexDir,
 		CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
+		OwnershipPath:  filepath.Join(home, ".agentfirehose", "state", "engine.lock"),
 	})
 	return capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: policy, Sources: sources})
 }

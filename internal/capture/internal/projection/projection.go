@@ -1,9 +1,9 @@
-// Package index maintains derived, queryable state over the spool: session
+// Package projection maintains derived, queryable state over the spool: session
 // and trace summaries, touched-file artifacts, and the day files each id
 // appears in. The spool stays the source of truth (migration plan, Phase 2);
-// the index is rebuilt from it at startup and updated incrementally, so it
+// the Projection is rebuilt from it at startup and updated incrementally, so it
 // can always be thrown away.
-package index
+package projection
 
 import (
 	"math"
@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/spool"
 )
 
 // Session summarizes one agent session.
@@ -51,8 +51,8 @@ type FileArtifact struct {
 	LastTime  time.Time `json:"last_time"`
 }
 
-// Index is a thread-safe derived view over spooled events.
-type Index struct {
+// Projection is a thread-safe disposable view over Captured Events.
+type Projection struct {
 	mu       sync.RWMutex
 	sessions map[string]*sessionEntry
 	traces   map[string]*traceEntry
@@ -77,8 +77,8 @@ type fileEntry struct {
 	sources map[string]bool
 }
 
-func New() *Index {
-	return &Index{
+func New() *Projection {
+	return &Projection{
 		sessions: map[string]*sessionEntry{},
 		traces:   map[string]*traceEntry{},
 		files:    map[string]*fileEntry{},
@@ -86,10 +86,10 @@ func New() *Index {
 	}
 }
 
-// Build rebuilds the index from every event in the spool directory. A
-// missing directory yields an empty index; unparseable lines are skipped by
+// Build rebuilds the Projection from every event in the spool directory. A
+// missing directory yields an empty Projection; unparseable lines are skipped by
 // the spool reader.
-func Build(dir string) (*Index, error) {
+func Build(dir string) (*Projection, error) {
 	evs, err := spool.ReadLastN(dir, math.MaxInt)
 	if err != nil {
 		return nil, err
@@ -107,19 +107,19 @@ const SourceFirehose = "firehose"
 // NameStateTransition is the event name for attention-state SSE frames.
 const NameStateTransition = "state.transition"
 
-// Apply folds one event into the index. Events with an id already applied
+// Apply folds one event into the Projection. Events with an id already applied
 // are ignored, so replays (e.g. the startup tail overlapping the build read)
 // never double-count. When a session's attention state changes, Apply returns
 // a stream-only synthetic event (never spooled).
-func (ix *Index) Apply(ev event.Event) *event.Event {
+func (ix *Projection) Apply(ev event.Event) *event.Event {
 	transition, _ := ix.ApplyResult(ev)
 	return transition
 }
 
-// ApplyResult folds one event into the index and reports whether its stable id
+// ApplyResult folds one event into the Projection and reports whether its stable id
 // was new. The seen set spans the lifetime of the Projection so an old replay
 // can never be counted twice.
-func (ix *Index) ApplyResult(ev event.Event) (*event.Event, bool) {
+func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
@@ -250,7 +250,7 @@ func (ix *Index) ApplyResult(ev event.Event) (*event.Event, bool) {
 
 // AdvanceIdle moves quiet working sessions to idle and returns one synthetic
 // transition event per session that changed.
-func (ix *Index) AdvanceIdle(now time.Time) []*event.Event {
+func (ix *Projection) AdvanceIdle(now time.Time) []*event.Event {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
@@ -322,7 +322,7 @@ func EventFilePaths(ev event.Event) []string {
 }
 
 // Sessions returns session summaries, most recently active first.
-func (ix *Index) Sessions() []Session {
+func (ix *Projection) Sessions() []Session {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	out := make([]Session, 0, len(ix.sessions))
@@ -339,7 +339,7 @@ func (ix *Index) Sessions() []Session {
 }
 
 // Session returns one session summary by id.
-func (ix *Index) Session(id string) (Session, bool) {
+func (ix *Projection) Session(id string) (Session, bool) {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	s, ok := ix.sessions[id]
@@ -351,7 +351,7 @@ func (ix *Index) Session(id string) (Session, bool) {
 
 // SessionDays returns the UTC day files (YYYY-MM-DD) containing the session,
 // oldest first, so readers can limit spool reads to the relevant files.
-func (ix *Index) SessionDays(id string) []string {
+func (ix *Projection) SessionDays(id string) []string {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	s, ok := ix.sessions[id]
@@ -362,7 +362,7 @@ func (ix *Index) SessionDays(id string) []string {
 }
 
 // Traces returns trace summaries, most recently active first.
-func (ix *Index) Traces() []Trace {
+func (ix *Projection) Traces() []Trace {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	out := make([]Trace, 0, len(ix.traces))
@@ -379,7 +379,7 @@ func (ix *Index) Traces() []Trace {
 }
 
 // TraceDays returns the UTC day files containing the trace, oldest first.
-func (ix *Index) TraceDays(id string) []string {
+func (ix *Projection) TraceDays(id string) []string {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	tr, ok := ix.traces[id]
@@ -390,7 +390,7 @@ func (ix *Index) TraceDays(id string) []string {
 }
 
 // Files returns touched-file artifacts, most recently touched first.
-func (ix *Index) Files() []FileArtifact {
+func (ix *Projection) Files() []FileArtifact {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	out := make([]FileArtifact, 0, len(ix.files))
