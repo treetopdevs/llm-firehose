@@ -73,6 +73,11 @@ func New(options Options) (*Engine, error) {
 		subs:     make(map[*subscriber]struct{}),
 	}
 	engine.project = engine.applyProjection
+	for _, source := range engine.sources {
+		if preparer, ok := source.(interface{ prepare() error }); ok {
+			_ = preparer.prepare()
+		}
+	}
 	return engine, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -383,5 +384,73 @@ func TestLiveSubscriptionSuppressesStableIDReplay(t *testing.T) {
 	case duplicate := <-subscription.Events:
 		t.Fatalf("stable replay was projected twice: %+v", duplicate)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+type testSource struct {
+	name     string
+	attempts atomic.Int32
+	failOnce bool
+	event    event.Event
+}
+
+func (s *testSource) Name() string { return s.name }
+
+func (s *testSource) Run(ctx context.Context, sink capture.Sink) error {
+	if s.attempts.Add(1) == 1 && s.failOnce {
+		return errors.New("source unavailable")
+	}
+	if _, err := sink.Admit(ctx, s.event); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return nil
+}
+
+func TestOneFailingSourceDoesNotStopOtherCapturePaths(t *testing.T) {
+	healthyEvent := observation()
+	healthyEvent.ID = "healthy-source-event"
+	retriedEvent := observation()
+	retriedEvent.ID = "retried-source-event"
+	healthy := &testSource{name: "healthy", event: healthyEvent}
+	retrying := &testSource{name: "retrying", failOnce: true, event: retriedEvent}
+	engine, err := capture.New(capture.Options{
+		SpoolDir: t.TempDir(),
+		Policy:   privacy.ModeFull,
+		Sources:  []capture.Source{retrying, healthy},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		history, err := engine.Recent(20)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, ev := range history {
+			seen[ev.ID] = true
+		}
+		if seen[healthyEvent.ID] && seen[retriedEvent.ID] {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("sources did not remain isolated: attempts=%d history=%+v", retrying.attempts.Load(), history)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if retrying.attempts.Load() < 2 {
+		t.Fatalf("failed source was not retried: %d attempts", retrying.attempts.Load())
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 }
