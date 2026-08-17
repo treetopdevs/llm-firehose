@@ -6,77 +6,51 @@ import (
 	"net/http"
 	"os"
 
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
-	"agentfirehose/internal/event"
-	"agentfirehose/internal/index"
-	"agentfirehose/internal/spool"
 )
 
 // Session and FileArtifact are served straight from the derived index; the
 // JSON shapes are part of the local API contract.
 type (
-	Session      = index.Session
-	FileArtifact = index.FileArtifact
+	Session      = capture.Session
+	FileArtifact = capture.FileArtifact
 )
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.ensureIndex().Sessions())
+	writeJSON(w, s.engine.Sessions())
 }
 
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	days := s.ensureIndex().SessionDays(id)
-	if len(days) == 0 {
-		http.Error(w, fmt.Sprintf("no events for session %q", id), http.StatusNotFound)
-		return
-	}
-	// The index narrows the read to the day files the session appears in;
-	// the spool stays the source of truth for the events themselves.
-	evs, err := spool.ReadDays(s.config().SpoolDir, days)
+	evs, err := s.engine.Session(id)
 	if err != nil {
+		if errors.Is(err, capture.ErrNotFound) {
+			http.Error(w, fmt.Sprintf("no events for session %q", id), http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var out []event.Event
-	for _, ev := range evs {
-		if ev.SessionID == id {
-			out = append(out, ev)
-		}
-	}
-	if len(out) == 0 {
-		http.Error(w, fmt.Sprintf("no events for session %q", id), http.StatusNotFound)
-		return
-	}
-	writeJSON(w, out)
+	writeJSON(w, evs)
 }
 
 func (s *Server) handleTraceByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	days := s.ensureIndex().TraceDays(id)
-	if len(days) == 0 {
-		http.Error(w, fmt.Sprintf("no events for trace %q", id), http.StatusNotFound)
-		return
-	}
-	evs, err := spool.ReadDays(s.config().SpoolDir, days)
+	evs, err := s.engine.Trace(id)
 	if err != nil {
+		if errors.Is(err, capture.ErrNotFound) {
+			http.Error(w, fmt.Sprintf("no events for trace %q", id), http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var out []event.Event
-	for _, ev := range evs {
-		if ev.TraceID == id {
-			out = append(out, ev)
-		}
-	}
-	if len(out) == 0 {
-		http.Error(w, fmt.Sprintf("no events for trace %q", id), http.StatusNotFound)
-		return
-	}
-	writeJSON(w, out)
+	writeJSON(w, evs)
 }
 
 func (s *Server) handleArtifactFiles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.ensureIndex().Files())
+	writeJSON(w, s.engine.Files())
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +116,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Firehose-Export-Version", fmt.Sprint(cli.ExportVersion))
-	if _, err := cli.Export(s.config(), w); err != nil {
+	if _, err := s.engine.Export(w); err != nil {
 		// Headers are already sent; the truncated body is the best signal left.
 		return
 	}

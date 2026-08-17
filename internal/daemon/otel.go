@@ -8,8 +8,6 @@ import (
 
 	"agentfirehose/internal/adapters/claudeotel"
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/workspace"
 )
 
 const maxOTLPBodyBytes = 1 << 20
@@ -46,14 +44,10 @@ func (s *Server) handleOTLP(
 	}
 
 	captured := time.Now().UTC()
-	mode, err := privacy.ParseMode(s.config().PrivacyMode)
-	if err != nil {
-		mode = privacy.ModeBalanced
-	}
 	for _, native := range parse(raw, captured) {
 		// Exporter-facing success never depends on the spool. Hooks remain the
 		// canonical daemon-optional baseline if this supplemental append fails.
-		_, _ = s.writer.Append(privacy.Redact(workspace.Enrich(native), mode))
+		_, _ = s.engine.Admit(r.Context(), native)
 	}
 	writeJSON(w, map[string]any{})
 }

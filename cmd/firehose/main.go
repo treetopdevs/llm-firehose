@@ -18,8 +18,8 @@ import (
 	"agentfirehose/internal/adapters/procwatch"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
-	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/host"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 	"agentfirehose/internal/tui"
@@ -167,7 +167,7 @@ func runDaemon(cfg cfgType, home, addr string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return daemon.Run(ctx, cfg, home, version, addr, func(bound string) {
+	return host.RunDaemon(ctx, cfg, home, version, addr, func(bound string) {
 		fmt.Fprintf(os.Stderr, "firehose daemon listening on %s (spool: %s)\n", bound, cfg.SpoolDir)
 	})
 }

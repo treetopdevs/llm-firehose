@@ -14,10 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
 
@@ -27,14 +29,18 @@ func testDaemon(t *testing.T) (*httptest.Server, cli.Config) {
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 	}
-	s := daemon.New(cfg, t.TempDir(), "test-version")
-	s.TailInterval = 10 * time.Millisecond
+	engine, err := capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: privacy.ModeBalanced})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := daemon.New(engine, cfg, t.TempDir(), "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		s.Wait()
+		<-done
 	})
-	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts, cfg

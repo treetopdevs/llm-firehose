@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"agentfirehose/internal/adapters/procwatch"
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 )
@@ -20,15 +20,23 @@ import (
 // startedServer runs a daemon with capture started against fast pollers.
 func startedServer(t *testing.T, cfg cli.Config) *httptest.Server {
 	t.Helper()
-	s := New(cfg, t.TempDir(), "test-version")
-	s.TailInterval = 10 * time.Millisecond
-	s.WatchInterval = 10 * time.Millisecond
+	home := t.TempDir()
+	var sources []capture.Source
+	if cfg.CodexDir != "" {
+		sources = capture.LocalSources(capture.LocalSourceOptions{
+			CodexDir:       cfg.CodexDir,
+			CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
+		})
+	}
+	engine := testEngine(t, cfg, sources...)
+	s := New(engine, cfg, home, "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		s.Wait()
+		<-done
 	})
-	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -296,18 +304,21 @@ func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing
 	sessionLine := capturedCodexLine(t, `"type":"session_meta"`)
 
 	start := func() (*httptest.Server, func()) {
-		s := New(cfg, home, "test-version")
-		s.TailInterval = 10 * time.Millisecond
-		s.WatchInterval = 10 * time.Millisecond
-		s.ProcLister = &fakeLister{}
+		sources := capture.LocalSources(capture.LocalSourceOptions{
+			CodexDir:       cfg.CodexDir,
+			CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
+		})
+		engine := testEngine(t, cfg, sources...)
+		s := New(engine, cfg, home, "test-version")
 		ctx, cancel := context.WithCancel(context.Background())
-		s.Start(ctx)
+		engineDone := make(chan error, 1)
+		go func() { engineDone <- engine.Run(ctx) }()
 		ts := httptest.NewServer(s.Handler())
 		var once sync.Once
 		stop := func() {
 			once.Do(func() {
 				cancel()
-				s.Wait()
+				<-engineDone
 				ts.Close()
 			})
 		}
@@ -390,16 +401,33 @@ func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing
 
 	ts2, stop2 := start()
 	t.Cleanup(stop2)
-	evs := waitEvents(ts2.URL, 3)
+	evs := waitEvents(ts2.URL, 2)
 	counts := map[string]int{}
 	for _, ev := range evs {
 		counts[ev.ID]++
 	}
-	if counts[first.ID] != 2 {
-		t.Fatalf("raw at-least-once replay count for %q = %d, want 2", first.ID, counts[first.ID])
+	if counts[first.ID] != 1 {
+		t.Fatalf("presentation replay count for %q = %d, want 1", first.ID, counts[first.ID])
 	}
 	if len(counts) != 2 {
 		t.Fatalf("unique stable ids = %d, want 2 across replay plus missed line: %+v", len(counts), evs)
+	}
+	exported, err := testPOST(t, ts2.URL+"/export", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exported.Body.Close()
+	physical := map[string]int{}
+	scanner := bufio.NewScanner(exported.Body)
+	for scanner.Scan() {
+		var ev event.Event
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			t.Fatal(err)
+		}
+		physical[ev.ID]++
+	}
+	if physical[first.ID] != 2 {
+		t.Fatalf("physical replay count for %q = %d, want 2", first.ID, physical[first.ID])
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -426,43 +454,40 @@ func TestDaemonRestartReplaysMissedCodexLinesAndDeduplicatesStableIDs(t *testing
 	}
 }
 
-// fakeLister is an injectable process table for procwatch persistence tests.
-type fakeLister struct {
-	mu    sync.Mutex
-	procs []procwatch.Process
-}
+type singleEventSource struct{ event event.Event }
 
-func (l *fakeLister) List() ([]procwatch.Process, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return append([]procwatch.Process(nil), l.procs...), nil
-}
+func (*singleEventSource) Name() string { return "test-process" }
 
-func (l *fakeLister) set(procs ...procwatch.Process) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.procs = procs
+func (s *singleEventSource) Run(ctx context.Context, sink capture.Sink) error {
+	if _, err := sink.Admit(ctx, s.event); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return nil
 }
 
 func TestProcwatchEventsPersistedToSpool(t *testing.T) {
 	cfg := testConfig(t)
-	s := New(cfg, t.TempDir(), "test-version")
-	s.TailInterval = 10 * time.Millisecond
-	s.WatchInterval = 10 * time.Millisecond
-	s.ProcInterval = 10 * time.Millisecond
-	fl := &fakeLister{}
-	s.ProcLister = fl
+	now := time.Now().UTC()
+	source := &singleEventSource{event: event.Event{
+		ID:       "procwatch-4242",
+		Time:     now,
+		Source:   "procwatch",
+		Agent:    "claude",
+		Category: event.CategorySession,
+		Name:     "agent-start",
+	}}
+	engine := testEngine(t, cfg, source)
+	s := New(engine, cfg, t.TempDir(), "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
+	engineDone := make(chan error, 1)
+	go func() { engineDone <- engine.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		s.Wait()
+		<-engineDone
 	})
-	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-
-	time.Sleep(50 * time.Millisecond) // let the baseline poll pass
-	fl.set(procwatch.Process{PID: 4242, Command: "/usr/local/bin/claude"})
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {

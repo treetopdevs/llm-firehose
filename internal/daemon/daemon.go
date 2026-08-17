@@ -4,6 +4,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,12 +17,12 @@ import (
 	"sync"
 	"time"
 
-	"agentfirehose/internal/adapters/procwatch"
+	"agentfirehose/internal/adapters/generic"
+	"agentfirehose/internal/adapters/push"
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
-	"agentfirehose/internal/index"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/spool"
 )
 
 const (
@@ -29,75 +30,26 @@ const (
 	maxRecentLimit     = 10000
 )
 
-// Server owns the capture engine behind the local API.
+// Server adapts an injected capture engine to the local API.
 type Server struct {
 	mu      sync.RWMutex // guards cfg
-	wg      sync.WaitGroup
 	cfg     cli.Config
 	home    string
 	version string
-	hub     *hub
-	writer  *spool.Writer // lifecycle-managed spool writer for capture paths
-
-	ixOnce sync.Once
-	ix     *index.Index
-
-	// TailInterval is the spool poll cadence; WatchInterval the codex one;
-	// ProcInterval the process-table one.
-	TailInterval  time.Duration
-	WatchInterval time.Duration
-	ProcInterval  time.Duration
-
-	// ProcLister supplies the process table for the agent process watcher;
-	// injectable for tests.
-	ProcLister procwatch.Lister
+	engine  *capture.Engine
 
 	// Environ is the process environment consulted by install handlers;
 	// injectable for tests so host telemetry variables cannot leak in.
 	Environ []string
 }
 
-func (s *Server) launch(run func()) {
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		run()
-	}()
-}
-
-// Wait blocks until capture workers launched by Start have observed
-// cancellation and stopped.
-func (s *Server) Wait() {
-	s.wg.Wait()
-}
-
-// ensureIndex builds the derived index from the spool exactly once (at Start
-// in production, or lazily at the first query) and returns it. A failed
-// build degrades to an empty index rather than taking the API down; the
-// spool remains authoritative either way.
-func (s *Server) ensureIndex() *index.Index {
-	s.ixOnce.Do(func() {
-		ix, err := index.Build(s.config().SpoolDir)
-		if err != nil {
-			ix = index.New()
-		}
-		s.ix = ix
-	})
-	return s.ix
-}
-
-func New(cfg cli.Config, home, version string) *Server {
+func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
 	return &Server{
-		cfg:           cfg,
-		home:          home,
-		version:       version,
-		hub:           newHub(),
-		writer:        spool.NewWriter(cfg.SpoolDir),
-		TailInterval:  100 * time.Millisecond,
-		WatchInterval: 250 * time.Millisecond,
-		ProcInterval:  2 * time.Second,
-		ProcLister:    procwatch.PSLister{},
-		Environ:       os.Environ(),
+		cfg:     cfg,
+		home:    home,
+		version: version,
+		engine:  engine,
+		Environ: os.Environ(),
 	}
 }
 
@@ -181,15 +133,18 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 		IdleTimeout:       60 * time.Second,
 		// WriteTimeout intentionally unset: SSE /events/stream is long-lived.
 	}
-	srv.RegisterOnShutdown(s.hub.closeAll)
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	srv.BaseContext = func(net.Listener) context.Context { return requestCtx }
 	go func() {
 		<-ctx.Done()
+		cancelRequests()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		srv.Shutdown(shutCtx)
+		_ = srv.Shutdown(shutCtx)
 	}()
 	done := make(chan error, 1)
 	go func() {
+		defer cancelRequests()
 		err := srv.Serve(l)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -214,30 +169,6 @@ func validateLoopbackAddr(addr string) error {
 		return fmt.Errorf("daemon address %q must use localhost or a loopback IP", addr)
 	}
 	return nil
-}
-
-// Run starts the capture engine and serves the local API on addr until ctx
-// is canceled. onReady, when non-nil, receives the bound address once the
-// listener is up. Both firehosed and `firehose daemon` are thin wrappers
-// around this.
-func Run(ctx context.Context, cfg cli.Config, home, version, addr string, onReady func(bound string)) error {
-	s := New(cfg, home, version)
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	s.Start(runCtx)
-	bound, done, err := s.Serve(runCtx, addr)
-	if err != nil {
-		cancel()
-		s.Wait()
-		return err
-	}
-	if onReady != nil {
-		onReady(bound)
-	}
-	err = <-done
-	cancel()
-	s.Wait()
-	return err
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -305,6 +236,10 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfg.PrivacyMode = merged.PrivacyMode
 	s.mu.Unlock()
+	if patch.PrivacyMode != "" {
+		mode, _ := privacy.ParseMode(patch.PrivacyMode)
+		s.engine.SetPolicy(mode)
+	}
 
 	if restart == nil {
 		restart = []string{}
@@ -325,7 +260,7 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 	if limit > maxRecentLimit {
 		limit = maxRecentLimit
 	}
-	evs, err := spool.ReadLastN(s.config().SpoolDir, limit)
+	evs, err := s.engine.Recent(limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -338,8 +273,24 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxOTLPBodyBytes)
-	n, err := cli.Ingest(s.config(), r.Body)
-	if err != nil {
+	scanner := bufio.NewScanner(r.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	n := 0
+	for scanner.Scan() {
+		if len(scanner.Bytes()) == 0 {
+			continue
+		}
+		observation, err := generic.Parse(scanner.Bytes())
+		if err != nil {
+			continue
+		}
+		if _, err := s.engine.Admit(r.Context(), observation); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		n++
+	}
+	if err := scanner.Err(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -361,11 +312,16 @@ func (s *Server) handleEmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// EmitLocalNamed, never Emit: the daemon is the engine and must not
-	// proxy emits back to its own address.
-	if err := cli.EmitLocalNamed(s.config(), source, eventName, raw); err != nil {
+	observation, err := push.Parse(source, eventName, raw)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if observation != nil {
+		if _, err := s.engine.Admit(r.Context(), *observation); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

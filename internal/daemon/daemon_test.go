@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
 
@@ -48,9 +50,22 @@ func testConfig(t *testing.T) cli.Config {
 
 func testServer(t *testing.T, cfg cli.Config) *httptest.Server {
 	t.Helper()
-	ts := httptest.NewServer(New(cfg, t.TempDir(), "test-version").Handler())
+	ts := httptest.NewServer(New(testEngine(t, cfg), cfg, t.TempDir(), "test-version").Handler())
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+func testEngine(t *testing.T, cfg cli.Config, sources ...capture.Source) *capture.Engine {
+	t.Helper()
+	policy, err := privacy.ParseMode(cfg.PrivacyMode)
+	if err != nil {
+		policy = privacy.ModeBalanced
+	}
+	engine, err := capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: policy, Sources: sources})
+	if err != nil {
+		t.Fatalf("capture.New: %v", err)
+	}
+	return engine
 }
 
 func mkEvent(i int, ts time.Time) event.Event {
@@ -60,43 +75,6 @@ func mkEvent(i int, ts time.Time) event.Event {
 		Source:   "generic",
 		Category: event.CategoryMeta,
 		Summary:  fmt.Sprintf("event %d", i),
-	}
-}
-
-func TestRunServesUntilCanceled(t *testing.T) {
-	cfg := testConfig(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ready := make(chan string, 1)
-	done := make(chan error, 1)
-	go func() {
-		done <- Run(ctx, cfg, t.TempDir(), "test-version", "127.0.0.1:0", func(bound string) { ready <- bound })
-	}()
-
-	var bound string
-	select {
-	case bound = <-ready:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run never became ready")
-	}
-	resp, err := testGET(t, "http://"+bound+"/health")
-	if err != nil {
-		t.Fatalf("GET /health while running: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("health status = %d, want 200", resp.StatusCode)
-	}
-
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run returned %v on clean shutdown, want nil", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after cancel")
 	}
 }
 
@@ -157,7 +135,8 @@ func TestCORSPreflight(t *testing.T) {
 }
 
 func TestServeRejectsNonLoopbackAddresses(t *testing.T) {
-	s := New(testConfig(t), t.TempDir(), "test-version")
+	cfg := testConfig(t)
+	s := New(testEngine(t, cfg), cfg, t.TempDir(), "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -211,7 +190,8 @@ func TestConfigEndpoint(t *testing.T) {
 func TestConfigUpdateEndpoint(t *testing.T) {
 	cfg := testConfig(t)
 	home := t.TempDir()
-	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	engine := testEngine(t, cfg)
+	ts := httptest.NewServer(New(engine, cfg, home, "test-version").Handler())
 	t.Cleanup(ts.Close)
 
 	resp, err := testPOST(t, ts.URL+"/config", "application/json", strings.NewReader(`{"privacy_mode":"minimal"}`))
@@ -248,12 +228,26 @@ func TestConfigUpdateEndpoint(t *testing.T) {
 	if saved.SpoolDir != cfg.SpoolDir {
 		t.Errorf("saved spool dir = %q, want %q", saved.SpoolDir, cfg.SpoolDir)
 	}
+
+	emit, err := testPOST(t, ts.URL+"/events", "application/x-ndjson", strings.NewReader(
+		`{"time":"2026-08-17T12:00:00Z","source":"generic","category":"meta","payload":{"secret":"value"}}`+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emit.Body.Close()
+	history, err := engine.Recent(1)
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %+v, %v", history, err)
+	}
+	if _, ok := history[0].Payload["secret"].(map[string]any); !ok {
+		t.Fatalf("engine did not apply live policy update: %+v", history[0].Payload)
+	}
 }
 
 func TestConfigUpdateRestartRequiredFields(t *testing.T) {
 	cfg := testConfig(t)
 	home := t.TempDir()
-	ts := httptest.NewServer(New(cfg, home, "test-version").Handler())
+	ts := httptest.NewServer(New(testEngine(t, cfg), cfg, home, "test-version").Handler())
 	t.Cleanup(ts.Close)
 
 	newSpool := filepath.Join(home, "elsewhere")

@@ -13,7 +13,7 @@ import (
 	"syscall"
 
 	"agentfirehose/internal/cli"
-	"agentfirehose/internal/daemon"
+	"agentfirehose/internal/host"
 )
 
 const version = "0.1.0"
@@ -43,7 +43,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = daemon.Run(ctx, cfg, home, version, *addr, func(bound string) {
+	err = host.RunDaemon(ctx, cfg, home, version, *addr, func(bound string) {
 		fmt.Fprintf(os.Stderr, "firehosed listening on %s (spool: %s)\n", bound, cfg.SpoolDir)
 	})
 	if err != nil {

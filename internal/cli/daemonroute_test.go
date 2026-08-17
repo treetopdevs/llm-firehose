@@ -13,12 +13,27 @@ import (
 	"testing"
 	"time"
 
+	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/spool"
 )
+
+func testCaptureEngine(t *testing.T, cfg cli.Config) *capture.Engine {
+	t.Helper()
+	mode, err := privacy.ParseMode(cfg.PrivacyMode)
+	if err != nil {
+		t.Fatalf("privacy mode: %v", err)
+	}
+	engine, err := capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: mode})
+	if err != nil {
+		t.Fatalf("capture engine: %v", err)
+	}
+	return engine
+}
 
 // startDaemon serves a daemon over its own spool dir and returns the
 // host:port it listens on plus that spool dir.
@@ -28,7 +43,7 @@ func startDaemon(t *testing.T) (addr, spoolDir string) {
 		SpoolDir:    filepath.Join(t.TempDir(), "daemon-spool"),
 		PrivacyMode: "balanced",
 	}
-	ts := httptest.NewServer(daemon.New(cfg, t.TempDir(), "test").Handler())
+	ts := httptest.NewServer(daemon.New(testCaptureEngine(t, cfg), cfg, t.TempDir(), "test").Handler())
 	t.Cleanup(ts.Close)
 	return strings.TrimPrefix(ts.URL, "http://"), cfg.SpoolDir
 }
@@ -167,7 +182,7 @@ func TestDaemonEmitDoesNotProxyToItself(t *testing.T) {
 		PrivacyMode: "balanced",
 		DaemonAddr:  addr, // the daemon's own address
 	}
-	s := daemon.New(cfg, t.TempDir(), "test")
+	s := daemon.New(testCaptureEngine(t, cfg), cfg, t.TempDir(), "test")
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if _, _, err := s.Serve(ctx, addr); err != nil {
@@ -198,7 +213,7 @@ func TestServeAndShutdown(t *testing.T) {
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 	}
-	s := daemon.New(cfg, t.TempDir(), "test")
+	s := daemon.New(testCaptureEngine(t, cfg), cfg, t.TempDir(), "test")
 	ctx, cancel := context.WithCancel(context.Background())
 	addr, done, err := s.Serve(ctx, "127.0.0.1:0")
 	if err != nil {

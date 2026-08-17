@@ -19,7 +19,7 @@ import (
 
 func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httptest.Server {
 	t.Helper()
-	srv := New(cfg, home, "test-version")
+	srv := New(testEngine(t, cfg), cfg, home, "test-version")
 	// Hermetic: the host running the tests may itself export Claude
 	// telemetry variables, which must not leak into install decisions.
 	srv.Environ = []string{}
@@ -223,14 +223,15 @@ func TestArtifactFilesEmpty(t *testing.T) {
 // re-reading the whole spool.
 func TestSessionsLiveUpdateWhileRunning(t *testing.T) {
 	cfg := testConfig(t)
-	s := New(cfg, t.TempDir(), "test-version")
-	s.TailInterval = 10 * time.Millisecond
+	engine := testEngine(t, cfg)
+	s := New(engine, cfg, t.TempDir(), "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		s.Wait()
+		<-done
 	})
-	s.Start(ctx)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 
@@ -356,7 +357,7 @@ func TestInstallEndpoint(t *testing.T) {
 func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
 	cfg := testConfig(t)
 	home := t.TempDir()
-	srv := New(cfg, home, "test-version")
+	srv := New(testEngine(t, cfg), cfg, home, "test-version")
 	srv.Environ = []string{"PATH=/usr/bin", "CLAUDE_CODE_ENABLE_TELEMETRY=1"}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -378,7 +379,7 @@ func TestInstallEndpointClaudeOTelNonConflictFailureIs500(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.DaemonAddr = "example.com:80" // non-loopback: an install failure that is not a settings conflict
 	home := t.TempDir()
-	srv := New(cfg, home, "test-version")
+	srv := New(testEngine(t, cfg), cfg, home, "test-version")
 	srv.Environ = []string{"PATH=/usr/bin"}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
