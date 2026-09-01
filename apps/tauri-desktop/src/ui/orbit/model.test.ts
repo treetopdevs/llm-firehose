@@ -114,6 +114,53 @@ describe("buildScene", () => {
     );
     expect(bodies[0].despawnAt).toBe(now + DESPAWN_MS);
   });
+
+  test("keeps geometry finite when a summary carries corrupt fields", () => {
+    const bodies = buildScene(
+      [
+        sess({
+          id: "bad",
+          events: Number.NaN,
+          state_since: "not-a-date",
+          last_time: "also-not-a-date",
+        }),
+      ],
+      now,
+    );
+    expect(bodies).toHaveLength(1);
+    expect(Number.isFinite(bodies[0].urgencyRadius)).toBe(true);
+    expect(Number.isFinite(bodies[0].sectorAngle)).toBe(true);
+    expect(Number.isFinite(bodies[0].activityRate)).toBe(true);
+  });
+
+  test("keeps geometry finite when the clock argument is not a number", () => {
+    // needs_input on purpose: its urgencyRadius branch is the one that actually
+    // consumes dwellMs, so a NaN clock reaches the value we assert on. A
+    // "working" fixture would pass even without the guard.
+    const bodies = buildScene([sess({ id: "a", state: "needs_input" })], Number.NaN);
+    expect(bodies).toHaveLength(1);
+    expect(Number.isFinite(bodies[0].urgencyRadius)).toBe(true);
+  });
+
+  test("drops summaries with no session id", () => {
+    const bodies = buildScene([sess({ id: "" }), sess({ id: "ok" })], now);
+    expect(bodies.map((b) => b.sessionId)).toEqual(["ok"]);
+  });
+
+  test("passes an unrecognized session state through with sane geometry", () => {
+    // Forward compatibility: a state this build has not heard of is a newer
+    // daemon, not corruption. It must render neutrally, not be asserted away.
+    const bodies = buildScene([sess({ id: "m", state: "mystery" })], now);
+    expect(bodies[0].state).toBe("mystery");
+    expect(bodies[0].labelAlways).toBe(false);
+    expect(Number.isFinite(bodies[0].urgencyRadius)).toBe(true);
+  });
+
+  test("falls back to working when a session state is not a usable string", () => {
+    const bodies = buildScene([sess({ id: "m", state: "" })], now);
+    expect(bodies[0].state).toBe("working");
+    expect(Number.isFinite(bodies[0].urgencyRadius)).toBe(true);
+  });
 });
 
 describe("applyActivity", () => {
@@ -168,5 +215,24 @@ describe("applyTransition", () => {
     const next = applyTransition(bodies, ev, now);
     expect(next[0].state).toBe("working");
     expect(next[0].despawnAt).toBeUndefined();
+  });
+
+  test("leaves a blocked session alone when a transition payload has no usable state", () => {
+    // needs_input fixture on purpose: demoting to "working" here would clear the
+    // amber attention signal, so this is where an unreadable frame does damage.
+    const bodies = buildScene([sess({ id: "s1", state: "needs_input" })], now);
+    const ev = {
+      id: "t3",
+      time: "not-a-date",
+      source: "firehose",
+      category: "meta",
+      name: "state.transition",
+      session_id: "s1",
+      payload: { state: 42, reason: "bad frame" },
+    } as unknown as FirehoseEvent;
+    const next = applyTransition(bodies, ev, now);
+    expect(next[0].state).toBe("needs_input");
+    expect(next[0].labelAlways).toBe(true);
+    expect(Number.isFinite(next[0].urgencyRadius)).toBe(true);
   });
 });

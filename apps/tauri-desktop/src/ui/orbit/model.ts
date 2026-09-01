@@ -23,6 +23,27 @@ export type OrbitBody = {
   lastActivityAt?: string;
 };
 
+function finiteOr(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, finiteOr(value, 0)));
+}
+
+/**
+ * The engine owns the session-state vocabulary
+ * (internal/capture/internal/projection/attention.go). We deliberately do NOT
+ * mirror the enum here: docs/contracts.md treats /sessions `state` as additive,
+ * so a state we have not heard of is a forward-compatible daemon, not corruption.
+ * Unknown values degrade structurally instead — urgencyRadius() has a `working`
+ * default branch and colorFor() falls back to a neutral hue. All we reject is a
+ * value that is not a usable string at all.
+ */
+function validState(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
 function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -38,24 +59,29 @@ export function sectorForRepo(repo: string): number {
 }
 
 export function urgencyRadius(state: string, dwellMs: number, activityRate: number): number {
+  const dwell = Math.max(0, finiteOr(dwellMs, 0));
+  const rate = clamp01(activityRate);
   switch (state) {
     case "needs_input":
-      return Math.max(0, 1 - dwellMs / NEEDS_INPUT_DRIFT_MS);
+      return Math.max(0, 1 - dwell / NEEDS_INPUT_DRIFT_MS);
     case "idle":
       return 0.55;
     case "done":
-      return 1.2 + Math.min(0.3, dwellMs / DESPAWN_MS);
+      return 1.2 + Math.min(0.3, dwell / DESPAWN_MS);
     case "working":
     default: {
       const span = 0.15;
-      return 0.85 + span * Math.min(1, Math.max(0, activityRate));
+      return 0.85 + span * rate;
     }
   }
 }
 
 function activityRate(s: SessionSummary): number {
-  // Rough volume signal from event count (log-scaled into 0..1).
-  return Math.min(1, Math.log10(Math.max(1, s.events)) / 2);
+  // Rough volume signal from event count (log-scaled into 0..1). A malformed
+  // summary must not produce a NaN radius: NaN there puts a THREE mesh at a
+  // NaN position, which no lerp recovers and which poisons the raycaster.
+  const events = Number.isFinite(s.events) ? s.events : 1;
+  return clamp01(Math.log10(Math.max(1, events)) / 2);
 }
 
 function parseStateSince(stateSince: string | undefined, now: number): number {
@@ -65,7 +91,7 @@ function parseStateSince(stateSince: string | undefined, now: number): number {
 }
 
 function bodyFromSession(s: SessionSummary, now: number, jitter: number): OrbitBody {
-  const state = s.state ?? "working";
+  const state = validState(s.state) ?? "working";
   const since = parseStateSince(s.state_since, now);
   const dwell = Math.max(0, now - since);
   const rate = activityRate(s);
@@ -102,8 +128,10 @@ function urgencyScore(b: OrbitBody): number {
 }
 
 /** Build declarative orbit bodies from session summaries. */
-export function buildScene(sessions: SessionSummary[], now: number): OrbitBody[] {
+export function buildScene(sessions: SessionSummary[], nowMs: number): OrbitBody[] {
+  const now = finiteOr(nowMs, Date.now());
   const live = sessions.filter((s) => {
+    if (!s.id) return false;
     if (s.state !== "done") return true;
     const since = parseStateSince(s.state_since, now);
     return now - since < DESPAWN_MS * 2;
@@ -167,7 +195,11 @@ export function applyTransition(bodies: OrbitBody[], ev: FirehoseEvent, now: num
   if (ev.source !== "firehose" || ev.name !== "state.transition" || !ev.session_id) {
     return bodies;
   }
-  const state = String(ev.payload?.state ?? "");
+  const state = validState(ev.payload?.state);
+  // A frame we cannot read is not a state change. Demoting to "working" here
+  // would silently clear the amber needs_input signal, which is the single most
+  // important output of this view.
+  if (state === null) return bodies;
   const reason = typeof ev.payload?.reason === "string" ? ev.payload.reason : undefined;
   const hasError = !!ev.payload?.has_error;
   return bodies.map((b) => {
