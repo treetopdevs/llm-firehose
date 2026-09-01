@@ -260,17 +260,22 @@ func buildLanes(events []event.Event, sessions []sessionInfo, now time.Time, win
 		if !sp.started {
 			continue
 		}
+		ln := &lanes[index[key.session]]
 		end := sp.end
 		if !sp.ended || end.Before(sp.start) {
+			// An unfinished call runs to now only while the engine still says
+			// the session is working; otherwise it ends at the last report.
 			end = now
+			if ln.State != stateWorking && ln.State != "" && !ln.Last.IsZero() {
+				end = ln.Last
+			}
 			if limit := sp.start.Add(laneMaxOpenSpan); limit.Before(end) {
 				end = limit
 			}
 		}
 		from, to := max(cellAt(sp.start), 0), cellAt(end)
-		cells := lanes[index[key.session]].Cells
 		for c := from; c <= to && c < width; c++ {
-			cells[c].Span = true
+			ln.Cells[c].Span = true
 		}
 	}
 	return lanes

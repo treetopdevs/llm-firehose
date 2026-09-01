@@ -92,6 +92,15 @@ describe("buildLanes", () => {
     expect(lanes[2].label).toBe("opencode");
   });
 
+  test("an unmatched start ends at the last report once the session stops working", () => {
+    const events = [call("s1", 40_000, "c1", "start"), ev("s1", 30_000)];
+    const at = (age: number) => new Date(now - age).toISOString();
+    const done = buildLanes(events, [summary({ id: "s1", state: "done", last_time: at(30_000) })], now, MIN);
+    expect(done[0].spans).toEqual([{ from: now - 40_000, to: now - 30_000, open: false }]);
+    const working = buildLanes(events, [summary({ id: "s1", state: "working", last_time: at(30_000) })], now, MIN);
+    expect(working[0].spans).toEqual([{ from: now - 40_000, to: now, open: true }]);
+  });
+
   test("drops engine states that are no longer plausible", () => {
     const summaries = [
       summary({ id: "ghost-needs", state: "needs_input", last_time: new Date(now - 48 * 3_600_000).toISOString() }),

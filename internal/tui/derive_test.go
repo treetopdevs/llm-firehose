@@ -175,6 +175,20 @@ func TestBuildLanesClipsSpansToWindow(t *testing.T) {
 	}
 }
 
+func TestBuildLanesEndsOpenCallsAtLastReportUnlessWorking(t *testing.T) {
+	now := t0.Add(time.Hour)
+	evs := []event.Event{laneEvent(now, 40*time.Second, "c1", "start"), laneEvent(now, 30*time.Second, "", "")}
+	last := now.Add(-30 * time.Second)
+	done := buildLanes(evs, []sessionInfo{{ID: "s1", State: stateDone, Last: last}}, now, time.Minute, 60)[0].Cells
+	if !done[19].Span || !done[29].Span || done[30].Span || done[59].Span {
+		t.Errorf("a done session's unfinished call should end at its last report: %+v %+v", done[29], done[30])
+	}
+	working := buildLanes(evs, []sessionInfo{{ID: "s1", State: stateWorking, Last: last}}, now, time.Minute, 60)[0].Cells
+	if !working[59].Span {
+		t.Error("a working session's unfinished call should run to now")
+	}
+}
+
 func runeIndex(s, sub string) int {
 	i := strings.Index(s, sub)
 	if i < 0 {

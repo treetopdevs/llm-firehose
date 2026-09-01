@@ -74,19 +74,6 @@ export function buildLanes(
     if (phase === "start" && sp.start === undefined) sp.start = t;
     else if (phase === "end" && sp.end === undefined) sp.end = t;
   }
-  for (const key of order) {
-    const sp = spans.get(key)!;
-    if (sp.start === undefined) continue;
-    let to = sp.end;
-    let open = false;
-    if (to === undefined || to < sp.start) {
-      to = Math.min(nowMs, sp.start + MAX_OPEN_SPAN_MS);
-      open = true;
-    }
-    if (to < start) continue;
-    acc.get(sp.session)!.spans.push({ from: Math.max(sp.start, start), to, open });
-  }
-
   for (const s of summaries) {
     if (!s.id) continue;
     const l = laneFor(s.id, s.agent || s.source);
@@ -95,6 +82,23 @@ export function buildLanes(
     l.since = Date.parse(s.state_since ?? "");
     const last = Date.parse(s.last_time);
     if (!Number.isNaN(last)) l.lastAt = later(l.lastAt, last);
+  }
+
+  for (const key of order) {
+    const sp = spans.get(key)!;
+    if (sp.start === undefined) continue;
+    const l = acc.get(sp.session)!;
+    let to = sp.end;
+    let open = false;
+    if (to === undefined || to < sp.start) {
+      // An unfinished call runs to now only while the engine still says the
+      // session is working; otherwise it ends at the session's last report.
+      open = l.state === "working" || l.state === "";
+      to = open || Number.isNaN(l.lastAt) ? nowMs : l.lastAt;
+      to = Math.min(to, sp.start + MAX_OPEN_SPAN_MS);
+    }
+    if (to < start) continue;
+    l.spans.push({ from: Math.max(sp.start, start), to, open });
   }
 
   const lanes = [...acc.values()].filter((l) => stateFresh(l.state, lastReported(l.lastAt, l.since), nowMs));

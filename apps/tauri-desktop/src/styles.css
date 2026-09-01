@@ -162,7 +162,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 
 /* sessions */
 .sessions { display: flex; gap: 0.8rem; flex: 1; min-height: 0; }
-.sessions-list { width: 320px; overflow-y: auto; flex-shrink: 0; }
+.sessions-list { width: 44%; min-width: 360px; max-width: 640px; overflow-y: auto; flex-shrink: 0; }
 .sessions-events { flex: 1; overflow-y: auto; min-width: 0; }
 .session-item {
   border: 1px solid var(--border);
@@ -173,9 +173,9 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 }
 .session-item:hover { background: var(--bg-hover); }
 .session-title { font-weight: 600; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
-.session-sub { color: var(--text-dim); font-size: 12px; }
+.session-sub { color: var(--text-dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-reason { color: var(--warn); font-size: 12px; margin-top: 0.2rem; }
-.session-id { font-size: 11px; word-break: break-all; }
+.session-id { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge {
   font-size: 10px;
   font-weight: 700;
