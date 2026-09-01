@@ -66,7 +66,11 @@ describe("lanes panel", () => {
     const btn = [...panel.root.querySelectorAll("button")].find((b) => b.textContent === "15m")!;
     btn.click();
     expect(btn.classList.contains("active")).toBe(true);
-    // 15m across the fallback width takes a 5m step: exactly three labels.
-    expect(panel.root.querySelectorAll(".lane-axis text")).toHaveLength(3);
+    // 15m across the fallback width takes a 5m step: three gridlines, and a
+    // label for each unless the last one would spill past the right edge.
+    expect(panel.root.querySelectorAll(".lane-axis line")).toHaveLength(3);
+    const labels = panel.root.querySelectorAll(".lane-axis text").length;
+    expect(labels).toBeGreaterThanOrEqual(2);
+    expect(labels).toBeLessThanOrEqual(3);
   });
 });

@@ -69,6 +69,20 @@ describe("sessions band", () => {
     expect(panel.root.querySelector(".badge")).toBeNull();
   });
 
+  test("a needs-you state from days ago neither leads nor lights up", async () => {
+    sessions.mockResolvedValue([
+      summary({ id: "ghost", source: "codex", agent: "codex", state: "needs_input", last_time: new Date(now - 48 * 3_600_000).toISOString() }),
+      summary({ id: "fresh", last_time: new Date(now - 5_000).toISOString() }),
+    ]);
+    const panel = createSessions(() => {}, () => []);
+    await panel.refresh();
+
+    const rows = [...panel.root.querySelectorAll(".band-row")];
+    expect(rows.map((r) => r.querySelector(".agent")?.textContent)).toEqual(["claude", "codex"]);
+    expect(rows[1].querySelector(".state")?.textContent).toBe("needs_input");
+    expect(rows[1].querySelector(".state.needs")).toBeNull();
+  });
+
   test("flags errors inline and opens the session on click", async () => {
     sessions.mockResolvedValue([summary({ id: "s1", has_error: true })]);
     sessionEvents.mockResolvedValue([]);

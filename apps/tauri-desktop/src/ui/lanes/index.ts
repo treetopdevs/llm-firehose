@@ -17,6 +17,7 @@ const AXIS_H = 20;
 const ROW_H = 24;
 const PAD = 8;
 const FALLBACK_W = 800;
+const LABEL_PX = 56; // room for "HH:MM:SS"; a label that would spill past the edge is dropped
 
 // Everything event-derived is a text node; attribute values are numbers and
 // class names we choose.
@@ -78,10 +79,10 @@ export function createLanes(
     const axis = svg("g", { class: "lane-axis" });
     for (const tick of axisTicks(now, windowMs, laneW)) {
       const tx = x(tick.at);
-      axis.append(
-        svg("line", { x1: tx, x2: tx, y1: AXIS_H - 4, y2: height - PAD }),
-        svg("text", { x: tx + 3, y: AXIS_H - 7 }, tick.label),
-      );
+      axis.append(svg("line", { x1: tx, x2: tx, y1: AXIS_H - 4, y2: height - PAD }));
+      if (tx + LABEL_PX <= width - PAD) {
+        axis.append(svg("text", { x: tx + 3, y: AXIS_H - 7 }, tick.label));
+      }
     }
     canvas.append(axis);
     if (lanes.length === 0) {

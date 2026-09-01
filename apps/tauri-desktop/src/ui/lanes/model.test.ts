@@ -92,6 +92,15 @@ describe("buildLanes", () => {
     expect(lanes[2].label).toBe("opencode");
   });
 
+  test("drops engine states that are no longer plausible", () => {
+    const summaries = [
+      summary({ id: "ghost-needs", state: "needs_input", last_time: new Date(now - 48 * 3_600_000).toISOString() }),
+      summary({ id: "ghost-working", state: "working", last_time: new Date(now - 40 * MIN).toISOString() }),
+      summary({ id: "waiting", state: "needs_input", last_time: new Date(now - 2 * 3_600_000).toISOString() }),
+    ];
+    expect(buildLanes([], summaries, now, 5 * MIN).map((l) => l.id)).toEqual(["waiting"]);
+  });
+
   test("caps the number of lanes", () => {
     const events = Array.from({ length: LANE_CAP + 5 }, (_, i) => ev(`s${i}`, i * 1000));
     expect(buildLanes(events, [], now, MIN)).toHaveLength(LANE_CAP);

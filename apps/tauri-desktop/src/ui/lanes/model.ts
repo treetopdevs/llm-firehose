@@ -3,13 +3,11 @@
 // attention state is read, never re-folded (internal/tui/derive.go mirrors this).
 
 import type { FirehoseEvent, SessionSummary } from "../../api";
-import { isTransition } from "../../spark";
+import { isTransition, lastReported, stateFresh } from "../../spark";
 
 export const LANE_WINDOWS_MS = [60_000, 300_000, 900_000, 3_600_000] as const;
 /** Past this an unfinished tool call cannot honestly be drawn as still running. */
 export const MAX_OPEN_SPAN_MS = 30 * 60_000;
-/** A session quiet for longer leaves the chart unless the engine says it is working or needs you. */
-export const LIVE_WINDOW_MS = 10 * 60_000;
 export const LANE_CAP = 12;
 
 export type LaneTick = { at: number; kind: "event" | "error" | "needs" };
@@ -99,9 +97,7 @@ export function buildLanes(
     if (!Number.isNaN(last)) l.lastAt = later(l.lastAt, last);
   }
 
-  const lanes = [...acc.values()].filter(
-    (l) => l.lastAt >= nowMs - LIVE_WINDOW_MS || l.state === "needs_input" || l.state === "working",
-  );
+  const lanes = [...acc.values()].filter((l) => stateFresh(l.state, lastReported(l.lastAt, l.since), nowMs));
   lanes.sort((a, b) => {
     const an = a.state === "needs_input";
     const bn = b.state === "needs_input";

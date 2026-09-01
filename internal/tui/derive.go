@@ -25,8 +25,12 @@ const (
 	// laneMaxOpenSpan caps how far an unfinished tool call is drawn: past this
 	// we cannot honestly claim it is still running.
 	laneMaxOpenSpan = 30 * time.Minute
-	minLaneWidth    = 10
-	maxLabelRunes   = 12
+	// Engine state is trusted only while it is still plausible. A session that
+	// has not reported anything for longer than this is a ghost, not a live one.
+	needsStaleAfter   = 24 * time.Hour
+	workingStaleAfter = laneMaxOpenSpan
+	minLaneWidth      = 10
+	maxLabelRunes     = 12
 
 	stateWorking = "working"
 	stateIdle    = "idle"
@@ -96,8 +100,11 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 	}
 	out := make([]sessionInfo, 0, len(byID))
 	for _, s := range byID {
-		recent := !s.Last.IsZero() && now.Sub(s.Last) <= bandWindow
-		if !recent && s.State != stateNeedsInput && s.State != stateWorking {
+		ref := s.Last
+		if s.Since.After(ref) {
+			ref = s.Since
+		}
+		if !stateFresh(s.State, ref, now) {
 			continue
 		}
 		if s.Label == "" {
@@ -119,6 +126,23 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		return a.ID < b.ID
 	})
 	return out
+}
+
+// stateFresh reports whether a session still belongs on screen: recent
+// activity, or an engine state that is still plausible given its age.
+func stateFresh(state string, ref, now time.Time) bool {
+	if ref.IsZero() {
+		return false
+	}
+	age := now.Sub(ref)
+	switch state {
+	case stateNeedsInput:
+		return age <= needsStaleAfter
+	case stateWorking:
+		return age <= workingStaleAfter
+	default:
+		return age <= bandWindow
+	}
 }
 
 // sparkline draws counts on a shared scale so shapes compare across rows.

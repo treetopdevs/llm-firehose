@@ -2,7 +2,7 @@ import { sessionEvents, sessions } from "../api";
 import type { FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
 import { shortPath } from "../format";
-import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
+import { bucketCountsBySession, formatAge, sessionHue, sparkline, stateFresh } from "../spark";
 import { renderEventList } from "./feed";
 
 export type SessionsPanel = {
@@ -13,18 +13,26 @@ export type SessionsPanel = {
 
 const REFRESH_MS = 5000;
 
+// A needs-you state is only worth leading with while it is still plausible;
+// a permission prompt from days ago sorts like any other old session.
+function needsYouNow(s: SessionSummary, now: number): boolean {
+  return s.state === "needs_input" && stateFresh(s.state, Date.parse(s.last_time), now);
+}
+
 // Needs-you first (longest wait first), then most recent activity.
-function bySupervision(a: SessionSummary, b: SessionSummary): number {
-  const an = a.state === "needs_input";
-  const bn = b.state === "needs_input";
-  if (an !== bn) return an ? -1 : 1;
-  if (an) {
-    const d = Date.parse(a.state_since ?? "") - Date.parse(b.state_since ?? "");
+function bySupervision(now: number) {
+  return (a: SessionSummary, b: SessionSummary): number => {
+    const an = needsYouNow(a, now);
+    const bn = needsYouNow(b, now);
+    if (an !== bn) return an ? -1 : 1;
+    if (an) {
+      const d = Date.parse(a.state_since ?? "") - Date.parse(b.state_since ?? "");
+      if (Number.isFinite(d) && d !== 0) return d;
+    }
+    const d = Date.parse(b.last_time) - Date.parse(a.last_time);
     if (Number.isFinite(d) && d !== 0) return d;
-  }
-  const d = Date.parse(b.last_time) - Date.parse(a.last_time);
-  if (Number.isFinite(d) && d !== 0) return d;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  };
 }
 
 // Session explorer: a small-multiples band from /sessions (one row per
@@ -52,7 +60,7 @@ export function createSessions(
   }
 
   function sessionItem(s: SessionSummary, buckets: readonly number[], scale: number, now: number): HTMLElement {
-    const needs = s.state === "needs_input";
+    const needs = needsYouNow(s, now);
     const last = Date.parse(s.last_time);
     const age = Number.isNaN(last) ? "" : formatAge(now - last);
     const summary = needs && s.state_reason ? s.state_reason : (s.last_summary ?? "");
@@ -83,13 +91,13 @@ export function createSessions(
       listBox.append(el("p", { class: "dim" }, "loading sessions…"));
     }
     try {
-      const all = [...(await sessions())].sort(bySupervision);
+      const now = Date.now();
+      const all = [...(await sessions())].sort(bySupervision(now));
       clear(listBox);
       if (all.length === 0) {
         listBox.append(el("p", { class: "dim" }, "no sessions captured yet"));
         return;
       }
-      const now = Date.now();
       const counts = bucketCountsBySession(recentEvents(), now);
       let scale = 0;
       for (const c of counts.values()) {

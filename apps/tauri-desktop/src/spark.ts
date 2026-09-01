@@ -6,11 +6,37 @@ import type { FirehoseEvent } from "./api";
 
 export const BAND_BUCKETS = 10;
 export const BAND_BUCKET_MS = 30_000;
+/** A session quiet for longer leaves the live views unless its engine state is still plausible. */
+export const LIVE_WINDOW_MS = 10 * 60_000;
+/** Engine state is trusted only while it is still plausible; past this the session is a ghost. */
+export const NEEDS_STALE_MS = 24 * 3_600_000;
+export const WORKING_STALE_MS = 30 * 60_000;
 
 const GLYPHS = [..."▁▂▃▄▅▆▇█"];
 
 export function isTransition(ev: FirehoseEvent): boolean {
   return ev.source === "firehose" && ev.name === "state.transition";
+}
+
+/** Whether a session still belongs on screen given its engine state and when it last reported. */
+export function stateFresh(state: string | undefined, lastAtMs: number, nowMs: number): boolean {
+  if (!Number.isFinite(lastAtMs)) return false;
+  const age = nowMs - lastAtMs;
+  switch (state) {
+    case "needs_input":
+      return age <= NEEDS_STALE_MS;
+    case "working":
+      return age <= WORKING_STALE_MS;
+    default:
+      return age <= LIVE_WINDOW_MS;
+  }
+}
+
+/** The later of a session's last event and its state change, for freshness checks. */
+export function lastReported(lastAtMs: number, sinceMs: number): number {
+  if (!Number.isFinite(lastAtMs)) return sinceMs;
+  if (!Number.isFinite(sinceMs)) return lastAtMs;
+  return Math.max(lastAtMs, sinceMs);
 }
 
 /** Events per bucket for every session, oldest bucket first. Transitions are not activity. */

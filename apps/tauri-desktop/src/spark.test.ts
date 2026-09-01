@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bucketCounts, formatAge, sessionHue, sparkline } from "./spark";
+import { bucketCounts, formatAge, sessionHue, sparkline, stateFresh } from "./spark";
 import type { FirehoseEvent } from "./api";
 
 const now = Date.parse("2026-07-02T10:10:00Z");
@@ -61,5 +61,18 @@ describe("sessionHue", () => {
       expect(h).toBeGreaterThanOrEqual(0);
       expect(h).toBeLessThan(360);
     }
+  });
+});
+
+describe("stateFresh", () => {
+  const H = 3_600_000;
+  test("trusts engine states only while they are plausible", () => {
+    expect(stateFresh("needs_input", now - 2 * H, now)).toBe(true);
+    expect(stateFresh("needs_input", now - 48 * H, now)).toBe(false);
+    expect(stateFresh("working", now - 20 * 60_000, now)).toBe(true);
+    expect(stateFresh("working", now - 40 * 60_000, now)).toBe(false);
+    expect(stateFresh("idle", now - 5 * 60_000, now)).toBe(true);
+    expect(stateFresh(undefined, now - 15 * 60_000, now)).toBe(false);
+    expect(stateFresh("needs_input", NaN, now)).toBe(false);
   });
 });
