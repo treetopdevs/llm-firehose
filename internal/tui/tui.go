@@ -26,6 +26,8 @@ type ExportFunc func([]event.Event) (string, error)
 // SessionAttention is the engine-owned Projection state needed by the view.
 type SessionAttention struct {
 	ID     string
+	Source string
+	Agent  string
 	State  string
 	Since  time.Time
 	Reason string
@@ -35,6 +37,16 @@ type attention struct {
 	State  string
 	Since  time.Time
 	Reason string
+	Source string
+	Agent  string
+}
+
+// tickMsg redraws once a second so ages, sparklines, and the lane axis move
+// even when no event arrives.
+type tickMsg time.Time
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 // Model is the Bubble Tea model for the firehose view.
@@ -58,8 +70,13 @@ type Model struct {
 	width    int
 	height   int
 	ExportFn ExportFunc
-	// attention tracks derived session state for the NEEDS YOU indicator.
+	// attention mirrors engine-owned session state: the NEEDS YOU indicator,
+	// the band's state column, and lane labels all read from it.
 	attention map[string]attention
+	help      bool
+	lanes     bool
+	laneIdx   int // index into laneWindows
+	now       func() time.Time
 }
 
 var categoryCycle = []event.Category{
@@ -69,7 +86,10 @@ var categoryCycle = []event.Category{
 }
 
 func NewModel(ch <-chan event.Event) Model {
-	return Model{ch: ch, cursor: -1, width: 80, height: 24, attention: map[string]attention{}}
+	return Model{
+		ch: ch, cursor: -1, width: 80, height: 24, attention: map[string]attention{},
+		laneIdx: 1, now: time.Now,
+	}
 }
 
 // Preload seeds the model with historical events (spool replay) so the
@@ -92,13 +112,15 @@ func (m Model) PreloadSessions(sessions []SessionAttention) Model {
 		m.attention = map[string]attention{}
 	}
 	for _, session := range sessions {
-		if session.ID == "" || session.State != stateNeedsInput {
+		if session.ID == "" || session.State == "" || session.State == stateDone {
 			continue
 		}
 		m.attention[session.ID] = attention{
 			State: session.State, Since: session.Since, Reason: session.Reason,
+			Source: session.Source, Agent: session.Agent,
 		}
 	}
+	m.boundAttention()
 	return m
 }
 
@@ -108,7 +130,7 @@ func (m Model) Paused() bool { return m.paused }
 // Filter exposes the active filter (for tests and status display).
 func (m Model) Filter() store.Filter { return m.filter }
 
-func (m Model) Init() tea.Cmd { return m.wait() }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.wait(), tick()) }
 
 func (m Model) wait() tea.Cmd {
 	if m.ch == nil {
@@ -152,6 +174,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.wait()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case tickMsg:
+		return m, tick()
 	}
 	return m, nil
 }
@@ -196,6 +220,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc", "q", "enter":
 			m.detail = nil
+		}
+		return m, nil
+	}
+	if m.help {
+		switch msg.String() {
+		case "esc", "q", "enter", "?":
+			m.help = false
 		}
 		return m, nil
 	}
@@ -249,6 +280,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.buf = ""
 	case "t":
 		m.compact = !m.compact
+	case "?":
+		m.help = true
+	case "l":
+		m.lanes = !m.lanes
+	case "-":
+		m.laneIdx = max(m.laneIdx-1, 0)
+	case "+", "=":
+		m.laneIdx = min(m.laneIdx+1, len(laneWindows)-1)
 	case "e":
 		if m.ExportFn != nil {
 			evs := m.filteredEvents()
@@ -282,22 +321,44 @@ func (m Model) visibleRows() []store.Row {
 
 // noteAttention applies engine-owned, live-only Projection transitions.
 func (m Model) noteAttention(ev event.Event) {
-	if ev.SessionID == "" || m.attention == nil {
-		return
-	}
-	if ev.Source != "firehose" || ev.Name != "state.transition" {
+	if ev.SessionID == "" || m.attention == nil || !isTransition(ev) {
 		return
 	}
 	state, _ := ev.Payload["state"].(string)
-	if state != stateNeedsInput {
+	if state == "" || state == stateDone {
 		delete(m.attention, ev.SessionID)
 		return
 	}
 	reason, _ := ev.Payload["reason"].(string)
-	if reason == "" {
+	if reason == "" && state == stateNeedsInput {
 		reason = ev.Summary
 	}
-	m.attention[ev.SessionID] = attention{State: state, Since: ev.Time, Reason: reason}
+	prev := m.attention[ev.SessionID]
+	m.attention[ev.SessionID] = attention{
+		State: state, Since: ev.Time, Reason: reason, Source: prev.Source, Agent: prev.Agent,
+	}
+	m.boundAttention()
+}
+
+// boundAttention evicts the stalest routine entries past attentionCap.
+// Sessions that need you are never evicted.
+func (m Model) boundAttention() {
+	for len(m.attention) > attentionCap {
+		victim, found := "", false
+		var oldest time.Time
+		for id, a := range m.attention {
+			if a.State == stateNeedsInput {
+				continue
+			}
+			if !found || a.Since.Before(oldest) {
+				victim, oldest, found = id, a.Since, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(m.attention, victim)
+	}
 }
 
 func (m Model) needsYouCount() int {
