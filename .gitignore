@@ -15,3 +15,6 @@ apps/tauri-desktop/src-tauri/binaries/
 apps/tauri-desktop/src-tauri/gen/schemas/
 .playwright-mcp/
 /.specstory
+
+# local consolidation WIP backups (not for commit)
+.consolidation-backup/

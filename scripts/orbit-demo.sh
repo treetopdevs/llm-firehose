@@ -52,3 +52,15 @@ emit claude-code "{\"hook_event_name\":\"Stop\",\"session_id\":\"$S4\"}"
 
 echo "done. Open the Orbit panel — $S3 should be amber near center (NEEDS YOU)."
 echo "  sessions: working=$S1  codex=$S2  blocked=$S3  done=$S4"
+
+# Optional steady-work loop. Without it every session goes quiet and the
+# projection turns the whole fleet idle after IdleAfter (90s), which is not what
+# a screen recording wants. ORBIT_DEMO_LOOP=1 keeps $S1 visibly working while
+# $S3 stays blocked and drifts inward. Ctrl-C to stop.
+if [ "${ORBIT_DEMO_LOOP:-0}" = "1" ]; then
+  echo "looping steady work on $S1 (ORBIT_DEMO_LOOP=1) — Ctrl-C to stop…"
+  while true; do
+    emit claude-code "{\"hook_event_name\":\"PostToolUse\",\"session_id\":\"$S1\",\"cwd\":\"/demo/alpha\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"/demo/alpha/main.go\"},\"tool_response\":{\"ok\":true}}"
+    sleep 2
+  done
+fi

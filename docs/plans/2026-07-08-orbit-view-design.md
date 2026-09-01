@@ -1,7 +1,9 @@
 # Orbit view — fleet-supervision visualization (design)
 
 **Date:** 2026-07-08
-**Status:** Validated design, not yet implemented
+**Status:** Implemented — the attention state machine ships in
+`internal/capture/internal/projection` and the desktop view in
+`apps/tauri-desktop/src/ui/orbit/`.
 **Decisions made via brainstorm:** fleet supervision as the job · blocked/waiting
 agents as the primary signal · attention gravity well as the metaphor ·
 click-to-detail as v1 interaction.
@@ -24,8 +26,8 @@ means it is literally at screen center. Space itself answers "who needs me?"
 
 ## Part 1 — Data layer: derived attention state
 
-New per-session state machine in `internal/index` (derived layer, never the
-spool):
+New per-session state machine in `internal/capture/internal/projection`
+(sealed derived layer, never the spool):
 
 ```text
 working → needs_input → working → … → done      (idle / error as overlays)
