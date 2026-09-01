@@ -19,29 +19,46 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
   const root = el("section", { class: "orbit" }, canvasHost, hoverCard);
 
   let scene: OrbitScene | null = null;
+  let sceneFailed = false;
   let bodies: OrbitBody[] = [];
   let summaries: SessionSummary[] = [];
   let refreshGen = 0;
 
   function ensureScene() {
-    if (!scene) {
+    if (scene || sceneFailed) return;
+    // Drop any fallback text left by an earlier failed attempt.
+    clear(canvasHost);
+    try {
       scene = createOrbitScene(canvasHost);
-      scene.canvas.addEventListener("click", (e) => {
-        const id = scene?.pick(e.clientX, e.clientY);
-        if (id && !id.startsWith("cluster:")) {
-          onOpenSession(id);
-        }
-      });
-      scene.canvas.addEventListener("pointermove", (e) => {
-        const id = scene?.pick(e.clientX, e.clientY) ?? null;
-        scene?.setHover(id);
-        showHover(id, e.clientX, e.clientY);
-      });
-      scene.canvas.addEventListener("pointerleave", () => {
-        scene?.setHover(null);
-        hoverCard.classList.add("hidden");
-      });
+    } catch {
+      // No WebGL (disabled, blocklisted, or contexts exhausted). Never let this
+      // reject out of refresh() — main.ts calls it as `void refresh()`.
+      failScene();
+      return;
     }
+    scene.canvas.addEventListener("click", (e) => {
+      const id = scene?.pick(e.clientX, e.clientY);
+      if (id && !id.startsWith("cluster:")) {
+        onOpenSession(id);
+      }
+    });
+    scene.canvas.addEventListener("pointermove", (e) => {
+      const id = scene?.pick(e.clientX, e.clientY) ?? null;
+      scene?.setHover(id);
+      showHover(id, e.clientX, e.clientY);
+    });
+    scene.canvas.addEventListener("pointerleave", () => {
+      scene?.setHover(null);
+      hoverCard.classList.add("hidden");
+    });
+  }
+
+  function failScene() {
+    scene?.dispose();
+    scene = null;
+    sceneFailed = true;
+    clear(canvasHost);
+    canvasHost.append(el("p", { class: "orbit-fallback dim" }, "3D orbit unavailable"));
   }
 
   function showHover(id: string | null, x: number, y: number) {
@@ -88,6 +105,7 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
     const rect = root.getBoundingClientRect();
     for (const body of bodies) {
       if (!body.labelAlways) continue;
+      if (!Number.isFinite(body.urgencyRadius) || !Number.isFinite(body.sectorAngle)) continue;
       const label = el(
         "div",
         { class: "orbit-label" },
@@ -111,8 +129,12 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
       if (gen !== refreshGen) return;
       summaries = next;
       bodies = buildScene(summaries, Date.now());
-      scene?.sync(bodies);
-      paintLabels();
+      try {
+        scene?.sync(bodies);
+        paintLabels();
+      } catch {
+        failScene();
+      }
     } catch (err) {
       if (gen !== refreshGen) return;
       clear(hoverCard);
@@ -123,16 +145,20 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
 
   function onEvent(ev: FirehoseEvent) {
     if (!scene) return;
-    if (ev.source === "firehose" && ev.name === "state.transition") {
-      bodies = applyTransition(bodies, ev, Date.now());
+    try {
+      if (ev.source === "firehose" && ev.name === "state.transition") {
+        bodies = applyTransition(bodies, ev, Date.now());
+        scene.sync(bodies);
+        paintLabels();
+        return;
+      }
+      bodies = applyActivity(bodies, ev);
       scene.sync(bodies);
-      paintLabels();
-      return;
-    }
-    bodies = applyActivity(bodies, ev);
-    scene.sync(bodies);
-    if (ev.session_id && (ev.category === "message" || ev.category === "tool" || ev.category === "file" || ev.category === "shell")) {
-      scene.spark(ev.session_id, ev.category);
+      if (ev.session_id && (ev.category === "message" || ev.category === "tool" || ev.category === "file" || ev.category === "shell")) {
+        scene.spark(ev.session_id, ev.category);
+      }
+    } catch {
+      failScene();
     }
   }
 
@@ -140,6 +166,9 @@ export function createOrbit(onOpenSession: (id: string) => void): OrbitPanel {
     refreshGen++;
     scene?.dispose();
     scene = null;
+    // Let a later visit retry: one transient WebGL failure must not disable the
+    // orbit view for the rest of the process.
+    sceneFailed = false;
   }
 
   return { root, refresh, onEvent, dispose };

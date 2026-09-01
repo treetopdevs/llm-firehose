@@ -209,6 +209,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
   height: 100%;
   cursor: pointer;
 }
+.orbit-fallback { margin: 0; padding: 1rem; }
 .orbit-hover {
   position: absolute;
   z-index: 2;

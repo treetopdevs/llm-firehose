@@ -20,6 +20,20 @@ type MeshEntry = {
 
 const ORBIT_SCALE = 8;
 
+/**
+ * Last gate before THREE. A body with non-finite geometry puts a mesh at a NaN
+ * position that no lerp recovers and that corrupts every later raycast.
+ */
+export function isRenderableBody(b: OrbitBody): boolean {
+  return (
+    b.sessionId !== "" &&
+    Number.isFinite(b.urgencyRadius) &&
+    b.urgencyRadius >= 0 &&
+    Number.isFinite(b.sectorAngle) &&
+    Number.isFinite(b.activityRate)
+  );
+}
+
 export type OrbitScene = {
   canvas: HTMLCanvasElement;
   sync(bodies: OrbitBody[]): void;
@@ -35,7 +49,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   container.append(canvas);
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x0d1117, 1);
 
   const scene = new THREE.Scene();
@@ -74,6 +88,8 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   let hoverId: string | null = null;
   let running = true;
   let raf = 0;
+  let contextLost = false;
+  let disposed = false;
 
   function resize() {
     const w = container.clientWidth || 1;
@@ -85,6 +101,19 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   resize();
   const ro = new ResizeObserver(resize);
   ro.observe(container);
+
+  // preventDefault() is load-bearing: without it the browser never fires
+  // webglcontextrestored.
+  const onContextLost = (e: Event) => {
+    e.preventDefault();
+    contextLost = true;
+  };
+  const onContextRestored = () => {
+    contextLost = false;
+    resize();
+  };
+  canvas.addEventListener("webglcontextlost", onContextLost);
+  canvas.addEventListener("webglcontextrestored", onContextRestored);
 
   function colorFor(body: OrbitBody): THREE.Color {
     if (body.state === "needs_input") return new THREE.Color(0xff9f43);
@@ -110,8 +139,10 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   }
 
   function sync(bodies: OrbitBody[]) {
+    if (disposed) return;
     const seen = new Set<string>();
     for (const body of bodies) {
+      if (!isRenderableBody(body)) continue;
       if (body.despawnAt && Date.now() > body.despawnAt) continue;
       seen.add(body.sessionId);
       let entry = entries.get(body.sessionId);
@@ -178,6 +209,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   }
 
   function spark(sessionId: string, category: string) {
+    if (disposed) return;
     const entry = entries.get(sessionId);
     if (!entry) return;
     const c =
@@ -202,7 +234,9 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   }
 
   function pick(clientX: number, clientY: number): string | null {
+    if (disposed) return null;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
     pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
@@ -219,7 +253,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   function tick() {
     if (!running) return;
     raf = requestAnimationFrame(tick);
-    if (document.hidden || !canvas.isConnected) return;
+    if (document.hidden || !canvas.isConnected || contextLost) return;
 
     const t = performance.now() / 1000;
     for (const entry of entries.values()) {
@@ -253,14 +287,23 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
         sparks.splice(i, 1);
       }
     }
-    renderer.render(scene, camera);
+    try {
+      renderer.render(scene, camera);
+    } catch {
+      // A lost context otherwise throws on every frame forever.
+      contextLost = true;
+    }
   }
   tick();
 
   function dispose() {
+    if (disposed) return;
+    disposed = true;
     running = false;
     cancelAnimationFrame(raf);
     ro.disconnect();
+    canvas.removeEventListener("webglcontextlost", onContextLost);
+    canvas.removeEventListener("webglcontextrestored", onContextRestored);
     for (const entry of entries.values()) {
       scene.remove(entry.mesh);
       if (entry.halo) {
@@ -278,6 +321,10 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
     sparks.length = 0;
     sparkGeoMessage.dispose();
     sparkGeoDefault.dispose();
+    core.geometry.dispose();
+    (core.material as THREE.Material).dispose();
+    ring.geometry.dispose();
+    (ring.material as THREE.Material).dispose();
     renderer.dispose();
     canvas.remove();
   }
