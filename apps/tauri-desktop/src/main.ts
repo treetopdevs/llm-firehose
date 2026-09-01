@@ -13,6 +13,7 @@ import { renderDetail } from "./ui/detail";
 import { createDoctor } from "./ui/doctor";
 import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
+import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createOrbit } from "./ui/orbit";
 import { createSessions } from "./ui/sessions";
@@ -24,18 +25,20 @@ const feedState = new FeedState(5000);
 const detailPane = el("aside", { class: "detail" });
 const showDetail = (ev: FirehoseEvent) => renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}));
 
-const sessionsPanel = createSessions(showDetail);
+const sessionsPanel = createSessions(showDetail, () => feedState.events());
 
-function openSessionFromOrbit(id: string) {
+function openSession(id: string) {
   show("sessions");
   void sessionsPanel.openSession(id);
 }
 
-const orbitPanel = createOrbit(openSessionFromOrbit);
+const orbitPanel = createOrbit(openSession);
+const lanesPanel = createLanes(() => feedState.events(), openSession);
 
 const panels = {
   orbit: orbitPanel,
   live: createFeed(feedState, showDetail),
+  lanes: lanesPanel,
   sessions: sessionsPanel,
   files: createFiles(),
   doctor: createDoctor(),
@@ -88,6 +91,9 @@ function onEvent(ev: FirehoseEvent) {
   eventCount.textContent = `${received.toLocaleString()} events`;
   if (active === "orbit") {
     orbitPanel.onEvent(ev);
+  }
+  if (active === "lanes") {
+    lanesPanel.onEvent(ev);
   }
   if (active === "live" && !renderQueued) {
     renderQueued = true;
