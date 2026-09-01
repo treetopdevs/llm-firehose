@@ -5,13 +5,16 @@ coding agents are doing on your Mac. Like a Twitter firehose, but for agent
 activity: fast, scrollable, information-dense, readable.
 
 ```
-AGENT FIREHOSE  ● LIVE  1,204 events
-10:04:12 │ [claude]   [prompt]     prompt: "fix the login bug"            …/dev/app
-10:04:15 │ [claude]   [shell]      ran: go test ./...                     …/dev/app
-10:04:19 │ [codex]    [file]       patched router.ex, health.ex           …/dev/api
-10:04:20 │ [opencode] [permission] permission requested: Run: rm -rf build
-10:04:21 │ [claude]   [file]       ran Edit on auth.go ×3                 …/dev/app
-space pause · ↑/↓ scroll · enter detail · f category · a source · / search · t density · e export · q quit
+AGENT FIREHOSE  ● LIVE  1,204 events  NEEDS YOU · 1 · approve Run: rm -rf build
+│ claude   ▂▄▆█▄▂ ▂▄   4s working    ran Edit on auth.go
+│ opencode ▂▂  ▄▂       1m NEEDS YOU  approve Run: rm -rf build
+
+10:04:12 │ claude   ▸ prompt: "fix the login bug"                   …/dev/app
+     :15 │ claude   $ ran: go test ./...
+     :19 │ codex    ■ patched router.ex, health.ex                  …/dev/api
+     :20 │ opencode ? permission requested: Run: rm -rf build
+     :21 │ claude   ■ ran Edit on auth.go ×3                        …/dev/app
+? help · l lanes
 ```
 
 Everything runs on-device. No backend, no accounts, no sync, no telemetry.
@@ -64,9 +67,9 @@ snapshots when a bounded stream disconnects. The API surface
 ## The desktop app
 
 A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
-for non-terminal users: live feed, session explorer, touched-file view,
-doctor with one-click adapter install, settings, and a first-run onboarding
-wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
+for non-terminal users: orbit, live feed, session lanes on a wall-clock axis,
+a session band with sparklines, touched-file view, doctor with one-click
+adapter install, settings, and a first-run onboarding wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
 already running — a daemon you run yourself always wins.
 
 ```sh
@@ -94,12 +97,23 @@ feed are documented in the [release runbook](docs/release-runbook.md).
 ## The viewer
 
 - **live mode** pins to the bottom; `space` pauses and counts unread events
+- a **session band** above the feed shows one line per live session: agent, a
+  sparkline of events per 30s over the last 5m, time since its last event, the
+  engine's state, and what it last did; sessions that need you come first
+- rows print the clock and working directory only when they change, use one
+  glyph per category (`?` shows the legend), and reserve color for warn, error,
+  and needs-you
+- `l` switches to **lanes**: wall time across with now at the right edge, one
+  lane per session, tool calls drawn as spans, and gaps left blank as the idle
+  signal; `-` and `+` zoom the window between 1m and 1h
 - `f` cycles category filter (session/prompt/message/tool/file/permission/shell/error/meta)
 - `a` cycles source filter, `/` searches summaries
 - `enter` opens a detail pane with the full structured payload
-- `t` toggles compact density, `e` exports the current view to NDJSON
+- `t` hides the working directory column, `e` exports the current view to NDJSON
 - bursty repeats coalesce into one row with a `×N` counter
 - adapter failures and unparseable lines surface *in the timeline* as `meta/warn` events
+- an engine state is only trusted while it is plausible: a needs-you state is
+  kept for 24h and a working state for 30m past the session's last report
 
 ## Privacy modes
 
