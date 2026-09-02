@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +193,90 @@ func TestRowSummaryStripsControlSequences(t *testing.T) {
 	}
 	if !strings.Contains(plain(v), "ok done") {
 		t.Fatalf("expected sanitized summary:\n%s", plain(v))
+	}
+}
+
+func callPair(now time.Time) (event.Event, event.Event) {
+	start := mkEv(1, event.CategoryShell, "ran: go test ./...")
+	start.CallID, start.TurnID, start.CWD = "c1", "t1", "/home/me/dev/app"
+	start.Time = now.Add(-10 * time.Second)
+	start.Payload = map[string]any{"phase": "start", "tool_name": "Bash", "command": "go test ./..."}
+	end := mkEv(2, event.CategoryShell, "ran: go test ./...")
+	end.CallID, end.TurnID, end.CWD = "c1", "t1", start.CWD
+	end.Time = start.Time.Add(2590 * time.Millisecond)
+	end.Payload = map[string]any{
+		"phase": "end", "tool_name": "Bash", "exit_code": 0,
+		"stdout": map[string]any{"sha256": "abcdef0123456789abcdef", "len": 512},
+	}
+	return start, end
+}
+
+func TestCallAltitudePairsPhasesAndTabulatesPayload(t *testing.T) {
+	now := t0.Add(time.Minute)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	start, end := callPair(now)
+	src := end.Time.Add(-42 * time.Millisecond)
+	cap := end.Time
+	end.SourceTime, end.CaptureTime = &src, &cap
+	m = push(m, stateTransitionAt(start.Time, "s1", stateWorking, ""))
+	m = push(push(m, start), end)
+	m = key(m, "enter") // follow mode selects the last row: the end of c1
+
+	v := plain(m.View())
+	for _, want := range []string{
+		"CALL",
+		"…/dev/app · claude · session s1",
+		"│ claude ", // the parent session's band line survives the zoom
+		"started   " + start.Time.Local().Format("15:04:05.000"),
+		"ended     " + end.Time.Local().Format("15:04:05.000") + "  2.59s",
+		"captured  +42ms after source",
+		"turn t1 · call c1",
+	} {
+		if !strings.Contains(v, want) {
+			t.Errorf("call view missing %q:\n%s", want, v)
+		}
+	}
+	for _, re := range []string{`command\s+go test \./\.\.\.`, `exit_code\s+0`, `stdout\s+#abcdef01 · len 512`} {
+		if !regexp.MustCompile(re).MatchString(v) {
+			t.Errorf("payload table missing %s:\n%s", re, v)
+		}
+	}
+	// The request (start payload) and response (end payload) are the two halves
+	// of one call; keys the headline and timing already express are not repeated.
+	if strings.Index(v, "request") > strings.Index(v, "command") || strings.Index(v, "response") > strings.Index(v, "exit_code") {
+		t.Errorf("request should precede its keys and response its own:\n%s", v)
+	}
+	for _, re := range []string{`(?m)^\s+phase\s`, `(?m)^\s+tool_name\s`} {
+		if regexp.MustCompile(re).MatchString(v) {
+			t.Errorf("%s is already expressed above the table:\n%s", re, v)
+		}
+	}
+	if strings.Contains(v, `"exit_code"`) || strings.Contains(v, "{") {
+		t.Errorf("call view must be a table, not marshalled JSON:\n%s", v)
+	}
+	m = key(m, "esc")
+	if strings.Contains(plain(m.View()), "CALL") {
+		t.Error("esc should ascend to the session altitude")
+	}
+}
+
+func TestCallAltitudeReportsUnfinishedCalls(t *testing.T) {
+	now := t0.Add(time.Minute)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	start, _ := callPair(now)
+	m = push(m, stateTransitionAt(start.Time, "s1", stateWorking, ""))
+	m = push(m, start)
+	m = key(m, "enter")
+	if v := plain(m.View()); !strings.Contains(v, "ended     still running · 10s") {
+		t.Errorf("a working session's open call should read as running:\n%s", v)
+	}
+	m = key(m, "esc")
+	m = push(m, stateTransitionAt(now, "s1", stateDone, ""))
+	m = key(m, "k") // the transition row is last; the call is above it
+	m = key(m, "enter")
+	if v := plain(m.View()); !strings.Contains(v, "ended     no end captured") {
+		t.Errorf("a finished session's open call should say so:\n%s", v)
 	}
 }

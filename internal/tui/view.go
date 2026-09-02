@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -59,7 +61,7 @@ const (
 
 func (m Model) View() string {
 	if m.detail != nil {
-		return m.viewDetail()
+		return m.viewCall(m.now())
 	}
 	if m.help {
 		return m.viewHelp()
@@ -171,28 +173,37 @@ func (m Model) viewBand(sessions []sessionInfo, now time.Time, agentW int) []str
 			scale = max(scale, n)
 		}
 	}
-	prefixW := 1 + 1 + agentW + 1 + bandBuckets + 1 + dwellCells + 1 + 3 + 1 + stateWidth + 1
-	// A narrow terminal keeps the number and gives the bar's cells to the text.
-	withBar := m.width-prefixW >= minBandText
-	if !withBar {
-		prefixW -= dwellCells + 1
-	}
+	prefixW, withBar := m.bandLayout(agentW)
 	lines := make([]string, 0, maxRows+2)
 	for i, s := range sessions {
 		if i >= maxRows {
 			lines = append(lines, dimStyle.Render(fmt.Sprintf("+%d more", len(sessions)-i)))
 			break
 		}
-		text := s.Summary
-		if s.State == stateNeedsInput && s.Reason != "" {
-			text = s.Reason
-		}
-		line := sessionBar(s.ID) + " " + dimStyle.Render(padRight(s.Label, agentW)) + " " +
-			sparkline(s.Buckets[:], scale) + " " + renderDwell(s, now, withBar) + " " +
-			stateLabel(s.State) + " " + fit(stripControl(text), m.width-prefixW)
-		lines = append(lines, line)
+		lines = append(lines, m.bandLine(s, now, scale, agentW, withBar, m.width-prefixW))
 	}
 	return append(lines, "")
+}
+
+// bandLayout sizes the band's fixed columns. A narrow terminal keeps the dwell
+// number and gives the bar's cells to the text.
+func (m Model) bandLayout(agentW int) (prefixW int, withBar bool) {
+	prefixW = 1 + 1 + agentW + 1 + bandBuckets + 1 + dwellCells + 1 + 3 + 1 + stateWidth + 1
+	withBar = m.width-prefixW >= minBandText
+	if !withBar {
+		prefixW -= dwellCells + 1
+	}
+	return prefixW, withBar
+}
+
+func (m Model) bandLine(s sessionInfo, now time.Time, scale, agentW int, withBar bool, textW int) string {
+	text := s.Summary
+	if s.State == stateNeedsInput && s.Reason != "" {
+		text = s.Reason
+	}
+	return sessionBar(s.ID) + " " + dimStyle.Render(padRight(s.Label, agentW)) + " " +
+		sparkline(s.Buckets[:], scale) + " " + renderDwell(s, now, withBar) + " " +
+		stateLabel(s.State) + " " + fit(stripControl(text), textW)
 }
 
 // renderDwell is the dwell bar with its number as the label. A session whose
@@ -247,27 +258,17 @@ func (m Model) renderRow(row store.Row, prev *store.Row, agentW int) string {
 	if prev != nil && prev.Event.Time.Local().Truncate(time.Minute).Equal(local.Truncate(time.Minute)) {
 		ts = padLeft(local.Format(":05"), clockWidth)
 	}
-	glyph := categoryGlyphs[ev.Category]
-	if glyph == "" {
-		glyph = "○"
-	}
+	glyph, tone, loud := eventTone(ev)
 	summary := stripControl(ev.Summary)
-	tone := dimStyle
-	var summaryStyle *lipgloss.Style
-	switch {
-	case ev.Severity == event.SeverityError || ev.Category == event.CategoryError:
-		tone, summaryStyle = errorStyle, &errorStyle
-	case ev.Severity == event.SeverityWarn:
-		tone, summaryStyle = warnStyle, &warnStyle
-	}
 	count := ""
 	if row.Count > 1 {
 		count = fmt.Sprintf(" ×%d", row.Count)
 	}
-	// Like the clock, the working directory is only printed when it changes.
+	// Like the clock, the workspace is only printed when it changes.
 	ctx := ""
-	if !m.compact && ev.CWD != "" && (prev == nil || prev.Event.CWD != ev.CWD) {
-		ctx = " " + shortPath(ev.CWD)
+	if where := workspaceLabel(ev.Repo, ev.CWD); !m.compact && where != "" &&
+		(prev == nil || workspaceLabel(prev.Event.Repo, prev.Event.CWD) != where) {
+		ctx = " " + where
 	}
 	prefixW := clockWidth + 1 + 1 + 1 + agentW + 1 + 1 + 1
 	budget := m.width - prefixW - lipgloss.Width(count)
@@ -279,8 +280,8 @@ func (m Model) renderRow(row store.Row, prev *store.Row, agentW int) string {
 		}
 	}
 	summary = fit(summary, budget)
-	if summaryStyle != nil {
-		summary = summaryStyle.Render(summary)
+	if loud {
+		summary = tone.Render(summary)
 	}
 	return dimStyle.Render(ts) + " " + sessionBar(ev.SessionID) + " " +
 		dimStyle.Render(padRight(agentLabel(ev.Agent, ev.Source), agentW)) + " " +
@@ -391,29 +392,298 @@ func (m Model) viewHelp() string {
 	return b.String()
 }
 
-func (m Model) viewDetail() string {
+// eventTone picks the category glyph and the one colour an event may claim:
+// red for error, yellow for warn, dim otherwise. loud says the summary shares it.
+func eventTone(ev event.Event) (glyph string, tone lipgloss.Style, loud bool) {
+	glyph = categoryGlyphs[ev.Category]
+	if glyph == "" {
+		glyph = "○"
+	}
+	switch {
+	case ev.Severity == event.SeverityError || ev.Category == event.CategoryError:
+		return glyph, errorStyle, true
+	case ev.Severity == event.SeverityWarn:
+		return glyph, warnStyle, true
+	}
+	return glyph, dimStyle, false
+}
+
+const callKeyWidth = len("severity") + 1
+
+// viewCall is the call altitude: one event as a designed table rather than a
+// marshalled dump. Start and end are paired by call id, the duration is the
+// difference, and the parent session stays on screen as a one-line breadcrumb
+// so context survives the zoom.
+func (m Model) viewCall(now time.Time) string {
 	ev := *m.detail
 	var b strings.Builder
-	b.WriteString(headerStyle.Render("EVENT DETAIL") + dimStyle.Render("  (esc to close)") + "\n\n")
-	b.WriteString(fmt.Sprintf("  id        %s\n", ev.ID))
-	b.WriteString(fmt.Sprintf("  time      %s\n", ev.Time.Local().Format("2006-01-02 15:04:05.000")))
-	b.WriteString(fmt.Sprintf("  source    %s (%s)\n", ev.Source, ev.Agent))
-	b.WriteString(fmt.Sprintf("  session   %s\n", ev.SessionID))
-	b.WriteString(fmt.Sprintf("  category  %s / %s [%s]\n", ev.Category, ev.Name, ev.Severity))
-	if ev.CWD != "" {
-		b.WriteString(fmt.Sprintf("  cwd       %s\n", ev.CWD))
-	}
-	b.WriteString(fmt.Sprintf("  summary   %s\n", stripControl(ev.Summary)))
-	if len(ev.Payload) > 0 {
-		data, err := json.MarshalIndent(ev.Payload, "  ", "  ")
-		if err == nil {
-			b.WriteString("\n  payload\n  " + string(data) + "\n")
+	crumb := joinNonEmpty(" · ", workspaceLabel(ev.Repo, ev.CWD), agentLabel(ev.Agent, ev.Source), prefixed("session ", shortID(ev.SessionID)))
+	b.WriteString(headerStyle.Render("CALL") + "  " + dimStyle.Render(crumb) + dimStyle.Render("  (esc to close)") + "\n")
+	if s, ok := m.sessionByID(ev.SessionID, now); ok {
+		scale := 0
+		for _, n := range s.Buckets {
+			scale = max(scale, n)
 		}
+		agentW := lipgloss.Width(s.Label)
+		prefixW, withBar := m.bandLayout(agentW)
+		b.WriteString(m.bandLine(s, now, scale, agentW, withBar, m.width-prefixW) + "\n")
+	}
+	b.WriteString("\n")
+
+	glyph, tone, _ := eventTone(ev)
+	title := string(ev.Category)
+	if name := toolName(ev); name != "" {
+		title += "  " + name
+	} else if ev.Name != "" {
+		title += " / " + ev.Name
+	}
+	b.WriteString("  " + clockMs(ev.Time) + "  " + tone.Render(glyph) + " " + fit(stripControl(title), m.width-16) + "\n")
+	if ev.Summary != "" {
+		b.WriteString("  " + fit(stripControl(ev.Summary), m.width-2) + "\n")
+	}
+	b.WriteString("\n")
+	var start, end *event.Event
+	if ev.CallID != "" {
+		start, end = pairCall(m.events, ev)
+	}
+	for _, row := range m.callRows(ev, start, end, now) {
+		b.WriteString("  " + padRight(row[0], callKeyWidth) + " " + fit(stripControl(row[1]), m.width-3-callKeyWidth) + "\n")
+	}
+
+	// Request and response are the two halves of one call; keys the headline
+	// and timing rows already express are not repeated.
+	omit := map[string]bool{"tool_name": toolName(ev) != ""}
+	if start != nil || end != nil {
+		omit["phase"] = true
+		if start != nil {
+			b.WriteString(m.payloadTable("request", start.Payload, omit))
+		}
+		if end != nil {
+			b.WriteString(m.payloadTable("response", end.Payload, omit))
+		}
+		if start != &ev && end != &ev && !sameEvent(start, ev) && !sameEvent(end, ev) {
+			b.WriteString(m.payloadTable("payload", ev.Payload, omit))
+		}
+	} else {
+		b.WriteString(m.payloadTable("payload", ev.Payload, omit))
 	}
 	if ev.Raw != "" {
 		b.WriteString("\n  raw\n  " + dimStyle.Render(truncate(stripControl(ev.Raw), 2000)) + "\n")
 	}
 	return b.String()
+}
+
+func sameEvent(a *event.Event, b event.Event) bool {
+	return a != nil && a.ID != "" && a.ID == b.ID
+}
+
+// payloadTable is one key/value section, keys sorted, one line per value.
+func (m Model) payloadTable(title string, payload map[string]any, omit map[string]bool) string {
+	keys := make([]string, 0, len(payload))
+	kw := 0
+	for k := range payload {
+		if omit[k] {
+			continue
+		}
+		keys = append(keys, k)
+		kw = max(kw, lipgloss.Width(k))
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("\n  " + title + "\n")
+	for _, k := range keys {
+		b.WriteString("  " + padRight(stripControl(k), kw) + "  " + fit(formatValue(payload[k]), m.width-4-kw) + "\n")
+	}
+	return b.String()
+}
+
+// callRows is the timing and identity table under the headline.
+func (m Model) callRows(ev event.Event, start, end *event.Event, now time.Time) [][2]string {
+	var rows [][2]string
+	add := func(k, v string) { rows = append(rows, [2]string{k, v}) }
+	if ev.CallID != "" {
+		if start != nil {
+			add("started", clockMs(start.Time))
+		}
+		switch {
+		case start != nil && end != nil:
+			add("ended", clockMs(end.Time)+"  "+fmtDuration(end.Time.Sub(start.Time)))
+		case start != nil:
+			if m.attention[ev.SessionID].State == stateWorking {
+				add("ended", "still running · "+formatAge(now.Sub(start.Time)))
+			} else {
+				add("ended", "no end captured")
+			}
+		case end != nil:
+			add("ended", clockMs(end.Time)+"  no start captured")
+		}
+	}
+	if ev.SourceTime != nil && ev.CaptureTime != nil {
+		add("captured", latencyLabel(ev.CaptureTime.Sub(*ev.SourceTime)))
+	}
+	if ids := joinNonEmpty(" · ", prefixed("session ", ev.SessionID), prefixed("turn ", ev.TurnID),
+		prefixed("call ", ev.CallID), prefixed("trace ", ev.TraceID)); ids != "" {
+		add("ids", ids)
+	}
+	if ev.Repo != "" {
+		add("repo", ev.Repo)
+	}
+	if ev.CWD != "" {
+		add("cwd", ev.CWD)
+	}
+	if ev.Severity != "" && ev.Severity != event.SeverityInfo {
+		add("severity", string(ev.Severity))
+	}
+	add("id", ev.ID)
+	return rows
+}
+
+// pairCall finds the start and end observations of ev's tool call: the first
+// start and the first end at or after it, in the same session.
+func pairCall(events []event.Event, ev event.Event) (start, end *event.Event) {
+	for i := range events {
+		other := &events[i]
+		if other.SessionID != ev.SessionID || other.CallID != ev.CallID {
+			continue
+		}
+		switch phase, _ := other.Payload["phase"].(string); phase {
+		case "start":
+			if start == nil {
+				start = other
+			}
+		case "end":
+			if end == nil && (start == nil || !other.Time.Before(start.Time)) {
+				end = other
+			}
+		}
+	}
+	return start, end
+}
+
+func (m Model) sessionByID(id string, now time.Time) (sessionInfo, bool) {
+	if id == "" {
+		return sessionInfo{}, false
+	}
+	for _, s := range m.liveSessions(now) {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return sessionInfo{}, false
+}
+
+func toolName(ev event.Event) string {
+	name, _ := ev.Payload["tool_name"].(string)
+	return name
+}
+
+func clockMs(t time.Time) string { return t.Local().Format("15:04:05.000") }
+
+// fmtDuration prints one resolution per magnitude: ms, s with two decimals,
+// then m and h with a two-digit remainder.
+func fmtDuration(d time.Duration) string {
+	if d < 0 {
+		d = -d
+	}
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%.2fs", d.Seconds())
+	case d < time.Hour:
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
+// latencyLabel reads capture time against the source's own clock.
+func latencyLabel(d time.Duration) string {
+	if d < 0 {
+		return fmtDuration(d) + " before source"
+	}
+	return "+" + fmtDuration(d) + " after source"
+}
+
+// formatValue renders one payload value on one line. Privacy digests
+// ({sha256, len}) read as a short hash and a length instead of an object.
+func formatValue(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "null"
+	case string:
+		return stripControl(x)
+	case bool:
+		return strconv.FormatBool(x)
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(x)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case map[string]any:
+		if sum, ok := x["sha256"].(string); ok {
+			if n, ok := x["len"]; ok {
+				return "#" + shortID(sum) + " · len " + formatValue(n)
+			}
+		}
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return stripControl(fmt.Sprint(v))
+	}
+	return stripControl(string(data))
+}
+
+func shortID(id string) string {
+	if r := []rune(id); len(r) > 8 {
+		return string(r[:8])
+	}
+	return id
+}
+
+func prefixed(prefix, s string) string {
+	if s == "" {
+		return ""
+	}
+	return prefix + s
+}
+
+func joinNonEmpty(sep string, parts ...string) string {
+	kept := parts[:0:0]
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, sep)
+}
+
+// workspaceLabel names where an event happened with what privacy allows: the
+// repo name, a short path, or the first eight hex digits of a digested path.
+func workspaceLabel(repo, cwd string) string {
+	if repo != "" {
+		return repo
+	}
+	if isDigest(cwd) {
+		return cwd[:8]
+	}
+	return shortPath(cwd)
+}
+
+func isDigest(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
 }
 
 func sessionBar(id string) string {

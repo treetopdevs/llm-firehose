@@ -218,7 +218,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.detail != nil {
 		switch msg.String() {
-		case "esc", "q", "enter":
+		case "esc", "q":
 			m.detail = nil
 		}
 		return m, nil
