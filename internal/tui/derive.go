@@ -31,6 +31,12 @@ const (
 	workingStaleAfter = laneMaxOpenSpan
 	minLaneWidth      = 10
 	maxLabelRunes     = 12
+	// The dwell bar measures time in the current state at half-minute
+	// resolution against a hairline at five minutes: a session waiting past
+	// the line is the one you forgot.
+	dwellCell  = 30 * time.Second
+	dwellCells = 15
+	dwellHair  = 10 // cell index of the five-minute hairline
 
 	stateWorking = "working"
 	stateIdle    = "idle"
@@ -159,6 +165,35 @@ func sparkline(buckets []int, scale int) string {
 		b.WriteRune(sparkGlyphs[level-1])
 	}
 	return b.String()
+}
+
+// dwellBar draws d as a horizontal bar of dwellCells cells with the hairline
+// in place. Half a cell (▌) marks a remainder past fifteen seconds, so the bar
+// visibly grows while a session waits.
+func dwellBar(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	full := int(d / dwellCell)
+	half := d%dwellCell >= dwellCell/2
+	cells := make([]rune, dwellCells)
+	for i := range cells {
+		unit := i
+		if i > dwellHair {
+			unit = i - 1
+		}
+		switch {
+		case i == dwellHair:
+			cells[i] = '│'
+		case unit < full:
+			cells[i] = '█'
+		case unit == full && half:
+			cells[i] = '▌'
+		default:
+			cells[i] = ' '
+		}
+	}
+	return string(cells)
 }
 
 func formatAge(d time.Duration) string {

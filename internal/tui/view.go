@@ -53,6 +53,8 @@ const (
 	stateWidth = len("NEEDS YOU")
 	// minBandHeight is the smallest terminal that still gets the session band.
 	minBandHeight = 12
+	// minBandText is the text budget below which the band drops the dwell bar.
+	minBandText = 12
 )
 
 func (m Model) View() string {
@@ -169,27 +171,47 @@ func (m Model) viewBand(sessions []sessionInfo, now time.Time, agentW int) []str
 			scale = max(scale, n)
 		}
 	}
-	prefixW := 1 + 1 + agentW + 1 + bandBuckets + 1 + 3 + 1 + stateWidth + 1
+	prefixW := 1 + 1 + agentW + 1 + bandBuckets + 1 + dwellCells + 1 + 3 + 1 + stateWidth + 1
+	// A narrow terminal keeps the number and gives the bar's cells to the text.
+	withBar := m.width-prefixW >= minBandText
+	if !withBar {
+		prefixW -= dwellCells + 1
+	}
 	lines := make([]string, 0, maxRows+2)
 	for i, s := range sessions {
 		if i >= maxRows {
 			lines = append(lines, dimStyle.Render(fmt.Sprintf("+%d more", len(sessions)-i)))
 			break
 		}
-		age := ""
-		if !s.Last.IsZero() {
-			age = formatAge(now.Sub(s.Last))
-		}
 		text := s.Summary
 		if s.State == stateNeedsInput && s.Reason != "" {
 			text = s.Reason
 		}
 		line := sessionBar(s.ID) + " " + dimStyle.Render(padRight(s.Label, agentW)) + " " +
-			sparkline(s.Buckets[:], scale) + " " + dimStyle.Render(padLeft(age, 3)) + " " +
+			sparkline(s.Buckets[:], scale) + " " + renderDwell(s, now, withBar) + " " +
 			stateLabel(s.State) + " " + fit(stripControl(text), m.width-prefixW)
 		lines = append(lines, line)
 	}
 	return append(lines, "")
+}
+
+// renderDwell is the dwell bar with its number as the label. A session whose
+// state the engine has not reported has no dwell, only the hairline.
+func renderDwell(s sessionInfo, now time.Time, withBar bool) string {
+	d, label := time.Duration(-1), strings.Repeat(" ", 3)
+	if s.State != "" && !s.Since.IsZero() {
+		d = now.Sub(s.Since)
+		label = dimStyle.Render(padLeft(formatAge(d), 3))
+	}
+	if !withBar {
+		return label
+	}
+	return dwellStyled(dwellBar(d)) + " " + label
+}
+
+func dwellStyled(bar string) string {
+	r := []rune(bar)
+	return string(r[:dwellHair]) + dimStyle.Render(string(r[dwellHair])) + string(r[dwellHair+1:])
 }
 
 func stateLabel(state string) string {
@@ -363,7 +385,7 @@ func (m Model) viewHelp() string {
 	b.WriteString("\n\n  color\n")
 	b.WriteString("  │ one hue per session   " + warnStyle.Render("warn") + "   " + errorStyle.Render("error") + "   " + needsStyle.Render("NEEDS YOU") + "\n\n")
 	b.WriteString("  band\n")
-	b.WriteString("  one line per live session: agent · events per 30s over the last 5m · time since last event · state · what it last did\n\n")
+	b.WriteString("  one line per live session: agent · events per 30s over the last 5m · time in its state as a bar, │ marks 5m · state · what it last did\n\n")
 	b.WriteString("  lanes\n")
 	b.WriteString("  wall time across, now at the right edge · ▂▄▆█ events per slot · ─ tool call still running · ! error · ? needs you\n")
 	return b.String()

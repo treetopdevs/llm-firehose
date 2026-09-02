@@ -239,3 +239,20 @@ func TestAttentionKeepsLiveStatesDropsDoneAndStaysBounded(t *testing.T) {
 		t.Fatal("needs-input attention must survive eviction")
 	}
 }
+
+func TestDwellBarMeasuresAgainstFiveMinuteHairline(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                              "          │    ",
+		10 * time.Second:               "          │    ",
+		2 * time.Minute:                "████      │    ",
+		2*time.Minute + 15*time.Second: "████▌     │    ",
+		5 * time.Minute:                "██████████│    ",
+		6 * time.Minute:                "██████████│██  ",
+		time.Hour:                      "██████████│████",
+	}
+	for d, want := range cases {
+		if got := dwellBar(d); got != want {
+			t.Errorf("dwellBar(%v) = %q, want %q", d, got, want)
+		}
+	}
+}

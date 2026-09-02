@@ -73,6 +73,7 @@ func TestBandShowsOneLinePerLiveSession(t *testing.T) {
 	asked.Time = now.Add(-time.Minute)
 	m = push(m, asked)
 	m = push(m, stateTransitionAt(now.Add(-time.Minute), "s2", stateNeedsInput, "approve Bash"))
+	m = push(m, stateTransitionAt(now.Add(-5*time.Second), "s1", stateWorking, ""))
 
 	got := viewLines(m)
 	if len(got) < 5 {
@@ -85,8 +86,13 @@ func TestBandShowsOneLinePerLiveSession(t *testing.T) {
 	if !strings.HasPrefix(second, "│ claude ") || !strings.ContainsAny(second, "▁▂▃▄▅▆▇█") || !strings.Contains(second, "edit view.go") {
 		t.Errorf("working session should show a sparkline and last summary: %q", second)
 	}
-	if !strings.Contains(first, " 1m ") || !strings.Contains(second, " 5s ") {
-		t.Errorf("band should show time since last event: %q / %q", first, second)
+	// Time in state is a bar against the five-minute hairline, labelled with
+	// its own number: one minute waiting is two cells short of the line.
+	if !strings.Contains(first, "██        │      1m ") {
+		t.Errorf("needs-you session should show its wait as a bar with a label: %q", first)
+	}
+	if !strings.Contains(second, "          │      5s ") {
+		t.Errorf("a five-second dwell is under one cell but still labelled: %q", second)
 	}
 	if sep != "" {
 		t.Errorf("band should be separated from the feed by a blank line, got %q", sep)
