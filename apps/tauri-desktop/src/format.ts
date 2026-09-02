@@ -36,3 +36,11 @@ export function shortPath(path: string): string {
 export function summaryLine(ev: FirehoseEvent): string {
   return ev.summary || ev.name || ev.category;
 }
+
+/** Where an event happened, with what privacy allows: the repo, a short path, or eight digits of a digested path. */
+export function workspaceLabel(repo: string | undefined, cwd: string | undefined): string {
+  if (repo) return repo;
+  if (!cwd) return "";
+  if (/^[0-9a-f]{64}$/.test(cwd)) return cwd.slice(0, 8);
+  return shortPath(cwd);
+}

@@ -2,7 +2,7 @@
 // viewer (internal/tui/derive.go) uses the same encodings so both clients draw
 // the same picture of the same session.
 
-import type { FirehoseEvent } from "./api";
+import type { FirehoseEvent, SessionSummary } from "./api";
 
 export const BAND_BUCKETS = 10;
 export const BAND_BUCKET_MS = 30_000;
@@ -37,6 +37,31 @@ export function lastReported(lastAtMs: number, sinceMs: number): number {
   if (!Number.isFinite(lastAtMs)) return sinceMs;
   if (!Number.isFinite(sinceMs)) return lastAtMs;
   return Math.max(lastAtMs, sinceMs);
+}
+
+function lastReportedOf(s: SessionSummary): number {
+  return lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""));
+}
+
+/** A needs-you state is only worth leading with while it is still plausible. */
+export function needsYouNow(s: SessionSummary, nowMs: number): boolean {
+  return s.state === "needs_input" && stateFresh(s.state, lastReportedOf(s), nowMs);
+}
+
+/** Needs-you first (longest wait first), then most recent activity. */
+export function bySupervision(nowMs: number) {
+  return (a: SessionSummary, b: SessionSummary): number => {
+    const an = needsYouNow(a, nowMs);
+    const bn = needsYouNow(b, nowMs);
+    if (an !== bn) return an ? -1 : 1;
+    if (an) {
+      const d = Date.parse(a.state_since ?? "") - Date.parse(b.state_since ?? "");
+      if (Number.isFinite(d) && d !== 0) return d;
+    }
+    const d = Date.parse(b.last_time) - Date.parse(a.last_time);
+    if (Number.isFinite(d) && d !== 0) return d;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  };
 }
 
 /** Events per bucket for every session, oldest bucket first. Transitions are not activity. */

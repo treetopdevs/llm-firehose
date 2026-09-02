@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatClock, severityClass, shortPath, summaryLine } from "./format";
+import { formatClock, severityClass, shortPath, summaryLine, workspaceLabel } from "./format";
 import type { FirehoseEvent } from "./api";
 
 describe("formatClock", () => {
@@ -40,5 +40,14 @@ describe("summaryLine", () => {
     expect(summaryLine({ ...base, summary: "ran: make" })).toBe("ran: make");
     expect(summaryLine({ ...base, name: "exec" })).toBe("exec");
     expect(summaryLine(base)).toBe("tool");
+  });
+});
+
+describe("workspaceLabel", () => {
+  test("prefers the repo, shortens a path, and shows eight digits of a digest", () => {
+    expect(workspaceLabel("llm-firehose", "/x/y/z")).toBe("llm-firehose");
+    expect(workspaceLabel(undefined, "/home/me/dev/app")).toBe("…/dev/app");
+    expect(workspaceLabel("", "aa43f1ff4abc3b9ab1e0a477140f68ea761e0384110aa530c6de08642f762655")).toBe("aa43f1ff");
+    expect(workspaceLabel(undefined, undefined)).toBe("");
   });
 });

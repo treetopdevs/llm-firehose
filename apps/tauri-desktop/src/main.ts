@@ -11,6 +11,7 @@ import { clear, el } from "./dom";
 import { FeedState } from "./state";
 import { renderDetail } from "./ui/detail";
 import { createDoctor } from "./ui/doctor";
+import { createDwell } from "./ui/dwell";
 import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
 import { createLanes } from "./ui/lanes";
@@ -32,17 +33,20 @@ function openSession(id: string) {
   void sessionsPanel.openSession(id);
 }
 
+const dwellPanel = createDwell(openSession);
 const orbitPanel = createOrbit(openSession);
 const lanesPanel = createLanes(() => feedState.events(), openSession);
 
+// Dwell bars are the landing view; orbit stays as an opt-in ambient display.
 const panels = {
-  orbit: orbitPanel,
+  dwell: dwellPanel,
   live: createFeed(feedState, showDetail),
   lanes: lanesPanel,
   sessions: sessionsPanel,
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
+  orbit: orbitPanel,
 } as const;
 
 type PanelName = keyof typeof panels;
@@ -53,7 +57,7 @@ const statusText = el("span", { class: "status-text dim" }, "connecting…");
 const compatBanner = el("div", { class: "compat-banner" });
 const eventCount = el("span", { class: "event-count dim" }, "");
 
-let active: PanelName = "orbit";
+let active: PanelName = "dwell";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
@@ -92,6 +96,9 @@ function onEvent(ev: FirehoseEvent) {
   if (active === "orbit") {
     orbitPanel.onEvent(ev);
   }
+  if (active === "dwell") {
+    dwellPanel.onEvent(ev);
+  }
   if (active === "lanes") {
     lanesPanel.onEvent(ev);
   }
@@ -122,8 +129,8 @@ const connector = createConnector({
     statusText.textContent = text;
   },
   onStreamOpen: () => {
-    if (active === "orbit") {
-      void orbitPanel.refresh();
+    if (active === "orbit" || active === "dwell") {
+      void panels[active].refresh();
     }
   },
 });
@@ -132,7 +139,7 @@ void connector.connect();
 setInterval(() => {
   void connector.connect();
 }, 3000);
-show("orbit");
+show("dwell");
 
 if (!isOnboarded()) {
   app.append(createOnboarding(() => show("doctor")));
