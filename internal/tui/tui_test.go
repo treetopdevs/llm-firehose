@@ -137,11 +137,11 @@ func TestDetailPaneShowsPayload(t *testing.T) {
 	m = push(m, mkEv(1, event.CategoryTool, "tool call"))
 	m = key(m, "enter")
 	view := m.View()
-	if !strings.Contains(view, `"k": "v"`) {
-		t.Errorf("detail should render payload JSON:\n%s", view)
+	if !strings.Contains(view, "k  v") {
+		t.Errorf("detail should tabulate the payload:\n%s", view)
 	}
 	m = key(m, "esc")
-	if strings.Contains(m.View(), `"k": "v"`) {
+	if strings.Contains(m.View(), "k  v") {
 		t.Error("esc should close detail")
 	}
 }

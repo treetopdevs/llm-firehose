@@ -44,6 +44,10 @@ type Health struct {
 // Session is the local API projection needed by presentation clients.
 type Session struct {
 	ID          string    `json:"id"`
+	Source      string    `json:"source"`
+	Agent       string    `json:"agent,omitempty"`
+	Repo        string    `json:"repo,omitempty"`
+	CWD         string    `json:"cwd,omitempty"`
 	State       string    `json:"state"`
 	StateSince  time.Time `json:"state_since"`
 	StateReason string    `json:"state_reason,omitempty"`

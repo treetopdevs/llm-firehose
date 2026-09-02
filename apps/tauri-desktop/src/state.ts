@@ -128,6 +128,11 @@ export class FeedState {
     return [...this.seenSources];
   }
 
+  /** The live buffer, oldest first, for views that read across sessions. */
+  events(): readonly FirehoseEvent[] {
+    return this.buf;
+  }
+
   /** Visible rows: filtered then coalesced, oldest first. */
   rows(): Row[] {
     const source = this.frozen ?? this.buf;

@@ -1,20 +1,48 @@
 import { sessionEvents, sessions } from "../api";
-import type { FirehoseEvent } from "../api";
+import type { FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
-import { shortPath } from "../format";
+import { workspaceKey, workspaceLabel } from "../format";
+import { bucketCountsBySession, bySupervision, formatAge, needsYouNow, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
+import type { CellScope } from "./workspace/model";
 
 export type SessionsPanel = {
   root: HTMLElement;
-  refresh(): void;
+  refresh(): Promise<void>;
   openSession(id: string): Promise<void>;
+  /** Narrows the list to one workspace × agent cell; null shows every session. */
+  setScope(scope: CellScope | null): void;
 };
 
-// Session explorer: summaries from /sessions, drill-down via /sessions/{id}.
-export function createSessions(onSelect: (ev: FirehoseEvent) => void): SessionsPanel {
+const REFRESH_MS = 5000;
+
+// Session explorer: a small-multiples band from /sessions (one row per
+// session, same encoding every row), drill-down via /sessions/{id}.
+export function createSessions(
+  onSelect: (ev: FirehoseEvent) => void,
+  recentEvents: () => readonly FirehoseEvent[],
+): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
   const root = el("section", { class: "sessions" }, listBox, eventsBox);
+  let scope: CellScope | null = null;
+
+  function setScope(next: CellScope | null) {
+    scope = next;
+  }
+
+  function inScope(s: SessionSummary): boolean {
+    return !scope || (workspaceKey(s.repo, s.cwd) === scope.where && (s.agent || s.source) === scope.agent);
+  }
+
+  function scopeChip(active: CellScope): HTMLElement {
+    const clearBtn = el("button", { title: "show every session" }, "×");
+    clearBtn.addEventListener("click", () => {
+      scope = null;
+      void refresh();
+    });
+    return el("div", { class: "sessions-scope" }, el("span", {}, active.label), clearBtn);
+  }
 
   async function openSession(id: string) {
     clear(eventsBox);
@@ -30,50 +58,55 @@ export function createSessions(onSelect: (ev: FirehoseEvent) => void): SessionsP
     }
   }
 
+  function sessionItem(s: SessionSummary, buckets: readonly number[], scale: number, now: number): HTMLElement {
+    const needs = needsYouNow(s, now);
+    const last = Date.parse(s.last_time);
+    const age = Number.isNaN(last) ? "" : formatAge(now - last);
+    const summary = needs && s.state_reason ? s.state_reason : (s.last_summary ?? "");
+    const row = el(
+      "div",
+      { class: "band-row", style: `--hue:${sessionHue(s.id)}` },
+      el("span", { class: "cell agent" }, s.agent || s.source),
+      el("span", { class: "cell spark", "aria-hidden": "true" }, sparkline(buckets, scale)),
+      el("span", { class: "cell age" }, age),
+      el("span", { class: `cell state${needs ? " needs" : ""}` }, needs ? "NEEDS YOU" : (s.state ?? "")),
+      el("span", { class: "cell err", title: s.has_error ? "an error was captured in this session" : "" }, s.has_error ? "!" : ""),
+      el("span", { class: "cell summary" }, summary),
+    );
+    const sub = [workspaceLabel(s.repo, s.cwd), `${s.events} events`].filter(Boolean).join(" · ");
+    const item = el(
+      "div",
+      { class: "session-item", tabindex: "0" },
+      row,
+      el("div", { class: "session-sub" }, sub),
+      el("div", { class: "session-id dim" }, s.id),
+    );
+    item.addEventListener("click", () => openSession(s.id));
+    return item;
+  }
+
   async function refresh() {
-    clear(listBox);
-    listBox.append(el("p", { class: "dim" }, "loading sessions…"));
+    if (!listBox.firstChild) {
+      listBox.append(el("p", { class: "dim" }, "loading sessions…"));
+    }
     try {
-      const all = await sessions();
+      const now = Date.now();
+      const all = (await sessions()).filter(inScope).sort(bySupervision(now));
       clear(listBox);
+      if (scope) {
+        listBox.append(scopeChip(scope));
+      }
       if (all.length === 0) {
-        listBox.append(el("p", { class: "dim" }, "no sessions captured yet"));
+        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this cell" : "no sessions captured yet"));
         return;
       }
+      const counts = bucketCountsBySession(recentEvents(), now);
+      let scale = 0;
+      for (const c of counts.values()) {
+        for (const n of c) scale = Math.max(scale, n);
+      }
       for (const s of all) {
-        const badges: HTMLElement[] = [];
-        if (s.state === "needs_input") {
-          badges.push(el("span", { class: "badge needs" }, "NEEDS YOU"));
-        }
-        if (s.has_error) {
-          badges.push(el("span", { class: "badge err" }, "ERROR"));
-        }
-        if (s.state === "idle") {
-          badges.push(el("span", { class: "badge idle" }, "idle"));
-        }
-        if (s.state === "done") {
-          badges.push(el("span", { class: "badge dim" }, "done"));
-        }
-        const titleBits: (string | HTMLElement)[] = [
-          `${s.source}${s.agent ? ` (${s.agent})` : ""} — ${s.events} events`,
-          ...badges,
-        ];
-        const sub = [s.repo, s.cwd ? shortPath(s.cwd) : "", new Date(s.last_time).toLocaleString()]
-          .filter(Boolean)
-          .join(" · ");
-        const reason = s.state_reason
-          ? el("div", { class: "session-reason" }, s.state_reason)
-          : null;
-        const item = el(
-          "div",
-          { class: "session-item", tabindex: "0" },
-          el("div", { class: "session-title" }, ...titleBits),
-          el("div", { class: "session-sub" }, sub),
-          ...(reason ? [reason] : []),
-          el("div", { class: "session-id dim" }, s.id),
-        );
-        item.addEventListener("click", () => openSession(s.id));
-        listBox.append(item);
+        listBox.append(sessionItem(s, counts.get(s.id) ?? [], scale, now));
       }
     } catch (err) {
       clear(listBox);
@@ -81,5 +114,10 @@ export function createSessions(onSelect: (ev: FirehoseEvent) => void): SessionsP
     }
   }
 
-  return { root, refresh, openSession };
+  // Ages and sparklines move while the panel is on screen.
+  setInterval(() => {
+    if (root.isConnected) void refresh();
+  }, REFRESH_MS);
+
+  return { root, refresh, openSession, setScope };
 }

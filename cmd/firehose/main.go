@@ -233,7 +233,9 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 			attention := make([]tui.SessionAttention, 0, len(sessions))
 			for _, session := range sessions {
 				attention = append(attention, tui.SessionAttention{
-					ID: session.ID, State: session.State, Since: session.StateSince, Reason: session.StateReason,
+					ID: session.ID, Source: session.Source, Agent: session.Agent,
+					Repo: session.Repo, CWD: session.CWD,
+					State: session.State, Since: session.StateSince, Reason: session.StateReason,
 				})
 			}
 			return stream, history, attention, nil
@@ -247,7 +249,9 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 	attention := make([]tui.SessionAttention, 0, len(feed.Sessions))
 	for _, session := range feed.Sessions {
 		attention = append(attention, tui.SessionAttention{
-			ID: session.ID, State: string(session.State), Since: session.StateSince, Reason: session.StateReason,
+			ID: session.ID, Source: session.Source, Agent: session.Agent,
+			Repo: session.Repo, CWD: session.CWD,
+			State: string(session.State), Since: session.StateSince, Reason: session.StateReason,
 		})
 	}
 	return feed.Events, feed.History, attention, nil
