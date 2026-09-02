@@ -1,7 +1,7 @@
 import { sessionEvents, sessions } from "../api";
 import type { FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
-import { shortPath, workspaceKey } from "../format";
+import { workspaceKey, workspaceLabel } from "../format";
 import { bucketCountsBySession, bySupervision, formatAge, needsYouNow, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
 import type { CellScope } from "./workspace/model";
@@ -73,7 +73,7 @@ export function createSessions(
       el("span", { class: "cell err", title: s.has_error ? "an error was captured in this session" : "" }, s.has_error ? "!" : ""),
       el("span", { class: "cell summary" }, summary),
     );
-    const sub = [s.repo, s.cwd ? shortPath(s.cwd) : "", `${s.events} events`].filter(Boolean).join(" · ");
+    const sub = [workspaceLabel(s.repo, s.cwd), `${s.events} events`].filter(Boolean).join(" · ");
     const item = el(
       "div",
       { class: "session-item", tabindex: "0" },

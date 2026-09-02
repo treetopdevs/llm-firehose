@@ -1,6 +1,6 @@
 import type { FirehoseEvent } from "../api";
 import { clear, el } from "../dom";
-import { formatClock, severityClass, shortPath, summaryLine } from "../format";
+import { formatClock, severityClass, summaryLine, workspaceLabel } from "../format";
 import type { FeedState, Row } from "../state";
 import { coalesce } from "../state";
 
@@ -59,7 +59,7 @@ export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => voi
       el("span", { class: `cell source src-${ev.source}` }, `[${ev.source}]`),
       el("span", { class: "cell category" }, `[${ev.category}]`),
       el("span", { class: "cell summary" }, summaryLine(ev) + (row.count > 1 ? ` ×${row.count}` : "")),
-      el("span", { class: "cell cwd" }, ev.cwd ? shortPath(ev.cwd) : ""),
+      el("span", { class: "cell cwd", title: ev.cwd ?? "" }, workspaceLabel(ev.repo, ev.cwd)),
     );
     line.addEventListener("click", () => onSelect(ev));
     return line;
