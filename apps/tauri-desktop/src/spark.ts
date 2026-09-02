@@ -32,15 +32,21 @@ export function stateFresh(state: string | undefined, lastAtMs: number, nowMs: n
   }
 }
 
-/** The later of a session's last event and its state change, for freshness checks. */
-export function lastReported(lastAtMs: number, sinceMs: number): number {
+/**
+ * When a session last gave evidence of life, for freshness checks: its last
+ * event, or its state change when the engine asserts it is working or waiting.
+ * Idle and done are absences, not reports: a daemon restart stamps every
+ * historical session idle, and that must not make hundreds of them live.
+ */
+export function lastReported(lastAtMs: number, sinceMs: number, state: string | undefined): number {
+  const asserted = state === "needs_input" || state === "working";
   if (!Number.isFinite(lastAtMs)) return sinceMs;
-  if (!Number.isFinite(sinceMs)) return lastAtMs;
+  if (!Number.isFinite(sinceMs) || !asserted) return lastAtMs;
   return Math.max(lastAtMs, sinceMs);
 }
 
 function lastReportedOf(s: SessionSummary): number {
-  return lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""));
+  return lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""), s.state);
 }
 
 /** A needs-you state is only worth leading with while it is still plausible. */

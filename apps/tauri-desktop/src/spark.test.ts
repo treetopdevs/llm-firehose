@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bucketCounts, formatAge, sessionHue, sparkline, stateFresh } from "./spark";
+import { bucketCounts, formatAge, lastReported, sessionHue, sparkline, stateFresh } from "./spark";
 import type { FirehoseEvent } from "./api";
 
 const now = Date.parse("2026-07-02T10:10:00Z");
@@ -74,5 +74,16 @@ describe("stateFresh", () => {
     expect(stateFresh("idle", now - 5 * 60_000, now)).toBe(true);
     expect(stateFresh(undefined, now - 15 * 60_000, now)).toBe(false);
     expect(stateFresh("needs_input", NaN, now)).toBe(false);
+  });
+});
+
+describe("lastReported", () => {
+  test("folds the state change in only when the engine asserts a live state", () => {
+    expect(lastReported(1000, 5000, "working")).toBe(5000);
+    expect(lastReported(1000, 5000, "needs_input")).toBe(5000);
+    expect(lastReported(1000, 5000, "idle")).toBe(1000);
+    expect(lastReported(1000, 5000, "done")).toBe(1000);
+    expect(lastReported(NaN, 5000, "idle")).toBe(5000);
+    expect(lastReported(1000, NaN, "working")).toBe(1000);
   });
 });

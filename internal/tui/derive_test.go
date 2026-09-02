@@ -68,15 +68,22 @@ func TestLiveSessionsBucketsOrdersAndDropsQuiet(t *testing.T) {
 	// s4: nothing in the ring, but preloaded engine attention says working.
 	// s5 and s6 carry engine states too old to believe: a permission prompt
 	// from two days ago and a tool call open for 40 minutes.
+	// s7 was stamped idle thirty seconds ago by a daemon restart, but its
+	// last event is two hours old: an idle stamp is not evidence of life.
 	m = m.PreloadSessions([]SessionAttention{
 		{ID: "s4", Source: "opencode", State: stateWorking, Since: now.Add(-time.Minute)},
 		{ID: "s5", Source: "codex", State: stateNeedsInput, Since: now.Add(-48 * time.Hour), Reason: "stale"},
 		{ID: "s6", Source: "codex", State: stateWorking, Since: now.Add(-40 * time.Minute)},
+		{ID: "s7", Source: "codex", State: stateIdle, Since: now.Add(-30 * time.Second)},
 	})
 	ghost := mkEv(30, event.CategoryTool, "s6 old tool")
 	ghost.SessionID = "s6"
 	ghost.Time = now.Add(-40 * time.Minute)
 	m = push(m, ghost)
+	restarted := mkEv(31, event.CategoryTool, "s7 old tool")
+	restarted.SessionID = "s7"
+	restarted.Time = now.Add(-2 * time.Hour)
+	m = push(m, restarted)
 
 	got := m.liveSessions(now)
 	ids := make([]string, len(got))

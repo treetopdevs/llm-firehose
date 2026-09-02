@@ -52,6 +52,17 @@ describe("buildDwell", () => {
     expect(rows[0].dwellMs).toBeGreaterThan(DWELL_MAX_MS);
   });
 
+  test("an idle stamp from a daemon restart is not evidence of life", () => {
+    const { rows } = buildDwell(
+      [
+        summary({ id: "restarted", state: "idle", state_since: new Date(now - 30_000).toISOString(), last_time: new Date(now - 2 * 3_600_000).toISOString() }),
+        summary({ id: "quiet", state: "idle", state_since: new Date(now - 30_000).toISOString(), last_time: new Date(now - 60_000).toISOString() }),
+      ],
+      now,
+    );
+    expect(rows.map((r) => r.id)).toEqual(["quiet"]);
+  });
+
   test("caps the chart and counts the rest", () => {
     const many = Array.from({ length: DWELL_CAP + 3 }, (_, i) => summary({ id: `s${i}` }));
     const { rows, more } = buildDwell(many, now);

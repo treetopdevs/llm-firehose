@@ -101,7 +101,7 @@ export function buildLanes(
     l.spans.push({ from: Math.max(sp.start, start), to, open });
   }
 
-  const lanes = [...acc.values()].filter((l) => stateFresh(l.state, lastReported(l.lastAt, l.since), nowMs));
+  const lanes = [...acc.values()].filter((l) => stateFresh(l.state, lastReported(l.lastAt, l.since, l.state), nowMs));
   lanes.sort((a, b) => {
     const an = a.state === "needs_input";
     const bn = b.state === "needs_input";

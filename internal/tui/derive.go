@@ -122,8 +122,11 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 	}
 	out := make([]sessionInfo, 0, len(byID))
 	for _, s := range byID {
+		// A state change is evidence of life only when the engine asserts a
+		// live state. A daemon restart stamps every historical session idle,
+		// and that must not make hundreds of them live.
 		ref := s.Last
-		if s.Since.After(ref) {
+		if s.Since.After(ref) && (s.State == stateNeedsInput || s.State == stateWorking) {
 			ref = s.Since
 		}
 		if !stateFresh(s.State, ref, now) {

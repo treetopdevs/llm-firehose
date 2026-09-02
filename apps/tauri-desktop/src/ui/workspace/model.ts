@@ -38,7 +38,7 @@ export function buildMatrix(summaries: readonly SessionSummary[], events: readon
   const agents = new Set<string>();
   for (const s of summaries) {
     if (!s.id) continue;
-    const ref = lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""));
+    const ref = lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""), s.state);
     if (!stateFresh(s.state, ref, nowMs)) continue;
     const where = workspaceKey(s.repo, s.cwd);
     const agent = s.agent || s.source;

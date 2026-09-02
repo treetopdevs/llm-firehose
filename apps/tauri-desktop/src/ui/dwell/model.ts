@@ -33,7 +33,7 @@ function sinceMs(s: SessionSummary): number {
  */
 export function buildDwell(summaries: readonly SessionSummary[], nowMs: number): { rows: DwellRow[]; more: number } {
   const live = summaries.filter(
-    (s) => !!s.id && stateFresh(s.state, lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? "")), nowMs),
+    (s) => !!s.id && stateFresh(s.state, lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""), s.state), nowMs),
   );
   live.sort(bySupervision(nowMs));
   const rows = live.slice(0, DWELL_CAP).map((s): DwellRow => {
