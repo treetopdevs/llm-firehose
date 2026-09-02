@@ -32,7 +32,7 @@ session waiting past the line is the one you forgot.
 
 ## 2. Three altitudes, one glyph grammar
 
-```
+```text
 workspace   one row per workspace, one column per agent; cell = sparkline · state glyph · count
    │ enter descends (esc ascends)
 session     strip (band or lanes, `l`) over event rows, scoped to the cell; scope in the header

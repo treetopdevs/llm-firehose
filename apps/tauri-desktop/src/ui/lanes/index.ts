@@ -1,6 +1,6 @@
 import { sessions } from "../../api";
 import type { FirehoseEvent, SessionSummary } from "../../api";
-import { clear, el } from "../../dom";
+import { clear, el, keepFocus, onActivate } from "../../dom";
 import { sessionHue } from "../../spark";
 import { LANE_WINDOWS_MS, axisTicks, buildLanes } from "./model";
 import type { Lane } from "./model";
@@ -73,7 +73,7 @@ export function createLanes(
       viewBox: `0 0 ${width} ${height}`,
       width: "100%",
       height,
-      role: "img",
+      role: "group",
       "aria-label": "session lanes",
     });
     const axis = svg("g", { class: "lane-axis" });
@@ -89,16 +89,18 @@ export function createLanes(
       canvas.append(svg("text", { class: "lane-empty", x: LABEL_W, y: AXIS_H + ROW_H / 2 + 4 }, "no live sessions"));
     }
     lanes.forEach((lane, i) => canvas.append(laneRow(lane, i, x, width)));
+    const refocus = keepFocus(chart);
     clear(chart);
     chart.append(canvas);
+    refocus();
   }
 
   function laneRow(lane: Lane, i: number, x: (t: number) => number, width: number): SVGGElement {
     const y = AXIS_H + i * ROW_H;
     const mid = y + ROW_H / 2;
     const needs = lane.state === "needs_input";
-    const g = svg("g", { class: "lane-row", tabindex: 0 });
-    g.addEventListener("click", () => onOpenSession(lane.id));
+    const g = svg("g", { class: "lane-row", tabindex: 0, role: "button", "aria-label": `open session ${lane.label}`, "data-key": lane.id });
+    onActivate(g, () => onOpenSession(lane.id));
     g.append(
       svg("title", {}, `${lane.label} · ${lane.state || "?"}${lane.reason ? ` · ${lane.reason}` : ""}`),
       svg("rect", { class: "lane-hit", x: 0, y, width, height: ROW_H }),

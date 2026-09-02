@@ -171,6 +171,11 @@ func TestLinesFitTheTerminalWidth(t *testing.T) {
 	long.Time = now.Add(-time.Second)
 	m = push(m, long)
 	m = push(m, stateTransitionAt(now, "s1", stateNeedsInput, strings.Repeat("reason ", 40)))
+	for i, agent := range []string{"codex", "opencode"} {
+		other := mkEv(10+i, event.CategoryTool, "work")
+		other.SessionID, other.Source, other.Agent, other.CWD, other.Time = agent+"-s", agent, agent, long.CWD, now.Add(-time.Second)
+		m = push(m, other)
+	}
 	check := func(mode string) {
 		lines := strings.Split(strings.TrimRight(m.View(), "\n"), "\n")
 		for i, l := range lines[1:] {
@@ -182,6 +187,26 @@ func TestLinesFitTheTerminalWidth(t *testing.T) {
 	check("feed")
 	m = key(m, "l")
 	check("lanes")
+	m = key(m, "esc")
+	check("workspace")
+	if head := viewLines(m)[1]; !strings.Contains(head, "claude") || strings.Contains(head, "opencode") || !strings.HasSuffix(head, "…") {
+		t.Errorf("a narrow matrix should draw the columns that fit and mark the rest: %q", head)
+	}
+}
+
+func TestCtrlCQuitsFromEveryMode(t *testing.T) {
+	quits := func(m Model, mode string) {
+		t.Helper()
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		if cmd == nil || cmd() != tea.Quit() {
+			t.Errorf("ctrl+c should quit from %s", mode)
+		}
+	}
+	m := push(newTestModel(), mkEv(1, event.CategoryTool, "x"))
+	quits(key(m, "enter"), "the call altitude")
+	quits(key(m, "?"), "help")
+	quits(key(m, "/"), "search")
+	quits(key(m, "esc"), "the workspace altitude")
 }
 
 func TestRowSummaryStripsControlSequences(t *testing.T) {
@@ -356,6 +381,7 @@ func TestAltitudeLabelsStripControlSequences(t *testing.T) {
 	m.now = func() time.Time { return now }
 	ev := mkEv(1, event.CategoryTool, "work")
 	ev.CWD, ev.Agent, ev.Time = "/home/me/dev/\x1b[31mapp\x07", "cla\x1b[2Jude", now.Add(-time.Second)
+	ev.SessionID = "s1\x1b[2J"
 	m = push(m, ev)
 	m = key(m, "esc")
 	if v := m.View(); strings.Contains(v, "\x1b") || strings.Contains(v, "\x07") {

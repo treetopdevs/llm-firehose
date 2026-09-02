@@ -64,6 +64,9 @@ describe("workspace panel", () => {
 
     cells[1].click();
     expect(opened).toEqual([{ where: "/home/me/dev/app", agent: "codex", label: "…/dev/app · codex" }]);
+    expect(cells[0].getAttribute("role")).toBe("button");
+    cells[0].dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    expect(opened[1]).toMatchObject({ where: "/home/me/dev/app", agent: "claude" });
   });
 
   test("says so when nothing is live", async () => {

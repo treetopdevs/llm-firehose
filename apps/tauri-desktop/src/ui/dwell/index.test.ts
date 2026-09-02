@@ -44,7 +44,7 @@ describe("dwell panel", () => {
       summary({ id: "ghost", state: "needs_input", state_since: new Date(now - 48 * 3_600_000).toISOString(), last_time: new Date(now - 48 * 3_600_000).toISOString() }),
     ]);
     const opened: string[] = [];
-    const panel = createDwell((id) => opened.push(id));
+    const panel = createDwell((id) => opened.push(id), () => now);
     await panel.refresh();
 
     const rows = [...panel.root.querySelectorAll<HTMLElement>(".dwell-row")];
@@ -67,7 +67,7 @@ describe("dwell panel", () => {
 
   test("a live transition restarts the bar before the next fetch", async () => {
     sessions.mockResolvedValue([summary({ id: "w" })]);
-    const panel = createDwell(() => {});
+    const panel = createDwell(() => {}, () => now);
     await panel.refresh();
     panel.onEvent({
       id: "t1",
@@ -84,6 +84,43 @@ describe("dwell panel", () => {
       expect(row.querySelector(".summary")?.textContent).toBe("approve Edit");
       expect(parseFloat(row.querySelector<HTMLElement>(".dwell-bar")!.style.width)).toBeLessThan(1);
     });
+  });
+
+  test("keeps every transition delivered inside one frame", async () => {
+    sessions.mockResolvedValue([summary({ id: "a" }), summary({ id: "b" })]);
+    const panel = createDwell(() => {}, () => now);
+    await panel.refresh();
+    for (const id of ["a", "b"]) {
+      panel.onEvent({
+        id: `t-${id}`,
+        time: new Date(now).toISOString(),
+        source: "firehose",
+        name: "state.transition",
+        category: "meta",
+        session_id: id,
+        payload: { state: "needs_input", reason: `approve ${id}` },
+      } as FirehoseEvent);
+    }
+    await vi.waitFor(() => {
+      const states = [...panel.root.querySelectorAll(".dwell-row .state")].map((n) => n.textContent);
+      expect(states).toEqual(["NEEDS YOU", "NEEDS YOU"]);
+    });
+  });
+
+  test("opens from the keyboard and keeps focus across a redraw", async () => {
+    sessions.mockResolvedValue([summary({ id: "w" }), summary({ id: "v" })]);
+    const opened: string[] = [];
+    const panel = createDwell((id) => opened.push(id), () => now);
+    document.body.append(panel.root);
+    await panel.refresh();
+    const row = panel.root.querySelectorAll<HTMLElement>(".dwell-row")[1];
+    expect(row.getAttribute("role")).toBe("button");
+    row.focus();
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(opened).toEqual(["w"]); // rows with equal activity sort by id, so v then w
+    await panel.refresh();
+    expect((document.activeElement as HTMLElement | null)?.getAttribute("data-key")).toBe("w");
+    panel.root.remove();
   });
 
   test("says so when nothing is live", async () => {

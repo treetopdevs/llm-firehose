@@ -341,7 +341,11 @@ func (m Model) viewWorkspace(now time.Time) []string {
 	for _, w := range mx.Wheres {
 		whereW = max(whereW, lipgloss.Width(whereLabel(w)))
 	}
-	whereW = min(whereW, maxWhereWidth)
+	whereW = min(whereW, maxWhereWidth, max(m.width/3, 4))
+	// Columns that do not fit are not drawn; the header ends with an ellipsis
+	// so the reader knows there are more. Cells keep their reading-order index
+	// so the selection still names the right cell.
+	cols := min(len(mx.Agents), max((m.width-whereW)/(2+matrixCellWidth), 1))
 	scale := 0
 	for _, c := range mx.Cells {
 		for _, n := range c.Buckets {
@@ -349,21 +353,28 @@ func (m Model) viewWorkspace(now time.Time) []string {
 		}
 	}
 	head := strings.Repeat(" ", whereW)
-	for _, a := range mx.Agents {
-		head += "  " + padRight(a, matrixCellWidth)
+	for _, a := range mx.Agents[:cols] {
+		head += "  " + padRight(fit(a, matrixCellWidth), matrixCellWidth)
 	}
-	lines := []string{dimStyle.Render(strings.TrimRight(head, " "))}
+	if cols < len(mx.Agents) {
+		head += " …"
+	}
+	lines := []string{dimStyle.Render(strings.TrimRight(fit(head, m.width), " "))}
 	sel := min(m.cellIdx, len(mx.Cells)-1)
 	idx := 0
 	for _, w := range mx.Wheres {
 		line := padRight(fit(whereLabel(w), whereW), whereW)
-		for _, a := range mx.Agents {
+		for i, a := range mx.Agents {
 			c, ok := mx.cell(w, a)
 			if !ok {
-				line += "  " + strings.Repeat(" ", matrixCellWidth)
+				if i < cols {
+					line += "  " + strings.Repeat(" ", matrixCellWidth)
+				}
 				continue
 			}
-			line += "  " + renderMatrixCell(c, scale, idx == sel)
+			if i < cols {
+				line += "  " + renderMatrixCell(c, scale, idx == sel)
+			}
 			idx++
 		}
 		lines = append(lines, strings.TrimRight(line, " "))
@@ -743,7 +754,9 @@ func formatValue(v any) string {
 	return stripControl(string(data))
 }
 
+// shortID is the one place a source-supplied id is prepared for the terminal.
 func shortID(id string) string {
+	id = stripControl(id)
 	if r := []rune(id); len(r) > 8 {
 		return string(r[:8])
 	}

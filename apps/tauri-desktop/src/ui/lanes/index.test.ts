@@ -37,6 +37,18 @@ beforeEach(() => {
 });
 
 describe("lanes panel", () => {
+  test("lane rows are keyboard-operable buttons inside a group", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    const opened: string[] = [];
+    const panel = createLanes(() => [ev("s1", 5_000)], (id) => opened.push(id));
+    await panel.refresh();
+    expect(panel.root.querySelector("svg")?.getAttribute("role")).toBe("group");
+    const row = panel.root.querySelector<SVGGElement>(".lane-row")!;
+    expect(row.getAttribute("role")).toBe("button");
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(opened).toEqual(["s1"]);
+  });
+
   test("draws one lane per live session with spans and ticks, and opens a session on click", async () => {
     sessions.mockResolvedValue([summary({ id: "s1" })]);
     const events = [

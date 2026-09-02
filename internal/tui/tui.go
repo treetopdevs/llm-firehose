@@ -229,6 +229,8 @@ func hasSource(list []string, s string) bool {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.search {
 		switch msg.Type {
+		case tea.KeyCtrlC:
+			return m, tea.Quit
 		case tea.KeyEnter:
 			m.search = false
 			m.filter.Text = m.buf
@@ -247,6 +249,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.detail != nil {
 		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
 		case "esc", "q":
 			m.detail = nil
 		}
@@ -254,6 +258,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.help {
 		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
 		case "esc", "q", "enter", "?":
 			m.help = false
 		}

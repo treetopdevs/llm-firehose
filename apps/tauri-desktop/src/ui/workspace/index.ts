@@ -1,6 +1,6 @@
 import { sessions } from "../../api";
 import type { FirehoseEvent, SessionSummary } from "../../api";
-import { clear, el } from "../../dom";
+import { clear, el, keepFocus, onActivate } from "../../dom";
 import { sparkline } from "../../spark";
 import { buildMatrix, stateGlyph } from "./model";
 import type { CellScope } from "./model";
@@ -27,6 +27,7 @@ export function createWorkspace(
 
   function draw() {
     const mx = buildMatrix(summaries, recentEvents(), Date.now());
+    const refocus = keepFocus(box);
     clear(box);
     if (mx.cells.length === 0) {
       box.append(el("p", { class: "dim" }, "no live sessions"));
@@ -50,17 +51,24 @@ export function createWorkspace(
         const needs = c.state === "needs_input";
         const td = el(
           "td",
-          { class: "matrix-cell", tabindex: "0", title: `${c.whereLabel} · ${c.agent} · ${c.sessions} session${c.sessions === 1 ? "" : "s"}` },
+          {
+            class: "matrix-cell",
+            tabindex: "0",
+            role: "button",
+            "data-key": `${c.agent}@${c.where}`,
+            title: `${c.whereLabel} · ${c.agent} · ${c.sessions} session${c.sessions === 1 ? "" : "s"}`,
+          },
           el("span", { class: "spark", "aria-hidden": "true" }, sparkline(c.buckets, scale)),
           el("span", { class: `glyph${needs ? " needs" : ""}` }, stateGlyph(c.state)),
           el("span", { class: "count" }, c.sessions > 1 ? String(c.sessions) : ""),
         );
-        td.addEventListener("click", () => onOpenCell({ where: c.where, agent: c.agent, label: `${c.whereLabel} · ${c.agent}` }));
+        onActivate(td, () => onOpenCell({ where: c.where, agent: c.agent, label: `${c.whereLabel} · ${c.agent}` }));
         tr.append(td);
       }
       body.append(tr);
     }
     box.append(el("table", { class: "matrix" }, el("thead", {}, head), body));
+    refocus();
   }
 
   async function refresh() {
