@@ -95,3 +95,24 @@ describe("sessions band", () => {
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("s1"));
   });
 });
+
+describe("sessions scope", () => {
+  test("narrows the list to one workspace × agent cell and clears it from the chip", async () => {
+    sessions.mockResolvedValue([
+      summary({ id: "s1", cwd: "/home/me/dev/app" }),
+      summary({ id: "s2", cwd: "/home/me/dev/app", source: "codex", agent: "codex" }),
+      summary({ id: "s3", cwd: "/home/me/dev/lib" }),
+    ]);
+    const panel = createSessions(() => {}, () => []);
+    panel.setScope({ where: "/home/me/dev/app", agent: "claude", label: "…/dev/app · claude" });
+    await panel.refresh();
+
+    const ids = () => [...panel.root.querySelectorAll(".session-id")].map((n) => n.textContent);
+    expect(ids()).toEqual(["s1"]);
+    const chip = panel.root.querySelector<HTMLElement>(".sessions-scope")!;
+    expect(chip.textContent).toContain("…/dev/app · claude");
+    chip.querySelector("button")!.click();
+    await vi.waitFor(() => expect(ids()).toEqual(["s1", "s2", "s3"]));
+    expect(panel.root.querySelector(".sessions-scope")).toBeNull();
+  });
+});

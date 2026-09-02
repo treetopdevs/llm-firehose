@@ -1,14 +1,17 @@
 import { sessionEvents, sessions } from "../api";
 import type { FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
-import { shortPath } from "../format";
+import { shortPath, workspaceKey } from "../format";
 import { bucketCountsBySession, bySupervision, formatAge, needsYouNow, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
+import type { CellScope } from "./workspace/model";
 
 export type SessionsPanel = {
   root: HTMLElement;
   refresh(): Promise<void>;
   openSession(id: string): Promise<void>;
+  /** Narrows the list to one workspace × agent cell; null shows every session. */
+  setScope(scope: CellScope | null): void;
 };
 
 const REFRESH_MS = 5000;
@@ -22,6 +25,24 @@ export function createSessions(
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
   const root = el("section", { class: "sessions" }, listBox, eventsBox);
+  let scope: CellScope | null = null;
+
+  function setScope(next: CellScope | null) {
+    scope = next;
+  }
+
+  function inScope(s: SessionSummary): boolean {
+    return !scope || (workspaceKey(s.repo, s.cwd) === scope.where && (s.agent || s.source) === scope.agent);
+  }
+
+  function scopeChip(active: CellScope): HTMLElement {
+    const clearBtn = el("button", { title: "show every session" }, "×");
+    clearBtn.addEventListener("click", () => {
+      scope = null;
+      void refresh();
+    });
+    return el("div", { class: "sessions-scope" }, el("span", {}, active.label), clearBtn);
+  }
 
   async function openSession(id: string) {
     clear(eventsBox);
@@ -70,10 +91,13 @@ export function createSessions(
     }
     try {
       const now = Date.now();
-      const all = [...(await sessions())].sort(bySupervision(now));
+      const all = (await sessions()).filter(inScope).sort(bySupervision(now));
       clear(listBox);
+      if (scope) {
+        listBox.append(scopeChip(scope));
+      }
       if (all.length === 0) {
-        listBox.append(el("p", { class: "dim" }, "no sessions captured yet"));
+        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this cell" : "no sessions captured yet"));
         return;
       }
       const counts = bucketCountsBySession(recentEvents(), now);
@@ -95,5 +119,5 @@ export function createSessions(
     if (root.isConnected) void refresh();
   }, REFRESH_MS);
 
-  return { root, refresh, openSession };
+  return { root, refresh, openSession, setScope };
 }
