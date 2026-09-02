@@ -19,10 +19,10 @@ Time in the current state as a bar against a hairline at five minutes. A
 session waiting past the line is the one you forgot.
 
 - **TUI band.** The time-since-last-event column, which the sparkline already
-  showed as a gap, becomes a fifteen-cell bar at half-minute resolution
-  (`▌` marks a remainder past fifteen seconds) with the hairline (`│`) at cell
-  ten and the number as the bar's own label:
-  `│ codex   ▂▂  ▄█      ██        │      1m NEEDS YOU  approve Bash`.
+  showed as a gap, becomes a fifteen-cell bar: seven cells to the hairline
+  (`│`) at five minutes, seven after it, full at ten minutes, rounded to half
+  a cell (`▌`), with the number as the bar's own label:
+  `│ codex   ▂▂  ▄█      █▌     │        1m NEEDS YOU  approve Bash`.
   Narrow terminals keep the number and give the bar's cells to the text.
 - **Desktop.** A `dwell` panel is the landing view: one row per live session,
   agent, workspace, state, the bar with the hairline, its number, an error
@@ -70,11 +70,20 @@ call        one event as a table: request and response paired by call id
   the last event alone. A daemon restart stamps every historical session idle
   with a fresh `state_since`, and the first live run of the dwell panel showed
   473 "live" sessions because of it.
-- **Pairing.** The first `start` and the first `end` at or after it, in the
-  same session; an unpaired start reads `still running · 10s` only while the
-  engine says the session is working (TUI), otherwise `no end captured`.
+- **Pairing.** Dual observations of one phase (hook push and rollout tail)
+  are coalesced exactly as the feed coalesces them, then the first `start` and
+  the first `end` at or after it are paired, in the same session; an unpaired
+  start reads `still running · 10s` only while the engine says the session is
+  working (TUI), otherwise `no end captured`.
+- **Dwell.** Both bars are the fraction of ten minutes with the hairline at
+  the midpoint, so the same wait is the same picture in the terminal and on
+  the desktop.
 - **Duration.** One resolution per magnitude: `42ms`, `2.59s`, `1m15s`,
   `1h02m`.
+- **Labels.** Agent and workspace names are sanitized once, in `agentLabel`
+  and `workspaceLabel`, so every column, crumb, and matrix header that prints
+  them is control-sequence safe; the desktop renders only through
+  `textContent`.
 - Sort order (needs-you first, longest wait first, then latest activity), the
   state glyphs, and the digest label are the same in `internal/tui/derive.go`
   and `apps/tauri-desktop/src/{spark,format}.ts`.

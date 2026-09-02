@@ -6,8 +6,8 @@ activity: fast, scrollable, information-dense, readable.
 
 ```
 AGENT FIREHOSE  ● LIVE  1,204 events  NEEDS YOU · 1 · approve Run: rm -rf build
-│ claude   ▂▄▆█▄▂ ▂▄            │      4s working   ran Edit on auth.go
-│ opencode ▂▂  ▄▂     ██        │      1m NEEDS YOU approve Run: rm -rf build
+│ claude   ▂▄▆█▄▂ ▂▄         │         4s working   ran Edit on auth.go
+│ opencode ▂▂  ▄▂     █▌     │         1m NEEDS YOU approve Run: rm -rf build
 
 10:04:12 │ claude   ▸ prompt: "fix the login bug"                   …/dev/app
      :15 │ claude   $ ran: go test ./...
@@ -102,9 +102,9 @@ feed are documented in the [release runbook](docs/release-runbook.md).
 - **live mode** pins to the bottom; `space` pauses and counts unread events
 - a **session band** above the feed shows one line per live session: agent, a
   sparkline of events per 30s over the last 5m, time in its current state as a
-  **dwell bar** against a hairline at 5m (a session waiting past the line is
-  the one you forgot), the engine's state, and what it last did; sessions
-  that need you come first, longest wait first
+  **dwell bar** against a hairline at 5m and full at 10m (a session waiting
+  past the line is the one you forgot), the engine's state, and what it last
+  did; sessions that need you come first, longest wait first
 - rows print the clock and workspace only when they change, use one glyph per
   category (`?` shows the legend), and reserve color for warn, error, and
   needs-you; under the default privacy mode a workspace prints as the first

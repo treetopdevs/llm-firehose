@@ -248,14 +248,19 @@ func TestAttentionKeepsLiveStatesDropsDoneAndStaysBounded(t *testing.T) {
 }
 
 func TestDwellBarMeasuresAgainstFiveMinuteHairline(t *testing.T) {
+	// Seven cells to the five-minute line, seven after it, full at ten
+	// minutes: the same fractions the desktop draws.
 	cases := map[time.Duration]string{
-		0:                              "          │    ",
-		10 * time.Second:               "          │    ",
-		2 * time.Minute:                "████      │    ",
-		2*time.Minute + 15*time.Second: "████▌     │    ",
-		5 * time.Minute:                "██████████│    ",
-		6 * time.Minute:                "██████████│██  ",
-		time.Hour:                      "██████████│████",
+		0:                              "       │       ",
+		10 * time.Second:               "       │       ",
+		time.Minute:                    "█▌     │       ",
+		2 * time.Minute:                "███    │       ",
+		2*time.Minute + 30*time.Second: "███▌   │       ",
+		5 * time.Minute:                "███████│       ",
+		6 * time.Minute:                "███████│█▌     ",
+		7 * time.Minute:                "███████│███    ",
+		10 * time.Minute:               "███████│███████",
+		time.Hour:                      "███████│███████",
 	}
 	for d, want := range cases {
 		if got := dwellBar(d); got != want {
@@ -328,10 +333,36 @@ func TestWorkspaceLabelRespectsPrivacy(t *testing.T) {
 		{"", "/home/me/dev/app", "…/dev/app"},
 		{"", digestDir, "aa43f1ff"},
 		{"", "", ""},
+		{"re\x1b[31mpo", "", "repo"},
+		{"", "/home/me/\x1b[2Jdev/ap\x07p", "…/dev/app"},
 	}
 	for _, c := range cases {
 		if got := workspaceLabel(c[0], c[1]); got != c[2] {
 			t.Errorf("workspaceLabel(%q, %q) = %q, want %q", c[0], c[1], got, c[2])
 		}
+	}
+	if got := whereLabel(""); got != "—" {
+		t.Errorf("a session that never reported a workspace should print a dash, got %q", got)
+	}
+	if got := agentLabel("cla\x1b[2Jude", "claude-code"); got != "claude" {
+		t.Errorf("agentLabel should strip control sequences, got %q", got)
+	}
+}
+
+func TestPairCallCoalescesDualObservationsInAnyOrder(t *testing.T) {
+	now := t0.Add(time.Minute)
+	start, end := callPair(now)
+	rollout := end // the same end seen again through a second transport
+	rollout.ID = "e2b"
+	rollout.Time = end.Time.Add(20 * time.Millisecond)
+	s, e := pairCall([]event.Event{rollout, start, end}, start)
+	if s == nil || e == nil {
+		t.Fatalf("pair = %v, %v", s, e)
+	}
+	if s.ID != start.ID {
+		t.Errorf("start = %s, want %s", s.ID, start.ID)
+	}
+	if !e.Time.Equal(rollout.Time) {
+		t.Errorf("end should be the coalesced observation the feed row shows: %v, want %v", e.Time, rollout.Time)
 	}
 }

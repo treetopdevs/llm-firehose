@@ -398,7 +398,14 @@ func stateGlyph(state string) (string, lipgloss.Style) {
 	}
 }
 
-func whereLabel(key string) string { return workspaceLabel("", key) }
+// whereLabel prints a matrix row or scope; a session that never reported a
+// workspace gets a dash rather than a blank.
+func whereLabel(key string) string {
+	if key == "" {
+		return "—"
+	}
+	return workspaceLabel("", key)
+}
 
 func renderLaneCells(cells []laneCell) string {
 	var b strings.Builder
@@ -480,7 +487,7 @@ func (m Model) viewHelp() string {
 	b.WriteString("\n\n  color\n")
 	b.WriteString("  │ one hue per session   " + warnStyle.Render("warn") + "   " + errorStyle.Render("error") + "   " + needsStyle.Render("NEEDS YOU") + "\n\n")
 	b.WriteString("  band\n")
-	b.WriteString("  one line per live session: agent · events per 30s over the last 5m · time in its state as a bar, │ marks 5m · state · what it last did\n\n")
+	b.WriteString("  one line per live session: agent · events per 30s over the last 5m · time in its state as a bar, │ marks 5m and full is 10m · state · what it last did\n\n")
 	b.WriteString("  lanes\n")
 	b.WriteString("  wall time across, now at the right edge · ▂▄▆█ events per slot · ─ tool call still running · ! error · ? needs you\n\n")
 	b.WriteString("  workspace\n")
@@ -557,7 +564,7 @@ func (m Model) viewCall(now time.Time) string {
 		if end != nil {
 			b.WriteString(m.payloadTable("response", end.Payload, omit))
 		}
-		if start != &ev && end != &ev && !sameEvent(start, ev) && !sameEvent(end, ev) {
+		if phase, _ := ev.Payload["phase"].(string); phase != "start" && phase != "end" {
 			b.WriteString(m.payloadTable("payload", ev.Payload, omit))
 		}
 	} else {
@@ -567,10 +574,6 @@ func (m Model) viewCall(now time.Time) string {
 		b.WriteString("\n  raw\n  " + dimStyle.Render(truncate(stripControl(ev.Raw), 2000)) + "\n")
 	}
 	return b.String()
-}
-
-func sameEvent(a *event.Event, b event.Event) bool {
-	return a != nil && a.ID != "" && a.ID == b.ID
 }
 
 // payloadTable is one key/value section, keys sorted, one line per value.
@@ -638,13 +641,19 @@ func (m Model) callRows(ev event.Event, start, end *event.Event, now time.Time) 
 }
 
 // pairCall finds the start and end observations of ev's tool call: the first
-// start and the first end at or after it, in the same session.
+// start and the first end at or after it, in the same session. Dual
+// observations of one phase (a hook push and a rollout tail) are coalesced
+// first, exactly as the feed coalesces them, so the pair agrees with the row.
 func pairCall(events []event.Event, ev event.Event) (start, end *event.Event) {
-	for i := range events {
-		other := &events[i]
-		if other.SessionID != ev.SessionID || other.CallID != ev.CallID {
-			continue
+	var same []event.Event
+	for _, other := range events {
+		if other.SessionID == ev.SessionID && other.CallID == ev.CallID {
+			same = append(same, other)
 		}
+	}
+	rows := store.Coalesce(same, coalesceWindow)
+	for i := range rows {
+		other := &rows[i].Event
 		switch phase, _ := other.Payload["phase"].(string); phase {
 		case "start":
 			if start == nil {
@@ -760,14 +769,15 @@ func joinNonEmpty(sep string, parts ...string) string {
 
 // workspaceLabel names where an event happened with what privacy allows: the
 // repo name, a short path, or the first eight hex digits of a digested path.
+// It is the one place a workspace is prepared for the terminal.
 func workspaceLabel(repo, cwd string) string {
 	if repo != "" {
-		return repo
+		return stripControl(repo)
 	}
 	if isDigest(cwd) {
 		return cwd[:8]
 	}
-	return shortPath(cwd)
+	return stripControl(shortPath(cwd))
 }
 
 func isDigest(s string) bool {

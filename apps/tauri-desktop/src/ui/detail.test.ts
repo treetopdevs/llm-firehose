@@ -95,6 +95,23 @@ describe("renderDetail", () => {
     expect(rows(pane, ".detail-kv")).toEqual({ text: "hi" });
   });
 
+  test("coalesces dual observations of one phase the way the feed does", () => {
+    const pane = document.createElement("aside");
+    const [start, end] = pair();
+    const rollout = { ...end, id: "e2b", time: new Date(t0 + 2610).toISOString() };
+    renderDetail(pane, start, () => {}, () => [start, end, rollout]);
+    const meta = rows(pane, ".detail-meta");
+    expect(meta.ended).toMatch(/\.920  2\.61s$/);
+    expect([...pane.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["request", "response"]);
+  });
+
+  test("pairs a call whose end arrived before its start", () => {
+    const pane = document.createElement("aside");
+    const [start, end] = pair();
+    renderDetail(pane, end, () => {}, () => [end, start]);
+    expect(rows(pane, ".detail-meta").ended).toMatch(/\.900  2\.59s$/);
+  });
+
   test("closes on the button and clears on null", () => {
     const pane = document.createElement("aside");
     let closed = 0;

@@ -88,12 +88,12 @@ func TestBandShowsOneLinePerLiveSession(t *testing.T) {
 		t.Errorf("working session should show a sparkline and last summary: %q", second)
 	}
 	// Time in state is a bar against the five-minute hairline, labelled with
-	// its own number: one minute waiting is two cells short of the line.
-	if !strings.Contains(first, "██        │      1m ") {
+	// its own number.
+	if !strings.Contains(first, dwellBar(time.Minute)+"  1m ") {
 		t.Errorf("needs-you session should show its wait as a bar with a label: %q", first)
 	}
-	if !strings.Contains(second, "          │      5s ") {
-		t.Errorf("a five-second dwell is under one cell but still labelled: %q", second)
+	if !strings.Contains(second, dwellBar(0)+"  5s ") {
+		t.Errorf("a five-second dwell is under half a cell but still labelled: %q", second)
 	}
 	if sep != "" {
 		t.Errorf("band should be separated from the feed by a blank line, got %q", sep)
@@ -347,5 +347,39 @@ func TestLanesStripKeepsRows(t *testing.T) {
 	}
 	if !strings.Contains(v, "$ x") {
 		t.Fatalf("rows should stay under the lanes strip:\n%s", v)
+	}
+}
+
+func TestAltitudeLabelsStripControlSequences(t *testing.T) {
+	now := t0.Add(time.Minute)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	ev := mkEv(1, event.CategoryTool, "work")
+	ev.CWD, ev.Agent, ev.Time = "/home/me/dev/\x1b[31mapp\x07", "cla\x1b[2Jude", now.Add(-time.Second)
+	m = push(m, ev)
+	m = key(m, "esc")
+	if v := m.View(); strings.Contains(v, "\x1b") || strings.Contains(v, "\x07") {
+		t.Fatalf("workspace altitude leaked control sequences:\n%q", v)
+	} else if !strings.Contains(v, "…/dev/app") || !strings.Contains(v, "claude") {
+		t.Fatalf("labels should survive sanitizing:\n%s", v)
+	}
+	m = key(m, "enter")
+	if h := m.viewHeader(); strings.Contains(h, "\x1b") || !strings.Contains(h, "…/dev/app · claude") {
+		t.Fatalf("scope breadcrumb = %q", h)
+	}
+	m = key(m, "enter")
+	if v := m.View(); strings.Contains(v, "\x1b") || !strings.Contains(v, "…/dev/app · claude · session s1") {
+		t.Fatalf("call crumb leaked or lost its labels:\n%q", v)
+	}
+}
+
+func TestWorkspaceKeysAreSafeOnAnEmptyMatrix(t *testing.T) {
+	m := newTestModel()
+	m = key(key(key(key(m, "esc"), "k"), "j"), "enter")
+	if m.alt != altWorkspace || m.scope != nil {
+		t.Fatalf("enter on an empty matrix should stay put: alt=%v scope=%v", m.alt, m.scope)
+	}
+	if !strings.Contains(plain(m.View()), "no live sessions") {
+		t.Fatalf("empty matrix should say so:\n%s", plain(m.View()))
 	}
 }

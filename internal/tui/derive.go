@@ -31,12 +31,14 @@ const (
 	workingStaleAfter = laneMaxOpenSpan
 	minLaneWidth      = 10
 	maxLabelRunes     = 12
-	// The dwell bar measures time in the current state at half-minute
-	// resolution against a hairline at five minutes: a session waiting past
-	// the line is the one you forgot.
-	dwellCell  = 30 * time.Second
-	dwellCells = 15
-	dwellHair  = 10 // cell index of the five-minute hairline
+	// The dwell bar measures time in the current state against a hairline at
+	// five minutes and is full at ten: seven cells before the line, seven
+	// after, at half-cell resolution. A session waiting past the line is the
+	// one you forgot. The desktop draws the same fractions of the same range.
+	dwellCells  = 15
+	dwellHair   = 7 // cell index of the five-minute hairline
+	dwellMax    = 10 * time.Minute
+	dwellHalves = 2 * (dwellCells - 1)
 
 	stateWorking = "working"
 	stateIdle    = "idle"
@@ -73,8 +75,10 @@ func workspaceKey(repo, cwd string) string {
 	return cwd
 }
 
+// agentLabel is the one place an agent name is prepared for the terminal, so
+// every column that prints it is control-sequence safe.
 func agentLabel(agent, source string) string {
-	label := orDefault(agent, source)
+	label := stripControl(orDefault(agent, source))
 	if r := []rune(label); len(r) > maxLabelRunes {
 		label = string(r[:maxLabelRunes])
 	}
@@ -282,14 +286,11 @@ func sparkline(buckets []int, scale int) string {
 }
 
 // dwellBar draws d as a horizontal bar of dwellCells cells with the hairline
-// in place. Half a cell (▌) marks a remainder past fifteen seconds, so the bar
+// in place: the fraction of dwellMax, rounded to half a cell (▌), so the bar
 // visibly grows while a session waits.
 func dwellBar(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	full := int(d / dwellCell)
-	half := d%dwellCell >= dwellCell/2
+	d = min(max(d, 0), dwellMax)
+	halves := int((d*dwellHalves + dwellMax/2) / dwellMax)
 	cells := make([]rune, dwellCells)
 	for i := range cells {
 		unit := i
@@ -299,9 +300,9 @@ func dwellBar(d time.Duration) string {
 		switch {
 		case i == dwellHair:
 			cells[i] = '│'
-		case unit < full:
+		case 2*unit+2 <= halves:
 			cells[i] = '█'
-		case unit == full && half:
+		case 2*unit+1 <= halves:
 			cells[i] = '▌'
 		default:
 			cells[i] = ' '

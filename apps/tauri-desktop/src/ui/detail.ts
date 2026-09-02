@@ -1,6 +1,7 @@
 import type { FirehoseEvent } from "../api";
 import { clear, el } from "../dom";
 import { formatClockMs, formatDuration, formatValue, latencyLabel, workspaceLabel } from "../format";
+import { coalesce } from "../state";
 
 /** Finds the other observations of an event's tool call (same session and call id). */
 export type Siblings = (ev: FirehoseEvent) => readonly FirehoseEvent[];
@@ -10,12 +11,15 @@ function phaseOf(ev: FirehoseEvent): string | undefined {
   return typeof phase === "string" ? phase : undefined;
 }
 
-// The first start and the first end at or after it.
+// The first start and the first end at or after it. Dual observations of one
+// phase (a hook push and a rollout tail) are coalesced first, exactly as the
+// feed coalesces them, so the pair agrees with the row.
 function pairCall(ev: FirehoseEvent, siblings: Siblings): { start?: FirehoseEvent; end?: FirehoseEvent } {
   let start: FirehoseEvent | undefined;
   let end: FirehoseEvent | undefined;
-  for (const other of siblings(ev)) {
-    if (other.session_id !== ev.session_id || other.call_id !== ev.call_id) continue;
+  const same = siblings(ev).filter((o) => o.session_id === ev.session_id && o.call_id === ev.call_id);
+  for (const row of coalesce(same)) {
+    const other = row.event;
     const phase = phaseOf(other);
     if (phase === "start" && !start) {
       start = other;
@@ -106,7 +110,8 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
     omit.add("phase");
     if (start) sections.push(...kvTable("request", start.payload, omit));
     if (end) sections.push(...kvTable("response", end.payload, omit));
-    if (ev.id !== start?.id && ev.id !== end?.id) sections.push(...kvTable("payload", ev.payload, omit));
+    const phase = phaseOf(ev);
+    if (phase !== "start" && phase !== "end") sections.push(...kvTable("payload", ev.payload, omit));
   } else {
     sections.push(...kvTable("payload", ev.payload, omit));
   }
