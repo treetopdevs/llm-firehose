@@ -71,8 +71,8 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	now := m.now()
 	var body []string
-	if m.lanes {
-		body = m.viewLanes(now)
+	if m.alt == altWorkspace {
+		body = m.viewWorkspace(now)
 	} else {
 		body = m.viewFeed(now)
 	}
@@ -97,8 +97,14 @@ func (m Model) viewHeader() string {
 		}
 		parts = append(parts, needsStyle.Render(label))
 	}
-	if m.lanes {
+	switch {
+	case m.alt == altWorkspace:
+		parts = append(parts, dimStyle.Render("workspace"))
+	case m.lanes:
 		parts = append(parts, dimStyle.Render("lanes · "+windowLabel(laneWindows[m.laneIdx])))
+	}
+	if m.scope != nil {
+		parts = append(parts, dimStyle.Render("▸ ")+whereLabel(m.scope.Where)+" · "+m.scope.Agent)
 	}
 	if f := m.filterLabel(); f != "" {
 		parts = append(parts, dimStyle.Render("filter: ")+f)
@@ -123,7 +129,8 @@ func (m Model) filterLabel() string {
 	return strings.Join(parts, " ")
 }
 
-// viewFeed is the session band over the event rows.
+// viewFeed is the session altitude: a strip of live sessions (the band, or
+// lanes) over the event rows.
 func (m Model) viewFeed(now time.Time) []string {
 	rows := m.visibleRows()
 	var sessions []sessionInfo
@@ -131,7 +138,12 @@ func (m Model) viewFeed(now time.Time) []string {
 		sessions = m.liveSessions(now)
 	}
 	agentW := agentWidth(rows, sessions)
-	lines := m.viewBand(sessions, now, agentW)
+	var lines []string
+	if m.lanes {
+		lines = m.viewLaneStrip(sessions, now, agentW)
+	} else {
+		lines = m.viewBand(sessions, now, agentW)
+	}
 
 	listHeight := max(1, m.height-3-len(lines))
 	start := 0
@@ -288,29 +300,105 @@ func (m Model) renderRow(row store.Row, prev *store.Row, agentW int) string {
 		tone.Render(glyph) + " " + summary + dimStyle.Render(count) + dimStyle.Render(ctx)
 }
 
-// viewLanes is a Marey-style timetable: wall time across, now at the right
-// edge, one lane per live session. An empty stretch is the idle signal.
-func (m Model) viewLanes(now time.Time) []string {
-	sessions := m.liveSessions(now)
-	agentW := agentWidth(nil, sessions)
+// viewLaneStrip is a Marey-style timetable: wall time across, now at the
+// right edge, one lane per live session. An empty stretch is the idle signal.
+func (m Model) viewLaneStrip(sessions []sessionInfo, now time.Time, agentW int) []string {
+	if len(sessions) == 0 {
+		return nil
+	}
+	maxRows := min(max((m.height-4)/4, 1), 6)
 	prefixW := 1 + 1 + agentW + 1 + stateWidth + 1
 	laneW := max(m.width-prefixW, minLaneWidth)
 	window := laneWindows[m.laneIdx]
-	lines := []string{strings.Repeat(" ", prefixW) + dimStyle.Render(laneAxis(now, window, laneW))}
-	if len(sessions) == 0 {
-		return append(lines, dimStyle.Render("  no live sessions"))
-	}
-	maxLanes := max(m.height-4, 1)
+	lines := make([]string, 0, maxRows+3)
+	lines = append(lines, strings.Repeat(" ", prefixW)+dimStyle.Render(laneAxis(now, window, laneW)))
 	for i, ln := range buildLanes(m.events, sessions, now, window, laneW) {
-		if i >= maxLanes {
+		if i >= maxRows {
 			lines = append(lines, dimStyle.Render(fmt.Sprintf("+%d more", len(sessions)-i)))
 			break
 		}
 		lines = append(lines, sessionBar(ln.ID)+" "+dimStyle.Render(padRight(ln.Label, agentW))+" "+
 			stateLabel(ln.State)+" "+renderLaneCells(ln.Cells))
 	}
+	return append(lines, "")
+}
+
+const (
+	maxWhereWidth = 20
+	// matrixCellWidth is sparkline · state glyph · session count.
+	matrixCellWidth = bandBuckets + 1 + 1 + 1 + 2
+)
+
+// viewWorkspace is the top altitude: one row per workspace, one column per
+// agent, and in each occupied cell the same sparkline as the band, the worst
+// state among the cell's sessions, and how many there are.
+func (m Model) viewWorkspace(now time.Time) []string {
+	mx := buildMatrix(m.liveSessions(now))
+	if len(mx.Cells) == 0 {
+		return []string{dimStyle.Render("  no live sessions")}
+	}
+	whereW := 1
+	for _, w := range mx.Wheres {
+		whereW = max(whereW, lipgloss.Width(whereLabel(w)))
+	}
+	whereW = min(whereW, maxWhereWidth)
+	scale := 0
+	for _, c := range mx.Cells {
+		for _, n := range c.Buckets {
+			scale = max(scale, n)
+		}
+	}
+	head := strings.Repeat(" ", whereW)
+	for _, a := range mx.Agents {
+		head += "  " + padRight(a, matrixCellWidth)
+	}
+	lines := []string{dimStyle.Render(strings.TrimRight(head, " "))}
+	sel := min(m.cellIdx, len(mx.Cells)-1)
+	idx := 0
+	for _, w := range mx.Wheres {
+		line := padRight(fit(whereLabel(w), whereW), whereW)
+		for _, a := range mx.Agents {
+			c, ok := mx.cell(w, a)
+			if !ok {
+				line += "  " + strings.Repeat(" ", matrixCellWidth)
+				continue
+			}
+			line += "  " + renderMatrixCell(c, scale, idx == sel)
+			idx++
+		}
+		lines = append(lines, strings.TrimRight(line, " "))
+	}
 	return lines
 }
+
+func renderMatrixCell(c matrixCell, scale int, selected bool) string {
+	glyph, style := stateGlyph(c.State)
+	count := "  "
+	if c.Sessions > 1 {
+		count = padLeft(strconv.Itoa(min(c.Sessions, 99)), 2)
+	}
+	spark := sparkline(c.Buckets[:], scale)
+	if selected {
+		return selStyle.Render(spark + " " + glyph + " " + count)
+	}
+	return spark + " " + style.Render(glyph) + " " + dimStyle.Render(count)
+}
+
+// stateGlyph is the one-cell form of the band's state column.
+func stateGlyph(state string) (string, lipgloss.Style) {
+	switch state {
+	case stateNeedsInput:
+		return "?", needsStyle
+	case stateWorking:
+		return "●", lipgloss.NewStyle()
+	case stateIdle:
+		return "·", dimStyle
+	default:
+		return " ", dimStyle
+	}
+}
+
+func whereLabel(key string) string { return workspaceLabel("", key) }
 
 func renderLaneCells(cells []laneCell) string {
 	var b strings.Builder
@@ -361,9 +449,12 @@ func laneGlyph(c laneCell) (string, *lipgloss.Style) {
 }
 
 func (m Model) viewFooter() string {
-	help := "? help · l lanes"
-	if m.lanes {
-		help = "? help · l feed"
+	help := "? help · esc workspace · l lanes"
+	switch {
+	case m.alt == altWorkspace:
+		help = "? help · ↑↓ pick · enter open"
+	case m.lanes:
+		help = "? help · esc workspace · l band"
 	}
 	if m.status != "" {
 		return m.status + "  " + dimStyle.Render(help)
@@ -374,11 +465,14 @@ func (m Model) viewFooter() string {
 func (m Model) viewHelp() string {
 	var b strings.Builder
 	b.WriteString(headerStyle.Render("HELP") + dimStyle.Render("  (? or esc to close)") + "\n\n")
+	b.WriteString("  altitudes\n")
+	b.WriteString("  workspace (repos × agents)  ›  session (band or lanes over rows)  ›  call\n")
+	b.WriteString("  enter descends, esc ascends; the header keeps the scope as a breadcrumb\n\n")
 	b.WriteString("  keys\n")
-	b.WriteString("  space  pause / resume      ↑↓ j k  scroll         enter  event detail\n")
+	b.WriteString("  space  pause / resume      ↑↓ j k  scroll / pick  enter  descend\n")
 	b.WriteString("  f      cycle category      a       cycle source   /      search summaries\n")
-	b.WriteString("  l      lanes ⇄ feed        - +     lane window    t      hide / show cwd\n")
-	b.WriteString("  e      export visible      q       quit\n\n")
+	b.WriteString("  l      lanes ⇄ band        - +     lane window    t      hide / show cwd\n")
+	b.WriteString("  e      export visible      q       quit           esc    ascend\n\n")
 	b.WriteString("  glyphs\n ")
 	for _, cat := range glyphOrder {
 		b.WriteString("  " + categoryGlyphs[cat] + " " + string(cat))
@@ -388,7 +482,9 @@ func (m Model) viewHelp() string {
 	b.WriteString("  band\n")
 	b.WriteString("  one line per live session: agent · events per 30s over the last 5m · time in its state as a bar, │ marks 5m · state · what it last did\n\n")
 	b.WriteString("  lanes\n")
-	b.WriteString("  wall time across, now at the right edge · ▂▄▆█ events per slot · ─ tool call still running · ! error · ? needs you\n")
+	b.WriteString("  wall time across, now at the right edge · ▂▄▆█ events per slot · ─ tool call still running · ! error · ? needs you\n\n")
+	b.WriteString("  workspace\n")
+	b.WriteString("  one row per workspace, one column per agent · sparkline · ? needs you  ● working  · idle · count when more than one session\n")
 	return b.String()
 }
 

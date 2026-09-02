@@ -28,6 +28,8 @@ type SessionAttention struct {
 	ID     string
 	Source string
 	Agent  string
+	Repo   string
+	CWD    string
 	State  string
 	Since  time.Time
 	Reason string
@@ -39,6 +41,30 @@ type attention struct {
 	Reason string
 	Source string
 	Agent  string
+	Where  string
+}
+
+// altitude is the reading distance: the workspace matrix, or the session
+// strip over event rows. The call altitude is a selected event (detail).
+type altitude int
+
+const (
+	altSession altitude = iota
+	altWorkspace
+)
+
+// cellScope narrows the session altitude to one workspace × agent cell.
+type cellScope struct{ Where, Agent string }
+
+func (c cellScope) has(s sessionInfo) bool {
+	return s.Where == c.Where && s.Label == c.Agent
+}
+
+// holds reports whether an event itself is in the cell. Sessions are also
+// members through any one of their events; see Model.scoped.
+func (c cellScope) holds(ev event.Event) bool {
+	return !isTransition(ev) && workspaceKey(ev.Repo, ev.CWD) == c.Where &&
+		agentLabel(ev.Agent, ev.Source) == c.Agent
 }
 
 // tickMsg redraws once a second so ages, sparklines, and the lane axis move
@@ -74,8 +100,11 @@ type Model struct {
 	// the band's state column, and lane labels all read from it.
 	attention map[string]attention
 	help      bool
-	lanes     bool
-	laneIdx   int // index into laneWindows
+	lanes     bool // the strip over the rows is lanes rather than the band
+	laneIdx   int  // index into laneWindows
+	alt       altitude
+	scope     *cellScope
+	cellIdx   int // selected cell at the workspace altitude, reading order
 	now       func() time.Time
 }
 
@@ -117,7 +146,7 @@ func (m Model) PreloadSessions(sessions []SessionAttention) Model {
 		}
 		m.attention[session.ID] = attention{
 			State: session.State, Since: session.Since, Reason: session.Reason,
-			Source: session.Source, Agent: session.Agent,
+			Source: session.Source, Agent: session.Agent, Where: workspaceKey(session.Repo, session.CWD),
 		}
 	}
 	m.boundAttention()
@@ -230,9 +259,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.alt == altWorkspace {
+		return m.handleWorkspaceKey(msg)
+	}
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "esc":
+		// Ascend: the workspace shows everything, with the cursor left on
+		// the cell we came from.
+		m.alt, m.scope, m.cursor = altWorkspace, nil, -1
 	case " ":
 		if m.paused {
 			m.paused = false
@@ -301,14 +337,69 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleWorkspaceKey moves between occupied cells in reading order; enter
+// descends into the selected cell with the strip switched to lanes, which is
+// how a session reads at that altitude.
+func (m Model) handleWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "?":
+		m.help = true
+	case "up", "k", "left", "h":
+		m.cellIdx = max(m.cellIdx-1, 0)
+	case "down", "j", "right":
+		n := len(buildMatrix(m.liveSessions(m.now())).Cells)
+		m.cellIdx = min(m.cellIdx+1, max(n-1, 0))
+	case "enter":
+		cells := buildMatrix(m.liveSessions(m.now())).Cells
+		if len(cells) == 0 {
+			return m, nil
+		}
+		m.cellIdx = min(m.cellIdx, len(cells)-1)
+		c := cells[m.cellIdx]
+		m.scope = &cellScope{Where: c.Where, Agent: c.Agent}
+		m.alt, m.lanes, m.cursor = altSession, true, -1
+	}
+	return m, nil
+}
+
 func (m Model) filteredEvents() []event.Event {
 	evs := m.events
 	if m.paused {
 		evs = evs[:m.frozen]
 	}
+	evs = m.scoped(evs)
 	out := make([]event.Event, 0, len(evs))
 	for _, ev := range evs {
 		if m.filter.Match(ev) {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// scoped keeps the events of the sessions in the scope cell. A session is a
+// member through its engine attention or through any one of its events, so
+// transitions and events without a workspace stay with their session.
+func (m Model) scoped(evs []event.Event) []event.Event {
+	if m.scope == nil {
+		return evs
+	}
+	in := map[string]bool{}
+	for id, a := range m.attention {
+		if a.Where == m.scope.Where && agentLabel(a.Agent, a.Source) == m.scope.Agent {
+			in[id] = true
+		}
+	}
+	for _, ev := range evs {
+		if ev.SessionID != "" && m.scope.holds(ev) {
+			in[ev.SessionID] = true
+		}
+	}
+	out := make([]event.Event, 0, len(evs))
+	for _, ev := range evs {
+		if m.scope.holds(ev) || (ev.SessionID != "" && in[ev.SessionID]) {
 			out = append(out, ev)
 		}
 	}
@@ -335,7 +426,8 @@ func (m Model) noteAttention(ev event.Event) {
 	}
 	prev := m.attention[ev.SessionID]
 	m.attention[ev.SessionID] = attention{
-		State: state, Since: ev.Time, Reason: reason, Source: prev.Source, Agent: prev.Agent,
+		State: state, Since: ev.Time, Reason: reason,
+		Source: prev.Source, Agent: prev.Agent, Where: prev.Where,
 	}
 	m.boundAttention()
 }

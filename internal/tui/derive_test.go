@@ -256,3 +256,75 @@ func TestDwellBarMeasuresAgainstFiveMinuteHairline(t *testing.T) {
 		}
 	}
 }
+
+const digestDir = "aa43f1ff4abc3b9ab1e0a477140f68ea761e0384110aa530c6de08642f762655"
+
+// workspaceFixture is three sessions in two workspaces: claude and codex in
+// …/dev/app (codex waiting on you), claude alone in a digested directory.
+func workspaceFixture(now time.Time) Model {
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	a := mkEv(1, event.CategoryTool, "s1 edits")
+	a.CWD, a.Time = "/home/me/dev/app", now.Add(-5*time.Second)
+	m = push(m, stateTransitionAt(now.Add(-time.Minute), "s1", stateWorking, ""))
+	m = push(m, a)
+	b := mkEv(2, event.CategoryPermission, "s2 asks")
+	b.SessionID, b.Source, b.Agent, b.CWD, b.Time = "s2", "codex", "codex", a.CWD, now.Add(-time.Minute)
+	m = push(m, b)
+	m = push(m, stateTransitionAt(now.Add(-time.Minute), "s2", stateNeedsInput, "approve Bash"))
+	c := mkEv(3, event.CategoryFile, "s3 writes")
+	c.SessionID, c.CWD, c.Time = "s3", digestDir, now.Add(-30*time.Second)
+	m = push(m, c)
+	return m
+}
+
+func TestBuildMatrixRowsAreWorkspacesColumnsAreAgents(t *testing.T) {
+	now := t0.Add(10 * time.Minute)
+	m := workspaceFixture(now)
+	mx := buildMatrix(m.liveSessions(now))
+	if strings.Join(mx.Agents, ",") != "claude,codex" {
+		t.Errorf("agents = %v", mx.Agents)
+	}
+	if strings.Join(mx.Wheres, ",") != "/home/me/dev/app,"+digestDir {
+		t.Errorf("workspaces should order by latest activity: %v", mx.Wheres)
+	}
+	if len(mx.Cells) != 3 {
+		t.Fatalf("cells = %+v", mx.Cells)
+	}
+	first, second, third := mx.Cells[0], mx.Cells[1], mx.Cells[2]
+	if first.Agent != "claude" || first.State != stateWorking || first.Sessions != 1 || first.Buckets[bandBuckets-1] != 1 {
+		t.Errorf("first cell = %+v", first)
+	}
+	if second.Agent != "codex" || second.State != stateNeedsInput {
+		t.Errorf("second cell = %+v", second)
+	}
+	if third.Where != digestDir || third.Agent != "claude" {
+		t.Errorf("third cell = %+v", third)
+	}
+}
+
+func TestWorstStateRanksNeedsOverWorkingOverIdle(t *testing.T) {
+	if got := worstState(stateIdle, stateWorking); got != stateWorking {
+		t.Errorf("worstState(idle, working) = %q", got)
+	}
+	if got := worstState(stateWorking, stateNeedsInput); got != stateNeedsInput {
+		t.Errorf("worstState(working, needs) = %q", got)
+	}
+	if got := worstState("", stateIdle); got != stateIdle {
+		t.Errorf("worstState(\"\", idle) = %q", got)
+	}
+}
+
+func TestWorkspaceLabelRespectsPrivacy(t *testing.T) {
+	cases := [][3]string{
+		{"llm-firehose", "/x/y/z", "llm-firehose"},
+		{"", "/home/me/dev/app", "…/dev/app"},
+		{"", digestDir, "aa43f1ff"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := workspaceLabel(c[0], c[1]); got != c[2] {
+			t.Errorf("workspaceLabel(%q, %q) = %q, want %q", c[0], c[1], got, c[2])
+		}
+	}
+}

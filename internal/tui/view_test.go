@@ -280,3 +280,72 @@ func TestCallAltitudeReportsUnfinishedCalls(t *testing.T) {
 		t.Errorf("a finished session's open call should say so:\n%s", v)
 	}
 }
+
+func TestEscAscendsToWorkspaceAndEnterDescendsScoped(t *testing.T) {
+	now := t0.Add(10 * time.Minute)
+	m := workspaceFixture(now)
+	m = key(m, "esc")
+	v := viewLines(m)
+	if !strings.Contains(v[0], "workspace") {
+		t.Fatalf("esc should ascend to the workspace altitude:\n%s", strings.Join(v, "\n"))
+	}
+	app := -1
+	for i, l := range v {
+		if strings.HasPrefix(l, "…/dev/app") {
+			app = i
+		}
+	}
+	if app < 0 {
+		t.Fatalf("matrix should have a row per workspace:\n%s", strings.Join(v, "\n"))
+	}
+	if !strings.Contains(v[app-1], "claude") || !strings.Contains(v[app-1], "codex") {
+		t.Errorf("columns should be agents: %q", v[app-1])
+	}
+	if !strings.Contains(v[app], "●") || !strings.Contains(v[app], "?") {
+		t.Errorf("cells should carry a state glyph: %q", v[app])
+	}
+	if !strings.HasPrefix(v[app+1], "aa43f1ff") {
+		t.Errorf("a digested directory is labelled by its first hex digits: %q", v[app+1])
+	}
+
+	m = key(m, "enter") // first cell: …/dev/app · claude
+	v = viewLines(m)
+	joined := strings.Join(v, "\n")
+	if !strings.Contains(v[0], "…/dev/app · claude") {
+		t.Errorf("header should carry the scope as a breadcrumb: %q", v[0])
+	}
+	if !strings.Contains(joined, "s1 edits") || strings.Contains(joined, "s2 asks") || strings.Contains(joined, "s3 writes") {
+		t.Errorf("rows should be scoped to the cell:\n%s", joined)
+	}
+	if !strings.Contains(joined, "╷") {
+		t.Errorf("the session altitude reads as lanes over rows:\n%s", joined)
+	}
+	if strings.Contains(joined, "│ codex") {
+		t.Errorf("the strip should be scoped too:\n%s", joined)
+	}
+
+	m = key(key(key(m, "esc"), "j"), "enter") // second cell: …/dev/app · codex
+	v = viewLines(m)
+	joined = strings.Join(v, "\n")
+	if !strings.Contains(v[0], "…/dev/app · codex") || !strings.Contains(joined, "s2 asks") || strings.Contains(joined, "s1 edits") {
+		t.Errorf("j should move to the next cell before descending:\n%s", joined)
+	}
+	if !strings.Contains(joined, "NEEDS YOU") {
+		t.Errorf("the scoped lane should still show the engine state:\n%s", joined)
+	}
+}
+
+func TestLanesStripKeepsRows(t *testing.T) {
+	now := t0.Add(2 * time.Minute)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	m = push(m, laneEvent(now, 30*time.Second, "c1", "start"))
+	m = key(m, "l")
+	v := plain(m.View())
+	if !strings.Contains(v, "╷") || !strings.Contains(v, "─") {
+		t.Fatalf("lanes strip missing:\n%s", v)
+	}
+	if !strings.Contains(v, "$ x") {
+		t.Fatalf("rows should stay under the lanes strip:\n%s", v)
+	}
+}

@@ -234,6 +234,7 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 			for _, session := range sessions {
 				attention = append(attention, tui.SessionAttention{
 					ID: session.ID, Source: session.Source, Agent: session.Agent,
+					Repo: session.Repo, CWD: session.CWD,
 					State: session.State, Since: session.StateSince, Reason: session.StateReason,
 				})
 			}
@@ -249,6 +250,7 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 	for _, session := range feed.Sessions {
 		attention = append(attention, tui.SessionAttention{
 			ID: session.ID, Source: session.Source, Agent: session.Agent,
+			Repo: session.Repo, CWD: session.CWD,
 			State: string(session.State), Since: session.StateSince, Reason: session.StateReason,
 		})
 	}

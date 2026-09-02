@@ -51,6 +51,7 @@ var sparkGlyphs = []rune("▁▂▃▄▅▆▇█")
 type sessionInfo struct {
 	ID      string
 	Label   string // agent, falling back to source family
+	Where   string // workspace identity: repo, else cwd (a digest under balanced privacy)
 	Last    time.Time
 	Summary string
 	State   string
@@ -61,6 +62,15 @@ type sessionInfo struct {
 
 func isTransition(ev event.Event) bool {
 	return ev.Source == "firehose" && ev.Name == "state.transition"
+}
+
+// workspaceKey is the identity the matrix and scope compare on; see
+// workspaceLabel for how it is printed.
+func workspaceKey(repo, cwd string) string {
+	if repo != "" {
+		return repo
+	}
+	return cwd
 }
 
 func agentLabel(agent, source string) string {
@@ -87,6 +97,9 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		if !ev.Time.Before(s.Last) {
 			s.Last = ev.Time
 			s.Summary = ev.Summary
+			if where := workspaceKey(ev.Repo, ev.CWD); where != "" {
+				s.Where = where
+			}
 		}
 		age := now.Sub(ev.Time)
 		if age < 0 {
@@ -103,6 +116,9 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 			byID[id] = s
 		}
 		s.State, s.Since, s.Reason = a.State, a.Since, a.Reason
+		if s.Where == "" {
+			s.Where = a.Where
+		}
 	}
 	out := make([]sessionInfo, 0, len(byID))
 	for _, s := range byID {
@@ -115,6 +131,9 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		}
 		if s.Label == "" {
 			s.Label = agentLabel("", s.ID)
+		}
+		if m.scope != nil && !m.scope.has(*s) {
+			continue
 		}
 		out = append(out, *s)
 	}
@@ -132,6 +151,98 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		return a.ID < b.ID
 	})
 	return out
+}
+
+// matrixCell is one workspace × agent pair at the workspace altitude: the
+// activity of every live session in the pair on one sparkline, the worst of
+// their states, and how many there are.
+type matrixCell struct {
+	Where, Agent string
+	Buckets      [bandBuckets]int
+	Sessions     int
+	State        string
+	Last         time.Time
+}
+
+type matrix struct {
+	Wheres []string     // rows, most recently active first
+	Agents []string     // columns, alphabetical
+	Cells  []matrixCell // occupied cells in reading order
+}
+
+func (mx matrix) cell(where, agent string) (matrixCell, bool) {
+	for _, c := range mx.Cells {
+		if c.Where == where && c.Agent == agent {
+			return c, true
+		}
+	}
+	return matrixCell{}, false
+}
+
+// buildMatrix folds live sessions into workspace rows and agent columns.
+func buildMatrix(sessions []sessionInfo) matrix {
+	type key struct{ where, agent string }
+	cells := map[key]*matrixCell{}
+	rowLast := map[string]time.Time{}
+	agents := map[string]bool{}
+	for _, s := range sessions {
+		k := key{s.Where, s.Label}
+		c := cells[k]
+		if c == nil {
+			c = &matrixCell{Where: s.Where, Agent: s.Label}
+			cells[k] = c
+		}
+		for i, n := range s.Buckets {
+			c.Buckets[i] += n
+		}
+		c.Sessions++
+		c.State = worstState(c.State, s.State)
+		last := s.Last
+		if s.Since.After(last) {
+			last = s.Since
+		}
+		if last.After(c.Last) {
+			c.Last = last
+		}
+		if last.After(rowLast[s.Where]) {
+			rowLast[s.Where] = last
+		}
+		agents[s.Label] = true
+	}
+	var mx matrix
+	for w := range rowLast {
+		mx.Wheres = append(mx.Wheres, w)
+	}
+	sort.Slice(mx.Wheres, func(i, j int) bool {
+		a, b := mx.Wheres[i], mx.Wheres[j]
+		if !rowLast[a].Equal(rowLast[b]) {
+			return rowLast[a].After(rowLast[b])
+		}
+		return a < b
+	})
+	for a := range agents {
+		mx.Agents = append(mx.Agents, a)
+	}
+	sort.Strings(mx.Agents)
+	for _, w := range mx.Wheres {
+		for _, a := range mx.Agents {
+			if c := cells[key{w, a}]; c != nil {
+				mx.Cells = append(mx.Cells, *c)
+			}
+		}
+	}
+	return mx
+}
+
+var stateRank = map[string]int{stateIdle: 1, stateWorking: 2, stateNeedsInput: 3}
+
+// worstState is the state that most needs the reader: needs you, then
+// working, then idle.
+func worstState(a, b string) string {
+	if stateRank[b] > stateRank[a] {
+		return b
+	}
+	return a
 }
 
 // stateFresh reports whether a session still belongs on screen: recent
