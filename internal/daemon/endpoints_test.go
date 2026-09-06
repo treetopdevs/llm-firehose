@@ -552,3 +552,59 @@ func TestEmitEndpointAntigravityUsesAdditiveEventParameter(t *testing.T) {
 		t.Errorf("status without event = %d, want 400", missing.StatusCode)
 	}
 }
+
+func TestAttentionAPIAndExactEvidence(t *testing.T) {
+	cfg := testConfig(t)
+	seedSessions(t, cfg.SpoolDir)
+	ts := testServer(t, cfg)
+	resp, err := http.Get(ts.URL + "/attention")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("attention status: %d", resp.StatusCode)
+	}
+	var snapshot struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		}
+		Warnings []any `json:"warnings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Sessions) != 2 || snapshot.Warnings == nil {
+		t.Fatalf("bad snapshot: %+v", snapshot)
+	}
+	evidence, err := http.Get(ts.URL + "/events/a2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evidence.Body.Close()
+	var ev event.Event
+	if err := json.NewDecoder(evidence.Body).Decode(&ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.ID != "a2" || ev.Name != "" || ev.SessionID != "s1" {
+		t.Fatalf("wrong evidence: %+v", ev)
+	}
+	missing, err := http.Get(ts.URL + "/events/absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing evidence status %d", missing.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/attention", nil)
+	req.Header.Set("Origin", "https://untrusted.example")
+	denied, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden {
+		t.Fatal("attention bypassed local API origin policy")
+	}
+}

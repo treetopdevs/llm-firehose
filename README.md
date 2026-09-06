@@ -86,6 +86,10 @@ Packaging for macOS, Windows, and Linux is validated in CI
 ([desktop workflow](.github/workflows/desktop.yml)); signing and the update
 feed are documented in the [release runbook](docs/release-runbook.md).
 
+See the [attention guide](docs/attention.md) for signal rules, capture limitations,
+and notification behavior. Live is the landing view; the attention strip remains
+visible across the existing activity views.
+
 ## Supported sources
 
 | Source | Depth | How it works |

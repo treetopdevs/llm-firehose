@@ -116,3 +116,12 @@ describe("sessions scope", () => {
     expect(panel.root.querySelector(".sessions-scope")).toBeNull();
   });
 });
+
+test("attention history can restrict a shared native session ID to its source",async()=>{
+ sessionEvents.mockResolvedValue([
+  {id:"c1",source:"codex",session_id:"same",category:"prompt",time:new Date(now).toISOString(),summary:"codex evidence"},
+  {id:"o1",source:"opencode",session_id:"same",category:"prompt",time:new Date(now).toISOString(),summary:"other evidence"},
+ ]);
+ const p=createSessions(()=>{},()=>[]);await p.openSession("same","codex");
+ expect(p.root.textContent).toContain("codex evidence");expect(p.root.textContent).not.toContain("other evidence");
+});

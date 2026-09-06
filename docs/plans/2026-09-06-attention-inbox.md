@@ -1,6 +1,6 @@
 # Attention inbox
 
-Status: planned. Baseline: origin/main 5841aad (includes the shipped Altitudes views).
+Status: implementing. Test boundaries confirmed by the user on 2026-09-06. Baseline: origin/main 5841aad (includes the shipped Altitudes views).
 
 ## Outcome
 
@@ -52,7 +52,7 @@ same read-only attention query available to other local clients.
 
 ## Implementation sequence and validation
 
-- Public boundaries proposed for confirmation: Capture Engine Admit/Attention/Session
+- Confirmed public boundaries: Capture Engine Admit/Attention/Session
   queries, local HTTP request/response, and rendered desktop interactions (HTTP,
   time, storage and OS notification boundary substituted in tests).
 - Build vertical failing-test → implementation slices: pending episode + recovery;
@@ -83,4 +83,4 @@ Go formatting, vet and all Go tests passed. All 107 desktop tests passed.
 CLI and sidecar compilation and the frontend production build passed. Vite reports its
 existing large-chunk advisory. All three native Rust tests passed, including
 the desktop crate compilation and doc-test gate.
-Test-boundary confirmation requested before feature tests, per the TDD skill.
+Test boundaries confirmed before feature tests, per the TDD skill.

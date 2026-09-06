@@ -92,8 +92,8 @@ export interface ConfigUpdateResult {
   restart_required: string[];
 }
 
-async function getJSON<T>(path: string): Promise<T> {
-  const resp = await fetch(`${DAEMON_URL}${path}`);
+async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const resp = await fetch(`${DAEMON_URL}${path}`, {signal});
   if (!resp.ok) {
     throw new Error(`GET ${path}: ${resp.status} ${await resp.text()}`);
   }
@@ -156,3 +156,36 @@ export async function exportNDJSON(): Promise<Blob> {
   }
   return resp.blob();
 }
+
+export interface AttentionEvidence {
+ source_time?:string;
+  event_id: string;
+  source: string;
+  kind: string;
+  summary: string;
+  time: string;
+  observed_at: string;
+}
+
+export interface AttentionSession {
+  id: string;
+  source: string;
+  agent?: string;
+  repo?: string;
+  cwd?: string;
+  repo_id?: string;
+  worktree_id?: string;
+  events: number;
+  state: string;
+  last: AttentionEvidence;
+  pending?: AttentionEvidence;
+  uncertainty?: string;
+}
+
+export interface AttentionSnapshot {
+  sessions: AttentionSession[];
+  warnings: AttentionEvidence[];
+}
+
+export const attention = (signal?:AbortSignal) => getJSON<AttentionSnapshot>("/attention",signal);
+export const capturedEvent = (id: string) => getJSON<FirehoseEvent>(`/events/${encodeURIComponent(id)}`);

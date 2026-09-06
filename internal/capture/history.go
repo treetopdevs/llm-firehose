@@ -17,9 +17,10 @@ var ErrNotFound = errors.New("capture: not found")
 
 // Capture-owned query shapes retain the frozen local HTTP JSON representation.
 type (
-	Session      = projection.Session
-	TraceSummary = projection.Trace
-	FileArtifact = projection.FileArtifact
+	InboxSnapshot = projection.InboxSnapshot
+	Session       = projection.Session
+	TraceSummary  = projection.Trace
+	FileArtifact  = projection.FileArtifact
 )
 
 func (e *Engine) applyProjection(ev event.Event) error {
@@ -113,4 +114,24 @@ func exportSpool(spoolDir string, w io.Writer) (int, error) {
 		}
 	}
 	return len(events), nil
+}
+
+// Attention returns source-scoped, evidence-backed supervision state.
+func (e *Engine) Attention() InboxSnapshot { return e.projection.Inbox() }
+
+// Event retrieves an exact captured event for an evidence link.
+func (e *Engine) Event(id string) (event.Event, error) {
+	day := e.projection.EventDay(id)
+	if day != "" {
+		evs, err := spool.ReadDays(e.spoolDir, []string{day})
+		if err != nil {
+			return event.Event{}, err
+		}
+		for _, ev := range evs {
+			if ev.ID == id {
+				return ev, nil
+			}
+		}
+	}
+	return event.Event{}, fmt.Errorf("%w: event %q", ErrNotFound, id)
 }

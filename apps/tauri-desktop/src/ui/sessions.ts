@@ -9,7 +9,7 @@ import type { CellScope } from "./workspace/model";
 export type SessionsPanel = {
   root: HTMLElement;
   refresh(): Promise<void>;
-  openSession(id: string): Promise<void>;
+  openSession(id: string, source?: string): Promise<void>;
   /** Narrows the list to one workspace × agent cell; null shows every session. */
   setScope(scope: CellScope | null): void;
 };
@@ -44,11 +44,11 @@ export function createSessions(
     return el("div", { class: "sessions-scope" }, el("span", {}, active.label), clearBtn);
   }
 
-  async function openSession(id: string) {
+  async function openSession(id: string, source?:string) {
     clear(eventsBox);
     eventsBox.append(el("p", { class: "dim" }, `loading ${id}…`));
     try {
-      const evs = await sessionEvents(id);
+      const evs = (await sessionEvents(id)).filter(ev=>!source || ev.source===source);
       clear(eventsBox);
       eventsBox.append(el("h3", {}, `session ${id} — ${evs.length} events`));
       renderEventList(eventsBox, evs, onSelect);

@@ -57,7 +57,9 @@ type Projection struct {
 	sessions map[string]*sessionEntry
 	traces   map[string]*traceEntry
 	files    map[string]*fileEntry
-	seen     map[string]bool
+	seen     map[string]string
+	inbox    map[inboxKey]*InboxSession
+	warnings map[inboxKey]Evidence
 }
 
 type sessionEntry struct {
@@ -82,7 +84,9 @@ func New() *Projection {
 		sessions: map[string]*sessionEntry{},
 		traces:   map[string]*traceEntry{},
 		files:    map[string]*fileEntry{},
-		seen:     map[string]bool{},
+		seen:     map[string]string{},
+		inbox:    map[inboxKey]*InboxSession{},
+		warnings: map[inboxKey]Evidence{},
 	}
 }
 
@@ -128,12 +132,13 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 	}
 
 	if ev.ID != "" {
-		if ix.seen[ev.ID] {
+		if ix.seen[ev.ID] != "" {
 			return nil, false
 		}
-		ix.seen[ev.ID] = true
+		ix.seen[ev.ID] = ev.Time.UTC().Format("2006-01-02")
 	}
 
+	ix.applyInbox(ev)
 	day := ev.Time.UTC().Format("2006-01-02")
 	var transition *event.Event
 
