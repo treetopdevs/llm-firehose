@@ -3,7 +3,9 @@ package capture_test
 import (
 	"agentfirehose/internal/adapters/claudecode"
 	"agentfirehose/internal/adapters/opencode"
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -320,6 +322,66 @@ func TestAttentionReportsInvalidEnvelopesAfterRestart(t *testing.T) {
 				if len(got.Gaps) == 0 || len(got.Sessions) != 0 {
 					t.Fatalf("restart %d hid invalid history or projected invalid evidence: %+v", restart, got)
 				}
+			}
+		})
+	}
+}
+
+func TestAttentionKeepsLegacyIDLessRecordsOutOfEvidence(t *testing.T) {
+	for _, mode := range []string{"startup", "live"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			e := inboxEngine(t, dir)
+			admitInbox(t, e, "verified-request", "codex", "s", event.CategoryPermission, "PermissionRequest", 0)
+			legacy := []event.Event{
+				{Source: "codex", SessionID: "legacy", Category: event.CategoryPermission, Name: "PermissionRequest", Time: time.Date(2026, 9, 6, 12, 0, 1, 0, time.UTC)},
+				{Source: "codex", SessionID: "s", Category: event.CategoryPrompt, Time: time.Date(2026, 9, 6, 12, 0, 2, 0, time.UTC)},
+			}
+			f, err := os.OpenFile(filepath.Join(dir, "2026-09-06.ndjson"), os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ev := range legacy {
+				if err := json.NewEncoder(f).Encode(ev); err != nil {
+					f.Close()
+					t.Fatal(err)
+				}
+			}
+			f.Close()
+			if mode == "startup" {
+				e = inboxEngine(t, dir)
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				done := make(chan error, 1)
+				go func() { done <- e.Run(ctx) }()
+				defer func() { cancel(); <-done }()
+				deadline := time.Now().Add(2 * time.Second)
+				observations := 0
+				for time.Now().Before(deadline) {
+					observations = 0
+					for _, session := range e.Sessions() {
+						observations += session.Events
+					}
+					if observations == 3 {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				if observations != 3 {
+					t.Fatalf("live history did not reconcile all records: %d", observations)
+				}
+			}
+			got := e.Attention()
+			if len(got.Gaps) == 0 || len(got.Sessions) != 1 || got.Sessions[0].Pending == nil || got.Sessions[0].Pending.EventID != "verified-request" {
+				t.Fatalf("unaddressable records became attention evidence: %+v", got)
+			}
+			history, err := e.Session("legacy")
+			if err != nil || len(history) != 1 || history[0].ID != "" {
+				t.Fatalf("legacy session history changed: %+v %v", history, err)
+			}
+			var exported bytes.Buffer
+			if n, err := e.Export(&exported); err != nil || n != 3 {
+				t.Fatalf("legacy export changed: count=%d error=%v", n, err)
 			}
 		})
 	}

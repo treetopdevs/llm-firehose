@@ -590,6 +590,9 @@ func TestAttentionAPIAndExactEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer evidence.Body.Close()
+		if evidence.Header.Get("Cache-Control") != "no-store" {
+			t.Fatal("captured evidence response can be cached")
+		}
 		var ev event.Event
 		if err := json.NewDecoder(evidence.Body).Decode(&ev); err != nil {
 			t.Fatal(err)
@@ -605,6 +608,9 @@ func TestAttentionAPIAndExactEvidence(t *testing.T) {
 	defer missing.Body.Close()
 	if missing.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing evidence status %d", missing.StatusCode)
+	}
+	if missing.Header.Get("Cache-Control") != "no-store" {
+		t.Fatal("missing evidence response can be cached")
 	}
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/attention", nil)
 	req.Header.Set("Origin", "https://untrusted.example")

@@ -12,7 +12,9 @@ capture setup link explain that distinction. Warning cards show the latest recor
 warning per source/name, with up to 20 displayed; their recovery status is unknown.
 Unreadable, invalid-envelope or oversized spool records appear as capture gaps, including on restart.
 These diagnostics are inspectable but clearly labeled as unrecorded; they have no
-invented captured event ID.
+invented captured event ID. Legacy records without stable IDs also produce a
+coverage gap and cannot support attention or resolution evidence; ordinary session
+history and export continue to include them.
 
 ## Signals
 
@@ -64,7 +66,8 @@ Session records include source, ID, agent, privacy-processed workspace identity,
 event count, derived state, last evidence, optional pending evidence and uncertainty.
 Evidence includes event ID, source, kind, summary, primary/source time and observation
 time. `GET /attention/event?id={id}` returns the exact captured envelope or 404 if unavailable.
-Both endpoints inherit the existing loopback and browser-origin policy.
+Both endpoints use `Cache-Control: no-store` and inherit the existing loopback and
+browser-origin policy.
 
 Engine/API tests cover rebuild, deduplication, source isolation, native request
 coalescing, resolution, source clocks, redaction and detached snapshots. Desktop

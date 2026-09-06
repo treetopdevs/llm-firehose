@@ -26,6 +26,7 @@ export function createSessions(
   const eventsBox = el("div", { class: "sessions-events" });
   const root = el("section", { class: "sessions" }, listBox, eventsBox);
   let scope: CellScope | null = null;
+  let historyVersion = 0;
 
   function setScope(next: CellScope | null) {
     scope = next;
@@ -44,15 +45,18 @@ export function createSessions(
     return el("div", { class: "sessions-scope" }, el("span", {}, active.label), clearBtn);
   }
 
-  async function openSession(id: string, source?:string) {
+  async function openSession(id: string, source?: string) {
+    const version = ++historyVersion;
     clear(eventsBox);
     eventsBox.append(el("p", { class: "dim" }, `loading ${id}…`));
     try {
-      const evs = (await sessionEvents(id)).filter(ev=>!source || ev.source===source);
+      const evs = (await sessionEvents(id)).filter(ev => !source || ev.source === source);
+      if (version !== historyVersion) return;
       clear(eventsBox);
       eventsBox.append(el("h3", {}, `session ${id} — ${evs.length} events`));
       renderEventList(eventsBox, evs, onSelect);
     } catch (err) {
+      if (version !== historyVersion) return;
       clear(eventsBox);
       eventsBox.append(el("p", { class: "error" }, String(err)));
     }

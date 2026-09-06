@@ -1,8 +1,7 @@
 # Attention inbox review and validation
 
-Reviewed baseline: `5841aad`. Final reviewed implementation:
-`631970d460d6ad59d082f0e4ca132f1ad7b29281`. This record is a documentation-only
-follow-up. Requirements: [attention inbox plan](../plans/2026-09-06-attention-inbox.md).
+Reviewed baseline: `5841aad`. Initial reviewed implementation:
+`631970d460d6ad59d082f0e4ca132f1ad7b29281`. The hosted-review follow-up below records later remediation. Requirements: [attention inbox plan](../plans/2026-09-06-attention-inbox.md).
 Two independent read-only reviewers assessed the immutable changes; execution
 results below were verified separately by the implementing agent.
 
@@ -46,7 +45,7 @@ implementation passed:
 - `gofmt -l .` (empty), `go vet ./...`, and `go test ./...`, in that order.
 - `go test -race ./internal/capture/... ./internal/daemon`.
 - `go build ./cmd/firehose` and `scripts/build-sidecar.sh`.
-- `pnpm -C apps/tauri-desktop test`: 126 tests across 20 files.
+- `pnpm -C apps/tauri-desktop test`: 128 tests across 20 files after the hosted-review follow-up.
 - `pnpm -C apps/tauri-desktop build`: TypeScript and production bundle succeeded;
   Vite retains the existing large-chunk advisory.
 - `cargo test --manifest-path apps/tauri-desktop/src-tauri/Cargo.toml`: three Rust
@@ -68,3 +67,27 @@ release, signing/notarization, or visible OS notification delivery. Notification
 permission and delivery boundaries are tested and native compilation passes;
 installed-app presentation remains an OS-specific release check. Notifications
 require the desktop app to remain open and respect OS notification settings.
+
+## Hosted review follow-up
+
+CodeRabbit reviewed PR #6 at `958e5a1` and raised three actionable comments.
+All three were reproduced with failing public-boundary tests and remediated:
+
+- Session history ignores stale success and error responses, including switching
+  source while the native session ID remains the same.
+- Exact evidence responses set `Cache-Control: no-store`, including missing-record
+  responses.
+- Legacy records without stable IDs become attention coverage gaps during startup
+  and live reconciliation. They cannot create or resolve attention episodes. The
+  fix is deliberately confined to the new inbox projection: existing session
+  history, live publication, export, and admission validation retain their prior
+  behavior. Engine tests verify both paths and preservation of history/export.
+
+The notification plugins are pinned to 2.4.0 in both manifests because the awaited
+native command uses the verified command payload from that version. Frozen-lockfile
+frontend installation and locked Cargo tests passed. Go formatting, vet, full tests,
+capture/daemon race checks, CLI/sidecar builds, all 128 frontend tests, the production
+bundle, and three native Rust tests passed after these changes.
+
+The earlier hosted run at `958e5a1` passed Go and full desktop packaging on Linux,
+macOS, and Windows. The PR checks remain the authority for the subsequent head.
