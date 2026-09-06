@@ -2,6 +2,7 @@ package capture_test
 
 import (
 	"agentfirehose/internal/adapters/claudecode"
+	"agentfirehose/internal/adapters/opencode"
 	"context"
 	"os"
 	"path/filepath"
@@ -168,12 +169,13 @@ func TestAttentionCoalescesNativeRequestAndWarnsWithoutSession(t *testing.T) {
 	if _, err := e.Admit(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}
+	episode := e.Attention().Sessions[0].Pending.EpisodeID
 	ev.ID = "r2"
 	ev.Time = ev.Time.Add(time.Second)
 	if _, err := e.Admit(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}
-	if s := e.Attention().Sessions[0]; s.Pending.EventID != "r1" {
+	if s := e.Attention().Sessions[0]; s.Pending.EpisodeID != episode || s.Pending.EventID != "r2" {
 		t.Fatalf("repeat native request became new episode: %+v", s)
 	}
 	ev.ID = "w"
@@ -218,4 +220,89 @@ func TestAttentionPreservesSourceClockAndMinimalPrivacyUncertainty(t *testing.T)
 	if e.Attention().Sessions[0].Last.SourceTime.IsZero() {
 		t.Fatal("caller changed source clock")
 	}
+}
+
+func TestAttentionOldNativeMessageCannotResolveCurrentRequest(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "adapters", "opencode", "testdata", "message_updated_assistant_completed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := opencode.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := inboxEngine(t, t.TempDir())
+	request := event.Event{ID: "request", Source: "opencode", SessionID: old.SessionID, Category: event.CategoryPermission, Name: "permission.updated", Time: old.Time.Add(-time.Second)}
+	if _, err := e.Admit(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Admit(context.Background(), *old); err != nil {
+		t.Fatal(err)
+	}
+	if e.Attention().Sessions[0].Pending == nil {
+		t.Fatal("replayed old message resolved a newer request")
+	}
+}
+
+func TestAttentionNativeEpisodeAndObservationsConvergeOnRebuild(t *testing.T) {
+	dir := t.TempDir()
+	e := inboxEngine(t, dir)
+	later := event.Event{ID: "r2", Source: "codex", SessionID: "s", Category: event.CategoryPermission, Name: "PermissionRequest", CallID: "call", Time: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)}
+	if _, err := e.Admit(context.Background(), later); err != nil {
+		t.Fatal(err)
+	}
+	before := e.Attention().Sessions[0]
+	earlier := later
+	earlier.ID = "r1"
+	earlier.Time = earlier.Time.Add(-24 * time.Hour)
+	recorded, err := e.Admit(context.Background(), earlier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := e.Attention().Sessions[0]
+	if after.Pending.EpisodeID != before.Pending.EpisodeID {
+		t.Fatal("late duplicate changed episode")
+	}
+	if !after.LastObservedAt.Equal(*recorded.CaptureTime) {
+		t.Fatal("late capture did not update last observation")
+	}
+	rebuilt := inboxEngine(t, dir).Attention()
+	if !reflect.DeepEqual(e.Attention(), rebuilt) {
+		t.Fatalf("inbox changed on rebuild: before=%+v after=%+v", e.Attention(), rebuilt)
+	}
+}
+
+func TestAttentionExposesUnrecordedSpoolGapsOnStartupAndLive(t *testing.T) {
+	dir := t.TempDir()
+	day := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".ndjson")
+	if err := os.WriteFile(day, []byte("broken record\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e := inboxEngine(t, dir)
+	if len(e.Attention().Gaps) == 0 {
+		t.Fatal("startup hid unreadable history")
+	}
+	initialGap := e.Attention().Gaps[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	f, err := os.OpenFile(day, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.WriteString("another broken record\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		gaps := e.Attention().Gaps
+		if len(gaps) > 0 && gaps[0].Time.After(initialGap.Time) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("live spool gap was not exposed")
 }

@@ -556,6 +556,9 @@ func TestEmitEndpointAntigravityUsesAdditiveEventParameter(t *testing.T) {
 func TestAttentionAPIAndExactEvidence(t *testing.T) {
 	cfg := testConfig(t)
 	seedSessions(t, cfg.SpoolDir)
+	if _, err := capturehistory.NewAdmitter(cfg.SpoolDir).Append(event.Event{ID: "stream", Source: "codex", SessionID: "s2", Time: time.Now().UTC(), Category: event.CategoryPermission, Name: "PermissionRequest"}); err != nil {
+		t.Fatal(err)
+	}
 	ts := testServer(t, cfg)
 	resp, err := http.Get(ts.URL + "/attention")
 	if err != nil {
@@ -577,7 +580,7 @@ func TestAttentionAPIAndExactEvidence(t *testing.T) {
 	if len(snapshot.Sessions) != 2 || snapshot.Warnings == nil {
 		t.Fatalf("bad snapshot: %+v", snapshot)
 	}
-	evidence, err := http.Get(ts.URL + "/events/a2")
+	evidence, err := http.Get(ts.URL + "/attention/events/stream")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,10 +589,10 @@ func TestAttentionAPIAndExactEvidence(t *testing.T) {
 	if err := json.NewDecoder(evidence.Body).Decode(&ev); err != nil {
 		t.Fatal(err)
 	}
-	if ev.ID != "a2" || ev.Name != "" || ev.SessionID != "s1" {
+	if ev.ID != "stream" || ev.SessionID != "s2" {
 		t.Fatalf("wrong evidence: %+v", ev)
 	}
-	missing, err := http.Get(ts.URL + "/events/absent")
+	missing, err := http.Get(ts.URL + "/attention/events/absent")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -105,7 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/logs", s.handleOTLPLogs)
 	mux.HandleFunc("POST /v1/metrics", s.handleOTLPMetrics)
 	mux.HandleFunc("GET /attention", s.handleAttention)
-	mux.HandleFunc("GET /events/{id}", s.handleEventByID)
+	mux.HandleFunc("GET /attention/events/{id}", s.handleEventByID)
 	mux.HandleFunc("GET /sessions", s.handleSessions)
 	mux.HandleFunc("GET /sessions/{id}", s.handleSessionByID)
 	mux.HandleFunc("GET /traces/{id}", s.handleTraceByID)

@@ -10,6 +10,9 @@ an observation; “No later resolution captured” is a derived conclusion, not 
 that the agent is currently blocked. Per-session timestamps, stale labels and the
 capture setup link explain that distinction. Warning cards show the latest recorded
 warning per source/name, with up to 20 displayed; their recovery status is unknown.
+Unreadable or oversized spool records appear as capture gaps, including on restart.
+These diagnostics are inspectable but clearly labeled as unrecorded; they have no
+invented captured event ID.
 
 ## Signals
 
@@ -23,10 +26,12 @@ warning per source/name, with up to 20 displayed; their recovery status is unkno
 | Subagent completion, metadata, ordinary tool errors, Codex stream errors or cancellations | No interruption |
 | Unrecognized or privacy-redacted permission notifications | Passive uncertainty explanation |
 
-A repeated request with the same native request/call ID keeps its episode ID.
+A repeated request with the same native request/call ID keeps a derived episode
+ID independent of arrival order; its evidence link follows the latest observation.
 Without a native correlation ID, distinct captured event IDs are separate episodes.
-Exact event-ID replay never duplicates state. Older event timestamps cannot reopen
-a resolved episode. Snapshot data is rebuilt from the canonical spool on startup.
+Exact event-ID replay never duplicates state. Native source timestamps govern activity order when present, with observation
+time and stable ID as deterministic tie breakers. Older activity cannot reopen
+or resolve a newer episode. Last observation time is tracked separately. Snapshot data is rebuilt from the canonical spool on startup.
 Older `/sessions` fields and stream-only state transitions retain their existing
 semantics; `/attention` provides the more conservative evidence-based view.
 
@@ -54,11 +59,11 @@ an agent's native UI are not part of this increment.
 
 ## API and validation
 
-`GET /attention` returns `{sessions, warnings}` with `Cache-Control: no-store`.
+`GET /attention` returns `{sessions, warnings, gaps}` with `Cache-Control: no-store`.
 Session records include source, ID, agent, privacy-processed workspace identity,
 event count, derived state, last evidence, optional pending evidence and uncertainty.
 Evidence includes event ID, source, kind, summary, primary/source time and observation
-time. `GET /events/{id}` returns the exact captured envelope or 404 if unavailable.
+time. `GET /attention/events/{id}` returns the exact captured envelope or 404 if unavailable.
 Both endpoints inherit the existing loopback and browser-origin policy.
 
 Engine/API tests cover rebuild, deduplication, source isolation, native request

@@ -6,7 +6,6 @@
 package projection
 
 import (
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -60,6 +59,7 @@ type Projection struct {
 	seen     map[string]string
 	inbox    map[inboxKey]*InboxSession
 	warnings map[inboxKey]Evidence
+	gap      *CaptureGap
 }
 
 type sessionEntry struct {
@@ -94,11 +94,14 @@ func New() *Projection {
 // missing directory yields an empty Projection; unparseable lines are skipped by
 // the spool reader.
 func Build(dir string) (*Projection, error) {
-	evs, err := spool.ReadLastN(dir, math.MaxInt)
+	evs, gaps, err := spool.ReadForProjection(dir)
 	if err != nil {
 		return nil, err
 	}
 	ix := New()
+	if gaps {
+		ix.gap = &CaptureGap{Source: "firehose", Time: time.Now().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
+	}
 	for _, ev := range evs {
 		ix.Apply(ev)
 	}

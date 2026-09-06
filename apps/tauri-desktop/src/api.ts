@@ -158,6 +158,7 @@ export async function exportNDJSON(): Promise<Blob> {
 }
 
 export interface AttentionEvidence {
+ episode_id?:string;
  source_time?:string;
   event_id: string;
   source: string;
@@ -168,6 +169,7 @@ export interface AttentionEvidence {
 }
 
 export interface AttentionSession {
+ last_observed_at?:string;
   id: string;
   source: string;
   agent?: string;
@@ -183,9 +185,10 @@ export interface AttentionSession {
 }
 
 export interface AttentionSnapshot {
+ gaps?: Array<{source:string;time:string;summary:string}>;
   sessions: AttentionSession[];
   warnings: AttentionEvidence[];
 }
 
 export const attention = (signal?:AbortSignal) => getJSON<AttentionSnapshot>("/attention",signal);
-export const capturedEvent = (id: string) => getJSON<FirehoseEvent>(`/events/${encodeURIComponent(id)}`);
+export const capturedEvent = (id: string) => getJSON<FirehoseEvent>(`/attention/events/${encodeURIComponent(id)}`);

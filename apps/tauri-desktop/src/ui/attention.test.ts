@@ -373,3 +373,42 @@ test("the native notification command receives only the fixed private message", 
     clearMocks();
   }
 });
+
+test("native episode identity preserves snooze when its supporting event changes", async () => {
+  const first = { ...evidence("r1"), episode_id: "native-request" };
+  snapshot.sessions[0].pending = first;
+  const p = mount();
+  await p.refresh();
+  button(p.root, "Snooze 15 minutes").click();
+  snapshot.sessions[0].pending = { ...first, event_id: "updated-evidence" };
+  await p.refresh();
+  expect(p.strip.textContent).toContain("1 snoozed");
+});
+
+test("unrecorded capture gaps are inspectable and show workspace identity separately", async () => {
+  const selected = vi.fn();
+  Object.assign(snapshot, {
+    gaps: [
+      {
+        source: "firehose",
+        time: new Date(now).toISOString(),
+        summary: "Unreadable spool line",
+      },
+    ],
+  });
+  snapshot.sessions[0].repo = "app";
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  expect(p.root.textContent).toContain("/work/app");
+  expect(p.strip.textContent).toContain("1 capture gap");
+  button(p.root, "Inspect capture gap").click();
+  expect(selected).toHaveBeenCalledWith(
+    expect.objectContaining({
+      name: "capture.gap",
+      summary: expect.stringContaining("not recorded"),
+    }),
+  );
+  expect(fetcher.mock.calls.some(([url]) => url.includes("undefined"))).toBe(
+    false,
+  );
+});

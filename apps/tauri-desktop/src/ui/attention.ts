@@ -1,5 +1,6 @@
 import { attention, capturedEvent } from "../api";
 import type {
+  AttentionEvidence,
   AttentionSnapshot,
   AttentionSession,
   FirehoseEvent,
@@ -60,7 +61,11 @@ export function createAttention(options: AttentionOptions) {
     }
   });
   const episodeKey = (s: AttentionSession) =>
-    JSON.stringify([s.source, s.id, s.pending?.event_id]);
+    JSON.stringify([
+      s.source,
+      s.id,
+      s.pending?.episode_id ?? s.pending?.event_id,
+    ]);
   const strip = el("section", {
     class: "attention-strip",
     "aria-label": "Attention status",
@@ -77,6 +82,8 @@ export function createAttention(options: AttentionOptions) {
   });
   const source = el("select", { "aria-label": "Source" });
   const workspace = el("select", { "aria-label": "Workspace" });
+  const eventTime = (ev: AttentionEvidence) =>
+    Date.parse(ev.source_time ?? ev.time);
   const where = (s: AttentionSession) => s.worktree_id || s.cwd || s.repo || "";
   working.addEventListener("click", () => {
     history = false;
@@ -171,6 +178,11 @@ export function createAttention(options: AttentionOptions) {
       ),
       el(
         "p",
+        { class: "dim" },
+        `Worktree: ${workspaceLabel(undefined, s.worktree_id || s.cwd) || "unknown"}`,
+      ),
+      el(
+        "p",
         { class: "attention-kind" },
         s.pending
           ? s.pending.kind === "request"
@@ -182,12 +194,12 @@ export function createAttention(options: AttentionOptions) {
       el(
         "p",
         { class: "dim" },
-        `${formatAge(Math.max(0, Date.now() - Date.parse(evidence.time)))} ago · ${s.pending ? "No later resolution captured" : s.state}`,
+        `${formatAge(Math.max(0, Date.now() - eventTime(evidence)))} ago · ${s.pending ? "No later resolution captured" : s.state}`,
       ),
       el(
         "p",
         { class: "dim" },
-        `${!Number.isFinite(Date.parse(s.last.time)) || Date.now() - Date.parse(s.last.time) > 30 * 60_000 ? "Stale observation · current state unknown" : "Last observed"} · ${formatAge(Math.max(0, Date.now() - Date.parse(s.last.observed_at)))} ago`,
+        `${!Number.isFinite(eventTime(s.last)) || Date.now() - eventTime(s.last) > 30 * 60_000 ? "Stale observation · current state unknown" : "Last observed"} · ${formatAge(Math.max(0, Date.now() - Date.parse(s.last_observed_at ?? s.last.observed_at)))} ago`,
       ),
       s.uncertainty ? el("p", { class: "dim" }, s.uncertainty) : null,
       inspectButton,
@@ -226,7 +238,7 @@ export function createAttention(options: AttentionOptions) {
       el(
         "span",
         { class: "dim" },
-        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}${snapshot.warnings.length} capture warning(s) · Coverage depends on captured observations`,
+        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}${snapshot.warnings.length} capture warning(s) · ${snapshot.gaps?.length ?? 0} capture gap(s) · Coverage depends on captured observations`,
       ),
       doctor,
     );
@@ -265,7 +277,7 @@ export function createAttention(options: AttentionOptions) {
           (history ||
             s.pending ||
             (s.state !== "done" &&
-              Date.now() - Date.parse(s.last.time) < 30 * 60_000)) &&
+              Date.now() - eventTime(s.last) < 30 * 60_000)) &&
           (!source.value || source.value === s.source) &&
           (!workspace.value || workspace.value === where(s)) &&
           [
@@ -284,10 +296,42 @@ export function createAttention(options: AttentionOptions) {
       .sort(
         (a, b) =>
           rank(a) - rank(b) ||
-          Date.parse(b.last.time) - Date.parse(a.last.time) ||
+          eventTime(b.last) - eventTime(a.last) ||
           a.id.localeCompare(b.id),
       );
     for (const s of all) rows.append(row(s));
+    for (const gap of snapshot.gaps ?? []) {
+      const inspectGap = el(
+        "button",
+        { "data-key": `gap:${gap.source}` },
+        "Inspect capture gap",
+      );
+      inspectGap.addEventListener("click", () =>
+        options.onSelect({
+          id: "",
+          source: gap.source,
+          time: gap.time,
+          category: "meta",
+          name: "capture.gap",
+          severity: "warn",
+          summary: "Capture warning — not recorded in history",
+          payload: { message: gap.summary },
+        }),
+      );
+      rows.append(
+        el(
+          "article",
+          { class: "capture-warning" },
+          el("p", {}, gap.summary),
+          el(
+            "p",
+            { class: "dim" },
+            "Unreadable history · this diagnostic is not a captured event.",
+          ),
+          inspectGap,
+        ),
+      );
+    }
     for (const warning of snapshot.warnings.slice(0, 20)) {
       const inspectWarning = el(
         "button",
@@ -340,7 +384,7 @@ export function createAttention(options: AttentionOptions) {
         !prefs.snoozed(key) &&
         snapshot.sessions.some((v) => v.pending && episodeKey(v) === key);
       if (!s.pending || !current()) continue;
-      const age = Date.now() - Date.parse(s.pending.time);
+      const age = Date.now() - eventTime(s.pending);
       if (!Number.isFinite(age) || age < 0 || age > 24 * 3600_000) {
         prefs.markNotified([key]);
         continue;

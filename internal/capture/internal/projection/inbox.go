@@ -1,6 +1,9 @@
 package projection
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"time"
 
@@ -9,6 +12,7 @@ import (
 
 // Evidence identifies a captured observation, never a synthetic state frame.
 type Evidence struct {
+	EpisodeID  string     `json:"episode_id,omitempty"`
 	SourceTime *time.Time `json:"source_time,omitempty"`
 	Source     string     `json:"source"`
 	EventID    string     `json:"event_id"`
@@ -21,23 +25,33 @@ type Evidence struct {
 // InboxSession is scoped by both source and native session ID. The older
 // session projection and its frozen attention semantics remain independent.
 type InboxSession struct {
-	stateTime   time.Time
-	requestKey  string
-	ID          string    `json:"id"`
-	Source      string    `json:"source"`
-	Agent       string    `json:"agent,omitempty"`
-	Repo        string    `json:"repo,omitempty"`
-	CWD         string    `json:"cwd,omitempty"`
-	RepoID      string    `json:"repo_id,omitempty"`
-	WorktreeID  string    `json:"worktree_id,omitempty"`
-	Events      int       `json:"events"`
-	State       string    `json:"state"`
-	Last        Evidence  `json:"last"`
-	Pending     *Evidence `json:"pending,omitempty"`
-	Uncertainty string    `json:"uncertainty,omitempty"`
+	signal         Evidence
+	uncertain      Evidence
+	identity       [5]Evidence
+	LastObservedAt time.Time `json:"last_observed_at"`
+	ID             string    `json:"id"`
+	Source         string    `json:"source"`
+	Agent          string    `json:"agent,omitempty"`
+	Repo           string    `json:"repo,omitempty"`
+	CWD            string    `json:"cwd,omitempty"`
+	RepoID         string    `json:"repo_id,omitempty"`
+	WorktreeID     string    `json:"worktree_id,omitempty"`
+	Events         int       `json:"events"`
+	State          string    `json:"state"`
+	Last           Evidence  `json:"last"`
+	Pending        *Evidence `json:"pending,omitempty"`
+	Uncertainty    string    `json:"uncertainty,omitempty"`
+}
+
+// CaptureGap describes an unreadable record, with no invented captured ID.
+type CaptureGap struct {
+	Source  string    `json:"source"`
+	Time    time.Time `json:"time"`
+	Summary string    `json:"summary"`
 }
 
 type InboxSnapshot struct {
+	Gaps     []CaptureGap   `json:"gaps"`
 	Sessions []InboxSession `json:"sessions"`
 	Warnings []Evidence     `json:"warnings"`
 }
@@ -54,7 +68,9 @@ func capturedEvidence(ev event.Event, kind string) Evidence {
 
 // applyInbox runs under the Projection write lock after exact-ID deduplication.
 func (ix *Projection) applyInbox(ev event.Event) {
-	if ev.Category == event.CategoryMeta && ev.Severity == event.SeverityWarn && ev.Name != "parse-error" {
+	if ev.Source == "firehose" && ev.Name == "parse-error" && ev.Category == event.CategoryMeta {
+		ix.gap = &CaptureGap{Source: ev.Source, Time: ev.Time, Summary: ev.Summary}
+	} else if ev.Category == event.CategoryMeta && ev.Severity == event.SeverityWarn {
 		key := inboxKey{ev.Source, ev.Name}
 		if old, ok := ix.warnings[key]; !ok || !ev.Time.Before(old.Time) {
 			ix.warnings[key] = capturedEvidence(ev, "capture_warning")
@@ -70,61 +86,91 @@ func (ix *Projection) applyInbox(ev event.Event) {
 		ix.inbox[key] = s
 	}
 	s.Events++
-	if !ev.Time.Before(s.Last.Time) {
-		s.Last = capturedEvidence(ev, "activity")
-		if ev.Agent != "" {
-			s.Agent = ev.Agent
-		}
-		if ev.Repo != "" {
-			s.Repo = ev.Repo
-		}
-		if ev.CWD != "" {
-			s.CWD = ev.CWD
-		}
-		if ev.RepoID != "" {
-			s.RepoID = ev.RepoID
-		}
-		if ev.WorktreeID != "" {
-			s.WorktreeID = ev.WorktreeID
-		}
+	observed := capturedEvidence(ev, "activity")
+	if observed.ObservedAt.After(s.LastObservedAt) {
+		s.LastObservedAt = observed.ObservedAt
 	}
-	if ev.Time.Before(s.stateTime) {
-		return
+	if newerEvidence(observed, s.Last) {
+		s.Last = observed
+	}
+	fields := []struct {
+		value  string
+		target *string
+	}{
+		{ev.Agent, &s.Agent}, {ev.Repo, &s.Repo}, {ev.CWD, &s.CWD}, {ev.RepoID, &s.RepoID}, {ev.WorktreeID, &s.WorktreeID},
+	}
+	for i, f := range fields {
+		if f.value != "" && newerEvidence(observed, s.identity[i]) {
+			*f.target = f.value
+			s.identity[i] = observed
+		}
 	}
 	kind := inboxSignal(ev)
-	switch kind {
-	case "request", "failure":
-		requestKey := ev.RequestID
-		if requestKey == "" {
-			requestKey = ev.CallID
+	if kind == "uncertain" {
+		if newerEvidence(observed, s.uncertain) {
+			s.uncertain = observed
 		}
-		if kind != "request" || s.Pending == nil || s.Pending.Kind != kind || requestKey == "" || requestKey != s.requestKey {
-			p := capturedEvidence(ev, kind)
-			s.Pending = &p
-		}
-		s.requestKey = requestKey
-		s.State = "needs_input"
-		if kind == "failure" {
-			s.State = "failed"
-		}
-		s.Uncertainty = ""
-		s.stateTime = ev.Time
-	case "done", "working":
+	} else if kind != "" && newerEvidence(observed, s.signal) {
+		s.signal = observed
 		s.Pending = nil
 		s.State = kind
-		s.Uncertainty = ""
-		s.stateTime = ev.Time
-	case "uncertain":
+		if kind == "request" || kind == "failure" {
+			pending := capturedEvidence(ev, kind)
+			pending.EpisodeID = episodeID(ev, kind)
+			s.Pending = &pending
+			s.State = "needs_input"
+			if kind == "failure" {
+				s.State = "failed"
+			}
+		}
+	}
+	s.Uncertainty = ""
+	if s.uncertain.EventID != "" && newerEvidence(s.uncertain, s.signal) {
 		s.Uncertainty = "Notification captured; whether input is required is unknown."
 	}
+}
 
+// Use native chronology when supplied. Observation time and stable ID break
+// ties deterministically, so live application and day-sorted rebuild converge.
+func newerEvidence(a, b Evidence) bool {
+	at, bt := a.Time, b.Time
+	if a.SourceTime != nil {
+		at = *a.SourceTime
+	}
+	if b.SourceTime != nil {
+		bt = *b.SourceTime
+	}
+	if !at.Equal(bt) {
+		return at.After(bt)
+	}
+	if !a.ObservedAt.Equal(b.ObservedAt) {
+		return a.ObservedAt.After(b.ObservedAt)
+	}
+	return a.EventID > b.EventID
+}
+
+func episodeID(ev event.Event, kind string) string {
+	scope, key := "event", ev.ID
+	if kind == "request" {
+		if ev.RequestID != "" {
+			scope, key = "request", ev.RequestID
+		} else if ev.CallID != "" {
+			scope, key = "call", ev.CallID
+		}
+	}
+	encoded, _ := json.Marshal([]string{ev.Source, ev.SessionID, kind, scope, key})
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 // Inbox returns detached snapshots so callers cannot mutate the Projection.
 func (ix *Projection) Inbox() InboxSnapshot {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	out := InboxSnapshot{Sessions: make([]InboxSession, 0, len(ix.inbox)), Warnings: []Evidence{}}
+	out := InboxSnapshot{Gaps: []CaptureGap{}, Sessions: make([]InboxSession, 0, len(ix.inbox)), Warnings: []Evidence{}}
+	if ix.gap != nil {
+		out.Gaps = append(out.Gaps, *ix.gap)
+	}
 	for _, w := range ix.warnings {
 		out.Warnings = append(out.Warnings, copyEvidence(w))
 	}
@@ -154,7 +200,7 @@ func (ix *Projection) Inbox() InboxSnapshot {
 	return out
 }
 
-// Only verified native signal families earn an interruption. Privacy-redacted
+// Only explicitly mapped native signal families earn an interruption. Privacy-redacted
 // or unfamiliar notifications remain visible without asserting a blocking state.
 func inboxSignal(ev event.Event) string {
 	known := ev.Source == "codex" || ev.Source == "claude-code" || ev.Source == "opencode"
