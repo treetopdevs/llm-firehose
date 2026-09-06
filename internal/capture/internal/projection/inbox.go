@@ -71,7 +71,9 @@ func (ix *Projection) applyInbox(ev event.Event) {
 	// Legacy history may lack IDs. Keep existing history/export semantics, but
 	// never turn unaddressable observations into attention or resolution evidence.
 	if ev.ID == "" {
-		ix.gap = &CaptureGap{Source: ev.Source, Time: time.Now().UTC(), Summary: "Some legacy spool records lack stable event IDs and cannot support attention evidence."}
+		if ix.gap == nil || ev.Time.After(ix.gap.Time) || ev.Time.Equal(ix.gap.Time) && ev.Source > ix.gap.Source {
+			ix.gap = &CaptureGap{Source: ev.Source, Time: ev.Time, Summary: "Some legacy spool records lack stable event IDs and cannot support attention evidence."}
+		}
 		return
 	}
 	if ev.Source == "firehose" && ev.Name == "parse-error" && ev.Category == event.CategoryMeta {

@@ -150,3 +150,19 @@ test.each(["success", "error"])("ignores stale history %s after selecting anothe
   expect(panel.root.textContent).not.toContain("stale source evidence");
   expect(panel.root.textContent).not.toContain("stale request failed");
 });
+
+
+test("ordinary aggregate session rows retain history from every source", async () => {
+  sessions.mockResolvedValue([summary({ id: "same", source: "codex", events: 2 })]);
+  sessionEvents.mockResolvedValue([
+    { ...ev("same", 1000), source: "codex", summary: "codex aggregate evidence" },
+    { ...ev("same", 0), source: "opencode", summary: "opencode aggregate evidence" },
+  ]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.refresh();
+  panel.root.querySelector<HTMLElement>(".session-item")!.click();
+  await vi.waitFor(() => {
+    expect(panel.root.textContent).toContain("codex aggregate evidence");
+    expect(panel.root.textContent).toContain("opencode aggregate evidence");
+  });
+});

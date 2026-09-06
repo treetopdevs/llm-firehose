@@ -294,10 +294,14 @@ func TestAttentionExposesUnrecordedSpoolGapsOnStartupAndLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.WriteString("another broken record\n"); err != nil {
-		t.Fatal(err)
+	_, writeErr := f.WriteString("another broken record\n")
+	closeErr := f.Close()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
-	f.Close()
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		gaps := e.Attention().Gaps
@@ -341,13 +345,18 @@ func TestAttentionKeepsLegacyIDLessRecordsOutOfEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, ev := range legacy {
-				if err := json.NewEncoder(f).Encode(ev); err != nil {
-					f.Close()
+			// Reverse chronology also exercises stable selection of the latest gap.
+			for i := len(legacy) - 1; i >= 0; i-- {
+				if err := json.NewEncoder(f).Encode(legacy[i]); err != nil {
+					if closeErr := f.Close(); closeErr != nil {
+						t.Errorf("close legacy spool: %v", closeErr)
+					}
 					t.Fatal(err)
 				}
 			}
-			f.Close()
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
 			if mode == "startup" {
 				e = inboxEngine(t, dir)
 			} else {
@@ -374,6 +383,12 @@ func TestAttentionKeepsLegacyIDLessRecordsOutOfEvidence(t *testing.T) {
 			got := e.Attention()
 			if len(got.Gaps) == 0 || len(got.Sessions) != 1 || got.Sessions[0].Pending == nil || got.Sessions[0].Pending.EventID != "verified-request" {
 				t.Fatalf("unaddressable records became attention evidence: %+v", got)
+			}
+			if !got.Gaps[0].Time.Equal(legacy[1].Time) {
+				t.Fatalf("gap did not retain latest persisted record time: %v", got.Gaps[0].Time)
+			}
+			if rebuilt := inboxEngine(t, dir).Attention(); !reflect.DeepEqual(got, rebuilt) {
+				t.Fatal("rebuilding identical history changed the attention snapshot")
 			}
 			history, err := e.Session("legacy")
 			if err != nil || len(history) != 1 || history[0].ID != "" {

@@ -45,7 +45,7 @@ implementation passed:
 - `gofmt -l .` (empty), `go vet ./...`, and `go test ./...`, in that order.
 - `go test -race ./internal/capture/... ./internal/daemon`.
 - `go build ./cmd/firehose` and `scripts/build-sidecar.sh`.
-- `pnpm -C apps/tauri-desktop test`: 128 tests across 20 files after the hosted-review follow-up.
+- `pnpm -C apps/tauri-desktop test`: 129 tests across 20 files after the hosted-review follow-up.
 - `pnpm -C apps/tauri-desktop build`: TypeScript and production bundle succeeded;
   Vite retains the existing large-chunk advisory.
 - `cargo test --manifest-path apps/tauri-desktop/src-tauri/Cargo.toml`: three Rust
@@ -86,8 +86,17 @@ All three were reproduced with failing public-boundary tests and remediated:
 The notification plugins are pinned to 2.4.0 in both manifests because the awaited
 native command uses the verified command payload from that version. Frozen-lockfile
 frontend installation and locked Cargo tests passed. Go formatting, vet, full tests,
-capture/daemon race checks, CLI/sidecar builds, all 128 frontend tests, the production
+capture/daemon race checks, CLI/sidecar builds, all 129 frontend tests, the production
 bundle, and three native Rust tests passed after these changes.
 
 The earlier hosted run at `958e5a1` passed Go and full desktop packaging on Linux,
 macOS, and Windows. The PR checks remain the authority for the subsequent head.
+
+A second hosted review at `21ed3e4` prompted a regression proving that legacy-gap
+timestamps retain the latest persisted record time across restart and reverse
+chronology, plus explicit handling of test-file close errors. Its suggestion to
+filter ordinary Sessions rows by their source label was declined after independent
+spec review: the frozen session projection groups by native ID only and retains
+the first source label. Filtering that aggregate would hide other-source events.
+A rendered regression preserves both sources on ordinary row clicks; Attention
+entry points continue to pass an explicit source and filter their history.

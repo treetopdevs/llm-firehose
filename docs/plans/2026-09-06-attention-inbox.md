@@ -92,6 +92,6 @@ tracks subsequent regression-tested remediation from the hosted PR review.
 See [the separate standards and spec reports](../reviews/2026-09-06-attention-inbox.md)
 for findings, resolutions, and verification limits. Final local gates passed:
 Go formatting, vet, full suite, capture/daemon race checks, CLI and sidecar builds;
-128 desktop tests and production build; three native Rust tests and doc tests.
+129 desktop tests and production build; three native Rust tests and doc tests.
 Isolated browser checks exercised evidence inspection, snooze, filtering,
 disconnect/reconnect, and resolution without using personal capture history.
