@@ -306,3 +306,21 @@ func TestAttentionExposesUnrecordedSpoolGapsOnStartupAndLive(t *testing.T) {
 	}
 	t.Fatal("live spool gap was not exposed")
 }
+
+func TestAttentionReportsInvalidEnvelopesAfterRestart(t *testing.T) {
+	for _, record := range []string{`{}`, `null`, `{"id":"invalid","source":"codex","session_id":"s","time":"2026-09-06T12:00:00Z","category":"unknown"}`} {
+		t.Run(record, func(t *testing.T) {
+			dir := t.TempDir()
+			day := filepath.Join(dir, "2026-09-06.ndjson")
+			if err := os.WriteFile(day, []byte(record+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for restart := 0; restart < 2; restart++ {
+				got := inboxEngine(t, dir).Attention()
+				if len(got.Gaps) == 0 || len(got.Sessions) != 0 {
+					t.Fatalf("restart %d hid invalid history or projected invalid evidence: %+v", restart, got)
+				}
+			}
+		})
+	}
+}

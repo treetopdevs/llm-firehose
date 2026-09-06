@@ -148,7 +148,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `POST /v1/logs` | opt-in loopback OTLP/HTTP JSON logs; `{}` on accepted batch |
 | `POST /v1/metrics` | opt-in loopback OTLP/HTTP JSON metrics; `{}` on accepted batch |
 | `GET /attention` | source + native-session scoped attention snapshot `{sessions, warnings, gaps}`; pending captured evidence, uncertainty and last observations; see [attention semantics](attention.md) |
-| `GET /attention/events/{id}` | exact captured envelope by stable ID, or 404; additive evidence lookup |
+| `GET /attention/event?id={id}` | exact captured envelope by stable ID, or 404; additive evidence lookup |
 | `GET /sessions` | session summaries (derived Projection), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
 | `GET /sessions/{id}` | all events for one session, oldest first |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |

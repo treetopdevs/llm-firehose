@@ -32,7 +32,7 @@ const fetcher = vi.fn(
         url.endsWith("/attention")
           ? snapshot
           : {
-              id: "r1",
+              id: new URL(url).searchParams.get("id") ?? "r1",
               source: "codex",
               category: "permission",
               time: new Date(now).toISOString(),
@@ -82,24 +82,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("shows unresolved requests first and opens the exact captured evidence", async () => {
+test.each(["r1", ".", "..", "a/b?&= %+"])("opens exact captured evidence for ID %s", async (id) => {
+  snapshot.sessions[0].pending = evidence(id);
   const selected = vi.fn();
   const panel = mount({ onSelect: selected });
   await panel.refresh();
   expect(panel.strip.textContent).toContain("1 needs attention");
   expect(panel.root.querySelector(".attention-row")?.textContent).toContain(
-    "reason r1",
+    `reason ${id}`,
   );
   expect(panel.root.textContent).toContain("No later resolution captured");
   button(panel.root, "Inspect evidence").click();
   await vi.waitFor(() =>
     expect(selected).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "r1", summary: "captured request" }),
+      expect.objectContaining({ id, summary: "captured request" }),
     ),
   );
-  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/events/r1"))).toBe(
-    true,
-  );
+  expect(fetcher.mock.calls.some(([url]) => {
+    const parsed = new URL(url);
+    return parsed.pathname === "/attention/event" && parsed.searchParams.get("id") === id;
+  })).toBe(true);
 });
 
 test("snooze survives a desktop restart, can be cleared, and never hides a new episode", async () => {

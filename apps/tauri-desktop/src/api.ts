@@ -191,4 +191,4 @@ export interface AttentionSnapshot {
 }
 
 export const attention = (signal?:AbortSignal) => getJSON<AttentionSnapshot>("/attention",signal);
-export const capturedEvent = (id: string) => getJSON<FirehoseEvent>(`/attention/events/${encodeURIComponent(id)}`);
+export const capturedEvent = (id: string) => getJSON<FirehoseEvent>(`/attention/event?id=${encodeURIComponent(id)}`);

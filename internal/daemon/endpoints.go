@@ -128,7 +128,7 @@ func (s *Server) handleAttention(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEventByID(w http.ResponseWriter, r *http.Request) {
-	ev, err := s.engine.Event(r.PathValue("id"))
+	ev, err := s.engine.Event(r.URL.Query().Get("id"))
 	if err != nil {
 		if errors.Is(err, capture.ErrNotFound) {
 			http.Error(w, "captured event unavailable", http.StatusNotFound)

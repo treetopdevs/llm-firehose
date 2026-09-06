@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -556,8 +557,11 @@ func TestEmitEndpointAntigravityUsesAdditiveEventParameter(t *testing.T) {
 func TestAttentionAPIAndExactEvidence(t *testing.T) {
 	cfg := testConfig(t)
 	seedSessions(t, cfg.SpoolDir)
-	if _, err := capturehistory.NewAdmitter(cfg.SpoolDir).Append(event.Event{ID: "stream", Source: "codex", SessionID: "s2", Time: time.Now().UTC(), Category: event.CategoryPermission, Name: "PermissionRequest"}); err != nil {
-		t.Fatal(err)
+	ids := []string{"stream", ".", "..", "a/b?&= %+"}
+	for _, id := range ids {
+		if _, err := capturehistory.NewAdmitter(cfg.SpoolDir).Append(event.Event{ID: id, Source: "codex", SessionID: "s2", Time: time.Now().UTC(), Category: event.CategoryPermission, Name: "PermissionRequest"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	ts := testServer(t, cfg)
 	resp, err := http.Get(ts.URL + "/attention")
@@ -580,19 +584,21 @@ func TestAttentionAPIAndExactEvidence(t *testing.T) {
 	if len(snapshot.Sessions) != 2 || snapshot.Warnings == nil {
 		t.Fatalf("bad snapshot: %+v", snapshot)
 	}
-	evidence, err := http.Get(ts.URL + "/attention/events/stream")
-	if err != nil {
-		t.Fatal(err)
+	for _, id := range ids {
+		evidence, err := http.Get(ts.URL + "/attention/event?id=" + url.QueryEscape(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer evidence.Body.Close()
+		var ev event.Event
+		if err := json.NewDecoder(evidence.Body).Decode(&ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.ID != id || ev.SessionID != "s2" {
+			t.Fatalf("wrong evidence: %+v", ev)
+		}
 	}
-	defer evidence.Body.Close()
-	var ev event.Event
-	if err := json.NewDecoder(evidence.Body).Decode(&ev); err != nil {
-		t.Fatal(err)
-	}
-	if ev.ID != "stream" || ev.SessionID != "s2" {
-		t.Fatalf("wrong evidence: %+v", ev)
-	}
-	missing, err := http.Get(ts.URL + "/attention/events/absent")
+	missing, err := http.Get(ts.URL + "/attention/event?id=absent")
 	if err != nil {
 		t.Fatal(err)
 	}

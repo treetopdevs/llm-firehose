@@ -10,7 +10,7 @@ an observation; “No later resolution captured” is a derived conclusion, not 
 that the agent is currently blocked. Per-session timestamps, stale labels and the
 capture setup link explain that distinction. Warning cards show the latest recorded
 warning per source/name, with up to 20 displayed; their recovery status is unknown.
-Unreadable or oversized spool records appear as capture gaps, including on restart.
+Unreadable, invalid-envelope or oversized spool records appear as capture gaps, including on restart.
 These diagnostics are inspectable but clearly labeled as unrecorded; they have no
 invented captured event ID.
 
@@ -63,7 +63,7 @@ an agent's native UI are not part of this increment.
 Session records include source, ID, agent, privacy-processed workspace identity,
 event count, derived state, last evidence, optional pending evidence and uncertainty.
 Evidence includes event ID, source, kind, summary, primary/source time and observation
-time. `GET /attention/events/{id}` returns the exact captured envelope or 404 if unavailable.
+time. `GET /attention/event?id={id}` returns the exact captured envelope or 404 if unavailable.
 Both endpoints inherit the existing loopback and browser-origin policy.
 
 Engine/API tests cover rebuild, deduplication, source isolation, native request

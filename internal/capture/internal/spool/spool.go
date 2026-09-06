@@ -196,7 +196,13 @@ func ReadForProjection(dir string) ([]event.Event, bool, error) {
 		if err != nil {
 			return nil, gaps, err
 		}
-		all = append(all, evs...)
+		for _, ev := range evs {
+			if ev.Validate() != nil {
+				gaps = true
+				continue
+			}
+			all = append(all, ev)
+		}
 	}
 	return all, gaps, nil
 }
