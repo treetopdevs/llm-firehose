@@ -80,6 +80,7 @@ This feature only observes and links evidence; it never answers agent permission
 
 2026-09-06, isolated worktree `llm-firehose-attention-inbox`, commit 5841aad:
 Go formatting, vet and all Go tests passed. All 107 desktop tests passed.
-Sidecar compilation passed. Frontend production build and native Rust tests
-were started separately; completion will be recorded after their results arrive.
+CLI and sidecar compilation and the frontend production build passed. Vite reports its
+existing large-chunk advisory. Native Rust tests are still compiling; their
+completion will be recorded after the process returns.
 Test-boundary confirmation requested before feature tests, per the TDD skill.
