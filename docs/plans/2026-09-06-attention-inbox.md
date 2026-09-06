@@ -1,6 +1,6 @@
 # Attention inbox
 
-Status: implementing. Test boundaries confirmed by the user on 2026-09-06. Baseline: origin/main 5841aad (includes the shipped Altitudes views).
+Status: implemented and locally validated; independent standards and spec reviews have no remaining actionable findings. Publication and hosted CI are tracked on the PR. Test boundaries confirmed by the user on 2026-09-06. Baseline: origin/main 5841aad (includes the shipped Altitudes views).
 
 ## Outcome
 
@@ -84,3 +84,13 @@ CLI and sidecar compilation and the frontend production build passed. Vite repor
 existing large-chunk advisory. All three native Rust tests passed, including
 the desktop crate compilation and doc-test gate.
 Test boundaries confirmed before feature tests, per the TDD skill.
+
+## Completion evidence
+
+Implementation and review remediation are committed through `631970d`.
+See [the separate standards and spec reports](../reviews/2026-09-06-attention-inbox.md)
+for findings, resolutions, and verification limits. Final local gates passed:
+Go formatting, vet, full suite, capture/daemon race checks, CLI and sidecar builds;
+126 desktop tests and production build; three native Rust tests and doc tests.
+Isolated browser checks exercised evidence inspection, snooze, filtering,
+disconnect/reconnect, and resolution without using personal capture history.
