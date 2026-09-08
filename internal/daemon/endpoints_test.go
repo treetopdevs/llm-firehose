@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -550,5 +551,75 @@ func TestEmitEndpointAntigravityUsesAdditiveEventParameter(t *testing.T) {
 	missing.Body.Close()
 	if missing.StatusCode != http.StatusBadRequest {
 		t.Errorf("status without event = %d, want 400", missing.StatusCode)
+	}
+}
+
+func TestAttentionAPIAndExactEvidence(t *testing.T) {
+	cfg := testConfig(t)
+	seedSessions(t, cfg.SpoolDir)
+	ids := []string{"stream", ".", "..", "a/b?&= %+"}
+	for _, id := range ids {
+		if _, err := capturehistory.NewAdmitter(cfg.SpoolDir).Append(event.Event{ID: id, Source: "codex", SessionID: "s2", Time: time.Now().UTC(), Category: event.CategoryPermission, Name: "PermissionRequest"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := testServer(t, cfg)
+	resp, err := http.Get(ts.URL + "/attention")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("attention status: %d", resp.StatusCode)
+	}
+	var snapshot struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		}
+		Warnings []any `json:"warnings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Sessions) != 2 || snapshot.Warnings == nil {
+		t.Fatalf("bad snapshot: %+v", snapshot)
+	}
+	for _, id := range ids {
+		evidence, err := http.Get(ts.URL + "/attention/event?id=" + url.QueryEscape(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer evidence.Body.Close()
+		if evidence.Header.Get("Cache-Control") != "no-store" {
+			t.Fatal("captured evidence response can be cached")
+		}
+		var ev event.Event
+		if err := json.NewDecoder(evidence.Body).Decode(&ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.ID != id || ev.SessionID != "s2" {
+			t.Fatalf("wrong evidence: %+v", ev)
+		}
+	}
+	missing, err := http.Get(ts.URL + "/attention/event?id=absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing evidence status %d", missing.StatusCode)
+	}
+	if missing.Header.Get("Cache-Control") != "no-store" {
+		t.Fatal("missing evidence response can be cached")
+	}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/attention", nil)
+	req.Header.Set("Origin", "https://untrusted.example")
+	denied, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden {
+		t.Fatal("attention bypassed local API origin policy")
 	}
 }

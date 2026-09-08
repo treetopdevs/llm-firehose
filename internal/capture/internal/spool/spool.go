@@ -180,7 +180,34 @@ func ReadDays(dir string, days []string) ([]event.Event, error) {
 	return all, nil
 }
 
-func readFile(path string) ([]event.Event, error) {
+func readFile(path string) ([]event.Event, error) { return readFileReport(path, func() {}) }
+
+// ReadForProjection reports skipped records without changing the ordinary
+// reader/export contract. Gaps describe missing evidence, not captured events.
+func ReadForProjection(dir string) ([]event.Event, bool, error) {
+	files, err := spoolFiles(dir)
+	if err != nil {
+		return nil, false, err
+	}
+	all := []event.Event{}
+	gaps := false
+	for _, file := range files {
+		evs, err := readFileReport(file, func() { gaps = true })
+		if err != nil {
+			return nil, gaps, err
+		}
+		for _, ev := range evs {
+			if ev.Validate() != nil {
+				gaps = true
+				continue
+			}
+			all = append(all, ev)
+		}
+	}
+	return all, gaps, nil
+}
+
+func readFileReport(path string, onGap func()) ([]event.Event, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -194,6 +221,7 @@ func readFile(path string) ([]event.Event, error) {
 			break
 		}
 		if errors.Is(err, errOversizedRecord) {
+			onGap()
 			continue
 		}
 		if err != nil {
@@ -201,7 +229,8 @@ func readFile(path string) ([]event.Event, error) {
 		}
 		var ev event.Event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			continue // reader skips bad lines; the tailer surfaces them
+			onGap()
+			continue // ordinary reader semantics still skip bad lines
 		}
 		evs = append(evs, ev)
 	}

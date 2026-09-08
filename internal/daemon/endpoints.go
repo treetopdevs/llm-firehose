@@ -121,3 +121,22 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
+func (s *Server) handleAttention(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, s.engine.Attention())
+}
+
+func (s *Server) handleEventByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	ev, err := s.engine.Event(r.URL.Query().Get("id"))
+	if err != nil {
+		if errors.Is(err, capture.ErrNotFound) {
+			http.Error(w, "captured event unavailable", http.StatusNotFound)
+		} else {
+			http.Error(w, "could not read captured evidence", http.StatusInternalServerError)
+		}
+		return
+	}
+	writeJSON(w, ev)
+}

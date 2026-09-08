@@ -116,3 +116,53 @@ describe("sessions scope", () => {
     expect(panel.root.querySelector(".sessions-scope")).toBeNull();
   });
 });
+
+test("attention history can restrict a shared native session ID to its source",async()=>{
+ sessionEvents.mockResolvedValue([
+  {id:"c1",source:"codex",session_id:"same",category:"prompt",time:new Date(now).toISOString(),summary:"codex evidence"},
+  {id:"o1",source:"opencode",session_id:"same",category:"prompt",time:new Date(now).toISOString(),summary:"other evidence"},
+ ]);
+ const p=createSessions(()=>{},()=>[]);await p.openSession("same","codex");
+ expect(p.root.textContent).toContain("codex evidence");expect(p.root.textContent).not.toContain("other evidence");
+});
+
+
+test.each(["success", "error"])("ignores stale history %s after selecting another source", async (outcome) => {
+  let finish!: (events: FirehoseEvent[]) => void;
+  let fail!: (reason: Error) => void;
+  sessionEvents.mockImplementationOnce(() => new Promise<FirehoseEvent[]>((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  }));
+  sessionEvents.mockResolvedValueOnce([
+    { ...ev("same", 0), source: "opencode", summary: "current source evidence" },
+  ]);
+  const panel = createSessions(() => {}, () => []);
+  const previous = panel.openSession("same", "codex");
+  await panel.openSession("same", "opencode");
+  if (outcome === "success") {
+    finish([{ ...ev("same", 1000), source: "codex", summary: "stale source evidence" }]);
+  } else {
+    fail(new Error("stale request failed"));
+  }
+  await previous;
+  expect(panel.root.textContent).toContain("current source evidence");
+  expect(panel.root.textContent).not.toContain("stale source evidence");
+  expect(panel.root.textContent).not.toContain("stale request failed");
+});
+
+
+test("ordinary aggregate session rows retain history from every source", async () => {
+  sessions.mockResolvedValue([summary({ id: "same", source: "codex", events: 2 })]);
+  sessionEvents.mockResolvedValue([
+    { ...ev("same", 1000), source: "codex", summary: "codex aggregate evidence" },
+    { ...ev("same", 0), source: "opencode", summary: "opencode aggregate evidence" },
+  ]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.refresh();
+  panel.root.querySelector<HTMLElement>(".session-item")!.click();
+  await vi.waitFor(() => {
+    expect(panel.root.textContent).toContain("codex aggregate evidence");
+    expect(panel.root.textContent).toContain("opencode aggregate evidence");
+  });
+});

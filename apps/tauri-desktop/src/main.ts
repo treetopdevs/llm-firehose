@@ -10,6 +10,7 @@ import { createConnector } from "./connect";
 import { clear, el } from "./dom";
 import { FeedState } from "./state";
 import { renderDetail } from "./ui/detail";
+import { createAttention } from "./ui/attention";
 import { createDoctor } from "./ui/doctor";
 import { createDwell } from "./ui/dwell";
 import { createFeed } from "./ui/feed";
@@ -34,10 +35,10 @@ const showDetail = (ev: FirehoseEvent) =>
 
 const sessionsPanel = createSessions(showDetail, () => feedState.events());
 
-function openSession(id: string) {
+function openSession(id: string, source?:string) {
   sessionsPanel.setScope(null);
   show("sessions");
-  void sessionsPanel.openSession(id);
+  void sessionsPanel.openSession(id,source);
 }
 
 // Descending from a workspace cell scopes the sessions list to it.
@@ -51,11 +52,14 @@ const workspacePanel = createWorkspace(() => feedState.events(), openCell);
 const orbitPanel = createOrbit(openSession);
 const lanesPanel = createLanes(() => feedState.events(), openSession);
 
-// Dwell bars are the landing view; orbit stays as an opt-in ambient display.
+const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
+attentionPanel.setConnected(false);
+// Live is home; attention remains visible at every altitude.
 const panels = {
+  live: createFeed(feedState, showDetail),
+  attention: attentionPanel,
   dwell: dwellPanel,
   workspace: workspacePanel,
-  live: createFeed(feedState, showDetail),
   lanes: lanesPanel,
   sessions: sessionsPanel,
   files: createFiles(),
@@ -72,7 +76,7 @@ const statusText = el("span", { class: "status-text dim" }, "connecting…");
 const compatBanner = el("div", { class: "compat-banner" });
 const eventCount = el("span", { class: "event-count dim" }, "");
 
-let active: PanelName = "dwell";
+let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
@@ -97,7 +101,7 @@ for (const name of Object.keys(panels) as PanelName[]) {
 }
 
 const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, eventCount);
-app.append(compatBanner, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
+app.append(compatBanner, attentionPanel.strip, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
 
 // --- live data -------------------------------------------------------------
 
@@ -137,6 +141,7 @@ const connector = createConnector({
   clientSchemaVersion: CLIENT_SCHEMA_VERSION,
   onEvent,
   setStatus: ({ kind, text, compatReason }) => {
+    attentionPanel.setConnected(kind === "ok");
     if (compatReason) {
       compatBanner.textContent = compatReason;
       compatBanner.classList.add("visible");
@@ -157,7 +162,7 @@ void connector.connect();
 setInterval(() => {
   void connector.connect();
 }, 3000);
-show("dwell");
+show("live");
 
 if (!isOnboarded()) {
   app.append(createOnboarding(() => show("doctor")));
