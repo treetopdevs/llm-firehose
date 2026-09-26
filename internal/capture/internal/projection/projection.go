@@ -218,37 +218,54 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.openTools = 0
 		}
 
-		// Codex review finding F1: AdvanceIdle's periodic sweep is what
-		// normally carries a working session into idle, but that transition
-		// is never spooled. Live, the sweep ticks every 5s, so it always gets
-		// a chance to run between two real events and the session is already
-		// idle by the time a later event (e.g. an error, which does not
-		// itself restart the idle clock — see isActivity) arrives. A spool
-		// rebuild applies events back-to-back with no sweep interleaved, so
-		// without this, the same two events would leave the session
-		// "working" until some later sweep derives state_since from whatever
-		// event happened to update lastActivity next, rather than from the
-		// original threshold crossing — a restart-dependent answer for the
-		// same spool. Applying the same crossing TickIdle would apply, using
-		// the state exactly as it stood before this event, keeps replay and
-		// incremental projection identical regardless of ordering. Errors and
-		// other non-activity events do not restart the idle clock: they only
-		// ever land here if a crossing already occurred, and the subsequent
-		// Transition call decides on top of that honestly-idled state.
+		// Codex review finding F1 (round 3): AdvanceIdle's periodic sweep is
+		// what normally carries a working session into idle, but that
+		// transition is never spooled. Live, the sweep ticks every 5s, so it
+		// always gets a chance to run between two real events and the
+		// session is already idle by the time a later event (e.g. an error,
+		// which does not itself restart the idle clock — see isActivity)
+		// arrives. A spool rebuild applies events back-to-back with no sweep
+		// interleaved, so without this, the same two events would leave the
+		// session "working" until some later sweep derives state_since from
+		// whatever event happened to update lastActivity next, rather than
+		// from the original threshold crossing — a restart-dependent answer
+		// for the same spool. Applying the same crossing TickIdle would
+		// apply, using the state exactly as it stood before this event,
+		// keeps replay and incremental projection identical regardless of
+		// ordering. Errors and other non-activity events do not restart the
+		// idle clock: they only ever land here if a crossing already
+		// occurred, and the subsequent Transition call decides on top of
+		// that honestly-idled state.
+		originalState := priorAttention.State
 		prev := priorAttention
-		if crossed, crossedChanged := TickIdle(prev, priorLastActivity, ev.Time, priorOpenTools > 0); crossedChanged {
+		crossed, crossedChanged := TickIdle(prev, priorLastActivity, ev.Time, priorOpenTools > 0)
+		if crossedChanged {
 			prev = crossed
 			s.State = crossed.State
 			s.StateSince = crossed.Since
 			s.StateReason = crossed.Reason
 		}
 		next, changed := Transition(prev, ev)
-		if changed {
+		switch {
+		case changed:
 			s.State = next.State
 			s.StateSince = next.Since
 			s.StateReason = next.Reason
 			s.HasError = next.HasError
 			transition = newStateTransition(ev.SessionID, prev.State, next, ev.Time)
+		case crossedChanged:
+			// Codex review finding F1 (round 4): the crossing above is a
+			// real state change even when this event's own Transition makes
+			// no further change on top of it — a non-activity event (e.g. a
+			// meta message) does not restart the idle clock, so `changed` is
+			// false here even though the session just went idle. Without
+			// this, ApplyResult returned no transition at all: capture's
+			// applyProjection (internal/capture/history.go) only publishes a
+			// transition when one comes back non-nil, so a live subscriber
+			// never learned the session went idle, and no later sweep would
+			// emit one either, since it would already find the session
+			// idle. Publish the crossing itself instead.
+			transition = newStateTransition(ev.SessionID, originalState, crossed, ev.Time)
 		}
 	}
 
