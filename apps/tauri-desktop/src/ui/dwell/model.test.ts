@@ -152,6 +152,26 @@ describe("applyTransition", () => {
     expect(after[0]).toMatchObject({ state: "needs_input", state_since: firstSinceIso, state_reason: "approve Bash" });
   });
 
+  // /sessions omits state_reason when it is empty, while an older daemon's
+  // transition payload always carries reason, as "" when there is none. The
+  // rising-edge fallback must treat the two as the same reason.
+  test("keeps the prior state_since on an older-daemon error frame after a summary with no state_reason", () => {
+    const firstSinceIso = new Date(now - 600_000).toISOString();
+    const before = [summary({ id: "w", state: "working", state_since: firstSinceIso })];
+    expect(before[0].state_reason).toBeUndefined();
+    const errOnly = {
+      id: "t3",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "working", reason: "", has_error: true },
+    } as FirehoseEvent;
+    const after = applyTransition(before, errOnly);
+    expect(after[0]).toMatchObject({ state: "working", state_since: firstSinceIso, has_error: true });
+  });
+
   // Regression test for Codex review round-4 finding F2: the round-3 fix
   // (above) keeps the prior state_since whenever state and reason are
   // unchanged with no payload since at all. That is right for an error being

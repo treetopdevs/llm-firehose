@@ -81,10 +81,12 @@ export function applyTransition(summaries: SessionSummary[], ev: FirehoseEvent):
   // has_error edge tells the two apart; anything else (recovery, or
   // has_error unchanged) falls back to ev.time.
   const raisingError = hasError && !prior.has_error;
+  // /sessions omits an empty state_reason; transition payloads send "".
+  const sameReason = (reason ?? "") === (prior.state_reason ?? "");
   const since =
     typeof ev.payload?.since === "string"
       ? ev.payload.since
-      : state === prior.state && reason === prior.state_reason && raisingError
+      : state === prior.state && sameReason && raisingError
         ? prior.state_since
         : ev.time;
   const next = [...summaries];
