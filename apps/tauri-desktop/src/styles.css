@@ -225,7 +225,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .matrix-cell .spark { white-space: pre; line-height: 1; margin-right: 0.6rem; }
 .matrix-cell .glyph { display: inline-block; width: 1ch; }
 .matrix-cell .glyph.needs { color: #ff9f43; font-weight: 700; }
-.matrix-cell .err { color: var(--err); font-weight: 700; }
+.matrix-cell .err { display: inline-block; width: 1ch; color: var(--err); font-weight: 700; }
 .matrix-cell .count { color: var(--text-dim); margin-left: 0.4rem; }
 .sessions-scope { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; color: var(--text-dim); }
 .sessions-scope button { padding: 0 0.4rem; }
