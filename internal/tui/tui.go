@@ -509,6 +509,14 @@ func (m Model) noteAttention(ev event.Event) {
 		if parsed, err := time.Parse(time.RFC3339Nano, s); err == nil {
 			since = parsed
 		}
+	} else if state == prev.State && reason == prev.Reason {
+		// Version skew: a daemon old enough to predate the "since" payload
+		// key (wave 3) carries none at all. Falling back to ev.Time is right
+		// for a genuine state change, but an error-only transition — same
+		// state, same reason, only has_error flipping — publishes at the
+		// error's own arrival, not the state's start; keep the prior
+		// state_since instead of resetting a long wait's dwell clock.
+		since = prev.Since
 	}
 	// Identity (source/agent/workspace) is normally carried forward from the
 	// session's prior attention entry, seeded once by PreloadSessions or an

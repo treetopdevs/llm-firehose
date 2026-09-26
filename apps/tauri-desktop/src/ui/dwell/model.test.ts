@@ -125,4 +125,30 @@ describe("applyTransition", () => {
     const after = applyTransition(before, ev);
     expect(after[0].state_since).toBe(ev.time);
   });
+
+  // Regression test for Codex review finding F3: a daemon old enough to
+  // predate the "since" payload key (wave 3) carries none at all, so
+  // applyTransition falls back to the event's own time. That fallback is
+  // correct for a genuine state change (the test above), but wrong for an
+  // error-only transition -- same state, same reason, only has_error
+  // flipping -- where ev.time is the error's own arrival, not the state's
+  // start. When since is absent and state and reason are unchanged from the
+  // prior summary, the prior state_since must be kept.
+  test("keeps the prior state_since for an error-only transition from an older daemon with no since", () => {
+    const firstSinceIso = new Date(now - 600_000).toISOString();
+    const before = [
+      summary({ id: "w", state: "needs_input", state_since: firstSinceIso, state_reason: "approve Bash" }),
+    ];
+    const errOnly = {
+      id: "t2",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "needs_input", reason: "approve Bash", has_error: true },
+    } as FirehoseEvent;
+    const after = applyTransition(before, errOnly);
+    expect(after[0]).toMatchObject({ state: "needs_input", state_since: firstSinceIso, state_reason: "approve Bash" });
+  });
 });

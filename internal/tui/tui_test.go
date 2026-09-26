@@ -192,6 +192,51 @@ func TestErrorOnlyTransitionDoesNotResetDwellSince(t *testing.T) {
 	}
 }
 
+// TestErrorOnlyTransitionFromOlderDaemonDoesNotResetDwellSince is the
+// regression test for Codex review finding F3: a transition from a daemon
+// old enough to predate the "since" payload key (wave 3) carries no since at
+// all, so noteAttention falls back to the event's own Time. That fallback is
+// correct for a genuine state change (the existing fallback coverage, via
+// stateTransition() in other tests, only ever exercises that case) but wrong
+// for an error-only transition — same state, same reason, only has_error
+// flips — where ev.Time is the error's own arrival, not the state's start.
+// When since is absent and state and reason are unchanged from the prior
+// entry, the prior state_since must be kept.
+func TestErrorOnlyTransitionFromOlderDaemonDoesNotResetDwellSince(t *testing.T) {
+	m := newTestModel()
+	firstSince := t0.Add(time.Second)
+	first := event.Event{
+		ID: "transition-1", Time: firstSince, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateNeedsInput,
+		Payload: map[string]any{
+			"state": stateNeedsInput, "reason": "approve Bash", "has_error": false,
+			// No "since" key at all: an older daemon that predates it.
+		},
+	}
+	m = push(m, first)
+	if got := m.attention["s1"].Since; !got.Equal(firstSince) {
+		t.Fatalf("setup: want Since %v, got %v", firstSince, got)
+	}
+
+	errAt := firstSince.Add(10 * time.Minute)
+	errOnly := event.Event{
+		ID: "transition-2", Time: errAt, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateNeedsInput,
+		Payload: map[string]any{
+			"state": stateNeedsInput, "reason": "approve Bash", "has_error": true,
+			// Still no "since" key.
+		},
+	}
+	m = push(m, errOnly)
+	got := m.attention["s1"]
+	if !got.Since.Equal(firstSince) {
+		t.Errorf("error-only transition from an older daemon reset Since: want %v, got %v", firstSince, got.Since)
+	}
+	if !got.HasError {
+		t.Errorf("has_error should now be true, got %+v", got)
+	}
+}
+
 // TestReconciledTransitionRestoresIdentityForWorkspaceCell is the regression
 // test for Codex review finding F3: a session recovered purely from a
 // reconciliation snapshot (its own events long scrolled out of the bounded

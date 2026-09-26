@@ -63,13 +63,23 @@ export function applyTransition(summaries: SessionSummary[], ev: FirehoseEvent):
   const idx = summaries.findIndex((s) => s.id === ev.session_id);
   if (idx < 0) return summaries;
   const reason = typeof ev.payload?.reason === "string" ? ev.payload.reason : undefined;
+  const prior = summaries[idx];
   // The payload's "since" is the state's own honest start time, kept
   // separate from the event's own "time" (when the transition was
   // published). They coincide for an ordinary state change, but not for a
   // transition that only flips has_error — falling back to ev.time there
-  // would restart the dwell clock on an error that arrives mid-wait. Older
-  // backends that don't send "since" still work via the ev.time fallback.
-  const since = typeof ev.payload?.since === "string" ? ev.payload.since : ev.time;
+  // would restart the dwell clock on an error that arrives mid-wait. A
+  // daemon old enough to predate "since" (wave 3) sends neither field, so
+  // when it's absent and state and reason are unchanged from the prior
+  // summary, this is that same error-only case in disguise: keep the prior
+  // state_since instead of resetting the dwell clock. Only a genuine state
+  // change falls back to ev.time.
+  const since =
+    typeof ev.payload?.since === "string"
+      ? ev.payload.since
+      : state === prior.state && reason === prior.state_reason
+        ? prior.state_since
+        : ev.time;
   const next = [...summaries];
   next[idx] = { ...next[idx], state, state_since: since, state_reason: reason };
   return next;
