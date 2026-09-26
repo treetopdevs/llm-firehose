@@ -185,12 +185,40 @@ func TestPreloadShowsHistory(t *testing.T) {
 
 func TestPreloadSessionsShowsProjectedAttention(t *testing.T) {
 	m := newTestModel()
+	m.now = func() time.Time { return t0.Add(time.Minute) }
 	m = m.PreloadSessions([]SessionAttention{{
 		ID: "waiting", State: "needs_input", Since: t0, Reason: "approve Bash",
 	}})
 	view := m.View()
 	if !strings.Contains(view, "NEEDS YOU · 1") || !strings.Contains(view, "approve Bash") {
 		t.Fatalf("projected attention missing:\n%s", view)
+	}
+}
+
+func TestNeedsYouCountIgnoresStaleSession(t *testing.T) {
+	now := t0.Add(30 * 24 * time.Hour)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	stale := now.Add(-25 * time.Hour)
+	m = m.PreloadSessions([]SessionAttention{{
+		ID: "ghost", State: stateNeedsInput, Since: stale, Reason: "approve Bash",
+	}})
+	if got := m.needsYouCount(); got != 0 {
+		t.Fatalf("needsYouCount = %d, want 0 for a needs_input session dead for 25h", got)
+	}
+	if view := m.View(); strings.Contains(view, "NEEDS YOU") {
+		t.Fatalf("header should not show a stale needs_input session:\n%s", view)
+	}
+
+	fresh := now.Add(-time.Minute)
+	m = m.PreloadSessions([]SessionAttention{{
+		ID: "waiting", State: stateNeedsInput, Since: fresh, Reason: "approve Bash",
+	}})
+	if got := m.needsYouCount(); got != 1 {
+		t.Fatalf("needsYouCount = %d, want 1 for a fresh needs_input session", got)
+	}
+	if view := m.View(); !strings.Contains(view, "NEEDS YOU · 1") {
+		t.Fatalf("header should show a fresh needs_input session:\n%s", view)
 	}
 }
 
@@ -207,6 +235,7 @@ func TestQuitKey(t *testing.T) {
 
 func TestNeedsYouInHeader(t *testing.T) {
 	m := newTestModel()
+	m.now = func() time.Time { return t0.Add(time.Minute) }
 	m = push(m, mkEv(1, event.CategoryTool, "working"))
 	if strings.Contains(m.View(), "NEEDS YOU") {
 		t.Fatal("working session should not show NEEDS YOU")
@@ -249,6 +278,7 @@ func TestAttentionMapStaysBounded(t *testing.T) {
 
 func TestNeedsYouReasonStripsControlSequences(t *testing.T) {
 	m := newTestModel()
+	m.now = func() time.Time { return t0.Add(time.Minute) }
 	m = push(m, stateTransition(1, "s1", "needs_input", "ok\x1b[31mALERT\x1b[0m\x07"+strings.Repeat("x", 200)))
 	header := m.viewHeader()
 	if strings.Contains(header, "\x1b") || strings.Contains(header, "\x07") {

@@ -33,6 +33,10 @@ type SessionAttention struct {
 	State  string
 	Since  time.Time
 	Reason string
+	// Last is the session's last real activity (projection/capture Session's
+	// LastTime), used to tell a live needs_input/working state from one a
+	// daemon restart stamped over a long-dead session.
+	Last time.Time
 }
 
 type attention struct {
@@ -42,6 +46,7 @@ type attention struct {
 	Source string
 	Agent  string
 	Where  string
+	Last   time.Time
 }
 
 // altitude is the reading distance: the workspace matrix, or the session
@@ -147,6 +152,7 @@ func (m Model) PreloadSessions(sessions []SessionAttention) Model {
 		m.attention[session.ID] = attention{
 			State: session.State, Since: session.Since, Reason: session.Reason,
 			Source: session.Source, Agent: session.Agent, Where: workspaceKey(session.Repo, session.CWD),
+			Last: session.Last,
 		}
 	}
 	m.boundAttention()
@@ -433,7 +439,7 @@ func (m Model) noteAttention(ev event.Event) {
 	prev := m.attention[ev.SessionID]
 	m.attention[ev.SessionID] = attention{
 		State: state, Since: ev.Time, Reason: reason,
-		Source: prev.Source, Agent: prev.Agent, Where: prev.Where,
+		Source: prev.Source, Agent: prev.Agent, Where: prev.Where, Last: prev.Last,
 	}
 	m.boundAttention()
 }
@@ -459,10 +465,16 @@ func (m Model) boundAttention() {
 	}
 }
 
+// needsYouCount is the header's count of sessions genuinely waiting on the
+// reader right now. It applies the same freshness rule liveSessions applies
+// at the session and workspace altitudes — a session that asked a question
+// and then died must not haunt the header forever. The count stays global
+// (not narrowed by m.scope), matching the header's existing behavior.
 func (m Model) needsYouCount() int {
+	now := m.now()
 	n := 0
 	for _, a := range m.attention {
-		if a.State == stateNeedsInput {
+		if a.State == stateNeedsInput && attentionFresh(a.State, a.Last, a.Since, now) {
 			n++
 		}
 	}
@@ -470,10 +482,11 @@ func (m Model) needsYouCount() int {
 }
 
 func (m Model) oldestNeedsYouReason() string {
+	now := m.now()
 	var best attention
 	found := false
 	for _, a := range m.attention {
-		if a.State != stateNeedsInput {
+		if a.State != stateNeedsInput || !attentionFresh(a.State, a.Last, a.Since, now) {
 			continue
 		}
 		if !found || a.Since.Before(best.Since) {

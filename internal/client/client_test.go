@@ -100,6 +100,10 @@ func TestSessionsReturnsProjectedAttention(t *testing.T) {
 	if len(sessions) != 1 || sessions[0].ID != "waiting" || sessions[0].State != "needs_input" {
 		t.Fatalf("sessions = %+v", sessions)
 	}
+	wantLast := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	if !sessions[0].LastTime.Equal(wantLast) {
+		t.Fatalf("last_time = %v, want %v (was silently dropped)", sessions[0].LastTime, wantLast)
+	}
 }
 
 func TestEmitNormalizesThroughDaemon(t *testing.T) {

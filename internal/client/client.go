@@ -51,6 +51,7 @@ type Session struct {
 	State       string    `json:"state"`
 	StateSince  time.Time `json:"state_since"`
 	StateReason string    `json:"state_reason,omitempty"`
+	LastTime    time.Time `json:"last_time"`
 }
 
 // HTTPError reports a daemon response that reached the local HTTP adapter but

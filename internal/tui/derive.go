@@ -129,11 +129,7 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		// A state change is evidence of life only when the engine asserts a
 		// live state. A daemon restart stamps every historical session idle,
 		// and that must not make hundreds of them live.
-		ref := s.Last
-		if s.Since.After(ref) && (s.State == stateNeedsInput || s.State == stateWorking) {
-			ref = s.Since
-		}
-		if !stateFresh(s.State, ref, now) {
+		if !attentionFresh(s.State, s.Last, s.Since, now) {
 			continue
 		}
 		if s.Label == "" {
@@ -250,6 +246,21 @@ func worstState(a, b string) string {
 		return b
 	}
 	return a
+}
+
+// attentionFresh decides whether an attention entry (last real activity
+// `last`, plus the engine's own `state`/`since`) is still plausible evidence
+// of a live session, as of `now`. `since` is preferred over `last` only while
+// the engine still asserts a live state (working or needs_input) — a daemon
+// restart's idle stamp is not evidence of life. liveSessions, needsYouCount,
+// and oldestNeedsYouReason all call this so they can never drift into
+// disagreeing about what counts as fresh.
+func attentionFresh(state string, last, since, now time.Time) bool {
+	ref := last
+	if since.After(ref) && (state == stateNeedsInput || state == stateWorking) {
+		ref = since
+	}
+	return stateFresh(state, ref, now)
 }
 
 // stateFresh reports whether a session still belongs on screen: recent
