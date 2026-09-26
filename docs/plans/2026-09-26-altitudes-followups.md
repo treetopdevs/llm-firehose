@@ -418,3 +418,49 @@ same branch (no design changes needed, no frozen-surface impact):
 
 See the branch's commit history for the corresponding TDD commits and
 regression tests.
+
+## Addendum (wave 3): a second Codex adversarial review
+
+A second Codex adversarial review, run against the branch after wave 2
+landed, found three more real bugs, all in the same follow-up work and all
+fixed on the same branch (no design changes, no frozen-surface impact — the
+fixes only populate already-optional envelope fields and add new,
+purely-additive keys to the stream-only, never-persisted `state.transition`
+payload):
+
+- **A transition's `event.Time` was overloaded to mean two different
+  things: "when this was published" and "when the state began."** For an
+  ordinary state change the two coincide, but `AdvanceIdle`'s idle sweep
+  stamped `Time` with `next.Since` — the historical threshold crossing,
+  which after a cold rebuild can be hours or days in the past — instead of
+  the sweep's own tick. The TUI appends live frames to the timeline in
+  arrival order and never sorts, so a batch of idle transitions published
+  moments after a restart could render as the newest rows while carrying
+  ancient timestamps. Fixed by publishing every transition's `Time` at its
+  own instant and moving the honest state-begin time into a new payload key,
+  `since` (`internal/capture/internal/projection/projection.go`).
+- **The same conflation reset the viewer's dwell clock on an error that
+  arrives mid-wait.** `Transition` (`attention.go`) already leaves `Since`
+  untouched when only `HasError` flips, but both the TUI
+  (`internal/tui/tui.go`) and the desktop dwell model
+  (`apps/tauri-desktop/src/ui/dwell/model.ts`) assigned the transition
+  event's own time to `Since`/`state_since` unconditionally, so a session
+  that had needed input for ten minutes and then errored looked like it had
+  just started waiting. Fixed by reading the new `since` payload key in both
+  viewers, falling back to the event's own time when it is absent (older
+  backends, or a transition genuinely published at its state-begin time).
+- **Reconciliation snapshots carried no workspace identity.** Both
+  reconciliation builders (`internal/host/feed.go`,
+  `internal/client/client.go`) already carry `last_time` and `has_error`
+  (wave 2) but set no `Agent`/`Repo`/`CWD` on the synthetic event and no
+  session-source in its payload. A session recovered purely from a
+  reconciliation snapshot — no prior attention entry to carry identity
+  forward from, its own events already outside the bounded recovery ring —
+  landed under an empty workspace/agent cell instead of its own. Fixed by
+  stamping the session's `Agent`/`Repo`/`CWD` on the event (`Source` stays
+  `"firehose"`, the synthetic-transition marker; the session's real
+  originating adapter travels as payload `source` instead) and consuming
+  both in `noteAttention` (`internal/tui/tui.go`).
+
+See the branch's commit history for the corresponding TDD commits and
+regression tests.
