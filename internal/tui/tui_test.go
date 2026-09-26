@@ -121,6 +121,117 @@ func TestReconciledTransitionRestoresLastForFreshness(t *testing.T) {
 	t.Fatalf("reconciled working session with recent last_time should be live, got %+v (attention=%+v)", sessions, m.attention["recovered"])
 }
 
+// TestIdleTransitionKeepsPublicationTimeSeparateFromStateSince is the
+// regression test for Codex review finding F1: the transition's event.Time
+// is when it was published (arrival order, what the timeline appends by),
+// while its payload's "since" carries the honest, possibly much older,
+// state_since. Collapsing the two made a restart's historical idle
+// transitions show a stale timestamp on what is, positionally, the newest
+// row in the timeline.
+func TestIdleTransitionKeepsPublicationTimeSeparateFromStateSince(t *testing.T) {
+	m := newTestModel()
+	now := t0.Add(10 * time.Minute)
+	historicalSince := t0.Add(2 * time.Minute)
+	transition := event.Event{
+		ID: "idle-1", Time: now, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: "idle",
+		Payload: map[string]any{
+			"state": "idle", "reason": "", "has_error": false,
+			"since": historicalSince.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	m = push(m, transition)
+	if len(m.events) != 1 || !m.events[0].Time.Equal(now) {
+		t.Fatalf("timeline event should carry the publication time %v, got %+v", now, m.events)
+	}
+	got := m.attention["s1"]
+	if !got.Since.Equal(historicalSince) {
+		t.Errorf("attention Since should be the honest state_since %v, got %v", historicalSince, got.Since)
+	}
+}
+
+// TestErrorOnlyTransitionDoesNotResetDwellSince is the regression test for
+// Codex review finding F2: a transition that only flips has_error (the
+// engine leaves state_since untouched, per Transition in attention.go) must
+// not restart the viewer's dwell clock. Before the fix, noteAttention
+// assigned every transition's own ev.Time to Since, so an error arriving ten
+// minutes into an unanswered needs_input made the header look like the
+// session had just started waiting.
+func TestErrorOnlyTransitionDoesNotResetDwellSince(t *testing.T) {
+	m := newTestModel()
+	firstSince := t0.Add(time.Second)
+	first := event.Event{
+		ID: "transition-1", Time: firstSince, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateNeedsInput,
+		Payload: map[string]any{
+			"state": stateNeedsInput, "reason": "approve Bash", "has_error": false,
+			"since": firstSince.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	m = push(m, first)
+	if got := m.attention["s1"].Since; !got.Equal(firstSince) {
+		t.Fatalf("setup: want Since %v, got %v", firstSince, got)
+	}
+
+	errAt := firstSince.Add(10 * time.Minute)
+	errOnly := event.Event{
+		ID: "transition-2", Time: errAt, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateNeedsInput,
+		Payload: map[string]any{
+			"state": stateNeedsInput, "reason": "approve Bash", "has_error": true,
+			"since": firstSince.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	m = push(m, errOnly)
+	got := m.attention["s1"]
+	if !got.Since.Equal(firstSince) {
+		t.Errorf("error-only transition reset Since: want %v, got %v", firstSince, got.Since)
+	}
+	if !got.HasError {
+		t.Errorf("has_error should now be true, got %+v", got)
+	}
+}
+
+// TestReconciledTransitionRestoresIdentityForWorkspaceCell is the regression
+// test for Codex review finding F3: a session recovered purely from a
+// reconciliation snapshot (its own events long scrolled out of the bounded
+// recovery ring, and no prior attention entry to carry identity forward
+// from) must still land in its real workspace cell, not an unknown one.
+// noteAttention must consume the event's own Agent/Repo/CWD and the
+// payload's source, not only carry forward whatever the (here: nonexistent)
+// previous attention entry had.
+func TestReconciledTransitionRestoresIdentityForWorkspaceCell(t *testing.T) {
+	now := t0.Add(30 * 24 * time.Hour)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+
+	recentLast := now.Add(-time.Minute)
+	transition := event.Event{
+		ID: "", Time: now.Add(-48 * time.Hour), Source: "firehose", SessionID: "recovered",
+		Agent: "claude", Repo: "org/repo", CWD: "/home/me/dev/repo",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: "",
+		Payload: map[string]any{
+			"state": stateWorking, "reason": "", "reconciled": true,
+			"has_error": false, "last_time": recentLast, "source": "claude-code",
+		},
+	}
+	m = push(m, transition)
+
+	sessions := m.liveSessions(now)
+	for _, s := range sessions {
+		if s.ID == "recovered" {
+			if s.Where != "org/repo" {
+				t.Errorf("workspace cell = %q, want %q", s.Where, "org/repo")
+			}
+			if s.Label != "claude" {
+				t.Errorf("agent label = %q, want %q", s.Label, "claude")
+			}
+			return
+		}
+	}
+	t.Fatalf("reconciled session should be live and placed in its own workspace cell, got %+v (attention=%+v)", sessions, m.attention["recovered"])
+}
+
 func TestPauseHoldsStreamAndCountsUnread(t *testing.T) {
 	m := newTestModel()
 	m = push(m, mkEv(1, event.CategoryShell, "first event"))

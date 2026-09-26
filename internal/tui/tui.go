@@ -466,9 +466,43 @@ func (m Model) noteAttention(ev event.Event) {
 	if lastTime, ok := ev.Payload["last_time"].(time.Time); ok && lastTime.After(last) {
 		last = lastTime
 	}
+	// since is the state's own honest start time, carried in the payload
+	// separately from ev.Time (when this transition was published). They
+	// coincide for an ordinary state change, but not for an idle sweep after
+	// a restart (ev.Time is the sweep's tick; since is the historical
+	// threshold crossing) or for a transition that only flips has_error
+	// (ev.Time is the error's own arrival; since is unchanged from whatever
+	// state the session was already in). Using ev.Time here would restart
+	// the viewer's dwell clock in both cases.
+	since := ev.Time
+	if s, ok := ev.Payload["since"].(string); ok {
+		if parsed, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			since = parsed
+		}
+	}
+	// Identity (source/agent/workspace) is normally carried forward from the
+	// session's prior attention entry, seeded once by PreloadSessions or an
+	// earlier transition. A reconciliation snapshot (client and daemonless
+	// reconnect paths) instead stamps the event's own Agent/Repo/CWD and a
+	// payload source: the only source of truth when a session has no prior
+	// attention entry and its own events have scrolled out of the bounded
+	// recovery ring, which otherwise leaves it with an empty identity and
+	// puts its restored state under an unknown workspace cell.
+	source := prev.Source
+	if s, ok := ev.Payload["source"].(string); ok && s != "" {
+		source = s
+	}
+	agent := prev.Agent
+	if ev.Agent != "" {
+		agent = ev.Agent
+	}
+	where := prev.Where
+	if w := workspaceKey(ev.Repo, ev.CWD); w != "" {
+		where = w
+	}
 	m.attention[ev.SessionID] = attention{
-		State: state, Since: ev.Time, Reason: reason,
-		Source: prev.Source, Agent: prev.Agent, Where: prev.Where, Last: last,
+		State: state, Since: since, Reason: reason,
+		Source: source, Agent: agent, Where: where, Last: last,
 		HasError: hasError,
 	}
 	m.boundAttention()
