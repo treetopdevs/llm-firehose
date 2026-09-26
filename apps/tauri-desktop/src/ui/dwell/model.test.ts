@@ -89,4 +89,40 @@ describe("applyTransition", () => {
     expect(applyTransition(before, { ...ev, session_id: "unknown" })).toBe(before);
     expect(applyTransition(before, { ...ev, source: "codex" })).toBe(before);
   });
+
+  // Regression test for Codex review finding F2: the backend's state.transition
+  // payload carries "since" — the state's own honest start time — separately
+  // from the event's own "time" (when the transition was published). An
+  // error-only transition (has_error flips, primary state and since
+  // unchanged) must not restart the dwell clock by falling back to ev.time.
+  test("uses the payload's since over the event's own time when present", () => {
+    const before = [summary({ id: "w", state: "needs_input", state_since: new Date(now - 600_000).toISOString() })];
+    const sinceIso = new Date(now - 600_000).toISOString();
+    const errOnly = {
+      id: "t2",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "needs_input", reason: "approve Bash", has_error: true, since: sinceIso },
+    } as FirehoseEvent;
+    const after = applyTransition(before, errOnly);
+    expect(after[0]).toMatchObject({ state: "needs_input", state_since: sinceIso, state_reason: "approve Bash" });
+  });
+
+  test("falls back to the event's own time when the payload carries no since", () => {
+    const before = [summary({ id: "w" })];
+    const ev = {
+      id: "t1",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "needs_input", reason: "approve Bash" },
+    } as FirehoseEvent;
+    const after = applyTransition(before, ev);
+    expect(after[0].state_since).toBe(ev.time);
+  });
 });
