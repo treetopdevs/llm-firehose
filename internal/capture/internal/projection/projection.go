@@ -183,7 +183,15 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.CWD = ev.CWD
 		}
 		s.days[day] = true
-		s.lastActivity = ev.Time
+		// lastActivity must be monotonic per session, mirroring LastTime above:
+		// append order does not establish timestamp order (a source can be
+		// applied out of order relative to another, or relative to itself), so
+		// a late-arriving event carrying an older source time must not drag
+		// the session's evidence of life backwards — that would make the idle
+		// sweep derive state_since from stale evidence.
+		if !ev.Time.Before(s.lastActivity) {
+			s.lastActivity = ev.Time
+		}
 
 		switch {
 		case strings.HasPrefix(ev.Name, "PreToolUse"):

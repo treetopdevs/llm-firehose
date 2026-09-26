@@ -293,8 +293,64 @@ func TestAdvanceIdleAfterRebuildStampsOwnLastActivity(t *testing.T) {
 	if s1.State != StateIdle {
 		t.Errorf("state = %q, want idle", s1.State)
 	}
-	if !s1.StateSince.Equal(base) {
-		t.Errorf("StateSince should be the session's own last activity (%v), got %v (restart was at %v)", base, s1.StateSince, restartNow)
+	wantSince := base.Add(IdleAfter)
+	if !s1.StateSince.Equal(wantSince) {
+		t.Errorf("StateSince should be the session's own last activity + IdleAfter (%v), got %v (restart was at %v)", wantSince, s1.StateSince, restartNow)
+	}
+}
+
+// TestApplyKeepsLastActivityMonotonic is the regression test for a session
+// whose events are applied out of timestamp order — which append order does
+// not rule out, since sources are not guaranteed to be applied in the order
+// their own clocks would sort them. A late-arriving event carrying an older
+// timestamp than one already applied must not move the session's tracked
+// last-activity backwards: doing so would make a later idle sweep derive
+// state_since from stale evidence, reporting idle before the session's own
+// recorded last_time or misjudging whether IdleAfter has even elapsed.
+func TestApplyKeepsLastActivityMonotonic(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	trueLastActivity := base.Add(100 * time.Second)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: trueLastActivity, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+	// Arrives second, but stamped with an older source time than the event
+	// already applied above.
+	ix.Apply(event.Event{
+		ID: "2", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+
+	s1, ok := ix.Session("s1")
+	if !ok {
+		t.Fatalf("session s1 not found")
+	}
+	if !s1.LastTime.Equal(trueLastActivity) {
+		t.Fatalf("s1 LastTime = %v, want %v (max of the two applied events)", s1.LastTime, trueLastActivity)
+	}
+
+	// The idle sweep runs just past IdleAfter measured from the session's
+	// true (later) last activity — it must not yet be idle, and once it is,
+	// it must derive state_since from the true last activity, not the older
+	// event that happened to be applied last.
+	notYetIdle := trueLastActivity.Add(IdleAfter - time.Second)
+	if trs := ix.AdvanceIdle(notYetIdle); len(trs) != 0 {
+		t.Fatalf("want no idle transition before the true IdleAfter elapses, got %+v", trs)
+	}
+
+	pastIdle := trueLastActivity.Add(IdleAfter + time.Second)
+	trs := ix.AdvanceIdle(pastIdle)
+	if len(trs) != 1 || trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
+		t.Fatalf("want 1 idle transition for s1, got %+v", trs)
+	}
+	wantSince := trueLastActivity.Add(IdleAfter)
+	s1, _ = ix.Session("s1")
+	if !s1.StateSince.Equal(wantSince) {
+		t.Errorf("StateSince = %v, want %v (derived from the true, monotonic last activity)", s1.StateSince, wantSince)
+	}
+	if s1.StateSince.Before(s1.LastTime) {
+		t.Errorf("StateSince (%v) precedes the session's own LastTime (%v)", s1.StateSince, s1.LastTime)
 	}
 }
 
