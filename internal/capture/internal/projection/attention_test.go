@@ -212,6 +212,24 @@ func TestTransitionIdleOnlyFromWorking(t *testing.T) {
 	if !changed || next.State != StateIdle {
 		t.Errorf("working→idle: %+v changed=%v", next, changed)
 	}
+	if !next.Since.Equal(last) {
+		t.Errorf("idle Since should be lastActivity (%v), got %v", last, next.Since)
+	}
+
+	// A cold rebuild's first idle sweep can run hours after the session's
+	// last real activity (e.g. a daemon restart long after the session went
+	// quiet). Since must still reflect the session's own last evidence of
+	// life, not the wall clock the sweep happened to run at.
+	longDeadLast := base
+	longDeadNow := base.Add(6 * time.Hour)
+	longDeadWorking := Attention{State: StateWorking, Since: base}
+	longDeadNext, longDeadChanged := TickIdle(longDeadWorking, longDeadLast, longDeadNow, false)
+	if !longDeadChanged || longDeadNext.State != StateIdle {
+		t.Errorf("long-dead working→idle: %+v changed=%v", longDeadNext, longDeadChanged)
+	}
+	if !longDeadNext.Since.Equal(longDeadLast) {
+		t.Errorf("long-dead idle Since should be lastActivity (%v), got %v (now was %v)", longDeadLast, longDeadNext.Since, longDeadNow)
+	}
 
 	needs := Attention{State: StateNeedsInput, Since: base, Reason: "perm"}
 	next, changed = TickIdle(needs, last, now, false)

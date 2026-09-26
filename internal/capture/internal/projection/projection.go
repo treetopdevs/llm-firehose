@@ -277,7 +277,7 @@ func (ix *Projection) AdvanceIdle(now time.Time) []*event.Event {
 		s.State = next.State
 		s.StateSince = next.Since
 		s.StateReason = next.Reason
-		out = append(out, newStateTransition(id, prev.State, next, now))
+		out = append(out, newStateTransition(id, prev.State, next, next.Since))
 	}
 	return out
 }

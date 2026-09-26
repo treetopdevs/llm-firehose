@@ -86,7 +86,7 @@ func TickIdle(prev Attention, lastActivity, now time.Time, toolOpen bool) (Atten
 	}
 	next := prev
 	next.State = StateIdle
-	next.Since = now
+	next.Since = lastActivity
 	next.Reason = ""
 	return next, true
 }

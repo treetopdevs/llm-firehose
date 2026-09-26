@@ -247,9 +247,104 @@ func TestAdvanceIdle(t *testing.T) {
 	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
 		t.Errorf("wrong transition: %+v", trs[0])
 	}
+	if !trs[0].Time.Equal(base) {
+		t.Errorf("transition Time should be the session's last activity (%v), got %v", base, trs[0].Time)
+	}
+	s1, _ := ix.Session("s1")
+	if !s1.StateSince.Equal(base) {
+		t.Errorf("s1 StateSince should be the event time already applied (%v), got %v", base, s1.StateSince)
+	}
 	s2, _ := ix.Session("s2")
 	if s2.State != StateNeedsInput {
 		t.Errorf("s2 must stay needs_input, got %q", s2.State)
+	}
+}
+
+// TestAdvanceIdleAfterRebuildStampsOwnLastActivity is the regression test for
+// the "473 live sessions" restart bug: a cold rebuild's first idle sweep
+// must stamp state_since from the session's own last real activity, not
+// from the wall-clock instant the sweep happened to run, however long after
+// that activity the restart occurred.
+func TestAdvanceIdleAfterRebuildStampsOwnLastActivity(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+
+	// Simulate a daemon restart hours after the session's last activity —
+	// far past IdleAfter, as happens on a cold rebuild of a long-quiet spool.
+	restartNow := base.Add(6 * time.Hour)
+	trs := ix.AdvanceIdle(restartNow)
+	if len(trs) != 1 {
+		t.Fatalf("want 1 idle transition, got %d: %+v", len(trs), trs)
+	}
+	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
+		t.Errorf("wrong transition: %+v", trs[0])
+	}
+
+	s1, ok := ix.Session("s1")
+	if !ok {
+		t.Fatalf("session s1 not found")
+	}
+	if s1.State != StateIdle {
+		t.Errorf("state = %q, want idle", s1.State)
+	}
+	if !s1.StateSince.Equal(base) {
+		t.Errorf("StateSince should be the session's own last activity (%v), got %v (restart was at %v)", base, s1.StateSince, restartNow)
+	}
+}
+
+// TestInboxUnaffectedByIdleSweep documents that the attention inbox
+// (inbox.go) has no analogous wall-clock restamp bug: InboxSession state and
+// evidence are set exclusively from real captured events inside applyInbox,
+// with no ticked idle sweep. An AdvanceIdle call, run well past IdleAfter,
+// must leave a session's inbox evidence byte-for-byte unchanged.
+func TestInboxUnaffectedByIdleSweep(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "Bash",
+	})
+
+	before := ix.Inbox()
+	var beforeSession InboxSession
+	found := false
+	for _, s := range before.Sessions {
+		if s.Source == "claude-code" && s.ID == "s1" {
+			beforeSession = s
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("s1 not found in inbox before sweep: %+v", before.Sessions)
+	}
+
+	ix.AdvanceIdle(base.Add(6 * time.Hour))
+
+	after := ix.Inbox()
+	var afterSession InboxSession
+	found = false
+	for _, s := range after.Sessions {
+		if s.Source == "claude-code" && s.ID == "s1" {
+			afterSession = s
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("s1 not found in inbox after sweep: %+v", after.Sessions)
+	}
+
+	if !reflect.DeepEqual(beforeSession.Last, afterSession.Last) {
+		t.Errorf("inbox Last evidence changed across an idle sweep: before=%+v after=%+v", beforeSession.Last, afterSession.Last)
+	}
+	if !afterSession.LastObservedAt.Equal(beforeSession.LastObservedAt) {
+		t.Errorf("inbox LastObservedAt changed across an idle sweep: before=%v after=%v", beforeSession.LastObservedAt, afterSession.LastObservedAt)
+	}
+	if afterSession.State != beforeSession.State {
+		t.Errorf("inbox State changed across an idle sweep: before=%q after=%q", beforeSession.State, afterSession.State)
 	}
 }
 
