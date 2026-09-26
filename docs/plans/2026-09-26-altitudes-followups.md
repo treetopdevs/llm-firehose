@@ -529,3 +529,56 @@ frozen-surface impact):
 
 See the branch's commit history for the corresponding TDD commits and
 regression tests.
+
+## Addendum (wave 5): a fourth Codex adversarial review
+
+A fourth Codex adversarial review, run against the branch after wave 4
+landed, found two problems introduced by wave 4's own fixes. Both were
+confirmed real by first writing a failing regression test against the
+actual code, then fixed on the same branch (no design changes, no
+frozen-surface impact):
+
+- **F1 [high, confirmed] The in-line idle crossing (wave 4) could change
+  state without ever being published.** Wave 4's fix inside `ApplyResult`
+  applies the same `TickIdle` crossing a live sweep would, so replay and
+  incremental projection agree on *state* — but when the event that
+  triggered the crossing does not itself change anything further (a
+  non-activity event, e.g. a meta message, does not restart the idle clock),
+  `Transition` reports no change, so `ApplyResult` returned no transition
+  event at all. `capture`'s `applyProjection`
+  (`internal/capture/history.go`) only publishes a transition when one comes
+  back non-nil, so a live subscriber (the TUI, the daemon's SSE stream)
+  never learned the session went idle, even though `/sessions` already
+  reported it — and no later sweep would emit one either, since it would
+  already find the session idle. Regression test
+  `TestInlineIdleCrossingPublishesLiveTransition`
+  (`internal/capture/capture_test.go`) asserts against the actual published
+  frame a live subscription receives (never calling `Engine.Run`, so no
+  periodic sweep can race in and paper over the gap) and failed before the
+  fix — the meta event arrived with no preceding transition. Fixed by
+  publishing the crossing itself when it is the only change
+  (`internal/capture/internal/projection/projection.go`).
+- **F2 [medium, confirmed] The round-3/4 older-daemon dwell fallback also
+  swallowed error *recovery*.** Wave 4's fix
+  (`internal/tui/tui.go`, `apps/tauri-desktop/src/ui/dwell/model.ts`) kept
+  the prior `state_since` whenever state and reason were unchanged with no
+  payload `since` at all — correct for an error being newly raised, but
+  wrong for recovery (working, then an error, then activity resumes), which
+  has the exact same state (`working`) and reason (`""`) on the way in and
+  the way out: `Transition` (`attention.go`) resets `Since` to the recovery
+  time for an activity event when `prev.HasError` was true, even though the
+  primary state does not change. Regression tests
+  `TestErrorRecoveryFromOlderDaemonResetsDwellSince`
+  (`internal/tui/tui_test.go`) and `"resets since to the recovery time when
+  has_error clears with no payload since (older daemon)"`
+  (`apps/tauri-desktop/src/ui/dwell/model.test.ts`) failed before the fix —
+  recovery kept the stale pre-error dwell. Fixed in both viewers: only keep
+  the prior `since` when `has_error` is rising (prior false, payload true)
+  with state and reason unchanged; any other case, including a falling edge,
+  falls back to the event's own time. The desktop dwell model also never
+  updated its cached `has_error` from a transition at all, so the edge it
+  now depends on was stale; `applyTransition` now carries `has_error`
+  through from the payload.
+
+See the branch's commit history for the corresponding TDD commits and
+regression tests.
