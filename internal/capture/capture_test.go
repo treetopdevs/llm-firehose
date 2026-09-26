@@ -407,6 +407,54 @@ func TestInlineIdleCrossingPublishesLiveTransition(t *testing.T) {
 	}
 }
 
+// TestInlineIdleCrossingThenResumePublishesBothTransitions covers the case
+// where the event that reveals an idle crossing also changes state itself:
+// activity arriving after IdleAfter must publish the idle crossing and then
+// the resume, in that order, so a live subscriber sees the idle interval
+// instead of a working → working frame.
+func TestInlineIdleCrossingThenResumePublishesBothTransitions(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscription := engine.Subscribe(ctx)
+
+	base := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	first := event.Event{
+		ID: "first", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "ran a tool",
+	}
+	resume := event.Event{
+		ID: "resume", Time: base.Add(91 * time.Second), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "ran another tool",
+	}
+	for _, ev := range []event.Event{first, resume} {
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got []string
+	for len(got) < 4 {
+		select {
+		case ev := <-subscription.Events:
+			if ev.Name == "state.transition" {
+				got = append(got, "transition:"+fmt.Sprint(ev.Payload["state"]))
+			} else {
+				got = append(got, ev.ID)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("stream stalled after %v", got)
+		}
+	}
+	want := []string{"first", "transition:idle", "transition:working", "resume"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("published %v, want %v", got, want)
+	}
+}
+
 func TestConcurrentAdmissionsSerializeWholeCommitAndProjection(t *testing.T) {
 	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
 	if err != nil {

@@ -117,16 +117,23 @@ const NameStateTransition = "state.transition"
 // Apply folds one event into the Projection. Events with an id already applied
 // are ignored, so replays (e.g. the startup tail overlapping the build read)
 // never double-count. When a session's attention state changes, Apply returns
-// a stream-only synthetic event (never spooled).
+// a stream-only synthetic event (never spooled). When the event reveals an idle
+// crossing and also changes state, Apply returns the final transition;
+// ApplyResult returns both.
 func (ix *Projection) Apply(ev event.Event) *event.Event {
-	transition, _ := ix.ApplyResult(ev)
-	return transition
+	transitions, _ := ix.ApplyResult(ev)
+	if len(transitions) == 0 {
+		return nil
+	}
+	return transitions[len(transitions)-1]
 }
 
 // ApplyResult folds one event into the Projection and reports whether its stable id
-// was new. The seen set spans the lifetime of the Projection so an old replay
-// can never be counted twice.
-func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
+// was new, along with the attention transitions it caused, in order: an idle
+// crossing revealed by the event's arrival, then the event's own change. The
+// seen set spans the lifetime of the Projection so an old replay can never be
+// counted twice.
+func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
@@ -143,7 +150,7 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 
 	ix.applyInbox(ev)
 	day := ev.Time.UTC().Format("2006-01-02")
-	var transition *event.Event
+	var transitions []*event.Event
 
 	if ev.SessionID != "" {
 		s, ok := ix.sessions[ev.SessionID]
@@ -244,28 +251,21 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.State = crossed.State
 			s.StateSince = crossed.Since
 			s.StateReason = crossed.Reason
+			// The crossing is a real state change in its own right, whether
+			// or not this event changes state on top of it. Publish it first
+			// so a live subscriber sees the idle interval: without it, a
+			// meta event would publish nothing and an activity event would
+			// publish working → working, and no later sweep can recover the
+			// crossing because the projection has already moved past it.
+			transitions = append(transitions, newStateTransition(ev.SessionID, originalState, crossed, ev.Time))
 		}
 		next, changed := Transition(prev, ev)
-		switch {
-		case changed:
+		if changed {
 			s.State = next.State
 			s.StateSince = next.Since
 			s.StateReason = next.Reason
 			s.HasError = next.HasError
-			transition = newStateTransition(ev.SessionID, prev.State, next, ev.Time)
-		case crossedChanged:
-			// Codex review finding F1 (round 4): the crossing above is a
-			// real state change even when this event's own Transition makes
-			// no further change on top of it — a non-activity event (e.g. a
-			// meta message) does not restart the idle clock, so `changed` is
-			// false here even though the session just went idle. Without
-			// this, ApplyResult returned no transition at all: capture's
-			// applyProjection (internal/capture/history.go) only publishes a
-			// transition when one comes back non-nil, so a live subscriber
-			// never learned the session went idle, and no later sweep would
-			// emit one either, since it would already find the session
-			// idle. Publish the crossing itself instead.
-			transition = newStateTransition(ev.SessionID, originalState, crossed, ev.Time)
+			transitions = append(transitions, newStateTransition(ev.SessionID, prev.State, next, ev.Time))
 		}
 	}
 
@@ -309,7 +309,7 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			f.Sources = append(f.Sources, ev.Source)
 		}
 	}
-	return transition, true
+	return transitions, true
 }
 
 // AdvanceIdle moves quiet working sessions to idle and returns one synthetic

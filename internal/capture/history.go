@@ -24,13 +24,13 @@ type (
 )
 
 func (e *Engine) applyProjection(ev event.Event) error {
-	transition, applied := e.projection.ApplyResult(ev)
+	transitions, applied := e.projection.ApplyResult(ev)
 	if !applied {
 		return nil
 	}
-	// Preserve the frozen stream behavior: a derived attention transition is
-	// announced before the Captured Event that caused it.
-	if transition != nil {
+	// Preserve the frozen stream behavior: derived attention transitions are
+	// announced before the Captured Event that caused them.
+	for _, transition := range transitions {
 		e.publish(*transition)
 	}
 	e.publish(ev)
