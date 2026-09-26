@@ -161,6 +161,19 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			}
 			ix.sessions[ev.SessionID] = s
 		}
+		// Snapshot the session's evidence of life and attention state as they
+		// stood immediately before this event, so an idle crossing that
+		// happened *between* the previous event and this one can be applied
+		// below using the same rule AdvanceIdle uses live.
+		priorLastActivity := s.lastActivity
+		priorOpenTools := s.openTools
+		priorAttention := Attention{
+			State:    s.State,
+			Since:    s.StateSince,
+			Reason:   s.StateReason,
+			HasError: s.HasError,
+		}
+
 		s.Events++
 		if ev.Time.Before(s.FirstTime) {
 			s.FirstTime = ev.Time
@@ -205,11 +218,29 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.openTools = 0
 		}
 
-		prev := Attention{
-			State:    s.State,
-			Since:    s.StateSince,
-			Reason:   s.StateReason,
-			HasError: s.HasError,
+		// Codex review finding F1: AdvanceIdle's periodic sweep is what
+		// normally carries a working session into idle, but that transition
+		// is never spooled. Live, the sweep ticks every 5s, so it always gets
+		// a chance to run between two real events and the session is already
+		// idle by the time a later event (e.g. an error, which does not
+		// itself restart the idle clock — see isActivity) arrives. A spool
+		// rebuild applies events back-to-back with no sweep interleaved, so
+		// without this, the same two events would leave the session
+		// "working" until some later sweep derives state_since from whatever
+		// event happened to update lastActivity next, rather than from the
+		// original threshold crossing — a restart-dependent answer for the
+		// same spool. Applying the same crossing TickIdle would apply, using
+		// the state exactly as it stood before this event, keeps replay and
+		// incremental projection identical regardless of ordering. Errors and
+		// other non-activity events do not restart the idle clock: they only
+		// ever land here if a crossing already occurred, and the subsequent
+		// Transition call decides on top of that honestly-idled state.
+		prev := priorAttention
+		if crossed, crossedChanged := TickIdle(prev, priorLastActivity, ev.Time, priorOpenTools > 0); crossedChanged {
+			prev = crossed
+			s.State = crossed.State
+			s.StateSince = crossed.Since
+			s.StateReason = crossed.Reason
 		}
 		next, changed := Transition(prev, ev)
 		if changed {

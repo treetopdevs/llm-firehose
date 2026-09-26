@@ -423,6 +423,76 @@ func TestApplyKeepsLastActivityMonotonic(t *testing.T) {
 	}
 }
 
+// TestReplayVsIncrementalIdleThenErrorAgree is the regression test for Codex
+// review finding F1: every event advances lastActivity, but only AdvanceIdle
+// (the periodic sweep) ever moves a session into idle — that crossing is
+// never spooled. In the live path the sweep always gets a chance to run
+// between two real events (it ticks every 5s), so an error arriving after a
+// long quiet period finds the session already idle and leaves state_since
+// alone (see TestApplyErrorOnlyTransitionCarriesUnchangedSince). But a spool
+// rebuild applies events back-to-back with no sweep interleaved, so the same
+// two events, replayed, leave the session "working" until some later sweep
+// derives state_since from whatever event happened to update lastActivity
+// last (here, the error) instead of the original threshold crossing. The
+// same spool must produce the same /sessions state, state_since, and
+// has_error regardless of whether a sweep happened to run before the error
+// arrived.
+func TestReplayVsIncrementalIdleThenErrorAgree(t *testing.T) {
+	base := time.Date(2026, 7, 9, 9, 0, 0, 0, time.UTC)
+	activity := event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "Bash",
+	}
+	errTime := base.Add(IdleAfter + 5*time.Minute)
+	errEvent := event.Event{
+		ID: "2", Time: errTime, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryError, Severity: event.SeverityError, Summary: "boom",
+	}
+	finalSweep := errTime.Add(IdleAfter + time.Minute)
+
+	// Incremental: activity, then a real idle sweep fires (as it always does
+	// live, every 5s) before the error arrives.
+	live := New()
+	live.Apply(activity)
+	if trs := live.AdvanceIdle(base.Add(IdleAfter + time.Minute)); len(trs) != 1 {
+		t.Fatalf("want 1 idle transition before the error, got %d: %+v", len(trs), trs)
+	}
+	live.Apply(errEvent)
+	live.AdvanceIdle(finalSweep) // no-op: already idle.
+
+	// Replay: the same two events folded back-to-back, as a cold rebuild
+	// would apply them from the spool -- the idle sweep is never spooled, so
+	// no sweep ever runs between them.
+	replay := New()
+	replay.Apply(activity)
+	replay.Apply(errEvent)
+	replay.AdvanceIdle(finalSweep) // the first sweep after the rebuild.
+
+	liveSession, ok := live.Session("s1")
+	if !ok {
+		t.Fatalf("live session missing")
+	}
+	replaySession, ok := replay.Session("s1")
+	if !ok {
+		t.Fatalf("replay session missing")
+	}
+	if liveSession.State != replaySession.State {
+		t.Errorf("state diverged across restart: live=%q replay=%q", liveSession.State, replaySession.State)
+	}
+	if !liveSession.StateSince.Equal(replaySession.StateSince) {
+		t.Errorf("state_since diverged across restart: live=%v replay=%v", liveSession.StateSince, replaySession.StateSince)
+	}
+	if liveSession.HasError != replaySession.HasError {
+		t.Errorf("has_error diverged across restart: live=%v replay=%v", liveSession.HasError, replaySession.HasError)
+	}
+
+	wantSince := base.Add(IdleAfter)
+	wantState := StateIdle
+	if liveSession.State != wantState || !liveSession.StateSince.Equal(wantSince) || !liveSession.HasError {
+		t.Errorf("live session = %+v, want state=%q state_since=%v has_error=true", liveSession, wantState, wantSince)
+	}
+}
+
 // TestInboxUnaffectedByIdleSweep documents that the attention inbox
 // (inbox.go) has no analogous wall-clock restamp bug: InboxSession state and
 // evidence are set exclusively from real captured events inside applyInbox,
