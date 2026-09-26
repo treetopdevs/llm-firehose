@@ -247,12 +247,13 @@ func TestAdvanceIdle(t *testing.T) {
 	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
 		t.Errorf("wrong transition: %+v", trs[0])
 	}
-	if !trs[0].Time.Equal(base) {
-		t.Errorf("transition Time should be the session's last activity (%v), got %v", base, trs[0].Time)
+	wantSince := base.Add(IdleAfter)
+	if !trs[0].Time.Equal(wantSince) {
+		t.Errorf("transition Time should be the threshold crossing (last activity + IdleAfter = %v), got %v", wantSince, trs[0].Time)
 	}
 	s1, _ := ix.Session("s1")
-	if !s1.StateSince.Equal(base) {
-		t.Errorf("s1 StateSince should be the event time already applied (%v), got %v", base, s1.StateSince)
+	if !s1.StateSince.Equal(wantSince) {
+		t.Errorf("s1 StateSince should be last activity + IdleAfter (%v), got %v", wantSince, s1.StateSince)
 	}
 	s2, _ := ix.Session("s2")
 	if s2.State != StateNeedsInput {
@@ -262,9 +263,10 @@ func TestAdvanceIdle(t *testing.T) {
 
 // TestAdvanceIdleAfterRebuildStampsOwnLastActivity is the regression test for
 // the "473 live sessions" restart bug: a cold rebuild's first idle sweep
-// must stamp state_since from the session's own last real activity, not
-// from the wall-clock instant the sweep happened to run, however long after
-// that activity the restart occurred.
+// must stamp state_since from the session's own last real activity (plus the
+// idle threshold, i.e. the instant the session actually crossed into idle),
+// not from the wall-clock instant the sweep happened to run, however long
+// after that activity the restart occurred.
 func TestAdvanceIdleAfterRebuildStampsOwnLastActivity(t *testing.T) {
 	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	ix := New()

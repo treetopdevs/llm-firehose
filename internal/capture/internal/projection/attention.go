@@ -77,16 +77,27 @@ func Transition(prev Attention, ev event.Event) (Attention, bool) {
 // needs_input and done are never transitioned to idle, and neither is a
 // session with an open tool call (toolOpen) — a long-running command between
 // PreToolUse and PostToolUse is the agent waiting on its tool, not idleness.
+//
+// Since is stamped from the threshold crossing itself — lastActivity plus
+// IdleAfter, the instant the session actually became idle — not from
+// lastActivity alone (which understates when idle began by a full IdleAfter,
+// making a viewer's now-Since dwell calculation show a huge fake dwell the
+// moment idle is first noticed) and not from now, the wall clock the sweep
+// happened to run at (which can overstate it, sometimes by hours after a
+// cold rebuild). Both a normal sweep moments after crossing and a rebuild
+// discovering a long-dead session get the same honest answer: state_since
+// is always "when this state began," never "when we happened to notice."
 func TickIdle(prev Attention, lastActivity, now time.Time, toolOpen bool) (Attention, bool) {
 	if prev.State != StateWorking || toolOpen {
 		return prev, false
 	}
-	if now.Sub(lastActivity) < IdleAfter {
+	crossedAt := lastActivity.Add(IdleAfter)
+	if now.Before(crossedAt) {
 		return prev, false
 	}
 	next := prev
 	next.State = StateIdle
-	next.Since = lastActivity
+	next.Since = crossedAt
 	next.Reason = ""
 	return next, true
 }

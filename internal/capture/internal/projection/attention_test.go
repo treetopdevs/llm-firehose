@@ -212,14 +212,18 @@ func TestTransitionIdleOnlyFromWorking(t *testing.T) {
 	if !changed || next.State != StateIdle {
 		t.Errorf("working→idle: %+v changed=%v", next, changed)
 	}
-	if !next.Since.Equal(last) {
-		t.Errorf("idle Since should be lastActivity (%v), got %v", last, next.Since)
+	wantSince := last.Add(IdleAfter)
+	if !next.Since.Equal(wantSince) {
+		t.Errorf("idle Since should be the threshold crossing (lastActivity+IdleAfter = %v), got %v", wantSince, next.Since)
 	}
 
 	// A cold rebuild's first idle sweep can run hours after the session's
 	// last real activity (e.g. a daemon restart long after the session went
-	// quiet). Since must still reflect the session's own last evidence of
-	// life, not the wall clock the sweep happened to run at.
+	// quiet). Since must still reflect when the session actually crossed
+	// into idle — lastActivity+IdleAfter — not the wall clock the sweep
+	// happened to run at, and not lastActivity itself (which would still
+	// misstate the crossing by a full IdleAfter and, live, make the reader
+	// see a huge fake dwell the instant idle is first noticed).
 	longDeadLast := base
 	longDeadNow := base.Add(6 * time.Hour)
 	longDeadWorking := Attention{State: StateWorking, Since: base}
@@ -227,8 +231,9 @@ func TestTransitionIdleOnlyFromWorking(t *testing.T) {
 	if !longDeadChanged || longDeadNext.State != StateIdle {
 		t.Errorf("long-dead working→idle: %+v changed=%v", longDeadNext, longDeadChanged)
 	}
-	if !longDeadNext.Since.Equal(longDeadLast) {
-		t.Errorf("long-dead idle Since should be lastActivity (%v), got %v (now was %v)", longDeadLast, longDeadNext.Since, longDeadNow)
+	wantLongDeadSince := longDeadLast.Add(IdleAfter)
+	if !longDeadNext.Since.Equal(wantLongDeadSince) {
+		t.Errorf("long-dead idle Since should be lastActivity+IdleAfter (%v), got %v (now was %v)", wantLongDeadSince, longDeadNext.Since, longDeadNow)
 	}
 
 	needs := Attention{State: StateNeedsInput, Since: base, Reason: "perm"}
@@ -241,6 +246,30 @@ func TestTransitionIdleOnlyFromWorking(t *testing.T) {
 	next, changed = TickIdle(done, last, now, false)
 	if changed || next.State != StateDone {
 		t.Errorf("done must not become idle: %+v changed=%v", next, changed)
+	}
+}
+
+// TestTickIdleDwellIsAccurateJustAfterCrossing is the regression test for the
+// Codex finding that a normal idle sweep, discovering idleness moments after
+// the threshold was crossed, must not report a dwell time inflated by the
+// full IdleAfter window. A viewer computing dwell as now.Sub(Since) should
+// see only the small margin between the threshold crossing and the sweep
+// that noticed it, not IdleAfter plus that margin.
+func TestTickIdleDwellIsAccurateJustAfterCrossing(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	lastActivity := base
+	// The sweep runs one second after the idle threshold was crossed.
+	now := lastActivity.Add(IdleAfter + time.Second)
+
+	working := Attention{State: StateWorking, Since: base}
+	next, changed := TickIdle(working, lastActivity, now, false)
+	if !changed || next.State != StateIdle {
+		t.Fatalf("working→idle: %+v changed=%v", next, changed)
+	}
+
+	dwell := now.Sub(next.Since)
+	if dwell != time.Second {
+		t.Errorf("dwell just after crossing = %v, want 1s (Since should be the crossing instant, not lastActivity or now)", dwell)
 	}
 }
 
