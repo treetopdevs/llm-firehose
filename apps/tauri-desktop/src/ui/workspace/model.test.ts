@@ -58,6 +58,33 @@ describe("buildMatrix", () => {
   test("is empty when nothing is live", () => {
     expect(buildMatrix([], [], now).cells).toEqual([]);
   });
+
+  test("folds hasError across the cell's sessions", () => {
+    const mx = buildMatrix(
+      [summary({ id: "s1", has_error: true }), summary({ id: "s1b", has_error: false })],
+      [],
+      now,
+    );
+    expect(mx.cells).toHaveLength(1);
+    expect(mx.cells[0]).toMatchObject({ sessions: 2, hasError: true });
+  });
+
+  test("a stale session's error does not resurrect the cell it would otherwise be excluded from", () => {
+    const mx = buildMatrix(
+      [
+        summary({
+          id: "ghost",
+          state: "idle",
+          state_since: new Date(now - 48 * 3_600_000).toISOString(),
+          last_time: new Date(now - 48 * 3_600_000).toISOString(),
+          has_error: true,
+        }),
+      ],
+      [],
+      now,
+    );
+    expect(mx.cells).toEqual([]);
+  });
 });
 
 describe("worstState", () => {
