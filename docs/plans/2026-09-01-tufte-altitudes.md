@@ -98,6 +98,9 @@ call        one event as a table: request and response paired by call id
 
 ## Follow-ups
 
+All three follow-ups below are addressed in
+[2026-09-26-altitudes-followups.md](2026-09-26-altitudes-followups.md).
+
 - Engine-side: do not restamp `state_since` for idle sessions on restart, or
   mark reconciled states so viewers need no heuristic. The TUI header's
   NEEDS YOU count still counts stale engine states (unchanged from the first

@@ -1,7 +1,8 @@
 # Altitudes follow-ups: honest state_since, a fresh NEEDS YOU count, error marks
 
-**Status:** Design complete, not yet implemented. Targets the three follow-ups
-recorded in [2026-09-01-tufte-altitudes.md](2026-09-01-tufte-altitudes.md#follow-ups),
+**Status:** Implemented on `feat/altitudes-followups`. Targets the three
+follow-ups recorded in
+[2026-09-01-tufte-altitudes.md](2026-09-01-tufte-altitudes.md#follow-ups),
 worktree `feat/altitudes-followups` off `main` (`d9166d8`, includes the shipped
 Attention inbox).
 
