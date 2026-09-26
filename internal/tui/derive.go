@@ -122,6 +122,15 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 			byID[id] = s
 		}
 		s.State, s.Since, s.Reason, s.HasError = a.State, a.Since, a.Reason, a.HasError
+		// a.Last is the engine's own record of this session's last activity
+		// (preload, or an ordinary event noteAttention carried forward) and
+		// must count even when no matching event survived in the timeline
+		// ring — otherwise an idle/done session judged fresh on Last alone
+		// (attentionFresh) looks dead here while needsYouCount, which reads
+		// a.Last directly, still sees it as live.
+		if a.Last.After(s.Last) {
+			s.Last = a.Last
+		}
 		if s.Where == "" {
 			s.Where = a.Where
 		}
