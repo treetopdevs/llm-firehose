@@ -456,9 +456,19 @@ func (m Model) noteAttention(ev event.Event) {
 	}
 	hasError, _ := ev.Payload["has_error"].(bool)
 	prev := m.attention[ev.SessionID]
+	// last_time is present only on a reconciliation snapshot (client and
+	// daemonless reconnect paths): the session's real last activity, needed
+	// when the session's own events have scrolled out of the bounded
+	// recovery window and there is no prior attention entry to carry Last
+	// forward from. An ordinary transition carries no such key, so Last
+	// keeps its usual carry-forward behavior.
+	last := prev.Last
+	if lastTime, ok := ev.Payload["last_time"].(time.Time); ok && lastTime.After(last) {
+		last = lastTime
+	}
 	m.attention[ev.SessionID] = attention{
 		State: state, Since: ev.Time, Reason: reason,
-		Source: prev.Source, Agent: prev.Agent, Where: prev.Where, Last: prev.Last,
+		Source: prev.Source, Agent: prev.Agent, Where: prev.Where, Last: last,
 		HasError: hasError,
 	}
 	m.boundAttention()

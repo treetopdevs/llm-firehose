@@ -281,7 +281,7 @@ func sessionTransitions(sessions []Session) []event.Event {
 			Category: event.CategoryMeta, Name: "state.transition",
 			Payload: map[string]any{
 				"state": session.State, "reason": session.StateReason, "reconciled": true,
-				"has_error": session.HasError,
+				"has_error": session.HasError, "last_time": session.LastTime,
 			},
 		})
 	}

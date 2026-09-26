@@ -85,6 +85,42 @@ func TestReconciledAttentionTransitionDoesNotEnterTimeline(t *testing.T) {
 	}
 }
 
+// TestReconciledTransitionRestoresLastForFreshness is the regression test for
+// Codex review finding F3: a reconciliation snapshot's payload carries
+// last_time (the session's real last activity), and noteAttention must
+// consume it into the attention entry's Last. A session recovered purely
+// from a reconciliation snapshot — its own activity long since scrolled out
+// of the bounded event-ring recovery window — has no other way to look
+// fresh: without last_time, Last stays at its zero value (there is no prior
+// attention entry to carry it forward from), and attentionFresh falls back
+// to the transition's own (here: stale) Since, wrongly judging a genuinely
+// active session dead the instant it reconciles.
+func TestReconciledTransitionRestoresLastForFreshness(t *testing.T) {
+	now := t0.Add(30 * 24 * time.Hour)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+
+	// The transition's own Since (ev.Time, from stateTransition's helper) is
+	// deliberately ancient — far past workingStaleAfter — while last_time
+	// carries the session's real, recent activity.
+	recentLast := now.Add(-time.Minute)
+	transition := stateTransition(1, "recovered", stateWorking, "")
+	transition.ID = ""
+	transition.Summary = ""
+	transition.Payload["reconciled"] = true
+	transition.Payload["has_error"] = false
+	transition.Payload["last_time"] = recentLast
+	m = push(m, transition)
+
+	sessions := m.liveSessions(now)
+	for _, s := range sessions {
+		if s.ID == "recovered" {
+			return
+		}
+	}
+	t.Fatalf("reconciled working session with recent last_time should be live, got %+v (attention=%+v)", sessions, m.attention["recovered"])
+}
+
 func TestPauseHoldsStreamAndCountsUnread(t *testing.T) {
 	m := newTestModel()
 	m = push(m, mkEv(1, event.CategoryShell, "first event"))

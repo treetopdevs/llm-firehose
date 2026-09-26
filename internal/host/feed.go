@@ -152,6 +152,7 @@ func projectedSessionTransitions(sessions []capture.Session) []event.Event {
 			Category: event.CategoryMeta, Name: "state.transition",
 			Payload: map[string]any{
 				"state": string(session.State), "reason": session.StateReason, "reconciled": true,
+				"has_error": session.HasError, "last_time": session.LastTime,
 			},
 		})
 	}
