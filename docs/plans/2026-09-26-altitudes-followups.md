@@ -582,3 +582,10 @@ frozen-surface impact):
 
 See the branch's commit history for the corresponding TDD commits and
 regression tests.
+
+## Addendum (wave 6): final narrow Codex pass
+
+A final pass over the wave-5 commits found two more issues. Both were confirmed with a failing test before the fix.
+
+- **F1 [high, confirmed] An event that both revealed an idle crossing and changed state published only its own transition.** Activity arriving after `IdleAfter` published working → working, which hid the idle interval from live subscribers, and no later sweep could recover it. `ApplyResult` now returns every transition in order, first the crossing and then the event's own change, and `applyProjection` publishes each one before the event. `Apply` still returns the final transition. Test: `TestInlineIdleCrossingThenResumePublishesBothTransitions` (`internal/capture/capture_test.go`).
+- **F2 [medium, confirmed] The desktop fallback compared an omitted `state_reason` with `""`.** `/sessions` omits an empty `state_reason`, but transition payloads always carry `reason`, so a rising-error frame after a real snapshot reset dwell. The comparison now treats a missing reason as empty. Test: `"keeps the prior state_since on an older-daemon error frame after a summary with no state_reason"` (`apps/tauri-desktop/src/ui/dwell/model.test.ts`). The TUI was unaffected, because Go strings default to `""`.
