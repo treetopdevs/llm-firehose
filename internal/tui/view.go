@@ -325,8 +325,8 @@ func (m Model) viewLaneStrip(sessions []sessionInfo, now time.Time, agentW int) 
 
 const (
 	maxWhereWidth = 20
-	// matrixCellWidth is sparkline · state glyph · session count.
-	matrixCellWidth = bandBuckets + 1 + 1 + 1 + 2
+	// matrixCellWidth is sparkline · state glyph · error mark · session count.
+	matrixCellWidth = bandBuckets + 1 + 1 + 1 + 1 + 2
 )
 
 // viewWorkspace is the top altitude: one row per workspace, one column per
@@ -390,9 +390,17 @@ func renderMatrixCell(c matrixCell, scale int, selected bool) string {
 	}
 	spark := sparkline(c.Buckets[:], scale)
 	if selected {
-		return selStyle.Render(spark + " " + glyph + " " + count)
+		errMark := " "
+		if c.HasError {
+			errMark = "!"
+		}
+		return selStyle.Render(spark + " " + glyph + errMark + " " + count)
 	}
-	return spark + " " + style.Render(glyph) + " " + dimStyle.Render(count)
+	errMark := " "
+	if c.HasError {
+		errMark = errorStyle.Render("!")
+	}
+	return spark + " " + style.Render(glyph) + errMark + " " + dimStyle.Render(count)
 }
 
 // stateGlyph is the one-cell form of the band's state column.

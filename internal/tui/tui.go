@@ -37,16 +37,20 @@ type SessionAttention struct {
 	// LastTime), used to tell a live needs_input/working state from one a
 	// daemon restart stamped over a long-dead session.
 	Last time.Time
+	// HasError mirrors the engine's HasError overlay: an error was observed
+	// in this session and no activity has cleared it yet.
+	HasError bool
 }
 
 type attention struct {
-	State  string
-	Since  time.Time
-	Reason string
-	Source string
-	Agent  string
-	Where  string
-	Last   time.Time
+	State    string
+	Since    time.Time
+	Reason   string
+	Source   string
+	Agent    string
+	Where    string
+	Last     time.Time
+	HasError bool
 }
 
 // altitude is the reading distance: the workspace matrix, or the session
@@ -152,7 +156,7 @@ func (m Model) PreloadSessions(sessions []SessionAttention) Model {
 		m.attention[session.ID] = attention{
 			State: session.State, Since: session.Since, Reason: session.Reason,
 			Source: session.Source, Agent: session.Agent, Where: workspaceKey(session.Repo, session.CWD),
-			Last: session.Last,
+			Last: session.Last, HasError: session.HasError,
 		}
 	}
 	m.boundAttention()
@@ -436,10 +440,12 @@ func (m Model) noteAttention(ev event.Event) {
 	if reason == "" && state == stateNeedsInput {
 		reason = ev.Summary
 	}
+	hasError, _ := ev.Payload["has_error"].(bool)
 	prev := m.attention[ev.SessionID]
 	m.attention[ev.SessionID] = attention{
 		State: state, Since: ev.Time, Reason: reason,
 		Source: prev.Source, Agent: prev.Agent, Where: prev.Where, Last: prev.Last,
+		HasError: hasError,
 	}
 	m.boundAttention()
 }

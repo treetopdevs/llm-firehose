@@ -236,7 +236,7 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 					ID: session.ID, Source: session.Source, Agent: session.Agent,
 					Repo: session.Repo, CWD: session.CWD,
 					State: session.State, Since: session.StateSince, Reason: session.StateReason,
-					Last: session.LastTime,
+					Last: session.LastTime, HasError: session.HasError,
 				})
 			}
 			return stream, history, attention, nil
@@ -253,7 +253,7 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 			ID: session.ID, Source: session.Source, Agent: session.Agent,
 			Repo: session.Repo, CWD: session.CWD,
 			State: string(session.State), Since: session.StateSince, Reason: session.StateReason,
-			Last: session.LastTime,
+			Last: session.LastTime, HasError: session.HasError,
 		})
 	}
 	return feed.Events, feed.History, attention, nil

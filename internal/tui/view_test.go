@@ -399,6 +399,27 @@ func TestAltitudeLabelsStripControlSequences(t *testing.T) {
 	}
 }
 
+func TestRenderMatrixCellMarksErrorWithoutChangingWidth(t *testing.T) {
+	base := matrixCell{Where: "/repo", Agent: "claude", State: stateWorking, Sessions: 1}
+	erroring := base
+	erroring.HasError = true
+
+	for _, selected := range []bool{false, true} {
+		clean := plain(renderMatrixCell(base, 1, selected))
+		marked := plain(renderMatrixCell(erroring, 1, selected))
+		if strings.Contains(clean, "!") {
+			t.Errorf("selected=%v: clean cell should not carry the error mark: %q", selected, clean)
+		}
+		if !strings.Contains(marked, "!") {
+			t.Errorf("selected=%v: erroring cell should carry the error mark: %q", selected, marked)
+		}
+		if lipgloss.Width(renderMatrixCell(base, 1, selected)) != lipgloss.Width(renderMatrixCell(erroring, 1, selected)) {
+			t.Errorf("selected=%v: cell width changed with HasError: clean=%d erroring=%d",
+				selected, lipgloss.Width(renderMatrixCell(base, 1, selected)), lipgloss.Width(renderMatrixCell(erroring, 1, selected)))
+		}
+	}
+}
+
 func TestWorkspaceKeysAreSafeOnAnEmptyMatrix(t *testing.T) {
 	m := newTestModel()
 	m = key(key(key(key(m, "esc"), "k"), "j"), "enter")

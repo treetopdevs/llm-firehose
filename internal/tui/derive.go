@@ -60,6 +60,8 @@ type sessionInfo struct {
 	Since   time.Time
 	Reason  string
 	Buckets [bandBuckets]int // events per bandBucket, oldest first
+	// HasError mirrors the engine's HasError overlay for this session.
+	HasError bool
 }
 
 func isTransition(ev event.Event) bool {
@@ -119,7 +121,7 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 			s = &sessionInfo{ID: id, Label: agentLabel(a.Agent, a.Source)}
 			byID[id] = s
 		}
-		s.State, s.Since, s.Reason = a.State, a.Since, a.Reason
+		s.State, s.Since, s.Reason, s.HasError = a.State, a.Since, a.Reason, a.HasError
 		if s.Where == "" {
 			s.Where = a.Where
 		}
@@ -165,6 +167,9 @@ type matrixCell struct {
 	Sessions     int
 	State        string
 	Last         time.Time
+	// HasError is true when any live session folded into this cell has an
+	// unresolved error overlay.
+	HasError bool
 }
 
 type matrix struct {
@@ -200,6 +205,7 @@ func buildMatrix(sessions []sessionInfo) matrix {
 		}
 		c.Sessions++
 		c.State = worstState(c.State, s.State)
+		c.HasError = c.HasError || s.HasError
 		last := s.Last
 		if s.Since.After(last) {
 			last = s.Since

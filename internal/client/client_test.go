@@ -93,6 +93,10 @@ func TestSessionsReturnsProjectedAttention(t *testing.T) {
 	if err := c.Emit(t.Context(), "generic", strings.NewReader(payload)); err != nil {
 		t.Fatal(err)
 	}
+	errPayload := `{"id":"error-1","time":"2026-08-17T12:00:05Z","source":"claude-code","category":"error","session_id":"waiting","summary":"boom"}`
+	if err := c.Emit(t.Context(), "generic", strings.NewReader(errPayload)); err != nil {
+		t.Fatal(err)
+	}
 	sessions, err := c.Sessions(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -100,9 +104,12 @@ func TestSessionsReturnsProjectedAttention(t *testing.T) {
 	if len(sessions) != 1 || sessions[0].ID != "waiting" || sessions[0].State != "needs_input" {
 		t.Fatalf("sessions = %+v", sessions)
 	}
-	wantLast := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	wantLast := time.Date(2026, 8, 17, 12, 0, 5, 0, time.UTC)
 	if !sessions[0].LastTime.Equal(wantLast) {
 		t.Fatalf("last_time = %v, want %v (was silently dropped)", sessions[0].LastTime, wantLast)
+	}
+	if !sessions[0].HasError {
+		t.Fatalf("has_error = %v, want true (was silently dropped)", sessions[0].HasError)
 	}
 }
 
