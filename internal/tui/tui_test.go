@@ -222,6 +222,37 @@ func TestNeedsYouCountIgnoresStaleSession(t *testing.T) {
 	}
 }
 
+// TestNeedsYouCountRefreshesOnOrdinaryActivity guards against attention.Last
+// only ever being set at preload/transition time. A session can sit in
+// needs_input for a long time while still emitting ordinary events (a Codex
+// token_count meta event, a shell event) that never change its state; those
+// events are real evidence the session is alive and must refresh Last the
+// same way liveSessions already does by scanning m.events, so the header
+// count does not disagree with the band/workspace views about what is live.
+func TestNeedsYouCountRefreshesOnOrdinaryActivity(t *testing.T) {
+	now := t0.Add(30 * 24 * time.Hour)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	stale := now.Add(-25 * time.Hour)
+	m = m.PreloadSessions([]SessionAttention{{
+		ID: "s1", State: stateNeedsInput, Since: stale, Last: stale, Reason: "approve Bash",
+	}})
+	if got := m.needsYouCount(); got != 0 {
+		t.Fatalf("needsYouCount = %d, want 0 before fresh activity", got)
+	}
+
+	recent := mkEv(1, event.CategoryMeta, "token_count")
+	recent.Time = now.Add(-time.Minute)
+	m = push(m, recent)
+
+	if got := m.needsYouCount(); got != 1 {
+		t.Fatalf("needsYouCount = %d, want 1 after a recent non-transition event", got)
+	}
+	if view := m.View(); !strings.Contains(view, "NEEDS YOU · 1") {
+		t.Fatalf("header should reflect fresh activity on a needs_input session:\n%s", view)
+	}
+}
+
 func TestQuitKey(t *testing.T) {
 	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})

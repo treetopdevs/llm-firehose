@@ -428,7 +428,21 @@ func (m Model) visibleRows() []store.Row {
 
 // noteAttention applies engine-owned, live-only Projection transitions.
 func (m Model) noteAttention(ev event.Event) {
-	if ev.SessionID == "" || m.attention == nil || !isTransition(ev) {
+	if ev.SessionID == "" || m.attention == nil {
+		return
+	}
+	if !isTransition(ev) {
+		// An ordinary event is real evidence the session is alive, the same
+		// evidence liveSessions already reads straight off m.events. An
+		// already-tracked session's Last must move forward with it so
+		// needsYouCount/oldestNeedsYouReason (which have no access to the
+		// event ring) do not disagree with liveSessions about what counts as
+		// fresh. A session with no attention entry yet needs none created
+		// here — it cannot appear in the header until a transition tracks it.
+		if prev, ok := m.attention[ev.SessionID]; ok && ev.Time.After(prev.Last) {
+			prev.Last = ev.Time
+			m.attention[ev.SessionID] = prev
+		}
 		return
 	}
 	state, _ := ev.Payload["state"].(string)
