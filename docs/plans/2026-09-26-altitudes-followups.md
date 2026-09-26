@@ -383,3 +383,38 @@ No frozen-surface impact. `has_error` is already a documented, additive
 that was silently failing to parse an already-frozen field, and (b) adds
 presentation in two viewers. Nothing here touches the envelope, privacy,
 spool, export, or the API's shape.
+
+## Addendum (wave 2): Codex adversarial review findings
+
+A Codex adversarial review of the branch after the above landed found three
+real bugs in this same follow-up work, all fixed in follow-up commits on the
+same branch (no design changes needed, no frozen-surface impact):
+
+- **The `state_since` fix above was itself off by `IdleAfter`.** Stamping
+  `Since` from `lastActivity` (this doc's original "the fix") is honest about
+  *whether* a session is idle but not about *when* idle began — the session
+  was still `working` for the 90s between `lastActivity` and the threshold
+  crossing. A viewer computing dwell as `now - Since` therefore showed a
+  fake ~90s of extra dwell the instant idle was first noticed, on every
+  normal sweep, not just after a restart. Fixed by stamping `Since` from the
+  threshold crossing itself (`lastActivity + IdleAfter`) in `TickIdle`
+  (`internal/capture/internal/projection/attention.go`).
+- **`lastActivity` was not monotonic.** `ApplyResult` assigned it from every
+  applied event unconditionally, unlike `LastTime`'s existing max-tracking.
+  Append order does not establish timestamp order, so a late-arriving event
+  with an older source time could drag a session's evidence of life
+  backwards, corrupting the idle sweep's crossing-time math. Fixed by
+  tracking the max event time, mirroring `LastTime`
+  (`internal/capture/internal/projection/projection.go`).
+- **Reconciliation snapshots dropped fields the TUI needs.** The daemonless
+  reconnect path (`internal/host/feed.go` `projectedSessionTransitions`)
+  omitted `has_error` entirely (a stream overflow could silently clear an
+  unresolved error mark), and neither reconnect path carried `last_time`, so
+  a session whose activity had scrolled out of the bounded event-ring
+  recovery window had no way to look fresh again after reconciling. Fixed by
+  carrying both fields on both reconciliation payloads
+  (`internal/host/feed.go`, `internal/client/client.go`) and consuming them
+  in `noteAttention` (`internal/tui/tui.go`).
+
+See the branch's commit history for the corresponding TDD commits and
+regression tests.
