@@ -509,13 +509,21 @@ func (m Model) noteAttention(ev event.Event) {
 		if parsed, err := time.Parse(time.RFC3339Nano, s); err == nil {
 			since = parsed
 		}
-	} else if state == prev.State && reason == prev.Reason {
+	} else if state == prev.State && reason == prev.Reason && hasError && !prev.HasError {
 		// Version skew: a daemon old enough to predate the "since" payload
 		// key (wave 3) carries none at all. Falling back to ev.Time is right
 		// for a genuine state change, but an error-only transition — same
 		// state, same reason, only has_error flipping — publishes at the
 		// error's own arrival, not the state's start; keep the prior
 		// state_since instead of resetting a long wait's dwell clock.
+		//
+		// That fallback must only fire when the error is being newly raised
+		// (prior HasError false, this one true): recovery — an activity
+		// event with prev.HasError true, which Transition (attention.go)
+		// resets Since for even though the primary state does not change —
+		// has the exact same state and reason on the way in and the way
+		// out. Guarding on the has_error edge tells the two apart; anything
+		// else (recovery, or has_error unchanged) falls back to ev.Time.
 		since = prev.Since
 	}
 	// Identity (source/agent/workspace) is normally carried forward from the

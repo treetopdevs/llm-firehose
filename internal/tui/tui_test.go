@@ -237,6 +237,65 @@ func TestErrorOnlyTransitionFromOlderDaemonDoesNotResetDwellSince(t *testing.T) 
 	}
 }
 
+// TestErrorRecoveryFromOlderDaemonResetsDwellSince is the regression test for
+// Codex review round-4 finding F2: the round-3 fix (above) preserves Since
+// whenever state and reason are unchanged from the prior entry, with no
+// payload "since" at all. That is right for an error being newly raised, but
+// wrong for error *recovery* — working, then an error, then activity resumes
+// — which has the exact same state ("working") and reason ("") on the way in
+// and the way out, per Transition in attention.go: an activity event with
+// prev.HasError true resets Since to the recovery time even though the
+// primary state does not change. An older daemon with no "since" key must
+// not make that recovery look like it kept dwelling in the pre-error wait;
+// only a rising has_error edge (false -> true) may keep the prior Since.
+func TestErrorRecoveryFromOlderDaemonResetsDwellSince(t *testing.T) {
+	m := newTestModel()
+	workingSince := t0
+	working := event.Event{
+		ID: "transition-1", Time: workingSince, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateWorking,
+		Payload: map[string]any{
+			"state": stateWorking, "reason": "", "has_error": false,
+			// No "since" key at all: an older daemon that predates it.
+		},
+	}
+	m = push(m, working)
+	if got := m.attention["s1"].Since; !got.Equal(workingSince) {
+		t.Fatalf("setup: want Since %v, got %v", workingSince, got)
+	}
+
+	errAt := workingSince.Add(time.Minute)
+	errOnly := event.Event{
+		ID: "transition-2", Time: errAt, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateWorking,
+		Payload: map[string]any{
+			"state": stateWorking, "reason": "", "has_error": true,
+		},
+	}
+	m = push(m, errOnly)
+	if got := m.attention["s1"]; !got.Since.Equal(workingSince) || !got.HasError {
+		t.Fatalf("setup: want error raised with Since preserved at %v, got %+v", workingSince, got)
+	}
+
+	recoverAt := errAt.Add(2 * time.Minute)
+	recovered := event.Event{
+		ID: "transition-3", Time: recoverAt, Source: "firehose", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "state.transition", Summary: stateWorking,
+		Payload: map[string]any{
+			"state": stateWorking, "reason": "", "has_error": false,
+			// Still no "since" key.
+		},
+	}
+	m = push(m, recovered)
+	got := m.attention["s1"]
+	if got.HasError {
+		t.Errorf("has_error should be cleared on recovery, got %+v", got)
+	}
+	if !got.Since.Equal(recoverAt) {
+		t.Errorf("recovery should reset Since to the recovery time (%v), not keep the stale pre-error dwell: got %v", recoverAt, got.Since)
+	}
+}
+
 // TestReconciledTransitionRestoresIdentityForWorkspaceCell is the regression
 // test for Codex review finding F3: a session recovered purely from a
 // reconciliation snapshot (its own events long scrolled out of the bounded
