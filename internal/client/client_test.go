@@ -275,6 +275,7 @@ func TestFeedRefreshesSessionAttentionAfterStreamInterruption(t *testing.T) {
 		case "/sessions":
 			_ = json.NewEncoder(w).Encode([]client.Session{{
 				ID: "attention", State: "working", StateSince: stateSince,
+				Source: "claude-code", Agent: "claude", Repo: "org/repo", CWD: "/home/me/dev/repo",
 			}})
 		case "/events/stream":
 			call := streams.Add(1)
@@ -299,6 +300,16 @@ func TestFeedRefreshesSessionAttentionAfterStreamInterruption(t *testing.T) {
 		if ev.Source != "firehose" || ev.Name != "state.transition" ||
 			ev.SessionID != "attention" || ev.Payload["state"] != "working" {
 			t.Fatalf("attention reconciliation = %+v", ev)
+		}
+		// Codex review finding F3: a reconciliation snapshot must carry the
+		// session's real identity, not leave the TUI to fall back to an
+		// empty one when no prior attention entry exists to carry it
+		// forward from.
+		if ev.Agent != "claude" || ev.Repo != "org/repo" || ev.CWD != "/home/me/dev/repo" {
+			t.Fatalf("reconciled transition dropped identity: %+v", ev)
+		}
+		if ev.Payload["source"] != "claude-code" {
+			t.Fatalf("reconciled transition dropped source: %+v", ev.Payload)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("session attention was not refreshed")
