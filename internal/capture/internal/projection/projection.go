@@ -285,7 +285,15 @@ func (ix *Projection) AdvanceIdle(now time.Time) []*event.Event {
 		s.State = next.State
 		s.StateSince = next.Since
 		s.StateReason = next.Reason
-		out = append(out, newStateTransition(id, prev.State, next, next.Since))
+		// The transition publishes now, at the sweep's own tick — never at
+		// next.Since, which on a cold rebuild can be hours or days in the
+		// past (the session's own threshold crossing). A live timeline
+		// appends events in arrival order and never sorts, so a historical
+		// Time here would render this row — which just arrived — as if it
+		// happened long before rows already on screen. next.Since (the
+		// honest "when this state began") still travels in the payload for
+		// viewers that need it (see newStateTransition).
+		out = append(out, newStateTransition(id, prev.State, next, now))
 	}
 	return out
 }
@@ -310,6 +318,18 @@ func newStateTransition(sessionID string, prev SessionState, next Attention, t t
 			"prev":      string(prev),
 			"reason":    next.Reason,
 			"has_error": next.HasError,
+			// since is next.Since (the state's own honest start time), kept
+			// separate from the event's own Time (the publication instant)
+			// so a viewer can distinguish "when this transition was
+			// observed" from "when the state actually began" — collapsing
+			// them made an error-only transition (state and Since unchanged,
+			// only has_error flips) look like it reset the dwell clock, and
+			// made a restart's historical idle transitions carry a stale
+			// Time into the live timeline. Formatted as a string (rather
+			// than left as time.Time) so it survives the daemon's SSE JSON
+			// transport unchanged; the daemonless in-process path parses the
+			// same format.
+			"since": next.Since.UTC().Format(time.RFC3339Nano),
 		},
 	}
 }

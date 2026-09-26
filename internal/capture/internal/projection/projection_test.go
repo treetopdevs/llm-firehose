@@ -208,6 +208,49 @@ func TestSessionAttentionSequence(t *testing.T) {
 	}
 }
 
+// TestApplyErrorOnlyTransitionCarriesUnchangedSince is the regression test
+// for Codex review finding F2: an event that only flips the HasError overlay
+// (primary state and Since unchanged, per Transition in attention.go) still
+// produces a transition — because has_error changed — but that transition's
+// event.Time is the publication instant (this event's own arrival), not the
+// state's Since. A viewer must be able to tell the two apart: the dwell
+// clock (state_since) must stay put at the earlier needs_input timestamp
+// even though ten minutes have passed and an error just arrived.
+func TestApplyErrorOnlyTransitionCarriesUnchangedSince(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+
+	tr := ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryPermission, Summary: "approve Bash",
+	})
+	if tr == nil || tr.Payload["state"] != "needs_input" {
+		t.Fatalf("want needs_input transition, got %+v", tr)
+	}
+
+	errTime := base.Add(10 * time.Minute)
+	tr = ix.Apply(event.Event{
+		ID: "2", Time: errTime, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryError, Severity: event.SeverityError, Summary: "boom",
+	})
+	if tr == nil {
+		t.Fatalf("error overlay change should still produce a transition")
+	}
+	if tr.Payload["state"] != "needs_input" {
+		t.Errorf("primary state should stay needs_input, got %+v", tr.Payload["state"])
+	}
+	if tr.Payload["has_error"] != true {
+		t.Errorf("has_error should now be true: %+v", tr.Payload)
+	}
+	if !tr.Time.Equal(errTime) {
+		t.Errorf("transition Time should be the publication instant (%v), got %v", errTime, tr.Time)
+	}
+	gotSince, err := time.Parse(time.RFC3339Nano, tr.Payload["since"].(string))
+	if err != nil || !gotSince.Equal(base) {
+		t.Errorf("transition payload since should stay at the original needs_input timestamp (%v), got %v (err=%v)", base, tr.Payload["since"], err)
+	}
+}
+
 func TestApplyIgnoresSyntheticTransition(t *testing.T) {
 	ix := New()
 	ix.Apply(event.Event{
@@ -240,16 +283,26 @@ func TestAdvanceIdle(t *testing.T) {
 		Category: event.CategoryPermission, Summary: "need you",
 	})
 
-	trs := ix.AdvanceIdle(base.Add(IdleAfter + time.Second))
+	now := base.Add(IdleAfter + time.Second)
+	trs := ix.AdvanceIdle(now)
 	if len(trs) != 1 {
 		t.Fatalf("want 1 idle transition (s1 only), got %d: %+v", len(trs), trs)
 	}
 	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
 		t.Errorf("wrong transition: %+v", trs[0])
 	}
+	// The event's Time is when the transition is published (now, the sweep's
+	// own tick) — never the historical state_since — so a live timeline that
+	// appends events in arrival order shows this row where it actually
+	// arrived, not stamped with a stale timestamp far earlier than rows
+	// already displayed.
+	if !trs[0].Time.Equal(now) {
+		t.Errorf("transition Time should be the publication time (%v), got %v", now, trs[0].Time)
+	}
 	wantSince := base.Add(IdleAfter)
-	if !trs[0].Time.Equal(wantSince) {
-		t.Errorf("transition Time should be the threshold crossing (last activity + IdleAfter = %v), got %v", wantSince, trs[0].Time)
+	gotSince, err := time.Parse(time.RFC3339Nano, trs[0].Payload["since"].(string))
+	if err != nil || !gotSince.Equal(wantSince) {
+		t.Errorf("transition payload since should be the threshold crossing (last activity + IdleAfter = %v), got %v (err=%v)", wantSince, trs[0].Payload["since"], err)
 	}
 	s1, _ := ix.Session("s1")
 	if !s1.StateSince.Equal(wantSince) {
@@ -286,6 +339,18 @@ func TestAdvanceIdleAfterRebuildStampsOwnLastActivity(t *testing.T) {
 		t.Errorf("wrong transition: %+v", trs[0])
 	}
 
+	// Codex review finding F1: on a cold rebuild, hundreds of sessions can
+	// cross into idle on the very first sweep, hours or days after their own
+	// last activity. If the transition's Time carried that historical
+	// state_since instead of the sweep's own publication time, a live
+	// timeline (which appends events in arrival order, never sorts) would
+	// show these as the newest rows while stamping them with ancient
+	// timestamps — appearing after genuinely newer activity that streamed in
+	// first. The transition must always publish at restartNow.
+	if !trs[0].Time.Equal(restartNow) {
+		t.Errorf("transition Time should be the sweep's publication time (%v), not the historical state_since, got %v", restartNow, trs[0].Time)
+	}
+
 	s1, ok := ix.Session("s1")
 	if !ok {
 		t.Fatalf("session s1 not found")
@@ -296,6 +361,10 @@ func TestAdvanceIdleAfterRebuildStampsOwnLastActivity(t *testing.T) {
 	wantSince := base.Add(IdleAfter)
 	if !s1.StateSince.Equal(wantSince) {
 		t.Errorf("StateSince should be the session's own last activity + IdleAfter (%v), got %v (restart was at %v)", wantSince, s1.StateSince, restartNow)
+	}
+	gotSince, err := time.Parse(time.RFC3339Nano, trs[0].Payload["since"].(string))
+	if err != nil || !gotSince.Equal(wantSince) {
+		t.Errorf("transition payload since should still carry the honest state_since (%v), got %v (err=%v)", wantSince, trs[0].Payload["since"], err)
 	}
 }
 
