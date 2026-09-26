@@ -315,6 +315,46 @@ func TestBuildMatrixRowsAreWorkspacesColumnsAreAgents(t *testing.T) {
 	}
 }
 
+func TestBuildMatrixFoldsHasErrorAcrossSessions(t *testing.T) {
+	now := t0.Add(time.Minute)
+	m := newTestModel()
+	m = m.PreloadSessions([]SessionAttention{
+		{ID: "s1", Source: "claude-code", Agent: "claude", CWD: "/home/me/dev/app", State: stateWorking, Since: now, Last: now, HasError: true},
+		{ID: "s2", Source: "claude-code", Agent: "claude", CWD: "/home/me/dev/app", State: stateWorking, Since: now, Last: now, HasError: false},
+		{ID: "s3", Source: "codex", Agent: "codex", CWD: "/home/me/dev/app", State: stateWorking, Since: now, Last: now, HasError: false},
+	})
+	mx := buildMatrix(m.liveSessions(now))
+	claudeCell, ok := mx.cell("/home/me/dev/app", "claude")
+	if !ok || !claudeCell.HasError {
+		t.Fatalf("claude cell should fold HasError=true from s1: %+v ok=%v", claudeCell, ok)
+	}
+	codexCell, ok := mx.cell("/home/me/dev/app", "codex")
+	if !ok || codexCell.HasError {
+		t.Fatalf("codex cell has no erroring session, want HasError=false: %+v ok=%v", codexCell, ok)
+	}
+}
+
+// TestLiveSessionsTrustsPreloadedLastWithNoRingEvents guards the other half
+// of attentionFresh's contract: an idle (or done) session judged fresh on
+// last activity alone, whose last activity the engine already reports via
+// preload/attention but which happens to have no matching event in the
+// timeline ring (e.g. evicted by busier sessions, or preloaded before the
+// ring replay). liveSessions must not silently treat it as dead just
+// because its own event-scan loop never touched s.Last.
+func TestLiveSessionsTrustsPreloadedLastWithNoRingEvents(t *testing.T) {
+	now := t0.Add(time.Hour)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+	fresh := now.Add(-3 * time.Minute)
+	m = m.PreloadSessions([]SessionAttention{
+		{ID: "s1", Source: "codex", State: stateIdle, Since: fresh, Last: fresh},
+	})
+	got := m.liveSessions(now)
+	if len(got) != 1 || got[0].ID != "s1" {
+		t.Fatalf("liveSessions = %+v, want [s1] fresh on its preloaded Last", got)
+	}
+}
+
 func TestWorstStateRanksNeedsOverWorkingOverIdle(t *testing.T) {
 	if got := worstState(stateIdle, stateWorking); got != stateWorking {
 		t.Errorf("worstState(idle, working) = %q", got)

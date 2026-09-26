@@ -60,6 +60,7 @@ export function createWorkspace(
           },
           el("span", { class: "spark", "aria-hidden": "true" }, sparkline(c.buckets, scale)),
           el("span", { class: `glyph${needs ? " needs" : ""}` }, stateGlyph(c.state)),
+          el("span", { class: "err", title: c.hasError ? "an error was captured in this cell" : "" }, c.hasError ? "!" : ""),
           el("span", { class: "count" }, c.sessions > 1 ? String(c.sessions) : ""),
         );
         onActivate(td, () => onOpenCell({ where: c.where, agent: c.agent, label: `${c.whereLabel} · ${c.agent}` }));

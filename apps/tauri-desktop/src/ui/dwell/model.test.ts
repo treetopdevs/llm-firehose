@@ -89,4 +89,129 @@ describe("applyTransition", () => {
     expect(applyTransition(before, { ...ev, session_id: "unknown" })).toBe(before);
     expect(applyTransition(before, { ...ev, source: "codex" })).toBe(before);
   });
+
+  // Regression test for Codex review finding F2: the backend's state.transition
+  // payload carries "since" — the state's own honest start time — separately
+  // from the event's own "time" (when the transition was published). An
+  // error-only transition (has_error flips, primary state and since
+  // unchanged) must not restart the dwell clock by falling back to ev.time.
+  test("uses the payload's since over the event's own time when present", () => {
+    const before = [summary({ id: "w", state: "needs_input", state_since: new Date(now - 600_000).toISOString() })];
+    const sinceIso = new Date(now - 600_000).toISOString();
+    const errOnly = {
+      id: "t2",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "needs_input", reason: "approve Bash", has_error: true, since: sinceIso },
+    } as FirehoseEvent;
+    const after = applyTransition(before, errOnly);
+    expect(after[0]).toMatchObject({ state: "needs_input", state_since: sinceIso, state_reason: "approve Bash" });
+  });
+
+  test("falls back to the event's own time when the payload carries no since", () => {
+    const before = [summary({ id: "w" })];
+    const ev = {
+      id: "t1",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "needs_input", reason: "approve Bash" },
+    } as FirehoseEvent;
+    const after = applyTransition(before, ev);
+    expect(after[0].state_since).toBe(ev.time);
+  });
+
+  // Regression test for Codex review finding F3: a daemon old enough to
+  // predate the "since" payload key (wave 3) carries none at all, so
+  // applyTransition falls back to the event's own time. That fallback is
+  // correct for a genuine state change (the test above), but wrong for an
+  // error-only transition -- same state, same reason, only has_error
+  // flipping -- where ev.time is the error's own arrival, not the state's
+  // start. When since is absent and state and reason are unchanged from the
+  // prior summary, the prior state_since must be kept.
+  test("keeps the prior state_since for an error-only transition from an older daemon with no since", () => {
+    const firstSinceIso = new Date(now - 600_000).toISOString();
+    const before = [
+      summary({ id: "w", state: "needs_input", state_since: firstSinceIso, state_reason: "approve Bash" }),
+    ];
+    const errOnly = {
+      id: "t2",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "needs_input", reason: "approve Bash", has_error: true },
+    } as FirehoseEvent;
+    const after = applyTransition(before, errOnly);
+    expect(after[0]).toMatchObject({ state: "needs_input", state_since: firstSinceIso, state_reason: "approve Bash" });
+  });
+
+  // /sessions omits state_reason when it is empty, while an older daemon's
+  // transition payload always carries reason, as "" when there is none. The
+  // rising-edge fallback must treat the two as the same reason.
+  test("keeps the prior state_since on an older-daemon error frame after a summary with no state_reason", () => {
+    const firstSinceIso = new Date(now - 600_000).toISOString();
+    const before = [summary({ id: "w", state: "working", state_since: firstSinceIso })];
+    expect(before[0].state_reason).toBeUndefined();
+    const errOnly = {
+      id: "t3",
+      time: new Date(now).toISOString(),
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "working", reason: "", has_error: true },
+    } as FirehoseEvent;
+    const after = applyTransition(before, errOnly);
+    expect(after[0]).toMatchObject({ state: "working", state_since: firstSinceIso, has_error: true });
+  });
+
+  // Regression test for Codex review round-4 finding F2: the round-3 fix
+  // (above) keeps the prior state_since whenever state and reason are
+  // unchanged with no payload since at all. That is right for an error being
+  // newly raised, but wrong for error *recovery* -- working, then an error,
+  // then activity resumes -- which has the exact same state ("working") and
+  // reason ("") on the way in and the way out, per Transition in
+  // attention.go: an activity event with prev.HasError true resets Since to
+  // the recovery time even though the primary state does not change. Only a
+  // rising has_error edge (false -> true) may keep the prior since; a
+  // falling edge (recovery) must fall back to the event's own time.
+  test("resets since to the recovery time when has_error clears with no payload since (older daemon)", () => {
+    const workingSinceIso = new Date(now - 3 * 60_000).toISOString();
+    const before = [
+      summary({ id: "w", state: "working", state_since: workingSinceIso, state_reason: "", has_error: false }),
+    ];
+
+    const errAtIso = new Date(now - 2 * 60_000).toISOString();
+    const errOnly = {
+      id: "t2",
+      time: errAtIso,
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "working", reason: "", has_error: true },
+    } as FirehoseEvent;
+    const afterError = applyTransition(before, errOnly);
+    expect(afterError[0]).toMatchObject({ state: "working", state_since: workingSinceIso, has_error: true });
+
+    const recoverAtIso = new Date(now).toISOString();
+    const recovered = {
+      id: "t3",
+      time: recoverAtIso,
+      source: "firehose",
+      name: "state.transition",
+      category: "meta",
+      session_id: "w",
+      payload: { state: "working", reason: "", has_error: false },
+    } as FirehoseEvent;
+    const afterRecover = applyTransition(afterError, recovered);
+    expect(afterRecover[0]).toMatchObject({ state: "working", state_since: recoverAtIso, has_error: false });
+  });
 });

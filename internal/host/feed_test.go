@@ -145,6 +145,7 @@ func TestEngineFeedReconcilesProjectedAttentionAfterOverflow(t *testing.T) {
 	base := time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)
 	permission := event.Event{
 		ID: "attention-open", Time: base, Source: "claude-code", SessionID: "attention-session",
+		Agent: "claude", Repo: "org/repo", CWD: "/home/me/dev/repo",
 		Category: event.CategoryPermission, Summary: "approve Bash",
 	}
 	if _, err := engine.Admit(context.Background(), permission); err != nil {
@@ -183,6 +184,16 @@ func TestEngineFeedReconcilesProjectedAttentionAfterOverflow(t *testing.T) {
 		case ev := <-feed.Events:
 			if ev.Source == "firehose" && ev.Name == "state.transition" &&
 				ev.SessionID == "attention-session" && ev.Payload["state"] == "working" {
+				// Codex review finding F3: a reconciliation snapshot must
+				// carry the session's real identity, not leave the TUI to
+				// fall back to an empty one when no prior attention entry
+				// exists to carry it forward from.
+				if ev.Agent != "claude" || ev.Repo != "org/repo" || ev.CWD != "/home/me/dev/repo" {
+					t.Fatalf("reconciled transition dropped identity: %+v", ev)
+				}
+				if ev.Payload["source"] != "claude-code" {
+					t.Fatalf("reconciled transition dropped source: %+v", ev.Payload)
+				}
 				return
 			}
 		case <-deadline:

@@ -60,6 +60,8 @@ type sessionInfo struct {
 	Since   time.Time
 	Reason  string
 	Buckets [bandBuckets]int // events per bandBucket, oldest first
+	// HasError mirrors the engine's HasError overlay for this session.
+	HasError bool
 }
 
 func isTransition(ev event.Event) bool {
@@ -119,7 +121,16 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 			s = &sessionInfo{ID: id, Label: agentLabel(a.Agent, a.Source)}
 			byID[id] = s
 		}
-		s.State, s.Since, s.Reason = a.State, a.Since, a.Reason
+		s.State, s.Since, s.Reason, s.HasError = a.State, a.Since, a.Reason, a.HasError
+		// a.Last is the engine's own record of this session's last activity
+		// (preload, or an ordinary event noteAttention carried forward) and
+		// must count even when no matching event survived in the timeline
+		// ring — otherwise an idle/done session judged fresh on Last alone
+		// (attentionFresh) looks dead here while needsYouCount, which reads
+		// a.Last directly, still sees it as live.
+		if a.Last.After(s.Last) {
+			s.Last = a.Last
+		}
 		if s.Where == "" {
 			s.Where = a.Where
 		}
@@ -129,11 +140,7 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		// A state change is evidence of life only when the engine asserts a
 		// live state. A daemon restart stamps every historical session idle,
 		// and that must not make hundreds of them live.
-		ref := s.Last
-		if s.Since.After(ref) && (s.State == stateNeedsInput || s.State == stateWorking) {
-			ref = s.Since
-		}
-		if !stateFresh(s.State, ref, now) {
+		if !attentionFresh(s.State, s.Last, s.Since, now) {
 			continue
 		}
 		if s.Label == "" {
@@ -169,6 +176,9 @@ type matrixCell struct {
 	Sessions     int
 	State        string
 	Last         time.Time
+	// HasError is true when any live session folded into this cell has an
+	// unresolved error overlay.
+	HasError bool
 }
 
 type matrix struct {
@@ -204,6 +214,7 @@ func buildMatrix(sessions []sessionInfo) matrix {
 		}
 		c.Sessions++
 		c.State = worstState(c.State, s.State)
+		c.HasError = c.HasError || s.HasError
 		last := s.Last
 		if s.Since.After(last) {
 			last = s.Since
@@ -250,6 +261,21 @@ func worstState(a, b string) string {
 		return b
 	}
 	return a
+}
+
+// attentionFresh decides whether an attention entry (last real activity
+// `last`, plus the engine's own `state`/`since`) is still plausible evidence
+// of a live session, as of `now`. `since` is preferred over `last` only while
+// the engine still asserts a live state (working or needs_input) — a daemon
+// restart's idle stamp is not evidence of life. liveSessions, needsYouCount,
+// and oldestNeedsYouReason all call this so they can never drift into
+// disagreeing about what counts as fresh.
+func attentionFresh(state string, last, since, now time.Time) bool {
+	ref := last
+	if since.After(ref) && (state == stateNeedsInput || state == stateWorking) {
+		ref = since
+	}
+	return stateFresh(state, ref, now)
 }
 
 // stateFresh reports whether a session still belongs on screen: recent

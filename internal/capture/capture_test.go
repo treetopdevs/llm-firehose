@@ -331,6 +331,130 @@ func TestLiveSubscriptionReceivesSerializedAdmissionsInOrder(t *testing.T) {
 	}
 }
 
+// TestInlineIdleCrossingPublishesLiveTransition is the regression test for
+// Codex review round-4 finding F1 (on top of round-3's f9eb2bc): when a
+// session-scoped, non-activity event arrives more than IdleAfter after the
+// session's last activity, projection.ApplyResult moves the session to idle
+// in-line (so replay and incremental projection agree, per round 3) but
+// Transition itself reports no further change for that event (a meta event
+// does not restart the idle clock), so no transition event used to be
+// returned at all. Engine.Run is never started in this test, so the
+// periodic AdvanceIdle sweep never runs and cannot paper over a missing
+// in-line transition by publishing its own moments later — only the in-line
+// crossing can ever report this live. history.go documents that a derived
+// attention transition is announced on the subscription before the Captured
+// Event that caused it; this asserts against that published frame, not a
+// /sessions snapshot, so a live subscriber (e.g. the TUI or the daemon's SSE
+// stream) is proven to actually observe the crossing.
+func TestInlineIdleCrossingPublishesLiveTransition(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscription := engine.Subscribe(ctx)
+
+	base := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	activity := event.Event{
+		ID: "activity", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "ran a tool",
+	}
+	if _, err := engine.Admit(context.Background(), activity); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-subscription.Events:
+		if got.ID != "activity" {
+			t.Fatalf("want the activity event first, got %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("activity event never arrived")
+	}
+
+	// More than IdleAfter (90s) after the session's last activity, but the
+	// event itself is not activity, an error, a permission, or a session
+	// end — nothing that would independently move the primary state.
+	meta := event.Event{
+		ID: "meta", Time: base.Add(91 * time.Second), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryMeta, Name: "token_count", Summary: "usage",
+	}
+	if _, err := engine.Admit(context.Background(), meta); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-subscription.Events:
+		if got.Source != "firehose" || got.Name != "state.transition" || got.Payload["state"] != "idle" {
+			t.Fatalf("want the idle transition published live before the meta event, got %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no idle transition was published for the in-line crossing: a live subscriber never learns the session went idle")
+	}
+
+	select {
+	case got := <-subscription.Events:
+		if got.ID != "meta" {
+			t.Fatalf("want the meta event next, got %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("meta event never arrived")
+	}
+
+	sessions := engine.Sessions()
+	if len(sessions) != 1 || sessions[0].State != "idle" {
+		t.Fatalf("want session s1 idle, got %+v", sessions)
+	}
+}
+
+// TestInlineIdleCrossingThenResumePublishesBothTransitions covers the case
+// where the event that reveals an idle crossing also changes state itself:
+// activity arriving after IdleAfter must publish the idle crossing and then
+// the resume, in that order, so a live subscriber sees the idle interval
+// instead of a working → working frame.
+func TestInlineIdleCrossingThenResumePublishesBothTransitions(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscription := engine.Subscribe(ctx)
+
+	base := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	first := event.Event{
+		ID: "first", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "ran a tool",
+	}
+	resume := event.Event{
+		ID: "resume", Time: base.Add(91 * time.Second), Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "ran another tool",
+	}
+	for _, ev := range []event.Event{first, resume} {
+		if _, err := engine.Admit(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got []string
+	for len(got) < 4 {
+		select {
+		case ev := <-subscription.Events:
+			if ev.Name == "state.transition" {
+				got = append(got, "transition:"+fmt.Sprint(ev.Payload["state"]))
+			} else {
+				got = append(got, ev.ID)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("stream stalled after %v", got)
+		}
+	}
+	want := []string{"first", "transition:idle", "transition:working", "resume"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("published %v, want %v", got, want)
+	}
+}
+
 func TestConcurrentAdmissionsSerializeWholeCommitAndProjection(t *testing.T) {
 	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeFull})
 	if err != nil {

@@ -63,7 +63,33 @@ export function applyTransition(summaries: SessionSummary[], ev: FirehoseEvent):
   const idx = summaries.findIndex((s) => s.id === ev.session_id);
   if (idx < 0) return summaries;
   const reason = typeof ev.payload?.reason === "string" ? ev.payload.reason : undefined;
+  const prior = summaries[idx];
+  const hasError = typeof ev.payload?.has_error === "boolean" ? ev.payload.has_error : !!prior.has_error;
+  // The payload's "since" is the state's own honest start time, kept
+  // separate from the event's own "time" (when the transition was
+  // published). They coincide for an ordinary state change, but not for a
+  // transition that only flips has_error — falling back to ev.time there
+  // would restart the dwell clock on an error that arrives mid-wait. A
+  // daemon old enough to predate "since" (wave 3) sends neither field, so
+  // when it's absent, this is only safe to treat as that same error-only
+  // case when the error is being newly raised (prior has_error false, this
+  // one true) with state and reason unchanged. Error *recovery* — working,
+  // then an error, then activity resumes — has the exact same state and
+  // reason on the way in and out, per Transition in attention.go: an
+  // activity event with prev.HasError true resets Since to the recovery
+  // time even though the primary state does not change. Guarding on the
+  // has_error edge tells the two apart; anything else (recovery, or
+  // has_error unchanged) falls back to ev.time.
+  const raisingError = hasError && !prior.has_error;
+  // /sessions omits an empty state_reason; transition payloads send "".
+  const sameReason = (reason ?? "") === (prior.state_reason ?? "");
+  const since =
+    typeof ev.payload?.since === "string"
+      ? ev.payload.since
+      : state === prior.state && sameReason && raisingError
+        ? prior.state_since
+        : ev.time;
   const next = [...summaries];
-  next[idx] = { ...next[idx], state, state_since: ev.time, state_reason: reason };
+  next[idx] = { ...next[idx], state, state_since: since, state_reason: reason, has_error: hasError };
   return next;
 }

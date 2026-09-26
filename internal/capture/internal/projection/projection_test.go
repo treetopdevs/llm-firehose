@@ -208,6 +208,49 @@ func TestSessionAttentionSequence(t *testing.T) {
 	}
 }
 
+// TestApplyErrorOnlyTransitionCarriesUnchangedSince is the regression test
+// for Codex review finding F2: an event that only flips the HasError overlay
+// (primary state and Since unchanged, per Transition in attention.go) still
+// produces a transition — because has_error changed — but that transition's
+// event.Time is the publication instant (this event's own arrival), not the
+// state's Since. A viewer must be able to tell the two apart: the dwell
+// clock (state_since) must stay put at the earlier needs_input timestamp
+// even though ten minutes have passed and an error just arrived.
+func TestApplyErrorOnlyTransitionCarriesUnchangedSince(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+
+	tr := ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryPermission, Summary: "approve Bash",
+	})
+	if tr == nil || tr.Payload["state"] != "needs_input" {
+		t.Fatalf("want needs_input transition, got %+v", tr)
+	}
+
+	errTime := base.Add(10 * time.Minute)
+	tr = ix.Apply(event.Event{
+		ID: "2", Time: errTime, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryError, Severity: event.SeverityError, Summary: "boom",
+	})
+	if tr == nil {
+		t.Fatalf("error overlay change should still produce a transition")
+	}
+	if tr.Payload["state"] != "needs_input" {
+		t.Errorf("primary state should stay needs_input, got %+v", tr.Payload["state"])
+	}
+	if tr.Payload["has_error"] != true {
+		t.Errorf("has_error should now be true: %+v", tr.Payload)
+	}
+	if !tr.Time.Equal(errTime) {
+		t.Errorf("transition Time should be the publication instant (%v), got %v", errTime, tr.Time)
+	}
+	gotSince, err := time.Parse(time.RFC3339Nano, tr.Payload["since"].(string))
+	if err != nil || !gotSince.Equal(base) {
+		t.Errorf("transition payload since should stay at the original needs_input timestamp (%v), got %v (err=%v)", base, tr.Payload["since"], err)
+	}
+}
+
 func TestApplyIgnoresSyntheticTransition(t *testing.T) {
 	ix := New()
 	ix.Apply(event.Event{
@@ -240,16 +283,265 @@ func TestAdvanceIdle(t *testing.T) {
 		Category: event.CategoryPermission, Summary: "need you",
 	})
 
-	trs := ix.AdvanceIdle(base.Add(IdleAfter + time.Second))
+	now := base.Add(IdleAfter + time.Second)
+	trs := ix.AdvanceIdle(now)
 	if len(trs) != 1 {
 		t.Fatalf("want 1 idle transition (s1 only), got %d: %+v", len(trs), trs)
 	}
 	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
 		t.Errorf("wrong transition: %+v", trs[0])
 	}
+	// The event's Time is when the transition is published (now, the sweep's
+	// own tick) — never the historical state_since — so a live timeline that
+	// appends events in arrival order shows this row where it actually
+	// arrived, not stamped with a stale timestamp far earlier than rows
+	// already displayed.
+	if !trs[0].Time.Equal(now) {
+		t.Errorf("transition Time should be the publication time (%v), got %v", now, trs[0].Time)
+	}
+	wantSince := base.Add(IdleAfter)
+	gotSince, err := time.Parse(time.RFC3339Nano, trs[0].Payload["since"].(string))
+	if err != nil || !gotSince.Equal(wantSince) {
+		t.Errorf("transition payload since should be the threshold crossing (last activity + IdleAfter = %v), got %v (err=%v)", wantSince, trs[0].Payload["since"], err)
+	}
+	s1, _ := ix.Session("s1")
+	if !s1.StateSince.Equal(wantSince) {
+		t.Errorf("s1 StateSince should be last activity + IdleAfter (%v), got %v", wantSince, s1.StateSince)
+	}
 	s2, _ := ix.Session("s2")
 	if s2.State != StateNeedsInput {
 		t.Errorf("s2 must stay needs_input, got %q", s2.State)
+	}
+}
+
+// TestAdvanceIdleAfterRebuildStampsOwnLastActivity is the regression test for
+// the "473 live sessions" restart bug: a cold rebuild's first idle sweep
+// must stamp state_since from the session's own last real activity (plus the
+// idle threshold, i.e. the instant the session actually crossed into idle),
+// not from the wall-clock instant the sweep happened to run, however long
+// after that activity the restart occurred.
+func TestAdvanceIdleAfterRebuildStampsOwnLastActivity(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+
+	// Simulate a daemon restart hours after the session's last activity —
+	// far past IdleAfter, as happens on a cold rebuild of a long-quiet spool.
+	restartNow := base.Add(6 * time.Hour)
+	trs := ix.AdvanceIdle(restartNow)
+	if len(trs) != 1 {
+		t.Fatalf("want 1 idle transition, got %d: %+v", len(trs), trs)
+	}
+	if trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
+		t.Errorf("wrong transition: %+v", trs[0])
+	}
+
+	// Codex review finding F1: on a cold rebuild, hundreds of sessions can
+	// cross into idle on the very first sweep, hours or days after their own
+	// last activity. If the transition's Time carried that historical
+	// state_since instead of the sweep's own publication time, a live
+	// timeline (which appends events in arrival order, never sorts) would
+	// show these as the newest rows while stamping them with ancient
+	// timestamps — appearing after genuinely newer activity that streamed in
+	// first. The transition must always publish at restartNow.
+	if !trs[0].Time.Equal(restartNow) {
+		t.Errorf("transition Time should be the sweep's publication time (%v), not the historical state_since, got %v", restartNow, trs[0].Time)
+	}
+
+	s1, ok := ix.Session("s1")
+	if !ok {
+		t.Fatalf("session s1 not found")
+	}
+	if s1.State != StateIdle {
+		t.Errorf("state = %q, want idle", s1.State)
+	}
+	wantSince := base.Add(IdleAfter)
+	if !s1.StateSince.Equal(wantSince) {
+		t.Errorf("StateSince should be the session's own last activity + IdleAfter (%v), got %v (restart was at %v)", wantSince, s1.StateSince, restartNow)
+	}
+	gotSince, err := time.Parse(time.RFC3339Nano, trs[0].Payload["since"].(string))
+	if err != nil || !gotSince.Equal(wantSince) {
+		t.Errorf("transition payload since should still carry the honest state_since (%v), got %v (err=%v)", wantSince, trs[0].Payload["since"], err)
+	}
+}
+
+// TestApplyKeepsLastActivityMonotonic is the regression test for a session
+// whose events are applied out of timestamp order — which append order does
+// not rule out, since sources are not guaranteed to be applied in the order
+// their own clocks would sort them. A late-arriving event carrying an older
+// timestamp than one already applied must not move the session's tracked
+// last-activity backwards: doing so would make a later idle sweep derive
+// state_since from stale evidence, reporting idle before the session's own
+// recorded last_time or misjudging whether IdleAfter has even elapsed.
+func TestApplyKeepsLastActivityMonotonic(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	trueLastActivity := base.Add(100 * time.Second)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: trueLastActivity, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+	// Arrives second, but stamped with an older source time than the event
+	// already applied above.
+	ix.Apply(event.Event{
+		ID: "2", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool,
+	})
+
+	s1, ok := ix.Session("s1")
+	if !ok {
+		t.Fatalf("session s1 not found")
+	}
+	if !s1.LastTime.Equal(trueLastActivity) {
+		t.Fatalf("s1 LastTime = %v, want %v (max of the two applied events)", s1.LastTime, trueLastActivity)
+	}
+
+	// The idle sweep runs just past IdleAfter measured from the session's
+	// true (later) last activity — it must not yet be idle, and once it is,
+	// it must derive state_since from the true last activity, not the older
+	// event that happened to be applied last.
+	notYetIdle := trueLastActivity.Add(IdleAfter - time.Second)
+	if trs := ix.AdvanceIdle(notYetIdle); len(trs) != 0 {
+		t.Fatalf("want no idle transition before the true IdleAfter elapses, got %+v", trs)
+	}
+
+	pastIdle := trueLastActivity.Add(IdleAfter + time.Second)
+	trs := ix.AdvanceIdle(pastIdle)
+	if len(trs) != 1 || trs[0].SessionID != "s1" || trs[0].Payload["state"] != "idle" {
+		t.Fatalf("want 1 idle transition for s1, got %+v", trs)
+	}
+	wantSince := trueLastActivity.Add(IdleAfter)
+	s1, _ = ix.Session("s1")
+	if !s1.StateSince.Equal(wantSince) {
+		t.Errorf("StateSince = %v, want %v (derived from the true, monotonic last activity)", s1.StateSince, wantSince)
+	}
+	if s1.StateSince.Before(s1.LastTime) {
+		t.Errorf("StateSince (%v) precedes the session's own LastTime (%v)", s1.StateSince, s1.LastTime)
+	}
+}
+
+// TestReplayVsIncrementalIdleThenErrorAgree is the regression test for Codex
+// review finding F1: every event advances lastActivity, but only AdvanceIdle
+// (the periodic sweep) ever moves a session into idle — that crossing is
+// never spooled. In the live path the sweep always gets a chance to run
+// between two real events (it ticks every 5s), so an error arriving after a
+// long quiet period finds the session already idle and leaves state_since
+// alone (see TestApplyErrorOnlyTransitionCarriesUnchangedSince). But a spool
+// rebuild applies events back-to-back with no sweep interleaved, so the same
+// two events, replayed, leave the session "working" until some later sweep
+// derives state_since from whatever event happened to update lastActivity
+// last (here, the error) instead of the original threshold crossing. The
+// same spool must produce the same /sessions state, state_since, and
+// has_error regardless of whether a sweep happened to run before the error
+// arrived.
+func TestReplayVsIncrementalIdleThenErrorAgree(t *testing.T) {
+	base := time.Date(2026, 7, 9, 9, 0, 0, 0, time.UTC)
+	activity := event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "Bash",
+	}
+	errTime := base.Add(IdleAfter + 5*time.Minute)
+	errEvent := event.Event{
+		ID: "2", Time: errTime, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryError, Severity: event.SeverityError, Summary: "boom",
+	}
+	finalSweep := errTime.Add(IdleAfter + time.Minute)
+
+	// Incremental: activity, then a real idle sweep fires (as it always does
+	// live, every 5s) before the error arrives.
+	live := New()
+	live.Apply(activity)
+	if trs := live.AdvanceIdle(base.Add(IdleAfter + time.Minute)); len(trs) != 1 {
+		t.Fatalf("want 1 idle transition before the error, got %d: %+v", len(trs), trs)
+	}
+	live.Apply(errEvent)
+	live.AdvanceIdle(finalSweep) // no-op: already idle.
+
+	// Replay: the same two events folded back-to-back, as a cold rebuild
+	// would apply them from the spool -- the idle sweep is never spooled, so
+	// no sweep ever runs between them.
+	replay := New()
+	replay.Apply(activity)
+	replay.Apply(errEvent)
+	replay.AdvanceIdle(finalSweep) // the first sweep after the rebuild.
+
+	liveSession, ok := live.Session("s1")
+	if !ok {
+		t.Fatalf("live session missing")
+	}
+	replaySession, ok := replay.Session("s1")
+	if !ok {
+		t.Fatalf("replay session missing")
+	}
+	if liveSession.State != replaySession.State {
+		t.Errorf("state diverged across restart: live=%q replay=%q", liveSession.State, replaySession.State)
+	}
+	if !liveSession.StateSince.Equal(replaySession.StateSince) {
+		t.Errorf("state_since diverged across restart: live=%v replay=%v", liveSession.StateSince, replaySession.StateSince)
+	}
+	if liveSession.HasError != replaySession.HasError {
+		t.Errorf("has_error diverged across restart: live=%v replay=%v", liveSession.HasError, replaySession.HasError)
+	}
+
+	wantSince := base.Add(IdleAfter)
+	wantState := StateIdle
+	if liveSession.State != wantState || !liveSession.StateSince.Equal(wantSince) || !liveSession.HasError {
+		t.Errorf("live session = %+v, want state=%q state_since=%v has_error=true", liveSession, wantState, wantSince)
+	}
+}
+
+// TestInboxUnaffectedByIdleSweep documents that the attention inbox
+// (inbox.go) has no analogous wall-clock restamp bug: InboxSession state and
+// evidence are set exclusively from real captured events inside applyInbox,
+// with no ticked idle sweep. An AdvanceIdle call, run well past IdleAfter,
+// must leave a session's inbox evidence byte-for-byte unchanged.
+func TestInboxUnaffectedByIdleSweep(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	ix := New()
+	ix.Apply(event.Event{
+		ID: "1", Time: base, Source: "claude-code", SessionID: "s1",
+		Category: event.CategoryTool, Summary: "Bash",
+	})
+
+	before := ix.Inbox()
+	var beforeSession InboxSession
+	found := false
+	for _, s := range before.Sessions {
+		if s.Source == "claude-code" && s.ID == "s1" {
+			beforeSession = s
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("s1 not found in inbox before sweep: %+v", before.Sessions)
+	}
+
+	ix.AdvanceIdle(base.Add(6 * time.Hour))
+
+	after := ix.Inbox()
+	var afterSession InboxSession
+	found = false
+	for _, s := range after.Sessions {
+		if s.Source == "claude-code" && s.ID == "s1" {
+			afterSession = s
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("s1 not found in inbox after sweep: %+v", after.Sessions)
+	}
+
+	if !reflect.DeepEqual(beforeSession.Last, afterSession.Last) {
+		t.Errorf("inbox Last evidence changed across an idle sweep: before=%+v after=%+v", beforeSession.Last, afterSession.Last)
+	}
+	if !afterSession.LastObservedAt.Equal(beforeSession.LastObservedAt) {
+		t.Errorf("inbox LastObservedAt changed across an idle sweep: before=%v after=%v", beforeSession.LastObservedAt, afterSession.LastObservedAt)
+	}
+	if afterSession.State != beforeSession.State {
+		t.Errorf("inbox State changed across an idle sweep: before=%q after=%q", beforeSession.State, afterSession.State)
 	}
 }
 

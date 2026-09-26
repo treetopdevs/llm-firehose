@@ -93,12 +93,23 @@ func TestSessionsReturnsProjectedAttention(t *testing.T) {
 	if err := c.Emit(t.Context(), "generic", strings.NewReader(payload)); err != nil {
 		t.Fatal(err)
 	}
+	errPayload := `{"id":"error-1","time":"2026-08-17T12:00:05Z","source":"claude-code","category":"error","session_id":"waiting","summary":"boom"}`
+	if err := c.Emit(t.Context(), "generic", strings.NewReader(errPayload)); err != nil {
+		t.Fatal(err)
+	}
 	sessions, err := c.Sessions(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions) != 1 || sessions[0].ID != "waiting" || sessions[0].State != "needs_input" {
 		t.Fatalf("sessions = %+v", sessions)
+	}
+	wantLast := time.Date(2026, 8, 17, 12, 0, 5, 0, time.UTC)
+	if !sessions[0].LastTime.Equal(wantLast) {
+		t.Fatalf("last_time = %v, want %v (was silently dropped)", sessions[0].LastTime, wantLast)
+	}
+	if !sessions[0].HasError {
+		t.Fatalf("has_error = %v, want true (was silently dropped)", sessions[0].HasError)
 	}
 }
 
@@ -264,6 +275,7 @@ func TestFeedRefreshesSessionAttentionAfterStreamInterruption(t *testing.T) {
 		case "/sessions":
 			_ = json.NewEncoder(w).Encode([]client.Session{{
 				ID: "attention", State: "working", StateSince: stateSince,
+				Source: "claude-code", Agent: "claude", Repo: "org/repo", CWD: "/home/me/dev/repo",
 			}})
 		case "/events/stream":
 			call := streams.Add(1)
@@ -288,6 +300,16 @@ func TestFeedRefreshesSessionAttentionAfterStreamInterruption(t *testing.T) {
 		if ev.Source != "firehose" || ev.Name != "state.transition" ||
 			ev.SessionID != "attention" || ev.Payload["state"] != "working" {
 			t.Fatalf("attention reconciliation = %+v", ev)
+		}
+		// Codex review finding F3: a reconciliation snapshot must carry the
+		// session's real identity, not leave the TUI to fall back to an
+		// empty one when no prior attention entry exists to carry it
+		// forward from.
+		if ev.Agent != "claude" || ev.Repo != "org/repo" || ev.CWD != "/home/me/dev/repo" {
+			t.Fatalf("reconciled transition dropped identity: %+v", ev)
+		}
+		if ev.Payload["source"] != "claude-code" {
+			t.Fatalf("reconciled transition dropped source: %+v", ev.Payload)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("session attention was not refreshed")

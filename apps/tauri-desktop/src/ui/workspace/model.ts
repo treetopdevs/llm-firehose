@@ -13,6 +13,7 @@ export type MatrixCell = {
   sessions: number;
   state: string;
   lastMs: number;
+  hasError: boolean;
 };
 
 export type Matrix = {
@@ -53,6 +54,7 @@ export function buildMatrix(summaries: readonly SessionSummary[], events: readon
         sessions: 0,
         state: "",
         lastMs: -Infinity,
+        hasError: false,
       };
       cells.set(key, c);
     }
@@ -61,6 +63,7 @@ export function buildMatrix(summaries: readonly SessionSummary[], events: readon
     c.sessions++;
     c.state = worstState(c.state, s.state ?? "");
     c.lastMs = Math.max(c.lastMs, ref);
+    c.hasError = c.hasError || !!s.has_error;
     rowLast.set(where, Math.max(rowLast.get(where) ?? -Infinity, ref));
     rowLabel.set(where, c.whereLabel);
     agents.add(agent);

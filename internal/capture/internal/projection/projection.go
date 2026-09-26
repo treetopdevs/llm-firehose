@@ -117,16 +117,23 @@ const NameStateTransition = "state.transition"
 // Apply folds one event into the Projection. Events with an id already applied
 // are ignored, so replays (e.g. the startup tail overlapping the build read)
 // never double-count. When a session's attention state changes, Apply returns
-// a stream-only synthetic event (never spooled).
+// a stream-only synthetic event (never spooled). When the event reveals an idle
+// crossing and also changes state, Apply returns the final transition;
+// ApplyResult returns both.
 func (ix *Projection) Apply(ev event.Event) *event.Event {
-	transition, _ := ix.ApplyResult(ev)
-	return transition
+	transitions, _ := ix.ApplyResult(ev)
+	if len(transitions) == 0 {
+		return nil
+	}
+	return transitions[len(transitions)-1]
 }
 
 // ApplyResult folds one event into the Projection and reports whether its stable id
-// was new. The seen set spans the lifetime of the Projection so an old replay
-// can never be counted twice.
-func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
+// was new, along with the attention transitions it caused, in order: an idle
+// crossing revealed by the event's arrival, then the event's own change. The
+// seen set spans the lifetime of the Projection so an old replay can never be
+// counted twice.
+func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
@@ -143,7 +150,7 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 
 	ix.applyInbox(ev)
 	day := ev.Time.UTC().Format("2006-01-02")
-	var transition *event.Event
+	var transitions []*event.Event
 
 	if ev.SessionID != "" {
 		s, ok := ix.sessions[ev.SessionID]
@@ -161,6 +168,19 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			}
 			ix.sessions[ev.SessionID] = s
 		}
+		// Snapshot the session's evidence of life and attention state as they
+		// stood immediately before this event, so an idle crossing that
+		// happened *between* the previous event and this one can be applied
+		// below using the same rule AdvanceIdle uses live.
+		priorLastActivity := s.lastActivity
+		priorOpenTools := s.openTools
+		priorAttention := Attention{
+			State:    s.State,
+			Since:    s.StateSince,
+			Reason:   s.StateReason,
+			HasError: s.HasError,
+		}
+
 		s.Events++
 		if ev.Time.Before(s.FirstTime) {
 			s.FirstTime = ev.Time
@@ -183,7 +203,15 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.CWD = ev.CWD
 		}
 		s.days[day] = true
-		s.lastActivity = ev.Time
+		// lastActivity must be monotonic per session, mirroring LastTime above:
+		// append order does not establish timestamp order (a source can be
+		// applied out of order relative to another, or relative to itself), so
+		// a late-arriving event carrying an older source time must not drag
+		// the session's evidence of life backwards — that would make the idle
+		// sweep derive state_since from stale evidence.
+		if !ev.Time.Before(s.lastActivity) {
+			s.lastActivity = ev.Time
+		}
 
 		switch {
 		case strings.HasPrefix(ev.Name, "PreToolUse"):
@@ -197,11 +225,39 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.openTools = 0
 		}
 
-		prev := Attention{
-			State:    s.State,
-			Since:    s.StateSince,
-			Reason:   s.StateReason,
-			HasError: s.HasError,
+		// Codex review finding F1 (round 3): AdvanceIdle's periodic sweep is
+		// what normally carries a working session into idle, but that
+		// transition is never spooled. Live, the sweep ticks every 5s, so it
+		// always gets a chance to run between two real events and the
+		// session is already idle by the time a later event (e.g. an error,
+		// which does not itself restart the idle clock — see isActivity)
+		// arrives. A spool rebuild applies events back-to-back with no sweep
+		// interleaved, so without this, the same two events would leave the
+		// session "working" until some later sweep derives state_since from
+		// whatever event happened to update lastActivity next, rather than
+		// from the original threshold crossing — a restart-dependent answer
+		// for the same spool. Applying the same crossing TickIdle would
+		// apply, using the state exactly as it stood before this event,
+		// keeps replay and incremental projection identical regardless of
+		// ordering. Errors and other non-activity events do not restart the
+		// idle clock: they only ever land here if a crossing already
+		// occurred, and the subsequent Transition call decides on top of
+		// that honestly-idled state.
+		originalState := priorAttention.State
+		prev := priorAttention
+		crossed, crossedChanged := TickIdle(prev, priorLastActivity, ev.Time, priorOpenTools > 0)
+		if crossedChanged {
+			prev = crossed
+			s.State = crossed.State
+			s.StateSince = crossed.Since
+			s.StateReason = crossed.Reason
+			// The crossing is a real state change in its own right, whether
+			// or not this event changes state on top of it. Publish it first
+			// so a live subscriber sees the idle interval: without it, a
+			// meta event would publish nothing and an activity event would
+			// publish working → working, and no later sweep can recover the
+			// crossing because the projection has already moved past it.
+			transitions = append(transitions, newStateTransition(ev.SessionID, originalState, crossed, ev.Time))
 		}
 		next, changed := Transition(prev, ev)
 		if changed {
@@ -209,7 +265,7 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			s.StateSince = next.Since
 			s.StateReason = next.Reason
 			s.HasError = next.HasError
-			transition = newStateTransition(ev.SessionID, prev.State, next, ev.Time)
+			transitions = append(transitions, newStateTransition(ev.SessionID, prev.State, next, ev.Time))
 		}
 	}
 
@@ -253,7 +309,7 @@ func (ix *Projection) ApplyResult(ev event.Event) (*event.Event, bool) {
 			f.Sources = append(f.Sources, ev.Source)
 		}
 	}
-	return transition, true
+	return transitions, true
 }
 
 // AdvanceIdle moves quiet working sessions to idle and returns one synthetic
@@ -277,6 +333,14 @@ func (ix *Projection) AdvanceIdle(now time.Time) []*event.Event {
 		s.State = next.State
 		s.StateSince = next.Since
 		s.StateReason = next.Reason
+		// The transition publishes now, at the sweep's own tick — never at
+		// next.Since, which on a cold rebuild can be hours or days in the
+		// past (the session's own threshold crossing). A live timeline
+		// appends events in arrival order and never sorts, so a historical
+		// Time here would render this row — which just arrived — as if it
+		// happened long before rows already on screen. next.Since (the
+		// honest "when this state began") still travels in the payload for
+		// viewers that need it (see newStateTransition).
 		out = append(out, newStateTransition(id, prev.State, next, now))
 	}
 	return out
@@ -302,6 +366,18 @@ func newStateTransition(sessionID string, prev SessionState, next Attention, t t
 			"prev":      string(prev),
 			"reason":    next.Reason,
 			"has_error": next.HasError,
+			// since is next.Since (the state's own honest start time), kept
+			// separate from the event's own Time (the publication instant)
+			// so a viewer can distinguish "when this transition was
+			// observed" from "when the state actually began" — collapsing
+			// them made an error-only transition (state and Since unchanged,
+			// only has_error flips) look like it reset the dwell clock, and
+			// made a restart's historical idle transitions carry a stale
+			// Time into the live timeline. Formatted as a string (rather
+			// than left as time.Time) so it survives the daemon's SSE JSON
+			// transport unchanged; the daemonless in-process path parses the
+			// same format.
+			"since": next.Since.UTC().Format(time.RFC3339Nano),
 		},
 	}
 }

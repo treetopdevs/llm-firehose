@@ -33,15 +33,24 @@ type SessionAttention struct {
 	State  string
 	Since  time.Time
 	Reason string
+	// Last is the session's last real activity (projection/capture Session's
+	// LastTime), used to tell a live needs_input/working state from one a
+	// daemon restart stamped over a long-dead session.
+	Last time.Time
+	// HasError mirrors the engine's HasError overlay: an error was observed
+	// in this session and no activity has cleared it yet.
+	HasError bool
 }
 
 type attention struct {
-	State  string
-	Since  time.Time
-	Reason string
-	Source string
-	Agent  string
-	Where  string
+	State    string
+	Since    time.Time
+	Reason   string
+	Source   string
+	Agent    string
+	Where    string
+	Last     time.Time
+	HasError bool
 }
 
 // altitude is the reading distance: the workspace matrix, or the session
@@ -147,6 +156,7 @@ func (m Model) PreloadSessions(sessions []SessionAttention) Model {
 		m.attention[session.ID] = attention{
 			State: session.State, Since: session.Since, Reason: session.Reason,
 			Source: session.Source, Agent: session.Agent, Where: workspaceKey(session.Repo, session.CWD),
+			Last: session.Last, HasError: session.HasError,
 		}
 	}
 	m.boundAttention()
@@ -418,7 +428,51 @@ func (m Model) visibleRows() []store.Row {
 
 // noteAttention applies engine-owned, live-only Projection transitions.
 func (m Model) noteAttention(ev event.Event) {
-	if ev.SessionID == "" || m.attention == nil || !isTransition(ev) {
+	if ev.SessionID == "" || m.attention == nil {
+		return
+	}
+	if !isTransition(ev) {
+		// An ordinary event is real evidence the session is alive, the same
+		// evidence liveSessions already reads straight off m.events. An
+		// already-tracked session's Last must move forward with it so
+		// needsYouCount/oldestNeedsYouReason (which have no access to the
+		// event ring) do not disagree with liveSessions about what counts as
+		// fresh. A session with no attention entry yet needs none created
+		// here — it cannot appear in the header until a transition tracks it.
+		//
+		// Normal state.transition frames carry no agent/workspace identity
+		// (only a reconciliation snapshot stamps that), so an attention
+		// entry's Source/Agent/Where would otherwise stay empty for the
+		// entire life of a session that never needed input or idled with an
+		// identified transition. liveSessions papers over this by reading
+		// identity straight off the session's own events in the ring — but
+		// once every one of those events ages out of the bounded 20,000-event
+		// ring, there is nothing left to fall back on and the session lands
+		// in an unknown workspace cell. Ordinary events already carry the
+		// session's real identity, the same way a reconciliation snapshot
+		// does, so fold it in here too.
+		if prev, ok := m.attention[ev.SessionID]; ok {
+			changed := false
+			if ev.Time.After(prev.Last) {
+				prev.Last = ev.Time
+				changed = true
+			}
+			if ev.Source != "" && prev.Source == "" {
+				prev.Source = ev.Source
+				changed = true
+			}
+			if ev.Agent != "" && prev.Agent == "" {
+				prev.Agent = ev.Agent
+				changed = true
+			}
+			if w := workspaceKey(ev.Repo, ev.CWD); w != "" && prev.Where == "" {
+				prev.Where = w
+				changed = true
+			}
+			if changed {
+				m.attention[ev.SessionID] = prev
+			}
+		}
 		return
 	}
 	state, _ := ev.Payload["state"].(string)
@@ -430,10 +484,72 @@ func (m Model) noteAttention(ev event.Event) {
 	if reason == "" && state == stateNeedsInput {
 		reason = ev.Summary
 	}
+	hasError, _ := ev.Payload["has_error"].(bool)
 	prev := m.attention[ev.SessionID]
+	// last_time is present only on a reconciliation snapshot (client and
+	// daemonless reconnect paths): the session's real last activity, needed
+	// when the session's own events have scrolled out of the bounded
+	// recovery window and there is no prior attention entry to carry Last
+	// forward from. An ordinary transition carries no such key, so Last
+	// keeps its usual carry-forward behavior.
+	last := prev.Last
+	if lastTime, ok := ev.Payload["last_time"].(time.Time); ok && lastTime.After(last) {
+		last = lastTime
+	}
+	// since is the state's own honest start time, carried in the payload
+	// separately from ev.Time (when this transition was published). They
+	// coincide for an ordinary state change, but not for an idle sweep after
+	// a restart (ev.Time is the sweep's tick; since is the historical
+	// threshold crossing) or for a transition that only flips has_error
+	// (ev.Time is the error's own arrival; since is unchanged from whatever
+	// state the session was already in). Using ev.Time here would restart
+	// the viewer's dwell clock in both cases.
+	since := ev.Time
+	if s, ok := ev.Payload["since"].(string); ok {
+		if parsed, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			since = parsed
+		}
+	} else if state == prev.State && reason == prev.Reason && hasError && !prev.HasError {
+		// Version skew: a daemon old enough to predate the "since" payload
+		// key (wave 3) carries none at all. Falling back to ev.Time is right
+		// for a genuine state change, but an error-only transition — same
+		// state, same reason, only has_error flipping — publishes at the
+		// error's own arrival, not the state's start; keep the prior
+		// state_since instead of resetting a long wait's dwell clock.
+		//
+		// That fallback must only fire when the error is being newly raised
+		// (prior HasError false, this one true): recovery — an activity
+		// event with prev.HasError true, which Transition (attention.go)
+		// resets Since for even though the primary state does not change —
+		// has the exact same state and reason on the way in and the way
+		// out. Guarding on the has_error edge tells the two apart; anything
+		// else (recovery, or has_error unchanged) falls back to ev.Time.
+		since = prev.Since
+	}
+	// Identity (source/agent/workspace) is normally carried forward from the
+	// session's prior attention entry, seeded once by PreloadSessions or an
+	// earlier transition. A reconciliation snapshot (client and daemonless
+	// reconnect paths) instead stamps the event's own Agent/Repo/CWD and a
+	// payload source: the only source of truth when a session has no prior
+	// attention entry and its own events have scrolled out of the bounded
+	// recovery ring, which otherwise leaves it with an empty identity and
+	// puts its restored state under an unknown workspace cell.
+	source := prev.Source
+	if s, ok := ev.Payload["source"].(string); ok && s != "" {
+		source = s
+	}
+	agent := prev.Agent
+	if ev.Agent != "" {
+		agent = ev.Agent
+	}
+	where := prev.Where
+	if w := workspaceKey(ev.Repo, ev.CWD); w != "" {
+		where = w
+	}
 	m.attention[ev.SessionID] = attention{
-		State: state, Since: ev.Time, Reason: reason,
-		Source: prev.Source, Agent: prev.Agent, Where: prev.Where,
+		State: state, Since: since, Reason: reason,
+		Source: source, Agent: agent, Where: where, Last: last,
+		HasError: hasError,
 	}
 	m.boundAttention()
 }
@@ -459,10 +575,16 @@ func (m Model) boundAttention() {
 	}
 }
 
+// needsYouCount is the header's count of sessions genuinely waiting on the
+// reader right now. It applies the same freshness rule liveSessions applies
+// at the session and workspace altitudes — a session that asked a question
+// and then died must not haunt the header forever. The count stays global
+// (not narrowed by m.scope), matching the header's existing behavior.
 func (m Model) needsYouCount() int {
+	now := m.now()
 	n := 0
 	for _, a := range m.attention {
-		if a.State == stateNeedsInput {
+		if a.State == stateNeedsInput && attentionFresh(a.State, a.Last, a.Since, now) {
 			n++
 		}
 	}
@@ -470,10 +592,11 @@ func (m Model) needsYouCount() int {
 }
 
 func (m Model) oldestNeedsYouReason() string {
+	now := m.now()
 	var best attention
 	found := false
 	for _, a := range m.attention {
-		if a.State != stateNeedsInput {
+		if a.State != stateNeedsInput || !attentionFresh(a.State, a.Last, a.Since, now) {
 			continue
 		}
 		if !found || a.Since.Before(best.Since) {

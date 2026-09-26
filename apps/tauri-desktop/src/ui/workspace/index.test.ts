@@ -42,7 +42,7 @@ describe("workspace panel", () => {
     sessions.mockResolvedValue([
       summary({ id: "s1" }),
       summary({ id: "s1b" }),
-      summary({ id: "s2", source: "codex", agent: "codex", state: "needs_input", state_since: new Date(now - 60_000).toISOString(), last_time: new Date(now - 60_000).toISOString() }),
+      summary({ id: "s2", source: "codex", agent: "codex", state: "needs_input", state_since: new Date(now - 60_000).toISOString(), last_time: new Date(now - 60_000).toISOString(), has_error: true }),
       summary({ id: "s3", cwd: "/home/me/dev/lib", last_time: new Date(now - 20_000).toISOString() }),
     ]);
     const opened: CellScope[] = [];
@@ -60,6 +60,8 @@ describe("workspace panel", () => {
     expect(cells[0].querySelector(".count")?.textContent).toBe("2");
     expect(cells[1].querySelector(".glyph.needs")?.textContent).toBe("?");
     expect(cells[1].querySelector(".count")?.textContent).toBe("");
+    expect(cells[0].querySelector(".err")?.textContent).toBe("");
+    expect(cells[1].querySelector(".err")?.textContent).toBe("!");
     expect(panel.root.querySelectorAll("td.empty")).toHaveLength(1);
 
     cells[1].click();

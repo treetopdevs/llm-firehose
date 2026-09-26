@@ -51,6 +51,8 @@ type Session struct {
 	State       string    `json:"state"`
 	StateSince  time.Time `json:"state_since"`
 	StateReason string    `json:"state_reason,omitempty"`
+	LastTime    time.Time `json:"last_time"`
+	HasError    bool      `json:"has_error,omitempty"`
 }
 
 // HTTPError reports a daemon response that reached the local HTTP adapter but
@@ -276,9 +278,20 @@ func sessionTransitions(sessions []Session) []event.Event {
 	for _, session := range sessions {
 		out = append(out, event.Event{
 			Time: session.StateSince, Source: "firehose", SessionID: session.ID,
+			// Agent/Repo/CWD carry the session's real workspace identity —
+			// Source stays "firehose" (this is a synthetic transition, not a
+			// captured event) so the session's originating adapter travels
+			// via Payload["source"] instead. Without these, a session
+			// recovered purely from this snapshot (no prior attention entry,
+			// its own events outside the bounded recovery ring) has no
+			// identity to fall back to and surfaces under an unknown
+			// workspace/agent cell.
+			Agent: session.Agent, Repo: session.Repo, CWD: session.CWD,
 			Category: event.CategoryMeta, Name: "state.transition",
 			Payload: map[string]any{
 				"state": session.State, "reason": session.StateReason, "reconciled": true,
+				"has_error": session.HasError, "last_time": session.LastTime,
+				"source": session.Source,
 			},
 		})
 	}
