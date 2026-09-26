@@ -439,9 +439,39 @@ func (m Model) noteAttention(ev event.Event) {
 		// event ring) do not disagree with liveSessions about what counts as
 		// fresh. A session with no attention entry yet needs none created
 		// here — it cannot appear in the header until a transition tracks it.
-		if prev, ok := m.attention[ev.SessionID]; ok && ev.Time.After(prev.Last) {
-			prev.Last = ev.Time
-			m.attention[ev.SessionID] = prev
+		//
+		// Normal state.transition frames carry no agent/workspace identity
+		// (only a reconciliation snapshot stamps that), so an attention
+		// entry's Source/Agent/Where would otherwise stay empty for the
+		// entire life of a session that never needed input or idled with an
+		// identified transition. liveSessions papers over this by reading
+		// identity straight off the session's own events in the ring — but
+		// once every one of those events ages out of the bounded 20,000-event
+		// ring, there is nothing left to fall back on and the session lands
+		// in an unknown workspace cell. Ordinary events already carry the
+		// session's real identity, the same way a reconciliation snapshot
+		// does, so fold it in here too.
+		if prev, ok := m.attention[ev.SessionID]; ok {
+			changed := false
+			if ev.Time.After(prev.Last) {
+				prev.Last = ev.Time
+				changed = true
+			}
+			if ev.Source != "" && prev.Source == "" {
+				prev.Source = ev.Source
+				changed = true
+			}
+			if ev.Agent != "" && prev.Agent == "" {
+				prev.Agent = ev.Agent
+				changed = true
+			}
+			if w := workspaceKey(ev.Repo, ev.CWD); w != "" && prev.Where == "" {
+				prev.Where = w
+				changed = true
+			}
+			if changed {
+				m.attention[ev.SessionID] = prev
+			}
 		}
 		return
 	}

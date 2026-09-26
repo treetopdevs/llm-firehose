@@ -400,6 +400,58 @@ func TestNeedsYouCountRefreshesOnOrdinaryActivity(t *testing.T) {
 	}
 }
 
+// TestAttentionIdentitySurvivesRingEviction is the regression test for Codex
+// review finding F2: normal state.transition frames carry no agent/workspace
+// identity (only a reconciliation snapshot stamps that), and noteAttention's
+// ordinary-event branch used to update only Last, never Source/Agent/Where.
+// A live session's identity therefore lived only in its own events in the
+// 20,000-event ring; once every one of those events aged out (pushed out by
+// unrelated traffic), the session fell back to whatever identity its
+// attention entry carried -- which was empty -- landing it in an unknown
+// workspace cell even though it never stopped being tracked.
+func TestAttentionIdentitySurvivesRingEviction(t *testing.T) {
+	now := t0.Add(time.Hour)
+	m := newTestModel()
+	m.now = func() time.Time { return now }
+
+	// The attention entry is created by a transition first, exactly as it
+	// would be live (an ordinary event never creates one) -- and, like every
+	// normal transition, it carries no identity.
+	m = push(m, stateTransition(1, "s1", stateNeedsInput, "approve Bash"))
+
+	// An ordinary session event now carries the session's real identity.
+	identified := mkEv(2, event.CategoryTool, "ran a tool")
+	identified.SessionID = "s1"
+	identified.Repo = "org/repo"
+	identified.CWD = "/home/me/dev/repo"
+	m = push(m, identified)
+
+	// Evict every one of s1's own events from the ring with unrelated
+	// traffic from another session.
+	for i := 0; i < maxEvents+10; i++ {
+		filler := mkEv(3, event.CategoryShell, "noise")
+		filler.ID = fmt.Sprintf("filler-%d", i)
+		filler.SessionID = "other"
+		m = push(m, filler)
+	}
+	for _, ev := range m.events {
+		if ev.SessionID == "s1" {
+			t.Fatalf("test setup: s1's own events should all have left the ring")
+		}
+	}
+
+	sessions := m.liveSessions(now)
+	for _, s := range sessions {
+		if s.ID == "s1" {
+			if s.Where != "org/repo" {
+				t.Errorf("workspace = %q, want %q (identity should survive ring eviction)", s.Where, "org/repo")
+			}
+			return
+		}
+	}
+	t.Fatalf("s1 should still be live after its own events left the ring, got %+v", sessions)
+}
+
 func TestQuitKey(t *testing.T) {
 	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
