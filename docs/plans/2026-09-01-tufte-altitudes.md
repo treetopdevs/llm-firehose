@@ -98,14 +98,14 @@ call        one event as a table: request and response paired by call id
 
 ## Follow-ups
 
-All three follow-ups below are addressed in
-[2026-09-26-altitudes-followups.md](2026-09-26-altitudes-followups.md).
+Recorded here as the open items this pass left; all three are now addressed
+in [2026-09-26-altitudes-followups.md](2026-09-26-altitudes-followups.md).
 
-- Engine-side: do not restamp `state_since` for idle sessions on restart, or
-  mark reconciled states so viewers need no heuristic. The TUI header's
-  NEEDS YOU count still counts stale engine states (unchanged from the first
-  pass).
-- Adapters: supply `source_time` where the source has a clock (Claude Code
-  hook payloads carry none today).
-- The workspace matrix could carry an error mark per cell; both viewers leave
-  it out for now to keep one glyph per cell.
+- Engine-side: `state_since` for an idle session was restamped to the wall
+  clock on restart instead of the session's own last activity, and the TUI
+  header's NEEDS YOU count trusted stale engine states with no freshness
+  check of its own.
+- Adapters: audit whether to supply `source_time` where the source has a
+  clock (Claude Code hook payloads carry none today).
+- The workspace matrix could carry an error mark per cell; both viewers left
+  it out at the time to keep one glyph per cell.
