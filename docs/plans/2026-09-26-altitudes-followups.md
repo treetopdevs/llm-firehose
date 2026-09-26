@@ -464,3 +464,68 @@ payload):
 
 See the branch's commit history for the corresponding TDD commits and
 regression tests.
+
+## Addendum (wave 4): a third Codex adversarial review
+
+A third Codex adversarial review, run against the branch after wave 3
+landed, raised three more findings. All three were confirmed real by first
+writing a failing regression test against the actual code (not just reading
+the finding), then fixed on the same branch (no design changes, no
+frozen-surface impact):
+
+- **F1 [high, confirmed] Replay vs. incremental idle divergence.** Every
+  event advances a session's `lastActivity`, but only `AdvanceIdle` (the
+  periodic 5s sweep) ever moves a working session into idle, and that
+  transition is never spooled. Live, the sweep always gets a chance to run
+  between two real events, so a later event that does not itself restart the
+  idle clock (an error — see `isActivity` in `attention.go`) finds the
+  session already idle and leaves `state_since` alone. A cold rebuild applies
+  the spooled events back-to-back with no sweep interleaved, so the same two
+  events left the session "working" until some later sweep derived
+  `state_since` from whatever event happened to update `lastActivity` next
+  (the error) instead of the original threshold crossing — a
+  restart-dependent answer for the same spool. Regression test
+  `TestReplayVsIncrementalIdleThenErrorAgree`
+  (`internal/capture/internal/projection/projection_test.go`) reproduced the
+  divergence (`state_since` off by several minutes between the two paths)
+  before the fix. Fixed by applying the same `TickIdle` crossing inside
+  `ApplyResult` itself — using the attention state and evidence exactly as
+  they stood immediately before the event being applied — so replay and
+  incremental projection always agree
+  (`internal/capture/internal/projection/projection.go`).
+- **F2 [medium, confirmed] Live sessions lose workspace identity once their
+  events leave the TUI's 20,000-event ring.** Normal `state.transition`
+  frames carry no agent/workspace identity (only a reconciliation snapshot
+  stamps that, per wave 3); `noteAttention`'s ordinary-event branch only ever
+  refreshed `Last`. `liveSessions` papers over this by reading identity
+  straight off a session's own events in the ring, but once every one of
+  those events aged out — pushed out by unrelated traffic, not merely by
+  time — a session still tracked in `m.attention` had nothing to fall back
+  on and landed in an unknown workspace cell. Regression test
+  `TestAttentionIdentitySurvivesRingEviction` (`internal/tui/tui_test.go`)
+  created an attention entry via a transition (no identity, as always),
+  gave the session real identity via an ordinary event, evicted every one of
+  the session's own events with 20,010 events of unrelated traffic, and
+  confirmed the workspace cell was empty before the fix. Fixed by folding
+  `Source`/`Agent`/`Where` from ordinary session events into an existing
+  attention entry too, mirroring what the reconciliation path already
+  carries (`internal/tui/tui.go`).
+- **F3 [medium, confirmed] Version skew with older daemons resets dwell on
+  an error-only frame.** A daemon old enough to predate the `since` payload
+  key (wave 3) sends none at all, so both viewers fell back to the
+  transition event's own time — correct for a genuine state change, but
+  wrong for an error-only transition (same state, same reason, only
+  `has_error` flipping), where the event's time is the error's own arrival,
+  not the state's start. The existing fallback test in each viewer only ever
+  exercised a genuine state change. New regression tests
+  (`TestErrorOnlyTransitionFromOlderDaemonDoesNotResetDwellSince` in
+  `internal/tui/tui_test.go`, and `"keeps the prior state_since for an
+  error-only transition from an older daemon with no since"` in
+  `apps/tauri-desktop/src/ui/dwell/model.test.ts`) reproduced the dwell-clock
+  reset before the fix. Fixed in both viewers: when `since` is absent and
+  state and reason are unchanged from the prior entry, keep the prior
+  `state_since` instead of falling back to the event's own time
+  (`internal/tui/tui.go`, `apps/tauri-desktop/src/ui/dwell/model.ts`).
+
+See the branch's commit history for the corresponding TDD commits and
+regression tests.
