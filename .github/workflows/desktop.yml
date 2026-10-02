@@ -27,10 +27,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Go gate and the Linux desktop leg run on Namespace runners
-  # (namespace-profile-mmw, same profile as the org's other repos). The
-  # macOS/Windows legs have no Namespace profile and stay GitHub-hosted,
-  # which requires org Actions billing to be in good standing.
+  # Every leg runs on Namespace runners: namespace-profile-mmw for the Go gate
+  # and Linux, namespace-profile-macos-tahoe-slim-latest for macOS (Apple
+  # Silicon, so the aarch64-apple-darwin triple still applies). Windows is
+  # parked until the Namespace plan includes a Windows profile — see the
+  # matrix below.
   go:
     runs-on: namespace-profile-mmw
     steps:
@@ -48,12 +49,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: namespace-profile-macos-tahoe-slim-latest
             triple: aarch64-apple-darwin
-          - os: windows-2022
-            triple: x86_64-pc-windows-msvc
           - os: namespace-profile-mmw
             triple: x86_64-unknown-linux-gnu
+          # Windows is parked: the Namespace plan has no Windows profile yet,
+          # and the GitHub-hosted fallback needs org Actions billing. To
+          # restore, add back:
+          #   - os: <namespace-profile-windows-… | windows-2022>
+          #     triple: x86_64-pc-windows-msvc
+          # Nothing else needs changing — the bash `defaults` and the .msi/.exe
+          # upload globs below are already in place.
     runs-on: ${{ matrix.os }}
     defaults:
       run:

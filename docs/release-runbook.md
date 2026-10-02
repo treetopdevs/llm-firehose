@@ -2,7 +2,8 @@
 
 How an Agent Firehose desktop release is produced (migration plan, Phase 3
 "desktop release tasks"). CI (`.github/workflows/desktop.yml`) proves the
-bundles build on macOS, Windows, and Linux on every change; the steps below
+bundles build on macOS and Linux on every change (the Windows leg is parked
+until a Namespace Windows runner is available; see the workflow); the steps below
 turn a green build into a shippable, signed release.
 
 > **Human-credential steps are marked ⚠** — they need org-owned secrets and

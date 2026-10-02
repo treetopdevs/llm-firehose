@@ -82,7 +82,7 @@ pnpm -C apps/tauri-desktop tauri dev        # develop
 pnpm -C apps/tauri-desktop tauri build      # package (.app / .msi / AppImage)
 ```
 
-Packaging for macOS, Windows, and Linux is validated in CI
+Packaging for macOS and Linux is validated in CI (Windows is parked)
 ([desktop workflow](.github/workflows/desktop.yml)); signing and the update
 feed are documented in the [release runbook](docs/release-runbook.md).
 
