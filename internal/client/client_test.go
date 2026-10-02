@@ -136,34 +136,14 @@ func TestStreamDeliversLiveEvents(t *testing.T) {
 		t.Fatalf("Stream: %v", err)
 	}
 
-	// Readiness handshake: wait until the live stream delivers a probe so the
-	// tailer has recorded initial offsets before the event under test.
-	probe := `{"time":"2026-07-02T09:59:00Z","source":"probe","category":"meta","summary":"stream-ready"}`
-	if err := c.Emit(t.Context(), "generic", strings.NewReader(probe)); err != nil {
-		t.Fatalf("probe Emit: %v", err)
-	}
-	deadline := time.After(3 * time.Second)
-ready:
-	for {
-		select {
-		case ev, ok := <-ch:
-			if !ok {
-				t.Fatal("stream closed before probe")
-			}
-			if ev.Summary == "stream-ready" {
-				break ready
-			}
-		case <-deadline:
-			t.Fatal("stream not ready (probe not delivered)")
-		}
-	}
-
+	// Stream returns only after the daemon has registered the subscription,
+	// so an event emitted now must be delivered; no readiness probe needed.
 	line := `{"time":"2026-07-02T10:00:00Z","source":"my-tool","category":"shell","summary":"via client"}`
 	if err := c.Emit(t.Context(), "generic", strings.NewReader(line)); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 
-	deadline = time.After(3 * time.Second)
+	deadline := time.After(3 * time.Second)
 	for {
 		select {
 		case ev, ok := <-ch:

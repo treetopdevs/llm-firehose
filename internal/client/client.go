@@ -139,8 +139,10 @@ func (c *Client) EmitNamed(ctx context.Context, source, eventName string, r io.R
 	return nil
 }
 
-// Stream subscribes to the daemon's live event feed. The returned channel
-// closes when ctx is canceled or the connection drops.
+// Stream subscribes to the daemon's live event feed. When it returns, the
+// daemon has registered the subscription, so every event admitted afterwards
+// is delivered (until overflow ends the stream). The returned channel closes
+// when ctx is canceled or the connection drops.
 func (c *Client) Stream(ctx context.Context) (<-chan event.Event, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/events/stream", nil)
 	if err != nil {
