@@ -1,9 +1,12 @@
 # Orbit view — fleet-supervision visualization (design)
 
 **Date:** 2026-07-08
-**Status:** Implemented — the attention state machine ships in
-`internal/capture/internal/projection` and the desktop view in
-`apps/tauri-desktop/src/ui/orbit/`.
+**Status:** Desktop view removed 2026-10-02. It had been demoted to an opt-in
+display by the Tufte pass (`2026-09-01-tufte-altitudes.md`); dwell bars and the
+attention inbox carry the same signal, and the 3D view read `/sessions` state
+that disagreed with `/attention`. The session attention state machine in
+`internal/capture/internal/projection` and the `/sessions` state fields remain
+(frozen local API).
 **Decisions made via brainstorm:** fleet supervision as the job · blocked/waiting
 agents as the primary signal · attention gravity well as the metaphor ·
 click-to-detail as v1 interaction.

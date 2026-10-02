@@ -441,7 +441,7 @@ The migration must not dual-write an Observation through old and new paths.
 - daemon loopback, origin, request-limit, stream, shutdown, and local HTTP contract
   tests;
 - TUI pause/filter/detail/export behavior;
-- desktop compatibility, connection, feed-state, and orbit-model tests.
+- desktop compatibility, connection, feed-state, and dwell-model tests.
 
 New acceptance tests must additionally prove:
 
