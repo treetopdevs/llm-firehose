@@ -1,5 +1,6 @@
-import type { AttentionEvidence, AttentionSession } from "../../api";
+import type { AttentionSession } from "../../api";
 import { workspaceLabel } from "../../format";
+import { evidenceTime, isFailure, needsLabel } from "../../needs";
 import { stateFresh } from "../../spark";
 
 /** The bar is full at ten minutes; past that the label carries the number. */
@@ -24,11 +25,6 @@ export type DwellRow = {
   text: string;
   hasError: boolean;
 };
-
-/** The source's own clock when captured, else the envelope time. */
-export function evidenceTime(ev: AttentionEvidence | undefined): number {
-  return ev ? Date.parse(ev.source_time ?? ev.time) : NaN;
-}
 
 type Live = { s: AttentionSession; since: number; last: number };
 
@@ -62,14 +58,15 @@ export function buildDwell(sessions: readonly AttentionSession[], nowMs: number)
   });
   const rows = live.slice(0, DWELL_CAP).map(({ s, since }): DwellRow => {
     const dwellMs = Math.max(0, nowMs - since);
-    const failed = s.pending?.kind === "failure" || s.state === "failed";
+    const failed = isFailure(s);
     return {
       key: keyOf(s),
       id: s.id,
       source: s.source,
       label: s.agent || s.source,
       where: workspaceLabel(s.repo, s.cwd),
-      status: s.pending ? (failed ? "FAILED" : "NEEDS YOU") : s.state,
+      // Every pending row here passed the needs_input freshness rule above.
+      status: needsLabel(s, nowMs),
       needs: !!s.pending,
       dwellMs,
       fraction: Math.min(1, dwellMs / DWELL_MAX_MS),
