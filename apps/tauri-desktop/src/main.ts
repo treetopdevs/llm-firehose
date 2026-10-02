@@ -17,7 +17,6 @@ import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
 import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
-import { createOrbit } from "./ui/orbit";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspace } from "./ui/workspace";
@@ -49,7 +48,6 @@ function openCell(scope: CellScope) {
 
 const dwellPanel = createDwell(openSession);
 const workspacePanel = createWorkspace(() => feedState.events(), openCell);
-const orbitPanel = createOrbit(openSession);
 const lanesPanel = createLanes(() => feedState.events(), openSession);
 
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
@@ -65,7 +63,6 @@ const panels = {
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
-  orbit: orbitPanel,
 } as const;
 
 type PanelName = keyof typeof panels;
@@ -80,9 +77,6 @@ let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
-  if (active === "orbit" && name !== "orbit") {
-    orbitPanel.dispose();
-  }
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
@@ -112,9 +106,6 @@ function onEvent(ev: FirehoseEvent) {
   feedState.push(ev);
   received++;
   eventCount.textContent = `${received.toLocaleString()} events`;
-  if (active === "orbit") {
-    orbitPanel.onEvent(ev);
-  }
   if (active === "dwell") {
     dwellPanel.onEvent(ev);
   }
@@ -152,8 +143,8 @@ const connector = createConnector({
     statusText.textContent = text;
   },
   onStreamOpen: () => {
-    if (active === "orbit" || active === "dwell") {
-      void panels[active].refresh();
+    if (active === "dwell") {
+      void panels.dwell.refresh();
     }
   },
 });

@@ -91,10 +91,6 @@ input, select {
   overflow: auto;
   padding: 0.6rem;
 }
-.content:has(.orbit) {
-  padding: 0;
-  overflow: hidden;
-}
 .content h2 { margin: 0.2rem 0 0.6rem; font-size: 1rem; }
 .content h3 { margin: 1rem 0 0.4rem; font-size: 0.9rem; color: var(--text-dim); }
 
@@ -282,66 +278,6 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .lane-tick { fill: var(--text); }
 .lane-tick.error { fill: var(--err); }
 .lane-tick.needs { fill: #ff9f43; }
-
-/* orbit */
-.orbit {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-.orbit-canvas-host {
-  position: absolute;
-  inset: 0;
-}
-.orbit-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  cursor: pointer;
-}
-.orbit-fallback { margin: 0; padding: 1rem; }
-.orbit-hover {
-  position: absolute;
-  z-index: 2;
-  min-width: 160px;
-  max-width: 240px;
-  padding: 0.5rem 0.65rem;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  pointer-events: none;
-  font-size: 12px;
-}
-.orbit-hover.hidden { display: none; }
-.orbit-hover-title { font-weight: 600; margin-bottom: 0.2rem; }
-.orbit-hover-reason { color: var(--warn); margin-top: 0.25rem; }
-.orbit-hover-activity {
-  margin-top: 0.5rem;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.orbit-hover-time { margin-top: 0.1rem; font-size: 0.7rem; }
-.orbit-label {
-  position: absolute;
-  z-index: 1;
-  transform: translate(-50%, -120%);
-  padding: 0.15rem 0.4rem;
-  background: #ff9f43;
-  color: #000;
-  font-size: 11px;
-  font-weight: 700;
-  border-radius: 3px;
-  pointer-events: none;
-  max-width: 200px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* files */
 .files-table { border-collapse: collapse; width: 100%; }

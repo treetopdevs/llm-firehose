@@ -1,8 +1,8 @@
-import { sessions } from "../../api";
-import type { FirehoseEvent, SessionSummary } from "../../api";
+import { attention } from "../../api";
+import type { AttentionSession, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { formatAge, sessionHue } from "../../spark";
-import { DWELL_HAIRLINE_MS, DWELL_MAX_MS, applyTransition, buildDwell } from "./model";
+import { DWELL_HAIRLINE_MS, DWELL_MAX_MS, buildDwell } from "./model";
 
 export type DwellPanel = {
   root: HTMLElement;
@@ -11,17 +11,18 @@ export type DwellPanel = {
 };
 
 const TICK_MS = 1000;
-const FETCH_EVERY_TICKS = 5;
+const FETCH_EVERY_TICKS = 3;
 
-// The supervision view: one horizontal bar per live session, length equal to
-// time in its state, sorted by urgency, with a hairline at five minutes. It
-// carries what the orbit encoded in depth and motion, in one dimension.
-export function createDwell(onOpenSession: (id: string) => void, clock: () => number = Date.now): DwellPanel {
+// The supervision view: one horizontal bar per live session, sorted by
+// urgency, with a hairline at five minutes. A pending request is measured from
+// when it was captured; any other session from its last activity. It reads the
+// same /attention snapshot as the strip and inbox, so all three agree.
+export function createDwell(onOpenSession: (id: string, source?: string) => void, clock: () => number = Date.now): DwellPanel {
   const hairPct = (DWELL_HAIRLINE_MS / DWELL_MAX_MS) * 100;
   const scale = el(
     "div",
     { class: "dwell-scale" },
-    el("span", { class: "dim" }, "time in state"),
+    el("span", { class: "dim" }, "waiting or quiet for"),
     el(
       "span",
       { class: "dwell-scale-track" },
@@ -32,12 +33,13 @@ export function createDwell(onOpenSession: (id: string) => void, clock: () => nu
   const rowsBox = el("div", { class: "dwell-rows" });
   const root = el("section", { class: "dwell" }, scale, rowsBox);
 
-  let summaries: SessionSummary[] = [];
-  let queued = false;
+  let sessions: AttentionSession[] = [];
   let ticks = 0;
+  let inFlight: Promise<void> | null = null;
+  let again = false;
 
   function draw() {
-    const { rows, more } = buildDwell(summaries, clock());
+    const { rows, more } = buildDwell(sessions, clock());
     const refocus = keepFocus(rowsBox);
     clear(rowsBox);
     if (rows.length === 0) {
@@ -47,10 +49,10 @@ export function createDwell(onOpenSession: (id: string) => void, clock: () => nu
     for (const r of rows) {
       const row = el(
         "div",
-        { class: "dwell-row", style: `--hue:${sessionHue(r.id)}`, tabindex: "0", role: "button", title: r.id, "data-key": r.id },
+        { class: "dwell-row", style: `--hue:${sessionHue(r.id)}`, tabindex: "0", role: "button", title: `${r.source} · ${r.id}`, "data-key": r.key },
         el("span", { class: "cell agent" }, r.label),
         el("span", { class: "cell where" }, r.where),
-        el("span", { class: `cell state${r.needs ? " needs" : ""}` }, r.needs ? "NEEDS YOU" : r.state),
+        el("span", { class: `cell state${r.needs ? " needs" : ""}` }, r.status),
         el(
           "div",
           { class: "dwell-track" },
@@ -58,10 +60,10 @@ export function createDwell(onOpenSession: (id: string) => void, clock: () => nu
           el("div", { class: "dwell-hair", style: `left:${hairPct}%` }),
         ),
         el("span", { class: "cell dwell-label" }, formatAge(r.dwellMs)),
-        el("span", { class: "cell err", title: r.hasError ? "an error was captured in this session" : "" }, r.hasError ? "!" : ""),
+        el("span", { class: "cell err", title: r.hasError ? "a session failure was captured" : "" }, r.hasError ? "!" : ""),
         el("span", { class: "cell summary" }, r.text),
       );
-      onActivate(row, () => onOpenSession(r.id));
+      onActivate(row, () => onOpenSession(r.id, r.source));
       rowsBox.append(row);
     }
     if (more > 0) {
@@ -70,31 +72,41 @@ export function createDwell(onOpenSession: (id: string) => void, clock: () => nu
     refocus();
   }
 
-  async function refresh() {
+  async function load() {
     try {
-      summaries = await sessions();
+      sessions = (await attention()).sessions;
     } catch {
       // Keep the last picture; the status bar reports daemon health.
     }
     draw();
   }
 
-  function onEvent(ev: FirehoseEvent) {
-    // Every transition is kept, even several inside one frame; the frame
-    // already queued draws the latest picture.
-    const next = applyTransition(summaries, ev);
-    if (next === summaries) return;
-    summaries = next;
-    if (queued) return;
-    queued = true;
-    requestAnimationFrame(() => {
-      queued = false;
-      draw();
+  // One fetch at a time; anything asked for mid-flight earns one follow-up.
+  function refresh(): Promise<void> {
+    if (inFlight) {
+      again = true;
+      return inFlight;
+    }
+    const task = load().finally(() => {
+      inFlight = null;
+      if (again) {
+        again = false;
+        void refresh();
+      }
     });
+    inFlight = task;
+    return task;
   }
 
-  // Bars grow once a second while the panel is on screen; summaries are
-  // refetched every few seconds so sessions the stream did not announce appear.
+  function onEvent(ev: FirehoseEvent) {
+    // Captured session activity can open or resolve an episode. The engine's
+    // own synthetic frames carry the older session semantics, so skip them.
+    if (!ev.session_id || ev.source === "firehose") return;
+    void refresh();
+  }
+
+  // Bars grow once a second while the panel is on screen; the snapshot is
+  // refetched every few seconds so changes the stream did not announce appear.
   setInterval(() => {
     if (!root.isConnected) return;
     ticks++;

@@ -67,12 +67,14 @@ snapshots when a bounded stream disconnects. The API surface
 ## The desktop app
 
 A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
-for non-terminal users: dwell bars as the landing view (time in state against
-a five-minute hairline), a workspace matrix of repos by agents, live feed,
+for non-terminal users: a live feed as the landing view with an attention strip
+and inbox, dwell bars (how long a session has waited on a request, or been quiet,
+against a five-minute hairline — read from the same attention snapshot as the
+inbox), a workspace matrix of repos by agents,
 session lanes on a wall-clock axis, a session band with sparklines, an event
 detail that pairs a tool call's request and response, touched-file view,
 doctor with one-click adapter install, settings, a first-run onboarding
-wizard, and the orbit view as an opt-in ambient display. It bundles `firehosed` as a sidecar and spawns it when no daemon is
+wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
 already running — a daemon you run yourself always wins.
 
 ```sh
