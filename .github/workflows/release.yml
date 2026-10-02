@@ -1,8 +1,8 @@
 # CLI release: on a v* tag, GoReleaser builds firehose/firehosed, publishes a
 # GitHub Release, and updates the Homebrew cask in treetopdevs/homebrew-tap.
-# Requires secret HOMEBREW_TAP_GITHUB_TOKEN: a fine-grained PAT with
-# Contents: read/write on treetopdevs/homebrew-tap (GITHUB_TOKEN can't push
-# to another repo).
+# Requires secret HOMEBREW_TAP_DEPLOY_KEY: the private half of a write-enabled
+# deploy key on treetopdevs/homebrew-tap (GITHUB_TOKEN can't push to another
+# repo).
 name: release
 
 on:
@@ -30,4 +30,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}

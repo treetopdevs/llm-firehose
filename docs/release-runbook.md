@@ -9,9 +9,10 @@ amd64/arm64 archives, creates the GitHub Release, and pushes
 (`brew install treetopdevs/tap/firehose`). The version comes from the tag
 (`-X main.version`); the constants in `cmd/*/main.go` are only the dev default.
 
-One-time setup ⚠: create the public repo `treetopdevs/homebrew-tap`, and add
-repo secret `HOMEBREW_TAP_GITHUB_TOKEN` — a fine-grained PAT with
-Contents: read/write on that repo.
+One-time setup (done): public repo `treetopdevs/homebrew-tap` with a
+write-enabled deploy key; its private half is repo secret
+`HOMEBREW_TAP_DEPLOY_KEY`. To rotate: `ssh-keygen -t ed25519 -N ""`,
+`gh repo deploy-key add --allow-write` on the tap, `gh secret set` here.
 
 Dry run locally: `goreleaser release --snapshot --clean --skip=publish`.
 
