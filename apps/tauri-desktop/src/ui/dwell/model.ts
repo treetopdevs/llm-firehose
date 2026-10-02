@@ -1,6 +1,6 @@
-import type { FirehoseEvent, SessionSummary } from "../../api";
+import type { AttentionEvidence, AttentionSession } from "../../api";
 import { workspaceLabel } from "../../format";
-import { bySupervision, isTransition, lastReported, needsYouNow, stateFresh } from "../../spark";
+import { stateFresh } from "../../spark";
 
 /** The bar is full at ten minutes; past that the label carries the number. */
 export const DWELL_MAX_MS = 10 * 60_000;
@@ -9,10 +9,14 @@ export const DWELL_HAIRLINE_MS = 5 * 60_000;
 export const DWELL_CAP = 24;
 
 export type DwellRow = {
+  /** Sessions are scoped by source and native id, as /attention scopes them. */
+  key: string;
   id: string;
+  source: string;
   label: string;
   where: string;
-  state: string;
+  /** NEEDS YOU, FAILED, or the attention state as reported. */
+  status: string;
   needs: boolean;
   dwellMs: number;
   /** Bar length as a fraction of DWELL_MAX_MS, clamped to 1. */
@@ -21,75 +25,61 @@ export type DwellRow = {
   hasError: boolean;
 };
 
-function sinceMs(s: SessionSummary): number {
-  const since = Date.parse(s.state_since ?? "");
-  return Number.isFinite(since) ? since : Date.parse(s.last_time);
+/** The source's own clock when captured, else the envelope time. */
+export function evidenceTime(ev: AttentionEvidence | undefined): number {
+  return ev ? Date.parse(ev.source_time ?? ev.time) : NaN;
 }
 
+type Live = { s: AttentionSession; since: number; last: number };
+
 /**
- * One bar per live session: time in its current state, needs-you first and
- * longest wait first. The same staleness rule as the band and lanes decides
- * what is live.
+ * One bar per live session, read from the same /attention snapshot as the
+ * strip and inbox so every view agrees on who needs you. A pending request or
+ * failure leads, measured from when it was captured; any other session is
+ * measured from its last activity. Only captured evidence moves a bar.
  */
-export function buildDwell(summaries: readonly SessionSummary[], nowMs: number): { rows: DwellRow[]; more: number } {
-  const live = summaries.filter(
-    (s) => !!s.id && stateFresh(s.state, lastReported(Date.parse(s.last_time), Date.parse(s.state_since ?? ""), s.state), nowMs),
-  );
-  live.sort(bySupervision(nowMs));
-  const rows = live.slice(0, DWELL_CAP).map((s): DwellRow => {
-    const since = sinceMs(s);
-    const dwellMs = Number.isFinite(since) ? Math.max(0, nowMs - since) : 0;
-    const needs = needsYouNow(s, nowMs);
+export function buildDwell(sessions: readonly AttentionSession[], nowMs: number): { rows: DwellRow[]; more: number } {
+  const live: Live[] = [];
+  for (const s of sessions) {
+    if (!s.id) continue;
+    const last = evidenceTime(s.last);
+    const since = s.pending ? evidenceTime(s.pending) : last;
+    if (!Number.isFinite(since)) continue;
+    // A pending episode stays plausible as long as a waiting session does.
+    const freshness = s.pending ? "needs_input" : s.state;
+    if (!stateFresh(freshness, Math.max(since, Number.isFinite(last) ? last : since), nowMs)) continue;
+    live.push({ s, since, last: Number.isFinite(last) ? last : since });
+  }
+  live.sort((a, b) => {
+    const an = !!a.s.pending;
+    const bn = !!b.s.pending;
+    if (an !== bn) return an ? -1 : 1;
+    const d = an ? a.since - b.since : b.last - a.last;
+    if (d !== 0) return d;
+    const ak = keyOf(a.s);
+    const bk = keyOf(b.s);
+    return ak < bk ? -1 : ak > bk ? 1 : 0;
+  });
+  const rows = live.slice(0, DWELL_CAP).map(({ s, since }): DwellRow => {
+    const dwellMs = Math.max(0, nowMs - since);
+    const failed = s.pending?.kind === "failure" || s.state === "failed";
     return {
+      key: keyOf(s),
       id: s.id,
+      source: s.source,
       label: s.agent || s.source,
       where: workspaceLabel(s.repo, s.cwd),
-      state: s.state ?? "",
-      needs,
+      status: s.pending ? (failed ? "FAILED" : "NEEDS YOU") : s.state,
+      needs: !!s.pending,
       dwellMs,
       fraction: Math.min(1, dwellMs / DWELL_MAX_MS),
-      text: needs && s.state_reason ? s.state_reason : (s.last_summary ?? ""),
-      hasError: !!s.has_error,
+      text: s.pending?.summary || s.uncertainty || s.last.summary || "",
+      hasError: failed,
     };
   });
   return { rows, more: live.length - rows.length };
 }
 
-/** Restarts a session's dwell from a live state.transition; unknown sessions wait for the next fetch. */
-export function applyTransition(summaries: SessionSummary[], ev: FirehoseEvent): SessionSummary[] {
-  if (!isTransition(ev) || !ev.session_id) return summaries;
-  const state = ev.payload?.state;
-  if (typeof state !== "string" || state === "") return summaries;
-  const idx = summaries.findIndex((s) => s.id === ev.session_id);
-  if (idx < 0) return summaries;
-  const reason = typeof ev.payload?.reason === "string" ? ev.payload.reason : undefined;
-  const prior = summaries[idx];
-  const hasError = typeof ev.payload?.has_error === "boolean" ? ev.payload.has_error : !!prior.has_error;
-  // The payload's "since" is the state's own honest start time, kept
-  // separate from the event's own "time" (when the transition was
-  // published). They coincide for an ordinary state change, but not for a
-  // transition that only flips has_error — falling back to ev.time there
-  // would restart the dwell clock on an error that arrives mid-wait. A
-  // daemon old enough to predate "since" (wave 3) sends neither field, so
-  // when it's absent, this is only safe to treat as that same error-only
-  // case when the error is being newly raised (prior has_error false, this
-  // one true) with state and reason unchanged. Error *recovery* — working,
-  // then an error, then activity resumes — has the exact same state and
-  // reason on the way in and out, per Transition in attention.go: an
-  // activity event with prev.HasError true resets Since to the recovery
-  // time even though the primary state does not change. Guarding on the
-  // has_error edge tells the two apart; anything else (recovery, or
-  // has_error unchanged) falls back to ev.time.
-  const raisingError = hasError && !prior.has_error;
-  // /sessions omits an empty state_reason; transition payloads send "".
-  const sameReason = (reason ?? "") === (prior.state_reason ?? "");
-  const since =
-    typeof ev.payload?.since === "string"
-      ? ev.payload.since
-      : state === prior.state && sameReason && raisingError
-        ? prior.state_since
-        : ev.time;
-  const next = [...summaries];
-  next[idx] = { ...next[idx], state, state_since: since, state_reason: reason, has_error: hasError };
-  return next;
+function keyOf(s: AttentionSession): string {
+  return JSON.stringify([s.source, s.id]);
 }
