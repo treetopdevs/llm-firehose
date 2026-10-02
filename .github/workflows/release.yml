@@ -1,0 +1,33 @@
+# CLI release: on a v* tag, GoReleaser builds firehose/firehosed, publishes a
+# GitHub Release, and updates the Homebrew cask in treetopdevs/homebrew-tap.
+# Requires secret HOMEBREW_TAP_GITHUB_TOKEN: a fine-grained PAT with
+# Contents: read/write on treetopdevs/homebrew-tap (GITHUB_TOKEN can't push
+# to another repo).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: namespace-profile-mmw
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -21,7 +21,8 @@ import (
 	"agentfirehose/internal/tui"
 )
 
-const version = "0.1.0"
+// version is overridden at release time via -ldflags "-X main.version=...".
+var version = "0.1.0"
 
 const usage = `Agent Firehose %s — a live timeline of AI coding-agent activity.
 

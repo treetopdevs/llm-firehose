@@ -16,7 +16,8 @@ import (
 	"agentfirehose/internal/host"
 )
 
-const version = "0.1.0"
+// version is overridden at release time via -ldflags "-X main.version=...".
+var version = "0.1.0"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
