@@ -1,0 +1,71 @@
+# CLI release: builds firehose + firehosed for macOS/Linux, attaches archives
+# to the GitHub Release, and pushes a Homebrew cask to treetopdevs/homebrew-tap.
+#   brew install treetopdevs/tap/firehose
+# Triggered by pushing a v* tag (.github/workflows/release.yml). The desktop
+# app has its own pipeline (docs/release-runbook.md).
+version: 2
+
+project_name: firehose
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: firehose
+    main: ./cmd/firehose
+    binary: firehose
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+  - id: firehosed
+    main: ./cmd/firehosed
+    binary: firehosed
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+
+archives:
+  - id: default
+    ids: [firehose, firehosed]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:", "Merge "]
+
+homebrew_casks:
+  - name: firehose
+    binaries: [firehose, firehosed]
+    repository:
+      owner: treetopdevs
+      name: homebrew-tap
+      # Pushed over SSH with a write deploy key scoped to the tap repo.
+      git:
+        url: git@github.com:treetopdevs/homebrew-tap.git
+        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
+    homepage: https://github.com/treetopdevs/llm-firehose
+    description: Live, local-first timeline of what AI coding agents are doing on your machine
+    license: MIT
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    # Binaries are not signed/notarized; strip quarantine so Gatekeeper
+    # doesn't block them on first run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/firehose"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/firehosed"]
+          end

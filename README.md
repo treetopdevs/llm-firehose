@@ -21,11 +21,16 @@ Everything runs on-device. No backend, no accounts, no sync, no telemetry.
 
 ## Install
 
+macOS / Linux via Homebrew (installs `firehose` and `firehosed`):
+
 ```sh
-go install agentfirehose/cmd/firehose@latest   # or: git clone && go build ./cmd/firehose
+brew install treetopdevs/tap/firehose
 ```
 
-Put the `firehose` binary on your `PATH`, then wire up the agents you use:
+Or from source: `git clone` this repo, then `go build ./cmd/firehose` and put the
+binary on your `PATH`.
+
+Then wire up the agents you use:
 
 ```sh
 firehose install claude-code   # merges hooks into ~/.claude/settings.json (backs it up first)

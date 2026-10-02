@@ -1,3 +1,23 @@
+# Release runbook
+
+## CLI (Homebrew)
+
+`firehose` + `firehosed` ship through GoReleaser (`.goreleaser.yaml`) and
+`.github/workflows/release.yml`. Pushing a `v*` tag builds darwin/linux
+amd64/arm64 archives, creates the GitHub Release, and pushes
+`Casks/firehose.rb` to `treetopdevs/homebrew-tap`
+(`brew install treetopdevs/tap/firehose`). The version comes from the tag
+(`-X main.version`); the constants in `cmd/*/main.go` are only the dev default.
+
+One-time setup (done): public repo `treetopdevs/homebrew-tap` with a
+write-enabled deploy key; its private half is repo secret
+`HOMEBREW_TAP_DEPLOY_KEY`. To rotate: `ssh-keygen -t ed25519 -N ""`,
+`gh repo deploy-key add --allow-write` on the tap, `gh secret set` here.
+
+Dry run locally: `goreleaser release --snapshot --clean --skip=publish`.
+
+Binaries are unsigned; the cask's postflight strips the macOS quarantine bit.
+
 # Desktop release runbook
 
 How an Agent Firehose desktop release is produced (migration plan, Phase 3
