@@ -234,7 +234,8 @@ var CodexHookEvents = []string{
 
 // InstallClaudeCode merges firehose forwarding hooks into
 // <home>/.claude/settings.json, backing the file up first and preserving all
-// existing content. Running it twice is a no-op.
+// existing content. Running it twice is a no-op, and Firehose hooks installed
+// from another binary path are replaced rather than duplicated.
 func InstallClaudeCode(home, binPath string) error {
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	settings := map[string]any{}
@@ -250,7 +251,7 @@ func InstallClaudeCode(home, binPath string) error {
 		return err
 	}
 
-	command := quoteCommandPath(binPath, runtime.GOOS) + " hook-forward --source claude-code"
+	command := quoteCommandPath(binPath, runtime.GOOS) + " " + claudeForwardArgs[0]
 	var hooks map[string]any
 	if existing, ok := settings["hooks"]; ok {
 		var valid bool
@@ -269,7 +270,7 @@ func InstallClaudeCode(home, binPath string) error {
 			matcher = ""
 		}
 		var entryChanged bool
-		entries, entryChanged = ensureClaudeHook(entries, command, matcher)
+		entries, entryChanged = ensureClaudeHook(entries, command, matcher, claudeForwardArgs...)
 		if entryChanged {
 			hooks[evName] = entries
 			changed = true
@@ -297,38 +298,102 @@ func InstallClaudeCode(home, binPath string) error {
 	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
 }
 
-func ensureClaudeHook(entries []any, command, matcher string) ([]any, bool) {
-	for _, rawEntry := range entries {
-		entry, _ := rawEntry.(map[string]any)
-		handlers, _ := entry["hooks"].([]any)
-		if len(handlers) != 1 {
+// claudeForwardArgs are the argument strings that mark a Claude hook as
+// Firehose-owned; the first is current, the rest are legacy installs.
+var claudeForwardArgs = []string{"hook-forward --source claude-code", "emit --source claude-code"}
+
+// isFirehoseCommand reports whether command runs a Firehose binary (any path,
+// quoted or not) with exactly one of ownedArgs. It lets reinstalling from a
+// different location replace prior registrations instead of duplicating them.
+func isFirehoseCommand(command string, ownedArgs ...string) bool {
+	for _, args := range ownedArgs {
+		bin, ok := strings.CutSuffix(command, " "+args)
+		if !ok {
 			continue
 		}
-		for _, rawHandler := range handlers {
-			handler, _ := rawHandler.(map[string]any)
-			if handler["command"] != command {
+		if len(bin) >= 2 && bin[0] == '\'' && bin[len(bin)-1] == '\'' {
+			unquoted := strings.ReplaceAll(bin[1:len(bin)-1], "'\"'\"'", "'")
+			if shellQuote(unquoted) != bin {
 				continue
 			}
-			changed := false
-			if handler["type"] != "command" {
-				handler["type"] = "command"
-				changed = true
+			bin = unquoted
+		} else if len(bin) >= 2 && bin[0] == '"' && bin[len(bin)-1] == '"' {
+			bin = bin[1 : len(bin)-1]
+			if strings.Contains(bin, `"`) {
+				continue
 			}
-			if handler["async"] != true {
-				handler["async"] = true
-				changed = true
-			}
-			if matcher == "" {
-				if _, ok := entry["matcher"]; ok {
-					delete(entry, "matcher")
-					changed = true
-				}
-			} else if entry["matcher"] != matcher {
-				entry["matcher"] = matcher
-				changed = true
-			}
-			return entries, changed
+		} else if strings.ContainsAny(bin, " \t'\"") {
+			continue
 		}
+		name := bin[strings.LastIndexAny(bin, `/\`)+1:]
+		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
+		if name == "firehose" || name == "firehosed" {
+			return true
+		}
+	}
+	return false
+}
+
+// ownedHookHandler returns the sole handler of entry when it is a
+// Firehose-owned registration. Entries shared with user handlers are never
+// treated as owned, so they are left untouched.
+func ownedHookHandler(rawEntry any, ownedArgs ...string) map[string]any {
+	entry, _ := rawEntry.(map[string]any)
+	handlers, _ := entry["hooks"].([]any)
+	if len(handlers) != 1 {
+		return nil
+	}
+	handler, _ := handlers[0].(map[string]any)
+	command, _ := handler["command"].(string)
+	if handler == nil || !isFirehoseCommand(command, ownedArgs...) {
+		return nil
+	}
+	return handler
+}
+
+// ensureClaudeHook keeps exactly one Firehose-owned entry, rewriting the
+// first one found (from any install path) to command and dropping the rest.
+func ensureClaudeHook(entries []any, command, matcher string, ownedArgs ...string) ([]any, bool) {
+	changed := false
+	kept := false
+	out := make([]any, 0, len(entries)+1)
+	for _, rawEntry := range entries {
+		handler := ownedHookHandler(rawEntry, ownedArgs...)
+		if handler == nil {
+			out = append(out, rawEntry)
+			continue
+		}
+		if kept {
+			changed = true
+			continue
+		}
+		kept = true
+		entry := rawEntry.(map[string]any)
+		if handler["command"] != command {
+			handler["command"] = command
+			changed = true
+		}
+		if handler["type"] != "command" {
+			handler["type"] = "command"
+			changed = true
+		}
+		if handler["async"] != true {
+			handler["async"] = true
+			changed = true
+		}
+		if matcher == "" {
+			if _, ok := entry["matcher"]; ok {
+				delete(entry, "matcher")
+				changed = true
+			}
+		} else if entry["matcher"] != matcher {
+			entry["matcher"] = matcher
+			changed = true
+		}
+		out = append(out, entry)
+	}
+	if kept {
+		return out, changed
 	}
 
 	handler := map[string]any{
@@ -340,7 +405,48 @@ func ensureClaudeHook(entries []any, command, matcher string) ([]any, bool) {
 	if matcher != "" {
 		entry["matcher"] = matcher
 	}
-	return append(entries, entry), true
+	return append(out, entry), true
+}
+
+// ensureCodexHook keeps exactly one Firehose-owned Codex entry, rewriting the
+// first one found (from any install path) to command and dropping the rest.
+// An exact command already inside a shared user entry still counts as
+// installed, as it always has.
+func ensureCodexHook(entries []any, command, matcher string) ([]any, bool) {
+	changed := false
+	kept := false
+	out := make([]any, 0, len(entries)+1)
+	for _, rawEntry := range entries {
+		handler := ownedHookHandler(rawEntry, "hook-forward")
+		if handler == nil {
+			out = append(out, rawEntry)
+			continue
+		}
+		if kept {
+			changed = true
+			continue
+		}
+		kept = true
+		if handler["command"] != command {
+			handler["command"] = command
+			changed = true
+		}
+		if handler["type"] != "command" {
+			handler["type"] = "command"
+			changed = true
+		}
+		out = append(out, rawEntry)
+	}
+	if kept || hasCommand(out, command) {
+		return out, changed
+	}
+	entry := map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": command}},
+	}
+	if matcher != "" {
+		entry["matcher"] = matcher
+	}
+	return append(out, entry), true
 }
 
 func hasCommand(entries []any, command string) bool {
@@ -406,7 +512,8 @@ func ClaudeHooksConfigured(home string) bool {
 
 // InstallCodex merges observational forwarding hooks into user-wide
 // ~/.codex/hooks.json. Existing hooks and top-level fields are preserved, the
-// prior file is backed up, and repeated installation is a no-op.
+// prior file is backed up, and repeated installation is a no-op. Firehose
+// hooks installed from another binary path are replaced, not duplicated.
 func InstallCodex(home, binPath string) error {
 	hooksPath := filepath.Join(home, ".codex", "hooks.json")
 	doc := map[string]any{}
@@ -429,18 +536,17 @@ func InstallCodex(home, binPath string) error {
 	changed := false
 	for _, name := range CodexHookEvents {
 		entries, _ := hooks[name].([]any)
-		if hasCommand(entries, command) {
-			continue
-		}
-		entry := map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": command}},
-		}
+		matcher := ""
 		switch name {
 		case "PreToolUse", "PermissionRequest", "PostToolUse", "SubagentStart", "SubagentStop":
-			entry["matcher"] = "*"
+			matcher = "*"
 		}
-		hooks[name] = append(entries, entry)
-		changed = true
+		var entryChanged bool
+		entries, entryChanged = ensureCodexHook(entries, command, matcher)
+		if entryChanged {
+			hooks[name] = entries
+			changed = true
+		}
 	}
 	if !changed && existed {
 		return nil

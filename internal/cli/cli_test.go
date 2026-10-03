@@ -337,6 +337,142 @@ func TestInstallClaudeCodeDoesNotMutateSharedUserEntry(t *testing.T) {
 	}
 }
 
+// firehoseCommands returns every hook command in the decoded hooks object
+// whose text contains marker, keyed by event name.
+func firehoseCommands(t *testing.T, hooks map[string]any, marker string) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for name, rawEntries := range hooks {
+		entries, _ := rawEntries.([]any)
+		for _, rawEntry := range entries {
+			entry, _ := rawEntry.(map[string]any)
+			handlers, _ := entry["hooks"].([]any)
+			for _, rawHandler := range handlers {
+				handler, _ := rawHandler.(map[string]any)
+				command, _ := handler["command"].(string)
+				if strings.Contains(command, marker) {
+					out[name] = append(out[name], command)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func TestInstallClaudeCodeReplacesFirehoseHooksFromAnotherPath(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A user hook that merely looks like a forwarder but is not a Firehose
+	// binary must survive both installs.
+	lookalike := "'/usr/local/bin/my-wrapper' hook-forward --source claude-code"
+	original := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-existing-hook"}]},{"matcher":".*","hooks":[{"type":"command","command":"` + lookalike + `"}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pathA := "/Users/someone/develop/llm-firehose/firehose"
+	pathB := "/opt/homebrew/bin/firehose"
+	if err := InstallClaudeCode(home, pathA); err != nil {
+		t.Fatalf("install from A: %v", err)
+	}
+	if err := InstallClaudeCode(home, pathB); err != nil {
+		t.Fatalf("install from B: %v", err)
+	}
+
+	data, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	hooks := settings["hooks"].(map[string]any)
+	if strings.Contains(string(data), pathA) {
+		t.Errorf("path-A hooks remain after reinstall from path B:\n%s", data)
+	}
+	wantB := quoteCommandPath(pathB, runtime.GOOS) + " hook-forward --source claude-code"
+	got := firehoseCommands(t, hooks, "/firehose")
+	for _, name := range ClaudeHookEvents {
+		if len(got[name]) != 1 || got[name][0] != wantB {
+			t.Errorf("%s Firehose hooks = %q, want exactly [%q]", name, got[name], wantB)
+		}
+	}
+	if !strings.Contains(string(data), "my-existing-hook") {
+		t.Error("unrelated user hook removed")
+	}
+	if !strings.Contains(string(data), "my-wrapper") {
+		t.Error("non-Firehose lookalike hook removed")
+	}
+	backup, _ := os.ReadFile(settingsPath + ".bak")
+	if string(backup) != original {
+		t.Errorf("backup = %s, want pre-Firehose original", backup)
+	}
+}
+
+func TestInstallClaudeCodeReplacesLegacyAndDuplicateFirehoseHooks(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An unquoted legacy `emit` registration plus a desktop sidecar
+	// registration, both already double-capturing.
+	original := `{"hooks":{"Stop":[` +
+		`{"hooks":[{"type":"command","command":"/usr/local/bin/firehose emit --source claude-code"}]},` +
+		`{"hooks":[{"type":"command","command":"'/Applications/Agent Firehose.app/Contents/MacOS/firehosed' hook-forward --source claude-code","async":true}]},` +
+		`{"hooks":[{"type":"command","command":"say done"}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := "/opt/homebrew/bin/firehose"
+	if err := InstallClaudeCode(home, bin); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	stop := settings["hooks"].(map[string]any)["Stop"].([]any)
+	want := quoteCommandPath(bin, runtime.GOOS) + " hook-forward --source claude-code"
+	if len(stop) != 2 {
+		t.Fatalf("Stop entries = %+v, want one Firehose entry plus the user hook", stop)
+	}
+	first := stop[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if first["command"] != want || first["async"] != true {
+		t.Errorf("Firehose Stop hook = %+v, want %q async", first, want)
+	}
+	second := stop[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if second["command"] != "say done" {
+		t.Errorf("user Stop hook = %+v", second)
+	}
+}
+
+func TestIsFirehoseCommandRecognisesOwnedForwardersOnly(t *testing.T) {
+	const args = "hook-forward --source claude-code"
+	for command, want := range map[string]bool{
+		"'/opt/homebrew/bin/firehose' " + args:                                true,
+		"'/Applications/Agent Firehose.app/Contents/MacOS/firehosed' " + args: true,
+		`'/Applications/$Agent'"'"'s Firehose/firehose' ` + args:              true,
+		`"C:\Program Files\Agent Firehose\firehosed.exe" ` + args:             true,
+		"/usr/local/bin/firehose " + args:                                     true,
+		"firehose " + args:                                                    true,
+		"/usr/local/bin/firehose emit --source claude-code":                   true,
+		"'/usr/local/bin/my-wrapper' " + args:                                 false,
+		"'/usr/local/bin/firehose-dev' " + args:                               false,
+		"'/usr/local/bin/firehose' " + args + " --verbose":                    false,
+		"'/usr/local/bin/firehose' hook-forward --source codex":               false,
+		"'/tmp/x' ; '/usr/local/bin/firehose' " + args:                        false,
+		"/opt/my tools/firehose " + args:                                      false,
+		"echo hi && /usr/local/bin/firehose " + args:                          false,
+	} {
+		if got := isFirehoseCommand(command, claudeForwardArgs...); got != want {
+			t.Errorf("isFirehoseCommand(%q) = %v, want %v", command, got, want)
+		}
+	}
+}
+
 func TestInstallClaudeCodeRefusesNonObjectHooks(t *testing.T) {
 	home := t.TempDir()
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
@@ -602,6 +738,44 @@ func TestInstallCodexHooksMergesBacksUpAndIsIdempotent(t *testing.T) {
 				t.Fatalf("idempotent install replaced original backup: %q", backupAfter)
 			}
 		})
+	}
+}
+
+func TestInstallCodexReplacesFirehoseHooksFromAnotherPath(t *testing.T) {
+	home := t.TempDir()
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"existing hook"}]},{"hooks":[{"type":"command","command":"'/usr/local/bin/my-wrapper' hook-forward"}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pathA := "/Users/someone/develop/llm-firehose/firehose"
+	pathB := "/opt/homebrew/bin/firehose"
+	if err := InstallCodex(home, pathA); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallCodex(home, pathB); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(hooksPath)
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), pathA) {
+		t.Errorf("path-A hooks remain after reinstall from path B:\n%s", data)
+	}
+	wantB := quoteCommandPath(pathB, runtime.GOOS) + " hook-forward"
+	got := firehoseCommands(t, doc["hooks"].(map[string]any), "/firehose")
+	for _, name := range CodexHookEvents {
+		if len(got[name]) != 1 || got[name][0] != wantB {
+			t.Errorf("%s Firehose hooks = %q, want exactly [%q]", name, got[name], wantB)
+		}
+	}
+	if !strings.Contains(string(data), "existing hook") || !strings.Contains(string(data), "my-wrapper") {
+		t.Errorf("unrelated user hooks removed:\n%s", data)
 	}
 }
 

@@ -54,7 +54,9 @@ with durable history snapshots.
 
 `firehose install claude-code` merges hook entries into
 `~/.claude/settings.json` (a `.bak` backup is written first; existing hooks
-are preserved; reruns are idempotent). Each Firehose-owned command hook is
+are preserved; reruns are idempotent, and rerunning from a different binary
+path — e.g. a source build, then Homebrew — replaces the earlier Firehose
+hooks instead of duplicating them). Each Firehose-owned command hook is
 asynchronous and pipes its JSON payload to
 `hook-forward --source claude-code`, which always returns neutral success,
 never makes a policy decision, and records a best-effort warning when the
@@ -114,7 +116,8 @@ Codex has two complementary observational transports:
   Rollouts are authoritative for streaming assistant commentary.
 - `firehose install codex` merges all current lifecycle, permission,
   compaction, subagent, and tool hooks into user-wide `~/.codex/hooks.json`.
-  It preserves existing hooks, writes `hooks.json.bak`, and is idempotent.
+  It preserves existing hooks, writes `hooks.json.bak`, and is idempotent;
+  Firehose hooks from a previous install path are replaced, not duplicated.
   Codex requires a separate trust review in `/hooks`. Both `firehose` and
   bundled `firehosed` expose a fail-silent `hook-forward` command that always
   returns `{}` and falls back to One-shot Admission if the daemon is down.
