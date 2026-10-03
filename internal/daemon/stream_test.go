@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -589,6 +590,79 @@ func TestStreamIncludesRedactedCodexEvents(t *testing.T) {
 			return
 		case <-deadline:
 			t.Fatal("no codex prompt event streamed")
+		}
+	}
+}
+
+// flushHookWriter is a streaming ResponseWriter that runs onFirstFlush when
+// the handler first flushes, i.e. the instant an HTTP client would see the
+// 200 response and consider the stream open.
+type flushHookWriter struct {
+	header       http.Header
+	onFirstFlush func()
+	flushed      bool
+	mu           sync.Mutex
+	body         strings.Builder
+	wrote        chan struct{}
+}
+
+func (w *flushHookWriter) Header() http.Header { return w.header }
+func (w *flushHookWriter) WriteHeader(int)     {}
+func (w *flushHookWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.body.Write(p)
+	select {
+	case w.wrote <- struct{}{}:
+	default:
+	}
+	return len(p), nil
+}
+func (w *flushHookWriter) Flush() {
+	if !w.flushed {
+		w.flushed = true
+		w.onFirstFlush()
+	}
+}
+func (w *flushHookWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.String()
+}
+
+// Once a client receives the stream's response headers, every event admitted
+// afterwards must be delivered. The subscription has to be registered before
+// the headers go out; otherwise an event admitted in that gap is silently
+// lost (and Feed's post-subscription snapshot cannot cover it either).
+func TestStreamSubscribesBeforeSignallingReady(t *testing.T) {
+	cfg := testConfig(t)
+	engine := testEngine(t, cfg)
+	s := New(engine, cfg, t.TempDir(), "test-version")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	w := &flushHookWriter{header: http.Header{}, wrote: make(chan struct{}, 1)}
+	w.onFirstFlush = func() {
+		ev := event.Event{Time: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC),
+			Source: "my-tool", Category: event.CategoryShell, Summary: "admitted at ready"}
+		if _, err := engine.Admit(ctx, ev); err != nil {
+			t.Errorf("Admit: %v", err)
+		}
+	}
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/events/stream", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleStream(w, req)
+	}()
+	defer func() { cancel(); <-done }()
+
+	deadline := time.After(3 * time.Second)
+	for !strings.Contains(w.String(), "admitted at ready") {
+		select {
+		case <-w.wrote:
+		case <-deadline:
+			t.Fatalf("event admitted once the stream signalled ready was never delivered; body = %q", w.String())
 		}
 	}
 }

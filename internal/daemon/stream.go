@@ -15,12 +15,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// Subscribe before sending headers: a client treats the 200 response as
+	// "stream open", so anything admitted after it sees headers must already
+	// have a subscriber to land in.
+	subscription := s.engine.Subscribe(r.Context())
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	subscription := s.engine.Subscribe(r.Context())
 	for {
 		select {
 		case <-s.shutdown:
