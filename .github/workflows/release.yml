@@ -83,7 +83,8 @@ jobs:
 
   tap:
     needs: [goreleaser, desktop]
-    runs-on: namespace-profile-mmw
+    # GitHub-hosted: gh, jq, git and ssh are guaranteed there.
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
