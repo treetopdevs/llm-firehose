@@ -1,22 +1,43 @@
 # Release runbook
 
-## CLI (Homebrew)
+## Homebrew (CLI formula + desktop cask)
 
-`firehose` + `firehosed` ship through GoReleaser (`.goreleaser.yaml`) and
-`.github/workflows/release.yml`. Pushing a `v*` tag builds darwin/linux
-amd64/arm64 archives, creates the GitHub Release, and pushes
-`Casks/firehose.rb` to `treetopdevs/homebrew-tap`
-(`brew install treetopdevs/tap/firehose`). The version comes from the tag
-(`-X main.version`); the constants in `cmd/*/main.go` are only the dev default.
+Pushing a `v*` tag runs `.github/workflows/release.yml`:
+
+1. `goreleaser` builds darwin/linux amd64/arm64 `firehose` + `firehosed`
+   archives and creates the GitHub Release (`.goreleaser.yaml`). The version
+   comes from the tag (`-X main.version`); the constants in `cmd/*/main.go`
+   are only the dev default.
+2. `desktop` builds the unsigned Tauri `.dmg` for aarch64 and x86_64 macOS.
+   It fails unless `tauri.conf.json`'s version equals the tag.
+3. `tap` attaches the `.dmg`s to the Release, runs `scripts/render-tap.sh`,
+   and pushes to `treetopdevs/homebrew-tap`:
+   - `Formula/firehose.rb` — `brew install treetopdevs/tap/firehose`; has a
+     `service` block, so `brew services start firehose` runs `firehosed` at
+     login (log: `$(brew --prefix)/var/log/firehosed.log`).
+   - `Casks/agent-firehose.rb` — `brew install --cask treetopdevs/tap/agent-firehose`.
+
+The CLI is a formula, not a cask, because only formulae support
+`brew services`. It replaced the old `Casks/firehose.rb`, which the tap job
+deletes. Existing cask users must run `brew uninstall --cask firehose`
+before `brew install treetopdevs/tap/firehose` (the names collide). A user-run daemon (including the brew service) wins over the
+desktop app's bundled sidecar, so the two coexist.
 
 One-time setup (done): public repo `treetopdevs/homebrew-tap` with a
 write-enabled deploy key; its private half is repo secret
 `HOMEBREW_TAP_DEPLOY_KEY`. To rotate: `ssh-keygen -t ed25519 -N ""`,
 `gh repo deploy-key add --allow-write` on the tap, `gh secret set` here.
 
-Dry run locally: `goreleaser release --snapshot --clean --skip=publish`.
+Dry runs: `goreleaser release --snapshot --clean --skip=publish`;
+`scripts/render-tap.sh <ver> checksums.txt <dmg-dir> <out-dir>` then
+`brew audit --strict` on the output (in a throwaway local tap).
 
-Binaries are unsigned; the cask's postflight strips the macOS quarantine bit.
+Binaries and the app are unsigned. The cask does not strip the macOS
+quarantine bit; its caveats tell users to approve the app once (System
+Settings > Privacy & Security, or
+`xattr -dr com.apple.quarantine "/Applications/Agent Firehose.app"`). Formula
+downloads aren't quarantined. Once the app is signed and notarized (desktop
+runbook §2) the caveat can go.
 
 # Desktop release runbook
 

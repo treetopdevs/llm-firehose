@@ -24,7 +24,15 @@ Everything runs on-device. No backend, no accounts, no sync, no telemetry.
 macOS / Linux via Homebrew (installs `firehose` and `firehosed`):
 
 ```sh
+brew uninstall --cask firehose 2>/dev/null   # only if you installed the old cask (pre-0.1.3)
 brew install treetopdevs/tap/firehose
+brew services start firehose   # optional: run the capture daemon in the background, at login
+```
+
+Desktop app (macOS, Apple Silicon or Intel):
+
+```sh
+brew install --cask treetopdevs/tap/agent-firehose
 ```
 
 Or from source: `git clone` this repo, then `go build ./cmd/firehose` and put the
