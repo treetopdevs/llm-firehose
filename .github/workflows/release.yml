@@ -117,6 +117,10 @@ jobs:
           # firehose was a cask before it became a formula; the names collide.
           git -C tap rm -q --ignore-unmatch Casks/firehose.rb
           git -C tap add -A
+          if git -C tap diff --cached --quiet; then
+            echo "tap already up to date"
+            exit 0
+          fi
           git -C tap -c user.name=goreleaserbot -c user.email=bot@goreleaser.com \
-            commit -m "firehose ${GITHUB_REF_NAME}" || { echo "tap already up to date"; exit 0; }
+            commit -m "firehose ${GITHUB_REF_NAME}"
           git -C tap push origin HEAD

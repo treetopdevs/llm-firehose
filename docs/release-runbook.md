@@ -19,7 +19,8 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 
 The CLI is a formula, not a cask, because only formulae support
 `brew services`. It replaced the old `Casks/firehose.rb`, which the tap job
-deletes. A user-run daemon (including the brew service) wins over the
+deletes. Existing cask users must run `brew uninstall --cask firehose`
+before `brew install treetopdevs/tap/firehose` (the names collide). A user-run daemon (including the brew service) wins over the
 desktop app's bundled sidecar, so the two coexist.
 
 One-time setup (done): public repo `treetopdevs/homebrew-tap` with a
