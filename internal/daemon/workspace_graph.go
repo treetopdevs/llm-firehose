@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"agentfirehose/internal/capture"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/workspace"
 	"agentfirehose/internal/workspacegraph"
 	"context"
@@ -28,7 +29,12 @@ type graphHost struct {
 	service        *workspacegraph.Service
 }
 
+// rememberGraphRoot records a registered root in memory and, only in full
+// privacy mode, in graph-roots.json. Raw absolute paths are not persisted in
+// minimal/balanced mode; those roots are re-learned from observed activity or
+// re-registered after a restart.
 func (s *Server) rememberGraphRoot(root, vcs string) error {
+	full := s.config().PrivacyMode == string(privacy.ModeFull) // before graph.mu: s.mu is never taken while holding it
 	s.graph.mu.Lock()
 	defer s.graph.mu.Unlock()
 	roots := mergeGraphRoots(s.graph.roots, graphRoot{root, vcs})
@@ -44,6 +50,29 @@ func (s *Server) rememberGraphRoot(root, vcs string) error {
 			return nil
 		}
 	}
+	if full {
+		if err := s.writeGraphRoots(roots); err != nil {
+			return err
+		}
+	}
+	s.graph.roots = roots
+	return nil
+}
+
+// syncGraphRoots makes the on-disk roots file match the privacy mode: written
+// from memory in full mode, removed otherwise. mode is passed in because the
+// caller may hold s.mu.
+func (s *Server) syncGraphRoots(mode string) {
+	s.graph.mu.Lock()
+	defer s.graph.mu.Unlock()
+	if mode == string(privacy.ModeFull) {
+		_ = s.writeGraphRoots(s.graph.roots)
+		return
+	}
+	_ = os.Remove(filepath.Join(s.home, ".agentfirehose", "graph-roots.json"))
+}
+
+func (s *Server) writeGraphRoots(roots []graphRoot) error {
 	data, err := json.Marshal(roots)
 	if err != nil {
 		return err
@@ -65,11 +94,7 @@ func (s *Server) rememberGraphRoot(root, vcs string) error {
 	if err != nil {
 		return err
 	}
-	if err = os.Rename(f.Name(), filepath.Join(dir, "graph-roots.json")); err != nil {
-		return err
-	}
-	s.graph.roots = roots
-	return nil
+	return os.Rename(f.Name(), filepath.Join(dir, "graph-roots.json"))
 }
 
 // runGraphDiscovery runs outside capture admission. Only explicitly registered
@@ -301,6 +326,11 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 
 // Root configuration is loaded before the server is exposed to requests.
 func (s *Server) loadGraphRoots() {
+	if s.cfg.PrivacyMode != string(privacy.ModeFull) {
+		// Raw roots are only kept in full mode; drop any left from an earlier one.
+		_ = os.Remove(filepath.Join(s.home, ".agentfirehose", "graph-roots.json"))
+		return
+	}
 	data, err := os.ReadFile(filepath.Join(s.home, ".agentfirehose", "graph-roots.json"))
 	if err != nil {
 		return

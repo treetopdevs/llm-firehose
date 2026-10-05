@@ -267,6 +267,7 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		mode, _ := privacy.ParseMode(patch.PrivacyMode)
 		s.setPolicy(mode)
 		s.graph.service.SetPrivacy(mode)
+		s.syncGraphRoots(string(mode))
 	}
 	s.mu.Unlock()
 

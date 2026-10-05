@@ -42,6 +42,7 @@ func TestGraphRegistrationPrivatePersistenceAndOrigin(t *testing.T) {
 		t.Fatalf("git init: %v %s", err, output)
 	}
 	cfg := testConfig(t)
+	cfg.PrivacyMode = "full"
 	home := t.TempDir()
 	s := New(testEngine(t, cfg), cfg, home, "test")
 	body, _ := json.Marshal(map[string]string{"root": root, "vcs": "git"})
@@ -49,9 +50,6 @@ func TestGraphRegistrationPrivatePersistenceAndOrigin(t *testing.T) {
 	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/workspace-graph/repos", bytes.NewReader(body)))
 	if w.Code != 200 {
 		t.Fatalf("register %d %s", w.Code, w.Body)
-	}
-	if strings.Contains(w.Body.String(), root) {
-		t.Fatal("registration leaked root")
 	}
 	path := filepath.Join(home, ".agentfirehose", "graph-roots.json")
 	data, err := os.ReadFile(path)
@@ -93,6 +91,7 @@ func TestGraphRootRegistrationKeepsExplicitAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := testConfig(t)
+	cfg.PrivacyMode = "full"
 	home := t.TempDir()
 	s := New(testEngine(t, cfg), cfg, home, "test")
 	for _, r := range []graphRoot{{root, "git"}, {alias, ""}, {root, "jj"}, {alias, ""}} {
@@ -192,5 +191,85 @@ func TestUnavailableKnownRepositoryDoesNotDuplicateDescriptor(t *testing.T) {
 	}
 	if len(repos) != 1 || repos[0].ID != repo.ID || repos[0].Status != "stale" {
 		t.Fatalf("duplicate or lost stale repository: %s", w.Body)
+	}
+}
+
+func graphRootsPath(home string) string {
+	return filepath.Join(home, ".agentfirehose", "graph-roots.json")
+}
+
+func TestGraphRootsNotPersistedOutsideFullMode(t *testing.T) {
+	root := t.TempDir()
+	if err := exec.Command("git", "init", "-q", root).Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"minimal", "balanced"} {
+		cfg := testConfig(t)
+		cfg.PrivacyMode = mode
+		home := t.TempDir()
+		s := New(testEngine(t, cfg), cfg, home, "test")
+		body, _ := json.Marshal(map[string]string{"root": root, "vcs": "git"})
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/workspace-graph/repos", bytes.NewReader(body)))
+		if w.Code != 200 || strings.Contains(w.Body.String(), root) {
+			t.Fatalf("%s: register %d %s", mode, w.Code, w.Body)
+		}
+		if _, err := os.Stat(graphRootsPath(home)); err == nil {
+			t.Fatalf("%s: raw root persisted", mode)
+		}
+		if len(s.graph.roots) != 1 {
+			t.Fatalf("%s: root must stay usable in memory", mode)
+		}
+	}
+}
+
+func TestLeavingFullModeRemovesPersistedRootsAndReturningRewritesThem(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t)
+	cfg.PrivacyMode = "full"
+	home := t.TempDir()
+	s := New(testEngine(t, cfg), cfg, home, "test")
+	if err := s.rememberGraphRoot(root, "git"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(graphRootsPath(home)); err != nil {
+		t.Fatal("full mode must persist")
+	}
+	post := func(mode string) {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(`{"privacy_mode":"`+mode+`"}`)))
+		if w.Code != 200 {
+			t.Fatalf("config %d %s", w.Code, w.Body)
+		}
+	}
+	post("balanced")
+	if _, err := os.Stat(graphRootsPath(home)); err == nil {
+		t.Fatal("raw roots survived leaving full mode")
+	}
+	post("full")
+	data, err := os.ReadFile(graphRootsPath(home))
+	if err != nil || !bytes.Contains(data, []byte(filepath.Base(root))) {
+		t.Fatalf("roots not rewritten on returning to full: %s %v", data, err)
+	}
+}
+
+func TestStaleRootsFileRemovedOnStartOutsideFullMode(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".agentfirehose"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(graphRootsPath(home), []byte(`[{"root":"/secret/path","vcs":"git"}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t)
+	s := New(testEngine(t, cfg), cfg, home, "test")
+	if _, err := os.Stat(graphRootsPath(home)); err == nil {
+		t.Fatal("stale raw roots file kept")
+	}
+	if len(s.graph.roots) != 0 {
+		t.Fatalf("stale roots loaded: %+v", s.graph.roots)
 	}
 }

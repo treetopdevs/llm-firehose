@@ -226,6 +226,9 @@ changes; full reconciliation every 30 seconds catches missed signals and checkou
 content changes. Explicit/focus refresh is also supported. Observed roots are learned before privacy processing
 only in a running capture engine; previously redacted unknown paths require
 explicit registration. A privacy-mode transition invalidates graph caches.
+Raw registered roots are persisted (`~/.agentfirehose/graph-roots.json`, 0600)
+only in `full` mode; leaving `full` deletes the file and returning rewrites it
+from memory, so minimal/balanced never hold raw paths on disk.
 
 Optional `jj_repo_id` and `jj_workspace_id` identities use the separate `jj:`
 namespace followed by canonical shared-repository/workspace paths in full mode;

@@ -161,11 +161,22 @@ visible across the existing activity views.
 
 ## Privacy modes
 
-Set in `~/.agentfirehose/config.json` (`{"privacy_mode": "balanced"}`):
+Show or change it with `firehose privacy` (applies live to a running daemon; the
+desktop app has the same switch under Settings):
+
+```sh
+firehose privacy         # show the current mode
+firehose privacy full    # minimal | balanced | full
+```
+
+Or set it in `~/.agentfirehose/config.json` (`{"privacy_mode": "balanced"}`):
 
 - `minimal` — payload values stored as `{sha256, len}` digests only
 - `balanced` (default) — payload strings truncated to 240 chars, raw payloads dropped
-- `full` — everything, including raw source payloads
+- `full` — everything, including raw source payloads and the raw local paths of
+  registered graph repositories (kept in `~/.agentfirehose/graph-roots.json`;
+  in other modes that file is not written, so repositories you registered by hand
+  are re-learned from agent activity or must be re-registered after a restart)
 
 Captured events live in `~/.agentfirehose/spool/*.ndjson`. Delete the
 directory to delete your history.
