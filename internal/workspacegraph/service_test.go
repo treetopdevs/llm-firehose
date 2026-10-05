@@ -438,3 +438,39 @@ func TestCanceledGitScanRetainsStaleSnapshot(t *testing.T) {
 		t.Fatalf("last successful snapshot not retained: %+v", after)
 	}
 }
+
+// An untrusted repository's own config must never get a command executed by
+// the daemon's background scans (clean filters run during `git status`).
+func TestGitScanRefusesExecutableRepoConfig(t *testing.T) {
+	ctx := context.Background()
+	root := fixture(t)
+	os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("a.txt filter=pwn\n"), 0600)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("one\n"), 0600)
+	git(t, root, "add", ".")
+	git(t, root, "commit", "-m", "tracked")
+	marker := filepath.Join(t.TempDir(), "pwned")
+	git(t, root, "config", "filter.pwn.clean", "touch "+marker+"; cat")
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("two\n"), 0600)
+
+	s := New(privacy.ModeFull)
+	repo, err := s.Register(ctx, root, "git")
+	if err == nil {
+		_, err = s.Snapshot(ctx, repo.ID, "", true)
+	}
+	if err == nil {
+		t.Fatal("scan of a repo with an executable filter config succeeded")
+	}
+	if _, e := os.Stat(marker); e == nil {
+		t.Fatal("repo-local filter command was executed")
+	}
+}
+
+func TestGitScanAllowsBenignRepoConfig(t *testing.T) {
+	root := fixture(t)
+	git(t, root, "config", "user.name", "Someone")
+	git(t, root, "config", "core.autocrlf", "false")
+	s := New(privacy.ModeFull)
+	if _, err := s.Register(context.Background(), root, "git"); err != nil {
+		t.Fatal(err)
+	}
+}

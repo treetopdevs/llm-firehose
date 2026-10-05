@@ -79,6 +79,9 @@ func (s *Service) Register(ctx context.Context, root, vcs string) (Repository, e
 	var id string
 	switch vcs {
 	case "git":
+		if e := guardGitConfig(ctx, root); e != nil {
+			return Repository{}, e
+		}
 		if top, err := run(ctx, root, "git", "rev-parse", "--show-toplevel"); err == nil {
 			if c, err := canonical(strings.TrimSpace(top)); err == nil {
 				root = c

@@ -14,7 +14,7 @@ func scan(ctx context.Context, r registration, limit int, m privacy.Mode) (Snaps
 	var e error
 	if r.vcs == "jj" {
 		e = scanJJ(ctx, r, limit, m, &v)
-	} else {
+	} else if e = guardGitConfig(ctx, r.root); e == nil {
 		e = scanGit(ctx, r, limit, m, &v)
 	}
 	if e != nil {
