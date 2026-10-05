@@ -527,3 +527,14 @@ func TestShadowConfigValueIsClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestGitStatusShadowHandlesSHA256Repos(t *testing.T) {
+	root := t.TempDir()
+	git(t, root, "init", "-b", "main", "--object-format=sha256")
+	git(t, root, "commit", "--allow-empty", "-m", "base")
+	os.WriteFile(filepath.Join(root, "f.txt"), []byte("x"), 0600)
+	out, err := gitStatus(context.Background(), root)
+	if err != nil || !strings.Contains(out, "f.txt") {
+		t.Fatalf("status %q %v", out, err)
+	}
+}

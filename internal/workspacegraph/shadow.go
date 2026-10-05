@@ -2,6 +2,7 @@ package workspacegraph
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,14 +31,15 @@ func gitStatus(ctx context.Context, root string) (string, error) {
 }
 
 func newShadowGitDir(ctx context.Context, root string) (string, []string, func(), error) {
-	gitDir, err := gitPath(ctx, root, "--absolute-git-dir")
+	out, err := run(ctx, root, "git", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir")
 	if err != nil {
 		return "", nil, nil, err
 	}
-	common, err := gitPath(ctx, root, "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return "", nil, nil, err
+	paths := strings.Split(strings.TrimSpace(out), "\n")
+	if len(paths) != 2 {
+		return "", nil, nil, errors.New("unexpected rev-parse output")
 	}
+	gitDir, common := filepath.Clean(paths[0]), filepath.Clean(paths[1])
 	cfg, err := run(ctx, root, "git", "config", "--list", "--show-scope", "-z")
 	if err != nil {
 		return "", nil, nil, err
@@ -73,15 +75,11 @@ func newShadowGitDir(ctx context.Context, root string) (string, []string, func()
 		return fail(e)
 	}
 
-	// The shadow config is built here, from keys status needs, never copied.
-	conf := filepath.Join(dir, "config")
-	set := func(key, val string) error {
-		_, e := run(ctx, dir, "git", "config", "--file", conf, "--add", key, val)
-		return e
-	}
-	if e := set("core.bare", "false"); e != nil {
-		return fail(e)
-	}
+	// The shadow config is written here from validated tokens (booleans,
+	// enums, digits), never copied from the repo, so nothing needs quoting.
+	var conf strings.Builder
+	conf.WriteString("[core]\n\tbare = false\n")
+	var ext strings.Builder
 	fields := strings.Split(cfg, "\x00")
 	for i := 0; i+1 < len(fields); i += 2 {
 		if fields[i] != "local" {
@@ -92,9 +90,20 @@ func newShadowGitDir(ctx context.Context, root string) (string, []string, func()
 		if !shadowConfigValue(k, val) {
 			continue
 		}
-		if e := set(k, val); e != nil {
-			return fail(e)
+		section, name, _ := strings.Cut(k, ".")
+		line := "\t" + name + " = " + strings.ToLower(val) + "\n"
+		switch section {
+		case "core":
+			conf.WriteString(line)
+		case "extensions":
+			ext.WriteString(line)
 		}
+	}
+	if ext.Len() > 0 {
+		conf.WriteString("[extensions]\n" + ext.String())
+	}
+	if e := os.WriteFile(filepath.Join(dir, "config"), []byte(conf.String()), 0o600); e != nil {
+		return fail(e)
 	}
 	env := []string{"GIT_DIR=" + dir, "GIT_WORK_TREE=" + root, "GIT_INDEX_FILE=" + filepath.Join(gitDir, "index")}
 	return dir, env, cleanup, nil
@@ -128,12 +137,4 @@ func shadowConfigValue(key, val string) bool {
 		return val == "sha1" || val == "sha256"
 	}
 	return false
-}
-
-func gitPath(ctx context.Context, root string, args ...string) (string, error) {
-	out, err := run(ctx, root, "git", append([]string{"rev-parse"}, args...)...)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(strings.TrimSpace(out)), nil
 }
