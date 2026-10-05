@@ -21,7 +21,8 @@ archive_sha() {
   echo "$sha"
 }
 dmg_sha() {
-  shasum -a 256 "$DMGS/agent-firehose_${VERSION}_$1.dmg" | awk '{ print $1 }'
+  local f="$DMGS/agent-firehose_${VERSION}_$1.dmg"
+  { shasum -a 256 "$f" 2>/dev/null || sha256sum "$f"; } | awk '{ print $1 }'
 }
 
 mkdir -p "$OUT/Formula" "$OUT/Casks"
