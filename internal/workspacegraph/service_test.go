@@ -486,3 +486,31 @@ func TestGitScanFailsClosedOnUnknownRepoConfig(t *testing.T) {
 		}
 	}
 }
+
+// gitStatus must not depend on the guard: even with an executable filter in
+// the live config (config rewritten after any check), status runs against a
+// shadow git dir and the filter never fires, while dirty files are still seen.
+func TestGitStatusNeverRunsLiveRepoFilters(t *testing.T) {
+	ctx := context.Background()
+	root := fixture(t)
+	os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("a.txt filter=pwn\n"), 0600)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("one\n"), 0600)
+	git(t, root, "add", ".")
+	git(t, root, "commit", "-m", "tracked")
+	marker := filepath.Join(t.TempDir(), "pwned")
+	git(t, root, "config", "filter.pwn.clean", "touch "+marker+"; cat")
+	git(t, root, "config", "core.fsmonitor", "touch "+marker)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("two\n"), 0600)
+	os.WriteFile(filepath.Join(root, "new.txt"), []byte("x"), 0600)
+
+	out, err := gitStatus(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, e := os.Stat(marker); e == nil {
+		t.Fatal("live repo config command was executed by status")
+	}
+	if !strings.Contains(out, "a.txt") || !strings.Contains(out, "new.txt") {
+		t.Fatalf("status lost dirty files: %q", out)
+	}
+}

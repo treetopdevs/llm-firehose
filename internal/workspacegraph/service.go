@@ -265,6 +265,9 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func run(ctx context.Context, root, bin string, args ...string) (string, error) {
+	return runEnv(ctx, root, bin, nil, args...)
+}
+func runEnv(ctx context.Context, root, bin string, env []string, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if bin == "jj" {
@@ -285,7 +288,7 @@ func run(ctx context.Context, root, bin string, args ...string) (string, error) 
 	}
 	c := exec.CommandContext(cctx, bin, args...)
 	c.Dir = root
-	c.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	c.Env = append(append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"), env...)
 	var out, stderr boundedBuffer
 	c.Stdout = &out
 	c.Stderr = &stderr
