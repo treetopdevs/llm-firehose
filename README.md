@@ -75,12 +75,28 @@ A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
 for non-terminal users: a live feed as the landing view with an attention strip
 and inbox, dwell bars (how long a session has waited on a request, or been quiet,
 against a five-minute hairline — read from the same attention snapshot as the
-inbox), a workspace matrix of repos by agents,
+inbox), a read-only workspace ancestry graph with a companion captured-event
+timeline, a workspace matrix of repos by agents,
 session lanes on a wall-clock axis, a session band with sparklines, an event
 detail that pairs a tool call's request and response, touched-file view,
 doctor with one-click adapter install, settings, a first-run onboarding
 wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
 already running — a daemon you run yourself always wins.
+
+Under **workspace**, register a local Git or JJ root or select one observed by
+the running capture engine. Graph edges represent actual revision parents;
+workspace labels show current checkout positions. Select a workspace to inspect
+its sessions, compare revision sets, or open its scoped Timeline. Timeline
+supports source/session/category filters, older history, pause/resume, and
+navigation back to the graph. Pausing the display never pauses capture.
+
+Discovery stays inside registered repositories. Privacy-protected identities
+from earlier runs cannot be resolved back to paths; register those roots
+explicitly. Git and JJ must be installed locally for their respective views
+(JJ fixtures are verified with 0.45.1). JJ scans do not snapshot working copies:
+the interface labels recorded state and warns about unsnapshotted changes.
+Graph failures retain a visibly stale snapshot. No graph action merges,
+rebases, deletes a workspace, fetches a remote, or approves an agent request.
 
 ```sh
 scripts/build-sidecar.sh                    # compile firehosed into the sidecar slot

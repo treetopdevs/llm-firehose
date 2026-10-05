@@ -21,9 +21,25 @@ type OneShotOptions struct {
 func (e *Engine) Admit(ctx context.Context, observation event.Event) (event.Event, error) {
 	e.sequence.Lock()
 	defer e.sequence.Unlock()
-	stored, err := admit(ctx, e.writer, e.activePolicy(), observation)
+	if err := ctx.Err(); err != nil {
+		return event.Event{}, err
+	}
+	if err := observation.Validate(); err != nil {
+		return event.Event{}, err
+	}
+	enriched, root := workspace.EnrichWithRoot(observation)
+	stored, err := e.writer.Append(privacy.Redact(enriched, e.activePolicy()))
 	if err != nil {
 		return event.Event{}, err
+	}
+	// Keep only observed absolute roots, never caller-supplied digests.
+	if root != "" {
+		e.rootsMu.Lock()
+		if e.roots == nil {
+			e.roots = make(map[string]struct{})
+		}
+		e.roots[root] = struct{}{}
+		e.rootsMu.Unlock()
 	}
 	// Append is the commit point. Projection failure is reconciled from the
 	// canonical spool and must never ask a durable Source Adapter to retry.

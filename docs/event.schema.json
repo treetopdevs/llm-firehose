@@ -122,6 +122,14 @@
       "type": "string",
       "description": "Canonical local path of the containing Git worktree root when observable. Added additively within schema version 1."
     },
+    "jj_repo_id": {
+      "type": "string",
+      "description": "JJ-only identity namespace: jj: followed by the canonical shared .jj/repo directory, or its sha256 hex digest outside full mode. Additive schema version 1 field; does not change Git repo_id."
+    },
+    "jj_workspace_id": {
+      "type": "string",
+      "description": "JJ workspace namespace: jj: followed by the canonical workspace root, or its sha256 hex digest outside full mode. Additive schema version 1 field."
+    },
     "payload": {
       "type": "object",
       "description": "Source-specific structured details. Subject to privacy-mode redaction: values may be truncated strings (balanced) or {sha256, len} digests (minimal).",

@@ -23,6 +23,7 @@ import (
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
+	"agentfirehose/internal/workspacegraph"
 )
 
 const (
@@ -32,14 +33,16 @@ const (
 
 // Server adapts an injected capture engine to the local API.
 type Server struct {
-	mu           sync.RWMutex // guards cfg
-	cfg          cli.Config
-	home         string
-	version      string
-	engine       *capture.Engine
-	setPolicy    func(privacy.Mode)
-	shutdown     chan struct{}
-	shutdownOnce sync.Once
+	graph           graphHost
+	graphResponseMu sync.RWMutex
+	mu              sync.RWMutex // guards cfg
+	cfg             cli.Config
+	home            string
+	version         string
+	engine          *capture.Engine
+	setPolicy       func(privacy.Mode)
+	shutdown        chan struct{}
+	shutdownOnce    sync.Once
 
 	// Environ is the process environment consulted by install handlers;
 	// injectable for tests so host telemetry variables cannot leak in.
@@ -47,7 +50,12 @@ type Server struct {
 }
 
 func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
-	return &Server{
+	mode, err := privacy.ParseMode(cfg.PrivacyMode)
+	if err != nil {
+		mode = privacy.ModeBalanced
+	}
+	server := &Server{
+		graph:     graphHost{service: workspacegraph.New(mode)},
 		cfg:       cfg,
 		home:      home,
 		version:   version,
@@ -56,6 +64,8 @@ func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
 		shutdown:  make(chan struct{}),
 		Environ:   os.Environ(),
 	}
+	server.loadGraphRoots()
+	return server
 }
 
 // allowedOrigins are the browser origins that may read the local API: the
@@ -95,6 +105,11 @@ func cors(next http.Handler) http.Handler {
 // Handler returns the daemon's HTTP API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /workspace-graph/repos", s.graphResponse(s.handleGraphRepos))
+	mux.HandleFunc("POST /workspace-graph/repos", s.graphResponse(s.handleGraphRegister))
+	mux.HandleFunc("GET /workspace-graph", s.graphResponse(s.handleGraph))
+	mux.HandleFunc("GET /workspace-graph/compare", s.graphResponse(s.handleGraphCompare))
+	mux.HandleFunc("GET /workspace-graph/timeline", s.graphResponse(s.handleGraphTimeline))
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /config", s.handleConfig)
 	mux.HandleFunc("POST /config", s.handleConfigUpdate)
@@ -147,6 +162,8 @@ func (s *Server) Serve(ctx context.Context, addr string) (string, <-chan error, 
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 	}()
+	go s.runGraphDiscovery(ctx)
+	go s.runGraphChanges(ctx)
 	done := make(chan error, 1)
 	go func() {
 		defer s.closeStreams()
@@ -220,6 +237,8 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.graphResponseMu.Lock()
+	defer s.graphResponseMu.Unlock()
 	s.mu.Lock()
 	merged := s.cfg
 	var restart []string
@@ -247,6 +266,7 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	if patch.PrivacyMode != "" {
 		mode, _ := privacy.ParseMode(patch.PrivacyMode)
 		s.setPolicy(mode)
+		s.graph.service.SetPrivacy(mode)
 	}
 	s.mu.Unlock()
 
