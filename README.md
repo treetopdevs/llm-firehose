@@ -25,6 +25,13 @@ macOS / Linux via Homebrew (installs `firehose` and `firehosed`):
 
 ```sh
 brew install treetopdevs/tap/firehose
+brew services start firehose   # optional: run the capture daemon in the background, at login
+```
+
+Desktop app (macOS, Apple Silicon or Intel):
+
+```sh
+brew install --cask treetopdevs/tap/agent-firehose
 ```
 
 Or from source: `git clone` this repo, then `go build ./cmd/firehose` and put the

@@ -1,8 +1,10 @@
-# CLI release: builds firehose + firehosed for macOS/Linux, attaches archives
-# to the GitHub Release, and pushes a Homebrew cask to treetopdevs/homebrew-tap.
-#   brew install treetopdevs/tap/firehose
-# Triggered by pushing a v* tag (.github/workflows/release.yml). The desktop
-# app has its own pipeline (docs/release-runbook.md).
+# CLI release: builds firehose + firehosed for macOS/Linux and attaches
+# archives to the GitHub Release. The Homebrew formula (firehose, with a
+# `brew services` definition) and the desktop cask (agent-firehose) are
+# rendered by scripts/render-tap.sh in the same workflow
+# (.github/workflows/release.yml); GoReleaser's own brew publishers don't
+# fit (casks have no service stanza, `brews` is deprecated).
+# Triggered by pushing a v* tag.
 version: 2
 
 project_name: firehose
@@ -43,29 +45,3 @@ changelog:
   use: github
   filters:
     exclude: ["^docs:", "^test:", "^chore:", "Merge "]
-
-homebrew_casks:
-  - name: firehose
-    binaries: [firehose, firehosed]
-    repository:
-      owner: treetopdevs
-      name: homebrew-tap
-      # Pushed over SSH with a write deploy key scoped to the tap repo.
-      git:
-        url: git@github.com:treetopdevs/homebrew-tap.git
-        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
-    homepage: https://github.com/treetopdevs/llm-firehose
-    description: Live, local-first timeline of what AI coding agents are doing on your machine
-    license: MIT
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
-    # Binaries are not signed/notarized; strip quarantine so Gatekeeper
-    # doesn't block them on first run.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/firehose"]
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/firehosed"]
-          end

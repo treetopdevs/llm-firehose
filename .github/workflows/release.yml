@@ -1,5 +1,9 @@
-# CLI release: on a v* tag, GoReleaser builds firehose/firehosed, publishes a
-# GitHub Release, and updates the Homebrew cask in treetopdevs/homebrew-tap.
+# Release: on a v* tag,
+#   goreleaser  builds firehose/firehosed and publishes the GitHub Release
+#   desktop     builds the unsigned Tauri .dmg for Apple Silicon and Intel
+#   tap         uploads the .dmgs to the Release and pushes Formula/firehose.rb
+#               (CLI + `brew services` daemon) and Casks/agent-firehose.rb
+#               (desktop app) to treetopdevs/homebrew-tap
 # Requires secret HOMEBREW_TAP_DEPLOY_KEY: the private half of a write-enabled
 # deploy key on treetopdevs/homebrew-tap (GITHUB_TOKEN can't push to another
 # repo).
@@ -30,4 +34,85 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            arch: aarch64
+          - triple: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match the desktop app version
+        run: |
+          v=$(jq -r .version apps/tauri-desktop/src-tauri/tauri.conf.json)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != tauri.conf.json version $v"; exit 1; }
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/tauri-desktop/pnpm-lock.yaml
+      - run: pnpm -C apps/tauri-desktop install --frozen-lockfile
+      - run: bash scripts/build-sidecar.sh ${{ matrix.triple }}
+      - run: pnpm -C apps/tauri-desktop tauri build --target ${{ matrix.triple }} --bundles dmg
+      - name: Stage dmg
+        run: |
+          mkdir -p dmg
+          cp apps/tauri-desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/dmg/*.dmg \
+            "dmg/agent-firehose_${GITHUB_REF_NAME#v}_${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dmg/*.dmg
+          if-no-files-found: error
+
+  tap:
+    needs: [goreleaser, desktop]
+    runs-on: namespace-profile-mmw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          merge-multiple: true
+          path: dmg
+      - name: Attach dmgs to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dmg/*.dmg --clobber
+      - name: Fetch CLI checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" --pattern checksums.txt
+      - name: Render formula and cask
+        run: bash scripts/render-tap.sh "${GITHUB_REF_NAME#v}" checksums.txt dmg rendered
+      - name: Push to tap
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          install -m 600 /dev/null ~/.tap_key
+          printf '%s\n' "$DEPLOY_KEY" > ~/.tap_key
+          export GIT_SSH_COMMAND="ssh -i $HOME/.tap_key -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:treetopdevs/homebrew-tap.git tap
+          mkdir -p tap/Formula tap/Casks
+          cp rendered/Formula/firehose.rb tap/Formula/
+          cp rendered/Casks/agent-firehose.rb tap/Casks/
+          # firehose was a cask before it became a formula; the names collide.
+          git -C tap rm -q --ignore-unmatch Casks/firehose.rb
+          git -C tap add -A
+          git -C tap -c user.name=goreleaserbot -c user.email=bot@goreleaser.com \
+            commit -m "firehose ${GITHUB_REF_NAME}" || { echo "tap already up to date"; exit 0; }
+          git -C tap push origin HEAD
