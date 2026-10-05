@@ -32,8 +32,11 @@ Dry runs: `goreleaser release --snapshot --clean --skip=publish`;
 `scripts/render-tap.sh <ver> checksums.txt <dmg-dir> <out-dir>` then
 `brew audit --strict` on the output (in a throwaway local tap).
 
-Binaries and the app are unsigned; the cask's postflight strips the macOS
-quarantine bit (formula downloads aren't quarantined).
+Binaries and the app are unsigned. The cask does not strip the macOS
+quarantine bit; its caveats tell users to approve the app once (System
+Settings > Privacy & Security, or `xattr -dr com.apple.quarantine`). Formula
+downloads aren't quarantined. Once the app is signed and notarized (desktop
+runbook §2) the caveat can go.
 
 # Desktop release runbook
 

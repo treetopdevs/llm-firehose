@@ -110,12 +110,14 @@ cask "agent-firehose" do
 
   app "Agent Firehose.app"
 
-  # The app is not signed/notarized yet; strip quarantine so Gatekeeper
-  # doesn't block the first launch.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Agent Firehose.app"]
-  end
+  # Not signed/notarized yet, so Gatekeeper blocks the first launch. The cask
+  # does not strip the quarantine flag on the user's behalf; caveats explain
+  # the one-time approval instead.
+  caveats <<~EOS
+    Agent Firehose is not yet signed or notarized, so macOS blocks the first launch.
+    Approve it once in System Settings > Privacy & Security ("Open Anyway"), or run:
+      xattr -dr com.apple.quarantine "/Applications/Agent Firehose.app"
+  EOS
 
   # Deliberately no zap for ~/.agentfirehose: it holds the user's event spool.
 end
