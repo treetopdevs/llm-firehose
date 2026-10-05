@@ -55,6 +55,8 @@ func Redact(ev event.Event, mode Mode) event.Event {
 	out.CWD = digestPath(out.CWD)
 	out.RepoID = digestPath(out.RepoID)
 	out.WorktreeID = digestPath(out.WorktreeID)
+	out.JJRepoID = digestPath(out.JJRepoID)
+	out.JJWorkspaceID = digestPath(out.JJWorkspaceID)
 	return out
 }
 

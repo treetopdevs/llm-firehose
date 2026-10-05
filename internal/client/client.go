@@ -5,6 +5,7 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -135,6 +136,29 @@ func (c *Client) EmitNamed(ctx context.Context, source, eventName string, r io.R
 			Operation: "POST /emit", Status: resp.Status, StatusCode: resp.StatusCode,
 			Body: strings.TrimSpace(string(body)),
 		}
+	}
+	return nil
+}
+
+// SetPrivacyMode asks the daemon to apply and persist a privacy mode.
+func (c *Client) SetPrivacyMode(ctx context.Context, mode string) error {
+	body, err := json.Marshal(map[string]string{"privacy_mode": mode})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/config", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return &HTTPError{Operation: "POST /config", Status: resp.Status, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(b))}
 	}
 	return nil
 }

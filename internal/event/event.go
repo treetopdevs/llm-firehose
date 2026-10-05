@@ -75,8 +75,10 @@ type Event struct {
 	Summary         string         `json:"summary,omitempty"`
 	Repo            string         `json:"repo,omitempty"`
 	CWD             string         `json:"cwd,omitempty"`
-	RepoID          string         `json:"repo_id,omitempty"`     // canonical local Git common-directory path, when observable
-	WorktreeID      string         `json:"worktree_id,omitempty"` // canonical local Git worktree-root path, when observable
+	RepoID          string         `json:"repo_id,omitempty"`         // canonical local Git common-directory path, when observable
+	WorktreeID      string         `json:"worktree_id,omitempty"`     // canonical local Git worktree-root path, when observable
+	JJRepoID        string         `json:"jj_repo_id,omitempty"`      // jj: + canonical shared JJ repo directory; separate from Git identity
+	JJWorkspaceID   string         `json:"jj_workspace_id,omitempty"` // jj: + canonical containing JJ workspace root
 	Payload         map[string]any `json:"payload,omitempty"`
 	Raw             string         `json:"raw,omitempty"` // original source payload, privacy mode permitting
 }

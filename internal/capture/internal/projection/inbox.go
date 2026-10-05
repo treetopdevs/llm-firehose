@@ -27,13 +27,15 @@ type Evidence struct {
 type InboxSession struct {
 	signal         Evidence
 	uncertain      Evidence
-	identity       [5]Evidence
+	identity       [7]Evidence
 	LastObservedAt time.Time `json:"last_observed_at"`
 	ID             string    `json:"id"`
 	Source         string    `json:"source"`
 	Agent          string    `json:"agent,omitempty"`
 	Repo           string    `json:"repo,omitempty"`
 	CWD            string    `json:"cwd,omitempty"`
+	JJRepoID       string    `json:"jj_repo_id,omitempty"`
+	JJWorkspaceID  string    `json:"jj_workspace_id,omitempty"`
 	RepoID         string    `json:"repo_id,omitempty"`
 	WorktreeID     string    `json:"worktree_id,omitempty"`
 	Events         int       `json:"events"`
@@ -105,10 +107,15 @@ func (ix *Projection) applyInbox(ev event.Event) {
 		value  string
 		target *string
 	}{
-		{ev.Agent, &s.Agent}, {ev.Repo, &s.Repo}, {ev.CWD, &s.CWD}, {ev.RepoID, &s.RepoID}, {ev.WorktreeID, &s.WorktreeID},
+		{ev.Agent, &s.Agent}, {ev.Repo, &s.Repo}, {ev.CWD, &s.CWD}, {ev.RepoID, &s.RepoID}, {ev.WorktreeID, &s.WorktreeID}, {ev.JJRepoID, &s.JJRepoID}, {ev.JJWorkspaceID, &s.JJWorkspaceID},
 	}
 	for i, f := range fields {
-		if f.value != "" && newerEvidence(observed, s.identity[i]) {
+		// Explicit identity in one VCS family clears a prior attachment in the
+		// other family; an event without identity leaves the current attachment.
+		hasGit := ev.RepoID != "" || ev.WorktreeID != ""
+		hasJJ := ev.JJRepoID != "" || ev.JJWorkspaceID != ""
+		explicitFamily := (i == 3 || i == 4) && !hasGit && hasJJ || (i == 5 || i == 6) && !hasJJ && hasGit
+		if (f.value != "" || explicitFamily) && newerEvidence(observed, s.identity[i]) {
 			*f.target = f.value
 			s.identity[i] = observed
 		}

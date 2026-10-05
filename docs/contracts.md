@@ -192,3 +192,60 @@ Client rules:
   daemon being up. An authoritative parse/validation rejection (`4xx`) is
   returned and never triggers a second write.
 - The daemon writes emits locally; it never proxies them (no self-forwarding).
+
+### Workspace graph and scoped timeline (additive)
+
+The local daemon exposes read-only VCS inspection through the same loopback and
+browser-origin restrictions as existing routes:
+
+- `GET /workspace-graph/repos`: registered repository descriptors.
+- `POST /workspace-graph/repos` with `{root, vcs}` registers an absolute local
+  directory (`vcs` is `git`, `jj`, or empty for detection). This writes only host
+  registration configuration, never VCS state. Scan roots persist in the private
+  `~/.agentfirehose/graph-roots.json` host file, which is not exposed by the API.
+  Graph identities and labels are hashed outside full mode; full mode permits
+  canonical paths in graph responses.
+- `GET /workspace-graph?repo_id=...&cursor=...&refresh=true`: disposable topology
+  snapshot with actual parent edges, every discovered workspace, explicit
+  boundaries, warnings, stale state, and an optional continuation cursor.
+- `GET /workspace-graph/compare?repo_id=...&revision=...&target=...`: revision-set
+  differences, merge bases, and committed changed files; checkout dirty state is
+  separate workspace metadata. No operation modifies a repository or fetches.
+- `GET /workspace-graph/timeline`: durable event page, newest compatible `time`
+  first, then descending exact ID for deterministic ties. Optional `repo_id`,
+  `workspace_id`, `source`, `session_id`, `category`, `search`, `cursor`, and
+  `limit` (default 200, maximum 1000) scope the original captured association.
+  `session_id` requires `source`. Response fields are `events`, `next_cursor`,
+  `has_more`, `order: "newest_first"`, and `capture_gap`. Exact-ID duplicates
+  are removed. Cursor paging never infers cross-provider causality; clients
+  reconcile the newest page after reconnect/resume to include late arrivals.
+
+Existing event/session/attention routes retain their representations. Graph
+scans run independently of capture. Debounced metadata polling detects repository
+changes; full reconciliation every 30 seconds catches missed signals and checkout
+content changes. Explicit/focus refresh is also supported. Observed roots are learned before privacy processing
+only in a running capture engine; previously redacted unknown paths require
+explicit registration. A privacy-mode transition invalidates graph caches.
+Raw registered roots are persisted (`~/.agentfirehose/graph-roots.json`, 0600)
+only in `full` mode; leaving `full` deletes the file and returning rewrites it
+from memory, so minimal/balanced never hold raw paths on disk.
+
+Optional `jj_repo_id` and `jj_workspace_id` identities use the separate `jj:`
+namespace followed by canonical shared-repository/workspace paths in full mode;
+minimal/balanced apply the same SHA-256 path protection as Git identities. Git
+fields keep their existing meaning, including in colocated repositories. The
+source-scoped attention session projection carries both optional JJ fields.
+Timeline scope matching accepts the registered repository's exact canonical and
+hashed identity aliases, preserving historical associations across privacy
+changes without interpreting hashes as paths.
+
+Graph snapshots add `attention_associations`, keyed by source + NUL + native
+session ID, with `{repo_id, workspace_id, event_id}` values resolved from exact
+observed identity aliases. The optional `event_id` identifies the attention
+observation used for that association; clients must not apply a stale map entry
+after newer session evidence arrives. Timeline pages similarly add `associations`, keyed by exact
+event ID. An empty associated workspace ID means no currently available graph
+workspace could be resolved; it does not relocate the captured event. These
+maps support cross-view navigation across privacy transitions while preserving
+original event envelopes. Session movement updates the current attachment only;
+late observations cannot restore an older attachment.

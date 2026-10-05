@@ -20,6 +20,7 @@ import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspace } from "./ui/workspace";
+import { createWorkspaceGraph } from "./ui/graph";
 import type { CellScope } from "./ui/workspace/model";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -28,7 +29,7 @@ const feedState = new FeedState(5000);
 const detailPane = el("aside", { class: "detail" });
 // The call altitude pairs a tool call's start and end from the live buffer.
 const siblings = (ev: FirehoseEvent) =>
-  ev.call_id ? feedState.events().filter((o) => o.session_id === ev.session_id && o.call_id === ev.call_id) : [];
+  ev.call_id ? feedState.events().filter((o) => o.source === ev.source && o.session_id === ev.session_id && o.call_id === ev.call_id) : [];
 const showDetail = (ev: FirehoseEvent) =>
   renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings);
 
@@ -47,7 +48,8 @@ function openCell(scope: CellScope) {
 }
 
 const dwellPanel = createDwell(openSession);
-const workspacePanel = createWorkspace(() => feedState.events(), openCell);
+const workspacePanel = createWorkspaceGraph(openSession);
+const matrixPanel = createWorkspace(() => feedState.events(), openCell);
 const lanesPanel = createLanes(() => feedState.events(), openSession);
 
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
@@ -58,6 +60,7 @@ const panels = {
   attention: attentionPanel,
   dwell: dwellPanel,
   workspace: workspacePanel,
+  matrix: matrixPanel,
   lanes: lanesPanel,
   sessions: sessionsPanel,
   files: createFiles(),
@@ -109,9 +112,8 @@ function onEvent(ev: FirehoseEvent) {
   if (active === "dwell") {
     dwellPanel.onEvent(ev);
   }
-  if (active === "workspace") {
-    workspacePanel.onEvent(ev);
-  }
+  workspacePanel.onEvent(ev);
+  if (active === "matrix") matrixPanel.onEvent(ev);
   if (active === "lanes") {
     lanesPanel.onEvent(ev);
   }

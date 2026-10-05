@@ -2,7 +2,7 @@
 // contract is the boundary: this file mirrors the daemon's shapes and knows
 // nothing about how they're rendered.
 
-export const DAEMON_URL = "http://127.0.0.1:4517";
+export const DAEMON_URL = (import.meta as ImportMeta & {env?:Record<string,string>}).env?.VITE_DAEMON_URL || "http://127.0.0.1:4517";
 
 /** The schema_version this client understands (event.CurrentSchemaVersion). */
 export const CLIENT_SCHEMA_VERSION = 1;
@@ -35,6 +35,8 @@ export interface FirehoseEvent {
   cwd?: string;
   repo_id?: string;
   worktree_id?: string;
+  jj_repo_id?: string;
+  jj_workspace_id?: string;
   payload?: Record<string, unknown>;
   raw?: string;
 }
@@ -177,6 +179,8 @@ export interface AttentionSession {
   cwd?: string;
   repo_id?: string;
   worktree_id?: string;
+  jj_repo_id?: string;
+  jj_workspace_id?: string;
   events: number;
   state: string;
   last: AttentionEvidence;

@@ -30,6 +30,7 @@ Usage:
   firehose [view]              open the live TUI (default; uses the daemon when running)
   firehose daemon [--addr A]   run the capture engine and its local API
   firehose status              report whether the daemon is running
+  firehose privacy [MODE]      show or set the privacy mode (minimal | balanced | full)
   firehose emit --source S     normalize one payload from stdin (via daemon when running)
                                (--event NAME names the hook event for antigravity)
   firehose ingest              stream NDJSON events from stdin into the spool
@@ -70,6 +71,8 @@ func main() {
 		addr := fs.String("addr", cfg.DaemonAddr, "listen address for the local API")
 		fs.Parse(args)
 		fatalIf(runDaemon(cfg, home, *addr))
+	case "privacy":
+		fatalIf(cli.Privacy(cfg, home, args, os.Stdout))
 	case "status":
 		if !cli.Status(cfg, os.Stdout) {
 			os.Exit(1)

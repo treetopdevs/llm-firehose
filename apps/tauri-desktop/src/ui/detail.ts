@@ -17,7 +17,7 @@ function phaseOf(ev: FirehoseEvent): string | undefined {
 function pairCall(ev: FirehoseEvent, siblings: Siblings): { start?: FirehoseEvent; end?: FirehoseEvent } {
   let start: FirehoseEvent | undefined;
   let end: FirehoseEvent | undefined;
-  const same = siblings(ev).filter((o) => o.session_id === ev.session_id && o.call_id === ev.call_id);
+  const same = siblings(ev).filter((o) => o.source === ev.source && o.session_id === ev.session_id && o.call_id === ev.call_id);
   for (const row of coalesce(same)) {
     const other = row.event;
     const phase = phaseOf(other);
@@ -97,6 +97,11 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
       ev.trace_id && `trace ${ev.trace_id}`,
     ].filter(Boolean).join(" · "),
   );
+  add("source", ev.source);
+  add("source time", ev.source_time);
+  add("capture time", ev.capture_time);
+  add("repository identity", ev.repo_id);
+  add("workspace identity", ev.worktree_id);
   add("repo", ev.repo);
   add("cwd", ev.cwd);
   if (ev.severity && ev.severity !== "info") add("severity", ev.severity);

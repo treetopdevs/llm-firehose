@@ -123,3 +123,10 @@ describe("renderDetail", () => {
     expect(pane.childElementCount).toBe(0);
   });
 });
+
+test('request response pairing never crosses providers with equal native session and call IDs', () => {
+ const pane=document.createElement('aside'); const [start,end]=pair();
+ renderDetail(pane,end,()=>{},()=>[{...start,source:'codex',payload:{phase:'start',command:'wrong provider'}},end]);
+ expect(pane.querySelector('.request')).toBeNull();
+ expect(pane.textContent).not.toContain('wrong provider');
+});

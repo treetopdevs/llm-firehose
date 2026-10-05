@@ -52,6 +52,8 @@ type engineSeams struct {
 
 // Engine turns Observations into Captured Events.
 type Engine struct {
+	rootsMu  sync.RWMutex
+	roots    map[string]struct{}
 	spoolDir string
 	writer   appender
 	sources  []Source

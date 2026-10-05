@@ -13,12 +13,26 @@ import (
 // Enrich replaces unverified identity when cwd makes the local Git identity
 // observable, otherwise preserving any historical identity already present.
 func Enrich(ev event.Event) event.Event {
+	ev, _ = EnrichWithRoot(ev)
+	return ev
+}
+
+// EnrichWithRoot also returns the root actually observed from CWD. Historical
+// caller-supplied identity may be preserved on ev, but is never a discovery hint.
+func EnrichWithRoot(ev event.Event) (event.Event, string) {
+	observedRoot := ""
 	repoID, worktreeID := Observe(ev.CWD)
 	if repoID != "" && worktreeID != "" {
 		ev.RepoID = repoID
 		ev.WorktreeID = worktreeID
+		observedRoot = worktreeID
 	}
-	return ev
+	if repoID, workspaceID := ObserveJJ(ev.CWD); repoID != "" && workspaceID != "" {
+		ev.JJRepoID = repoID
+		ev.JJWorkspaceID = workspaceID
+		observedRoot = strings.TrimPrefix(workspaceID, "jj:")
+	}
+	return ev, observedRoot
 }
 
 // Observe returns canonical local paths identifying the Git common directory
