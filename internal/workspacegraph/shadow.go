@@ -89,7 +89,7 @@ func newShadowGitDir(ctx context.Context, root string) (string, []string, func()
 		}
 		key, val, _ := strings.Cut(fields[i+1], "\n")
 		k := strings.ToLower(key)
-		if !statusConfigKey(k) {
+		if !shadowConfigValue(k, val) {
 			continue
 		}
 		if e := set(k, val); e != nil {
@@ -100,22 +100,32 @@ func newShadowGitDir(ctx context.Context, root string) (string, []string, func()
 	return dir, env, cleanup, nil
 }
 
-// statusConfigKey: the inert local keys that change how status reads files
-// and the object store. Anything else (including core.worktree and
-// core.bare, which are set explicitly) is left out of the shadow config.
-func statusConfigKey(key string) bool {
-	parts := strings.Split(key, ".")
-	if parts[0] == "extensions" {
-		return len(parts) == 2
-	}
-	if parts[0] != "core" || len(parts) != 2 {
-		return false
-	}
-	switch parts[1] {
-	case "repositoryformatversion", "filemode", "ignorecase", "precomposeunicode", "symlinks",
-		"autocrlf", "safecrlf", "eol", "untrackedcache", "longpaths", "protectntfs",
-		"hidedotfiles", "trustctime", "quotepath", "preloadindex":
-		return true
+// shadowConfigValue reports whether a local config entry may be copied into
+// the shadow config. Both the key and its value must be known: status needs
+// only a few settings, each with a closed set of meanings, so anything
+// outside that (an unknown extension, an odd value) is simply not copied and
+// the shadow config falls back to git's defaults. core.worktree and
+// core.bare are never copied; they are set explicitly.
+func shadowConfigValue(key, val string) bool {
+	val = strings.ToLower(val)
+	isBool := val == "true" || val == "false" || val == "yes" || val == "no" || val == "on" || val == "off" || val == "1" || val == "0"
+	switch key {
+	case "core.repositoryformatversion":
+		return val == "0" || val == "1"
+	case "core.filemode", "core.ignorecase", "core.precomposeunicode", "core.symlinks",
+		"core.longpaths", "core.protectntfs", "core.hidedotfiles", "core.trustctime",
+		"core.quotepath", "core.preloadindex", "extensions.worktreeconfig":
+		return isBool
+	case "core.untrackedcache":
+		return isBool || val == "keep"
+	case "core.autocrlf":
+		return isBool || val == "input"
+	case "core.safecrlf":
+		return isBool || val == "warn"
+	case "core.eol":
+		return val == "lf" || val == "crlf" || val == "native"
+	case "extensions.objectformat":
+		return val == "sha1" || val == "sha256"
 	}
 	return false
 }

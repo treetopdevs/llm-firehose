@@ -514,3 +514,16 @@ func TestGitStatusNeverRunsLiveRepoFilters(t *testing.T) {
 		t.Fatalf("status lost dirty files: %q", out)
 	}
 }
+
+func TestShadowConfigValueIsClosed(t *testing.T) {
+	for _, ok := range [][2]string{{"core.autocrlf", "input"}, {"core.filemode", "false"}, {"extensions.objectformat", "sha256"}, {"core.repositoryformatversion", "1"}} {
+		if !shadowConfigValue(ok[0], ok[1]) {
+			t.Errorf("%v rejected", ok)
+		}
+	}
+	for _, bad := range [][2]string{{"core.autocrlf", "$(touch x)"}, {"core.eol", "x"}, {"extensions.partialclone", "origin"}, {"extensions.refstorage", "reftable"}, {"core.worktree", "/"}, {"core.bare", "true"}, {"core.fsmonitor", "true"}, {"core.repositoryformatversion", "9"}} {
+		if shadowConfigValue(bad[0], bad[1]) {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}
