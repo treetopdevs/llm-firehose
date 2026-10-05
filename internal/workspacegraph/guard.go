@@ -9,10 +9,16 @@ import (
 var errUnsafeConfig = errors.New("repository config defines commands the daemon will not run; refusing to scan")
 
 // guardGitConfig refuses repositories whose local (or per-worktree) config
-// can make read-only git commands execute programs: clean filters run during
-// `git status`, and fsmonitor, pagers, diff/merge drivers and similar keys
-// are the same class. Roots are discovered from agent activity, so the
-// repository may be attacker-shaped. User/system config is trusted.
+// holds any key outside a known-inert allowlist. Config can make read-only git
+// commands execute programs (clean filters run during `git status`; fsmonitor,
+// pagers, diff/merge drivers and more are the same class), and a denylist of
+// those can never be complete, so unknown keys fail closed. Roots are
+// discovered from agent activity, so the repository may be attacker-shaped.
+// User/system config is trusted.
+//
+// The check runs at registration, at the start of every scan and immediately
+// before each `git status`; a repo that rewrites its own config in the window
+// between the check and the command is not defended against.
 func guardGitConfig(ctx context.Context, root string) error {
 	out, err := run(ctx, root, "git", "config", "--list", "--show-scope", "-z")
 	if err != nil {
@@ -25,38 +31,42 @@ func guardGitConfig(ctx context.Context, root string) error {
 			continue
 		}
 		key, _, _ := strings.Cut(fields[i+1], "\n")
-		if executableGitKey(strings.ToLower(key)) {
+		if !inertGitKey(strings.ToLower(key)) {
 			return errUnsafeConfig
 		}
 	}
 	return nil
 }
 
-func executableGitKey(key string) bool {
-	switch key {
-	case "core.fsmonitor", "core.hookspath", "core.sshcommand", "core.pager", "core.editor",
-		"core.askpass", "core.gitproxy", "core.alternaterefscommand", "diff.external",
-		"uploadpack.packobjectshook", "include.path", "gpg.program":
-		return true
-	}
+// inertGitKey reports whether a lowercased config key is known not to cause
+// command execution in the read-only commands the scanner runs.
+func inertGitKey(key string) bool {
 	parts := strings.Split(key, ".")
-	if len(parts) < 3 {
-		return false
-	}
 	section, variable := parts[0], parts[len(parts)-1]
 	switch section {
-	case "filter":
-		return variable == "clean" || variable == "smudge" || variable == "process"
-	case "diff":
-		return variable == "textconv" || variable == "command"
-	case "merge":
-		return variable == "driver"
-	case "gpg":
-		return variable == "program"
-	case "includeif":
-		return variable == "path"
-	case "credential":
-		return variable == "helper"
+	case "core":
+		switch variable {
+		case "repositoryformatversion", "filemode", "bare", "logallrefupdates", "ignorecase",
+			"precomposeunicode", "symlinks", "autocrlf", "safecrlf", "eol", "worktree",
+			"untrackedcache", "sparsecheckout", "sparsecheckoutcone", "commitgraph",
+			"longpaths", "protectntfs", "hidedotfiles", "trustctime", "quotepath",
+			"abbrev", "compression", "loosecompression", "bigfilethreshold", "preloadindex":
+			return len(parts) == 2
+		}
+	case "user", "init", "gc", "pack", "pull", "push", "fetch", "receive", "extensions", "advice", "color":
+		return true
+	case "remote":
+		switch variable {
+		case "url", "pushurl", "fetch", "push", "tagopt", "prune":
+			return len(parts) == 3
+		}
+	case "branch":
+		return len(parts) == 3
+	case "submodule":
+		switch variable {
+		case "url", "active", "branch":
+			return len(parts) == 3
+		}
 	}
 	return false
 }

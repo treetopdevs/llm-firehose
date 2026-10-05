@@ -469,8 +469,20 @@ func TestGitScanAllowsBenignRepoConfig(t *testing.T) {
 	root := fixture(t)
 	git(t, root, "config", "user.name", "Someone")
 	git(t, root, "config", "core.autocrlf", "false")
+	git(t, root, "config", "remote.origin.url", "https://example.invalid/x.git")
+	git(t, root, "config", "branch.main.remote", "origin")
 	s := New(privacy.ModeFull)
 	if _, err := s.Register(context.Background(), root, "git"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGitScanFailsClosedOnUnknownRepoConfig(t *testing.T) {
+	for _, kv := range [][2]string{{"core.fsmonitor", "touch x"}, {"core.sshcommand", "x"}, {"custom.thing", "1"}, {"diff.d.textconv", "x"}} {
+		root := fixture(t)
+		git(t, root, "config", kv[0], kv[1])
+		if _, err := New(privacy.ModeFull).Register(context.Background(), root, "git"); err == nil {
+			t.Fatalf("%s accepted", kv[0])
+		}
 	}
 }

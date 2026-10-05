@@ -80,6 +80,10 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 		}
 	}
 	for i, root := range roots {
+		if e := guardGitConfig(ctx, root); e != nil {
+			v.Workspaces[i].Availability = "inaccessible"
+			continue
+		}
 		b, e := run(ctx, root, "git", "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 		if e != nil {
 			v.Workspaces[i].Availability = "inaccessible"
