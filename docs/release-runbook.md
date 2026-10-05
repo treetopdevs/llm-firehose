@@ -34,7 +34,8 @@ Dry runs: `goreleaser release --snapshot --clean --skip=publish`;
 
 Binaries and the app are unsigned. The cask does not strip the macOS
 quarantine bit; its caveats tell users to approve the app once (System
-Settings > Privacy & Security, or `xattr -dr com.apple.quarantine`). Formula
+Settings > Privacy & Security, or
+`xattr -dr com.apple.quarantine "/Applications/Agent Firehose.app"`). Formula
 downloads aren't quarantined. Once the app is signed and notarized (desktop
 runbook §2) the caveat can go.
 
