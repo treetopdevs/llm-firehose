@@ -1,6 +1,7 @@
 // Package client is the Go client for the firehose daemon's local HTTP API.
-// It deliberately imports only the event envelope: the JSON contract is the
-// boundary, so clients and the daemon can evolve independently.
+// It imports the event envelope and the Live Subscription module. The JSON
+// contract is the seam with the daemon, so this client does not import the
+// Capture Engine.
 package client
 
 import (
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/livesubscription"
 )
 
 // Client talks to a firehose daemon at BaseURL (e.g. http://127.0.0.1:4517).
@@ -24,8 +26,6 @@ type Client struct {
 	http    *http.Client // short-timeout client for request/response calls
 	stream  *http.Client // no overall timeout; streams live on request context
 }
-
-const feedSeenCapacity = 20000
 
 func New(baseURL string) *Client {
 	return &Client{
@@ -205,155 +205,39 @@ func (c *Client) Stream(ctx context.Context) (<-chan event.Event, error) {
 	return ch, nil
 }
 
-// Feed loads durable history, consumes one live stream, and on interruption
-// brackets a replacement stream with durable snapshots. The post-subscription
-// snapshot closes the history/live race; exact stable ids already inside the
-// bounded presentation window are suppressed.
-func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-chan event.Event, []event.Event, error) {
-	history, err := c.Recent(ctx, initialLimit)
+// Feed opens a Live Subscription against this daemon. History, the event
+// channel, and the session snapshot are returned together.
+func (c *Client) Feed(ctx context.Context, initialLimit, reconcileLimit int) (<-chan event.Event, []event.Event, []livesubscription.Session, error) {
+	sub, err := livesubscription.Open(ctx, httpSource{c}, initialLimit, reconcileLimit)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	seen := newBoundedIDs(feedSeenCapacity)
-	history = deduplicate(history, seen)
-	streamCtx, stopStream := context.WithCancel(ctx)
-	stream, err := c.Stream(streamCtx)
-	if err != nil {
-		stopStream()
-		return nil, nil, err
-	}
-	catchup, err := c.Recent(ctx, initialLimit)
-	if err != nil {
-		stopStream()
-		return nil, nil, err
-	}
-	history = append(history, deduplicate(catchup, seen)...)
-	out := make(chan event.Event, 256)
-	go func() {
-		defer close(out)
-		current := stream
-		stopCurrent := stopStream
-		defer func() { stopCurrent() }()
-		for {
-			for ev := range current {
-				if ev.ID != "" && !seen.add(ev.ID) {
-					continue
-				}
-				select {
-				case out <- ev:
-				case <-ctx.Done():
-					return
-				}
-			}
-			stopCurrent()
-			current = nil
-			if ctx.Err() != nil {
-				return
-			}
+	return sub.Events, sub.History, sub.Sessions, nil
+}
 
-			for {
-				recovered, historyErr := c.Recent(ctx, reconcileLimit)
-				if historyErr == nil {
-					replacementCtx, stopReplacement := context.WithCancel(ctx)
-					replacement, streamErr := c.Stream(replacementCtx)
-					if streamErr == nil {
-						catchup, catchupErr := c.Recent(ctx, reconcileLimit)
-						if catchupErr == nil {
-							recovered = append(recovered, catchup...)
-							for _, ev := range deduplicate(recovered, seen) {
-								select {
-								case out <- ev:
-								case <-ctx.Done():
-									stopReplacement()
-									return
-								}
-							}
-							if sessions, sessionsErr := c.Sessions(ctx); sessionsErr == nil {
-								for _, ev := range sessionTransitions(sessions) {
-									select {
-									case out <- ev:
-									case <-ctx.Done():
-										stopReplacement()
-										return
-									}
-								}
-							}
-							current = replacement
-							stopCurrent = stopReplacement
-							break
-						}
-					}
-					stopReplacement()
-				}
-				if current != nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(250 * time.Millisecond):
-				}
-			}
+type httpSource struct{ client *Client }
+
+func (s httpSource) Recent(ctx context.Context, limit int) ([]event.Event, error) {
+	return s.client.Recent(ctx, limit)
+}
+
+func (s httpSource) Subscribe(ctx context.Context) (<-chan event.Event, error) {
+	return s.client.Stream(ctx)
+}
+
+func (s httpSource) Sessions(ctx context.Context) ([]livesubscription.Session, error) {
+	sessions, err := s.client.Sessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livesubscription.Session, len(sessions))
+	for i, session := range sessions {
+		out[i] = livesubscription.Session{
+			ID: session.ID, Source: session.Source, Agent: session.Agent,
+			Repo: session.Repo, CWD: session.CWD, State: session.State,
+			StateSince: session.StateSince, StateReason: session.StateReason,
+			LastTime: session.LastTime, HasError: session.HasError,
 		}
-	}()
-	return out, history, nil
-}
-
-func sessionTransitions(sessions []Session) []event.Event {
-	out := make([]event.Event, 0, len(sessions))
-	for _, session := range sessions {
-		out = append(out, event.Event{
-			Time: session.StateSince, Source: "firehose", SessionID: session.ID,
-			// Agent/Repo/CWD carry the session's real workspace identity —
-			// Source stays "firehose" (this is a synthetic transition, not a
-			// captured event) so the session's originating adapter travels
-			// via Payload["source"] instead. Without these, a session
-			// recovered purely from this snapshot (no prior attention entry,
-			// its own events outside the bounded recovery ring) has no
-			// identity to fall back to and surfaces under an unknown
-			// workspace/agent cell.
-			Agent: session.Agent, Repo: session.Repo, CWD: session.CWD,
-			Category: event.CategoryMeta, Name: "state.transition",
-			Payload: map[string]any{
-				"state": session.State, "reason": session.StateReason, "reconciled": true,
-				"has_error": session.HasError, "last_time": session.LastTime,
-				"source": session.Source,
-			},
-		})
 	}
-	return out
-}
-
-type boundedIDs struct {
-	capacity int
-	set      map[string]bool
-	order    []string
-}
-
-func newBoundedIDs(capacity int) *boundedIDs {
-	return &boundedIDs{capacity: capacity, set: make(map[string]bool)}
-}
-
-func (s *boundedIDs) add(id string) bool {
-	if s.set[id] {
-		return false
-	}
-	s.set[id] = true
-	s.order = append(s.order, id)
-	if len(s.order) > s.capacity {
-		delete(s.set, s.order[0])
-		s.order = s.order[1:]
-	}
-	return true
-}
-
-func deduplicate(events []event.Event, seen *boundedIDs) []event.Event {
-	out := make([]event.Event, 0, len(events))
-	for _, ev := range events {
-		if ev.ID != "" && !seen.add(ev.ID) {
-			continue
-		}
-		out = append(out, ev)
-	}
-	return out
+	return out, nil
 }

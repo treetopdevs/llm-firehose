@@ -18,6 +18,7 @@ import (
 	"agentfirehose/internal/client"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/host"
+	"agentfirehose/internal/livesubscription"
 	"agentfirehose/internal/tui"
 )
 
@@ -226,24 +227,11 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 					schema, event.CurrentSchemaVersion,
 				)
 			}
-			stream, history, err := c.Feed(ctx, 500, 10000)
+			stream, history, sessions, err := c.Feed(ctx, 500, 10000)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			sessions, err := c.Sessions(ctx)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			attention := make([]tui.SessionAttention, 0, len(sessions))
-			for _, session := range sessions {
-				attention = append(attention, tui.SessionAttention{
-					ID: session.ID, Source: session.Source, Agent: session.Agent,
-					Repo: session.Repo, CWD: session.CWD,
-					State: session.State, Since: session.StateSince, Reason: session.StateReason,
-					Last: session.LastTime, HasError: session.HasError,
-				})
-			}
-			return stream, history, attention, nil
+			return stream, history, sessionAttention(sessions), nil
 		}
 	}
 
@@ -251,16 +239,20 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	attention := make([]tui.SessionAttention, 0, len(feed.Sessions))
-	for _, session := range feed.Sessions {
+	return feed.Events, feed.History, sessionAttention(feed.Sessions), nil
+}
+
+func sessionAttention(sessions []livesubscription.Session) []tui.SessionAttention {
+	attention := make([]tui.SessionAttention, 0, len(sessions))
+	for _, session := range sessions {
 		attention = append(attention, tui.SessionAttention{
 			ID: session.ID, Source: session.Source, Agent: session.Agent,
 			Repo: session.Repo, CWD: session.CWD,
-			State: string(session.State), Since: session.StateSince, Reason: session.StateReason,
+			State: session.State, Since: session.StateSince, Reason: session.StateReason,
 			Last: session.LastTime, HasError: session.HasError,
 		})
 	}
-	return feed.Events, feed.History, attention, nil
+	return attention
 }
 
 type cfgType = cli.Config
