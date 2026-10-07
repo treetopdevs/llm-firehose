@@ -216,7 +216,7 @@ func TestFeedReconcilesHistoryBeforeReplacingClosedStream(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	feed, history, err := client.New(server.URL).Feed(ctx, 500, 10000)
+	feed, history, _, err := client.New(server.URL).Feed(ctx, 500, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestFeedRefreshesSessionAttentionAfterStreamInterruption(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	feed, _, err := client.New(server.URL).Feed(ctx, 500, 10000)
+	feed, _, _, err := client.New(server.URL).Feed(ctx, 500, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,6 +310,8 @@ func TestFeedPostSubscriptionSnapshotClosesHistoryLiveRace(t *testing.T) {
 			} else {
 				_ = json.NewEncoder(w).Encode([]event.Event{gap})
 			}
+		case "/sessions":
+			_ = json.NewEncoder(w).Encode([]client.Session{})
 		case "/events/stream":
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
@@ -321,7 +323,7 @@ func TestFeedPostSubscriptionSnapshotClosesHistoryLiveRace(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, history, err := client.New(server.URL).Feed(ctx, 500, 10000)
+	_, history, _, err := client.New(server.URL).Feed(ctx, 500, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}

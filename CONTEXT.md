@@ -29,7 +29,7 @@ The idempotent application of a Captured Event to disposable derived state and l
 _Avoid_: Persistence, capture
 
 **Live Subscription**:
-A bounded, ordered view of Projections that reconciles from durable history after interruption.
+A bounded, ordered view of Projections. After an interruption it is reconciled from durable history together with the session Projection.
 _Avoid_: Source of truth, event queue
 
 **Capture Warning**:

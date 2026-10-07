@@ -2,20 +2,18 @@ package host
 
 import (
 	"context"
-	"time"
 
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/livesubscription"
 )
 
-const feedSeenCapacity = 20000
-
-// Feed is the daemonless view's engine-owned durable and live state.
+// Feed is the daemonless view's Live Subscription.
 type Feed struct {
 	Events   <-chan event.Event
 	History  []event.Event
-	Sessions []capture.Session
+	Sessions []livesubscription.Session
 }
 
 // OpenLocalFeed composes the same production Capture Engine used by the
@@ -29,168 +27,39 @@ func OpenLocalFeed(ctx context.Context, cfg cli.Config, home string) (Feed, erro
 }
 
 func openEngineFeed(ctx context.Context, engine *capture.Engine, initialLimit, reconcileLimit int) (Feed, error) {
-	history, err := engine.Recent(initialLimit)
+	feedCtx, stopFeed := context.WithCancel(ctx)
+	sub, err := livesubscription.Open(feedCtx, engineSource{engine}, initialLimit, reconcileLimit)
 	if err != nil {
+		stopFeed()
 		return Feed{}, err
 	}
-	sessions := engine.Sessions()
-	seen := newFeedIDs(feedSeenCapacity)
-	for _, ev := range history {
-		seen.add(ev.ID)
-	}
-	subscriptionCtx, stopSubscription := context.WithCancel(ctx)
-	subscription := engine.Subscribe(subscriptionCtx)
-	catchup, err := engine.Recent(initialLimit)
-	if err != nil {
-		stopSubscription()
-		return Feed{}, err
-	}
-	for _, ev := range catchup {
-		if seen.add(ev.ID) {
-			history = append(history, ev)
+	go func() {
+		_ = engine.Run(ctx)
+		stopFeed()
+	}()
+	return Feed{Events: sub.Events, History: sub.History, Sessions: sub.Sessions}, nil
+}
+
+type engineSource struct{ engine *capture.Engine }
+
+func (s engineSource) Recent(_ context.Context, limit int) ([]event.Event, error) {
+	return s.engine.Recent(limit)
+}
+
+func (s engineSource) Subscribe(ctx context.Context) (<-chan event.Event, error) {
+	return s.engine.Subscribe(ctx).Events, nil
+}
+
+func (s engineSource) Sessions(context.Context) ([]livesubscription.Session, error) {
+	projected := s.engine.Sessions()
+	sessions := make([]livesubscription.Session, len(projected))
+	for i, session := range projected {
+		sessions[i] = livesubscription.Session{
+			ID: session.ID, Source: session.Source, Agent: session.Agent,
+			Repo: session.Repo, CWD: session.CWD, State: string(session.State),
+			StateSince: session.StateSince, StateReason: session.StateReason,
+			LastTime: session.LastTime, HasError: session.HasError,
 		}
 	}
-	engineDone := make(chan error, 1)
-	go func() { engineDone <- engine.Run(ctx) }()
-
-	out := make(chan event.Event, 256)
-	go pumpEngineFeed(ctx, engine, subscription, stopSubscription, engineDone, reconcileLimit, seen, out)
-	return Feed{Events: out, History: history, Sessions: sessions}, nil
-}
-
-func pumpEngineFeed(
-	ctx context.Context,
-	engine *capture.Engine,
-	subscription *capture.Subscription,
-	stopSubscription context.CancelFunc,
-	engineDone <-chan error,
-	reconcileLimit int,
-	seen *feedIDs,
-	out chan<- event.Event,
-) {
-	defer close(out)
-	current := subscription
-	stopCurrent := stopSubscription
-	defer func() { stopCurrent() }()
-	for {
-		for current != nil {
-			select {
-			case <-ctx.Done():
-				return
-			case <-engineDone:
-				return
-			case ev, ok := <-current.Events:
-				if !ok {
-					current = nil
-					continue
-				}
-				if !seen.add(ev.ID) {
-					continue
-				}
-				select {
-				case out <- ev:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-		stopCurrent()
-
-		for current == nil {
-			if ctx.Err() != nil {
-				return
-			}
-			recovered, err := engine.Recent(reconcileLimit)
-			if err == nil {
-				replacementCtx, stopReplacement := context.WithCancel(ctx)
-				replacement := engine.Subscribe(replacementCtx)
-				catchup, catchupErr := engine.Recent(reconcileLimit)
-				if catchupErr != nil {
-					stopReplacement()
-				} else {
-					recovered = append(recovered, catchup...)
-					for _, ev := range recovered {
-						if !seen.add(ev.ID) {
-							continue
-						}
-						select {
-						case out <- ev:
-						case <-ctx.Done():
-							stopReplacement()
-							return
-						}
-					}
-					for _, ev := range projectedSessionTransitions(engine.Sessions()) {
-						select {
-						case out <- ev:
-						case <-ctx.Done():
-							stopReplacement()
-							return
-						}
-					}
-					current = replacement
-					stopCurrent = stopReplacement
-					break
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-engineDone:
-				return
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-	}
-}
-
-func projectedSessionTransitions(sessions []capture.Session) []event.Event {
-	out := make([]event.Event, 0, len(sessions))
-	for _, session := range sessions {
-		out = append(out, event.Event{
-			Time: session.StateSince, Source: "firehose", SessionID: session.ID,
-			// Agent/Repo/CWD carry the session's real workspace identity —
-			// Source stays "firehose" (this is a synthetic transition, not a
-			// captured event) so the session's originating adapter travels
-			// via Payload["source"] instead. Without these, a session
-			// recovered purely from this snapshot (no prior attention entry,
-			// its own events outside the bounded recovery ring) has no
-			// identity to fall back to and surfaces under an unknown
-			// workspace/agent cell.
-			Agent: session.Agent, Repo: session.Repo, CWD: session.CWD,
-			Category: event.CategoryMeta, Name: "state.transition",
-			Payload: map[string]any{
-				"state": string(session.State), "reason": session.StateReason, "reconciled": true,
-				"has_error": session.HasError, "last_time": session.LastTime,
-				"source": session.Source,
-			},
-		})
-	}
-	return out
-}
-
-type feedIDs struct {
-	capacity int
-	set      map[string]bool
-	order    []string
-}
-
-func newFeedIDs(capacity int) *feedIDs {
-	return &feedIDs{capacity: capacity, set: make(map[string]bool)}
-}
-
-func (s *feedIDs) add(id string) bool {
-	if id == "" {
-		return true
-	}
-	if s.set[id] {
-		return false
-	}
-	s.set[id] = true
-	s.order = append(s.order, id)
-	if len(s.order) > s.capacity {
-		delete(s.set, s.order[0])
-		s.order = s.order[1:]
-	}
-	return true
+	return sessions, nil
 }
