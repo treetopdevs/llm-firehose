@@ -17,7 +17,7 @@ func (s *Service) Compare(ctx context.Context, id, selected, target string) (Com
 		s.mu.Unlock()
 		return Comparison{}, ErrNotFound
 	}
-	root, vcs, mode, epoch := r.root, r.vcs, s.mode, s.epoch
+	root, vcs := r.root, r.vcs
 	if target == "" && r.snapshot != nil {
 		target = r.snapshot.DefaultTarget
 	}
@@ -55,9 +55,10 @@ func (s *Service) Compare(ctx context.Context, id, selected, target string) (Com
 		}
 		for _, p := range strings.Split(b, "\x00") {
 			if p != "" {
-				v.ChangedFiles = append(v.ChangedFiles, content(p, mode))
+				v.ChangedFiles = append(v.ChangedFiles, p)
 			}
 		}
+		v.Changes, v.ChangesTruncated = gitCompareChanges(query, selected, target)
 	} else {
 		template := `commit_id ++ "\n"`
 		b, e = query("log", "--no-graph", "-r", selected+" ~ ancestors("+target+") | (ancestors("+selected+") ~ ancestors("+target+"))", "-T", template)
@@ -81,15 +82,11 @@ func (s *Service) Compare(ctx context.Context, id, selected, target string) (Com
 		}
 		for _, p := range strings.Split(strings.TrimSpace(b), "\n") {
 			if p != "" {
-				v.ChangedFiles = append(v.ChangedFiles, content(p, mode))
+				v.ChangedFiles = append(v.ChangedFiles, p)
 			}
 		}
+		v.Changes, v.ChangesTruncated = jjChanges(ctx, root, []string{"--from", target, "--to", selected})
 	}
 	v.Disconnected = len(v.MergeBases) == 0
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if epoch != s.epoch {
-		return Comparison{}, errors.New("privacy changed; retry comparison")
-	}
 	return v, nil
 }

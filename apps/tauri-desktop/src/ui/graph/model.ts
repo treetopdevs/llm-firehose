@@ -17,76 +17,6 @@ export interface Point {
   x: number;
   y: number;
 }
-/** Iterative Kahn ranking follows parenthood, never timestamps. Absent parents remain boundaries. */
-export function layoutGraph(nodes: GraphNode[], workspaces: Anchor[]) {
-  const byKey = new Map(nodes.map((n) => [n.key, n]));
-  const incoming = new Map(nodes.map((n) => [n.key, 0]));
-  const ranks = new Map<string, number>();
-  for (const n of nodes)
-    for (const p of n.parents)
-      if (byKey.has(p)) incoming.set(p, incoming.get(p)! + 1);
-  const queue = nodes
-    .filter((n) => incoming.get(n.key) === 0)
-    .map((n) => n.key);
-  let i = 0;
-  while (i < queue.length) {
-    const k = queue[i++];
-    for (const p of byKey.get(k)!.parents) {
-      if (!byKey.has(p)) continue;
-      ranks.set(p, Math.max(ranks.get(p) ?? 0, (ranks.get(k) ?? 0) + 1));
-      incoming.set(p, incoming.get(p)! - 1);
-      if (incoming.get(p) === 0) queue.push(p);
-    }
-  }
-  const levels = new Map<number, string[]>();
-  for (const n of nodes) {
-    const r = ranks.get(n.key) ?? 0;
-    levels.set(r, [...(levels.get(r) ?? []), n.key]);
-  }
-  const points = new Map<string, Point>();
-  const labels = new Map<string, Point>();
-  let y = 45;
-  let width = 600;
-  for (const [, keys] of [...levels].sort((a, b) => a[0] - b[0])) {
-    let height = 22;
-    let nextX = 45;
-    keys.forEach((k) => {
-      const x = nextX;
-      points.set(k, { x, y });
-      const attached = workspaces.filter((w) => w.revision_key === k);
-      attached.forEach((w, j) =>
-        labels.set(w.id, { x: x + 22, y: y + j * 35 - 15 }),
-      );
-      height = Math.max(
-        height,
-        attached.length ? attached.length * 35 + 20 : 22,
-      );
-      nextX += attached.length ? 320 : 38;
-      width = Math.max(width, x + (attached.length ? 325 : 40));
-    });
-    y += height;
-  }
-  for (const w of workspaces)
-    if (!labels.has(w.id)) {
-      labels.set(w.id, { x: 45, y });
-      y += 40;
-    }
-  const edges = nodes.flatMap((n) =>
-    n.parents
-      .filter((p) => byKey.has(p))
-      .map((p) => ({ child: n.key, parent: p })),
-  );
-  return {
-    points,
-    labels,
-    edges,
-    boundaries: nodes
-      .filter((n) => n.parents.some((p) => !byKey.has(p)))
-      .map((n) => n.key),
-    width,
-    height: y + 30,
-  };
-}
 export function relatives(
   nodes: GraphNode[],
   key: string,
@@ -108,6 +38,24 @@ export function relatives(
     for (const p of map.get(k) ?? []) if (keys.has(p)) pending.push(p);
   }
   return result;
+}
+/**
+ * |ancestors(a) ∩ ancestors(b)| over the loaded nodes only. Ancestors include
+ * the revision itself (same convention as `relatives`), so a revision that is
+ * an ancestor of the other counts itself. Absent revisions contribute nothing.
+ */
+export function sharedAncestorCount(
+  nodes: GraphNode[],
+  a: string,
+  b: string,
+): number {
+  const loaded = new Set(nodes.map((n) => n.key));
+  if (!loaded.has(a) || !loaded.has(b)) return 0;
+  const left = relatives(nodes, a);
+  const right = relatives(nodes, b);
+  let shared = 0;
+  for (const k of left) if (right.has(k) && loaded.has(k)) shared++;
+  return shared;
 }
 export interface TimelineFilter {
   repo?: string;

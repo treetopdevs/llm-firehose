@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/workspace"
 	"agentfirehose/internal/workspacegraph"
 	"context"
@@ -29,12 +28,13 @@ type graphHost struct {
 	service        *workspacegraph.Service
 }
 
-// rememberGraphRoot records a registered root in memory and, only in full
-// privacy mode, in graph-roots.json. Raw absolute paths are not persisted in
-// minimal/balanced mode; those roots are re-learned from observed activity or
-// re-registered after a restart.
+// rememberGraphRoot records a registered or observed root in memory and in the
+// host-private graph-roots.json (0600), in every privacy mode. Privacy modes
+// govern captured history, not the user's own repository list: without the
+// persisted roots the graph would be empty after every restart until each repo
+// emitted another event. The file is never part of the spool, the stream, an
+// export or any API response.
 func (s *Server) rememberGraphRoot(root, vcs string) error {
-	full := s.config().PrivacyMode == string(privacy.ModeFull) // before graph.mu: s.mu is never taken while holding it
 	s.graph.mu.Lock()
 	defer s.graph.mu.Unlock()
 	roots := mergeGraphRoots(s.graph.roots, graphRoot{root, vcs})
@@ -50,26 +50,11 @@ func (s *Server) rememberGraphRoot(root, vcs string) error {
 			return nil
 		}
 	}
-	if full {
-		if err := s.writeGraphRoots(roots); err != nil {
-			return err
-		}
+	if err := s.writeGraphRoots(roots); err != nil {
+		return err
 	}
 	s.graph.roots = roots
 	return nil
-}
-
-// syncGraphRoots makes the on-disk roots file match the privacy mode: written
-// from memory in full mode, removed otherwise. mode is passed in because the
-// caller may hold s.mu.
-func (s *Server) syncGraphRoots(mode string) {
-	s.graph.mu.Lock()
-	defer s.graph.mu.Unlock()
-	if mode == string(privacy.ModeFull) {
-		_ = s.writeGraphRoots(s.graph.roots)
-		return
-	}
-	_ = os.Remove(filepath.Join(s.home, ".agentfirehose", "graph-roots.json"))
 }
 
 func (s *Server) writeGraphRoots(roots []graphRoot) error {
@@ -100,56 +85,7 @@ func (s *Server) writeGraphRoots(roots []graphRoot) error {
 // runGraphDiscovery runs outside capture admission. Only explicitly registered
 // or pre-privacy observed roots are inspected; there is no filesystem crawl.
 func (s *Server) runGraphDiscovery(ctx context.Context) {
-	reconcile := func() {
-		s.graph.mu.Lock()
-		roots := append([]graphRoot(nil), s.graph.roots...)
-		s.graph.mu.Unlock()
-		known := map[string]bool{}
-		for _, root := range roots {
-			known[graphRootKey(root.Root)] = true
-		}
-		for _, root := range s.engine.ObservedRoots() {
-			if !known[graphRootKey(root)] {
-				roots = append(roots, graphRoot{Root: root})
-				known[graphRootKey(root)] = true
-			}
-		}
-		for _, root := range roots {
-			if ctx.Err() != nil {
-				return
-			}
-			s.graph.registrationMu.Lock()
-			root = s.selectedGraphRoot(root)
-			scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			_, err := s.graph.service.Register(scanCtx, root.Root, root.VCS)
-			s.graph.mu.Lock()
-			if s.graph.unavailable == nil {
-				s.graph.unavailable = map[string]string{}
-			}
-			if err != nil {
-				s.graph.unavailable[root.Root] = root.VCS
-			} else {
-				delete(s.graph.unavailable, root.Root)
-			}
-			s.graph.mu.Unlock()
-			if err == nil {
-				_ = s.rememberGraphRoot(root.Root, root.VCS)
-			}
-			cancel()
-			s.graph.registrationMu.Unlock()
-		}
-		// Refresh known repositories even when rediscovery fails, allowing the
-		// service to retain and explicitly mark the last successful graph stale.
-		for _, repo := range s.graph.service.Repositories() {
-			if ctx.Err() != nil {
-				return
-			}
-			scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			_, _ = s.graph.service.Snapshot(scanCtx, repo.ID, "", true)
-			cancel()
-		}
-	}
-	reconcile()
+	s.reconcileGraphRoots(ctx)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -157,8 +93,60 @@ func (s *Server) runGraphDiscovery(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reconcile()
+			s.reconcileGraphRoots(ctx)
 		}
+	}
+}
+
+// reconcileGraphRoots scans every registered or observed root once, remembers
+// (and persists) each that scans successfully, and refreshes known repositories.
+func (s *Server) reconcileGraphRoots(ctx context.Context) {
+	s.graph.mu.Lock()
+	roots := append([]graphRoot(nil), s.graph.roots...)
+	s.graph.mu.Unlock()
+	known := map[string]bool{}
+	for _, root := range roots {
+		known[graphRootKey(root.Root)] = true
+	}
+	for _, root := range s.engine.ObservedRoots() {
+		if !known[graphRootKey(root)] {
+			roots = append(roots, graphRoot{Root: root})
+			known[graphRootKey(root)] = true
+		}
+	}
+	for _, root := range roots {
+		if ctx.Err() != nil {
+			return
+		}
+		s.graph.registrationMu.Lock()
+		root = s.selectedGraphRoot(root)
+		scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		_, err := s.graph.service.Register(scanCtx, root.Root, root.VCS)
+		s.graph.mu.Lock()
+		if s.graph.unavailable == nil {
+			s.graph.unavailable = map[string]string{}
+		}
+		if err != nil {
+			s.graph.unavailable[root.Root] = root.VCS
+		} else {
+			delete(s.graph.unavailable, root.Root)
+		}
+		s.graph.mu.Unlock()
+		if err == nil {
+			_ = s.rememberGraphRoot(root.Root, root.VCS)
+		}
+		cancel()
+		s.graph.registrationMu.Unlock()
+	}
+	// Refresh known repositories even when rediscovery fails, allowing the
+	// service to retain and explicitly mark the last successful graph stale.
+	for _, repo := range s.graph.service.Repositories() {
+		if ctx.Err() != nil {
+			return
+		}
+		scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		_, _ = s.graph.service.Snapshot(scanCtx, repo.ID, "", true)
+		cancel()
 	}
 }
 func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +158,6 @@ func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 			knownRoots[canonicalGraphRoot(root)] = true
 		}
 	}
-	mode := s.config().PrivacyMode
 	s.graph.mu.Lock()
 	for root, vcs := range s.graph.unavailable {
 		// A retained failed/stale service registration already describes this
@@ -178,14 +165,10 @@ func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 		if knownRoots[canonicalGraphRoot(root)] {
 			continue
 		}
+		// The id is an opaque digest in every mode; the label is the readable
+		// root path, like every other graph display value.
 		sum := sha256.Sum256([]byte("unavailable:" + root))
-		id := hex.EncodeToString(sum[:])
-		label := root
-		if mode != "full" {
-			sum := sha256.Sum256([]byte(root))
-			label = hex.EncodeToString(sum[:])
-		}
-		repos = append(repos, workspacegraph.Repository{ID: id, VCS: vcs, Label: label, Status: "unavailable"})
+		repos = append(repos, workspacegraph.Repository{ID: hex.EncodeToString(sum[:]), VCS: vcs, Label: root, Status: "unavailable"})
 	}
 	s.graph.mu.Unlock()
 	writeJSON(w, repos)
@@ -288,8 +271,11 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 		cancel()
 	}
 	repoAliases, workspaceAliases, _ := s.graph.service.EventScope(q.Get("repo_id"), q.Get("workspace_id"))
-	page, err := s.engine.Timeline(capture.TimelineQuery{RepoAliases: repoAliases, WorkspaceAliases: workspaceAliases, RepoID: q.Get("repo_id"), WorkspaceID: q.Get("workspace_id"), Source: q.Get("source"), SessionID: q.Get("session_id"), Category: q.Get("category"), Search: q.Get("search"), Cursor: q.Get("cursor"), Limit: limit})
+	page, err := s.engine.Timeline(r.Context(), capture.TimelineQuery{RepoAliases: repoAliases, WorkspaceAliases: workspaceAliases, RepoID: q.Get("repo_id"), WorkspaceID: q.Get("workspace_id"), Source: q.Get("source"), SessionID: q.Get("session_id"), Category: q.Get("category"), Search: q.Get("search"), Cursor: q.Get("cursor"), Limit: limit})
 	if err != nil {
+		if r.Context().Err() != nil {
+			return // the client abandoned the request; the scan has already stopped
+		}
 		http.Error(w, "timeline query failed; check source, session and cursor", 400)
 		return
 	}
@@ -324,13 +310,10 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 	}{page, associations})
 }
 
-// Root configuration is loaded before the server is exposed to requests.
+// Root configuration is loaded before the server is exposed to requests. The
+// file is read in every privacy mode and never deleted by a mode change.
+// Entries that are not absolute paths or name an unknown VCS are ignored.
 func (s *Server) loadGraphRoots() {
-	if s.cfg.PrivacyMode != string(privacy.ModeFull) {
-		// Raw roots are only kept in full mode; drop any left from an earlier one.
-		_ = os.Remove(filepath.Join(s.home, ".agentfirehose", "graph-roots.json"))
-		return
-	}
 	data, err := os.ReadFile(filepath.Join(s.home, ".agentfirehose", "graph-roots.json"))
 	if err != nil {
 		return
@@ -340,6 +323,9 @@ func (s *Server) loadGraphRoots() {
 		return
 	}
 	for _, root := range roots {
+		if !filepath.IsAbs(root.Root) || root.VCS != "" && root.VCS != "git" && root.VCS != "jj" {
+			continue
+		}
 		s.graph.roots = mergeGraphRoots(s.graph.roots, root)
 	}
 }

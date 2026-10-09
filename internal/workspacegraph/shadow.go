@@ -17,17 +17,61 @@ import (
 // so no filter driver exists to run. Submodules are ignored because their
 // status would run in a child repo with its own config.
 func gitStatus(ctx context.Context, root string) (string, error) {
+	status, _, _, err := gitDirtyState(ctx, root, false)
+	return status, err
+}
+
+// gitDirtyState returns `git status` output and, when stats is set and status
+// found changes, `git diff --numstat -z HEAD` output, both from the same
+// shadow git dir (see gitStatus). detail is the status with untracked
+// directories expanded to their files (equal to status when none is folded);
+// only the structured changes use it, the legacy changed_files keep status.
+// The diff is read-only in the strict sense: diff.autoRefreshIndex=false stops `git diff` from rewriting the real index
+// (it does so by default, even with GIT_OPTIONAL_LOCKS=0), and --no-ext-diff
+// --no-textconv --ignore-submodules=all keep any configured driver or child
+// repository out of it. Numstat is best effort: a failure returns no numstat
+// (changes then carry path and status only), never an error.
+func gitDirtyState(ctx context.Context, root string, stats bool) (status, detail, numstat string, err error) {
 	_, env, cleanup, err := newShadowGitDir(ctx, root)
 	if err != nil {
 		// No symlinks (e.g. Windows) or an unusual layout: fall back to the
 		// checked live repo, which keeps only the narrow check-then-run window.
 		if e := guardGitConfig(ctx, root); e != nil {
-			return "", e
+			return "", "", "", e
 		}
-		return run(ctx, root, "git", "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all")
+		env = nil
+	} else {
+		defer cleanup()
 	}
-	defer cleanup()
-	return runEnv(ctx, root, "git", env, "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all")
+	status, err = runEnv(ctx, root, "git", env, "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all")
+	if err != nil || !stats || status == "" {
+		return status, status, "", err
+	}
+	// The default status folds a new directory into one `?? dir/` entry. The
+	// structured changes list each file, so ask again only when a directory is
+	// folded; a failure keeps the folded entries (best effort, never an error).
+	detail = status
+	if hasUntrackedDirectory(status) {
+		if all, e := runEnv(ctx, root, "git", env, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"); e == nil {
+			detail = all
+		}
+	}
+	numstat, e := runEnv(ctx, root, "git", env, "-c", "diff.autoRefreshIndex=false", "diff", "--numstat", "-z", "-M", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD", "--")
+	if e != nil {
+		numstat = ""
+	}
+	return status, detail, numstat, nil
+}
+
+// hasUntrackedDirectory reports whether a `status -z` listing folds an
+// untracked directory into a single trailing-slash entry.
+func hasUntrackedDirectory(status string) bool {
+	for _, f := range strings.Split(status, "\x00") {
+		if strings.HasPrefix(f, "?? ") && strings.HasSuffix(f, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func newShadowGitDir(ctx context.Context, root string) (string, []string, func(), error) {

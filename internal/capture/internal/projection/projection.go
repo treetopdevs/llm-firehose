@@ -60,6 +60,15 @@ type Projection struct {
 	inbox    map[inboxKey]*InboxSession
 	warnings map[inboxKey]Evidence
 	gap      *CaptureGap
+
+	// identityDays maps each Git/JJ repository or workspace identity value seen
+	// on a Captured Event to the UTC day files that contain it. allDays is every
+	// day with at least one projected event. readGap records that some spool
+	// record could not be read. Like the session and trace day sets they are
+	// derived solely from applied events, so Build and incremental Apply agree.
+	identityDays map[string]map[string]bool
+	allDays      map[string]bool
+	readGap      bool
 }
 
 type sessionEntry struct {
@@ -87,6 +96,9 @@ func New() *Projection {
 		seen:     map[string]string{},
 		inbox:    map[inboxKey]*InboxSession{},
 		warnings: map[inboxKey]Evidence{},
+
+		identityDays: map[string]map[string]bool{},
+		allDays:      map[string]bool{},
 	}
 }
 
@@ -101,6 +113,7 @@ func Build(dir string) (*Projection, error) {
 	ix := New()
 	if gaps {
 		ix.gap = &CaptureGap{Source: "firehose", Time: time.Now().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
+		ix.readGap = true
 	}
 	for _, ev := range evs {
 		ix.Apply(ev)
@@ -150,6 +163,7 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 
 	ix.applyInbox(ev)
 	day := ev.Time.UTC().Format("2006-01-02")
+	ix.indexDay(ev, day)
 	var transitions []*event.Event
 
 	if ev.SessionID != "" {
@@ -497,4 +511,101 @@ func sortedDays(days map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// indexDay records which day file holds the event under each identity value it
+// carries. Runs under the write lock, after exact-ID deduplication.
+func (ix *Projection) indexDay(ev event.Event, day string) {
+	ix.allDays[day] = true
+	for _, id := range [...]string{ev.RepoID, ev.JJRepoID, ev.WorktreeID, ev.JJWorkspaceID} {
+		if id == "" {
+			continue
+		}
+		days := ix.identityDays[id]
+		if days == nil {
+			days = map[string]bool{}
+			ix.identityDays[id] = days
+		}
+		days[day] = true
+	}
+	if ev.Source == SourceFirehose && ev.Name == "parse-error" && ev.Category == event.CategoryMeta {
+		// The live tailer reports an unreadable appended record this way.
+		ix.readGap = true
+	}
+}
+
+// IdentityDays returns the UTC day files (YYYY-MM-DD), oldest first, holding
+// an event that carries any of the identity values (repository or workspace,
+// Git or JJ). Empty values never match.
+func (ix *Projection) IdentityDays(values []string) []string {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return sortedDays(ix.unionDays(values))
+}
+
+func (ix *Projection) unionDays(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, v := range values {
+		for day := range ix.identityDays[v] {
+			out[day] = true
+		}
+	}
+	return out
+}
+
+// TimelineDays returns the candidate day files, newest first, for a historical
+// query. Each group is a set of alternative identity values (an identity plus
+// its aliases); a day qualifies only if it holds an event for every group, and
+// for sessionID when set. No group and no session means every projected day.
+// The result is a superset of the days that can hold a matching event; callers
+// still apply the exact event filters.
+func (ix *Projection) TimelineDays(groups [][]string, sessionID string) []string {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	var days map[string]bool
+	narrow := func(next map[string]bool) {
+		if days == nil {
+			days = next
+			return
+		}
+		for day := range days {
+			if !next[day] {
+				delete(days, day)
+			}
+		}
+	}
+	for _, group := range groups {
+		narrow(ix.unionDays(group))
+	}
+	if sessionID != "" {
+		s, ok := ix.sessions[sessionID]
+		if !ok {
+			return nil
+		}
+		next := make(map[string]bool, len(s.days))
+		for day := range s.days {
+			next[day] = true
+		}
+		narrow(next)
+	}
+	if days == nil {
+		days = make(map[string]bool, len(ix.allDays))
+		for day := range ix.allDays {
+			days[day] = true
+		}
+	}
+	out := sortedDays(days)
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+// ReadGap reports that some spool record could not be read, either while the
+// Projection was rebuilt or later by the live tailer. It describes missing
+// evidence, not a captured event.
+func (ix *Projection) ReadGap() bool {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return ix.readGap
 }

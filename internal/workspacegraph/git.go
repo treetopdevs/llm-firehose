@@ -10,7 +10,7 @@ import (
 )
 
 func scan(ctx context.Context, r registration, limit int, m privacy.Mode) (Snapshot, error) {
-	v := Snapshot{Repository: Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: identity(r.root, m), ObservedAt: time.Now().UTC(), Status: "ready"}, Nodes: []Revision{}, Workspaces: []Workspace{}, Edges: []Edge{}, Boundaries: []Boundary{}, Warnings: []string{}}
+	v := Snapshot{Repository: Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: r.root, ObservedAt: time.Now().UTC(), Status: "ready"}, Nodes: []Revision{}, Workspaces: []Workspace{}, Edges: []Edge{}, Boundaries: []Boundary{}, Warnings: []string{}}
 	var e error
 	if r.vcs == "jj" {
 		e = scanJJ(ctx, r, limit, m, &v)
@@ -57,7 +57,7 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 				root = c
 			}
 			roots = append(roots, root)
-			v.Workspaces = append(v.Workspaces, Workspace{rawIdentity: root, ID: identity(root, m), RepoID: v.Repository.ID, Label: identity(root, m), Refs: []string{}, Availability: "available"})
+			v.Workspaces = append(v.Workspaces, Workspace{rawIdentity: root, ID: identity(root, m), RepoID: v.Repository.ID, Label: root, Refs: []string{}, Availability: "available"})
 			w = &v.Workspaces[len(v.Workspaces)-1]
 		case w == nil:
 			continue
@@ -70,7 +70,7 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 				tips = append(tips, w.Revision)
 			}
 		case strings.HasPrefix(f, "branch "):
-			w.Refs = append(w.Refs, content(strings.TrimPrefix(f, "branch "), m))
+			w.Refs = append(w.Refs, strings.TrimPrefix(f, "branch "))
 		case f == "detached":
 			w.Refs = append(w.Refs, "detached")
 		case strings.HasPrefix(f, "locked"):
@@ -80,7 +80,7 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 		}
 	}
 	for i, root := range roots {
-		b, e := gitStatus(ctx, root)
+		b, detail, numstat, e := gitDirtyState(ctx, root, !v.Workspaces[i].Unborn)
 		if e != nil {
 			v.Workspaces[i].Availability = "inaccessible"
 			continue
@@ -93,12 +93,19 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 				continue
 			}
 			if len(f) >= 3 {
-				v.Workspaces[i].ChangedFiles = append(v.Workspaces[i].ChangedFiles, content(f, m))
+				v.Workspaces[i].ChangedFiles = append(v.Workspaces[i].ChangedFiles, f)
 				skipRename = strings.ContainsAny(f[:2], "RC")
 			}
 			if len(f) >= 2 && (strings.Contains(f[:2], "U") || f[:2] == "AA" || f[:2] == "DD") {
 				v.Workspaces[i].Conflicted = true
 			}
+		}
+		if b != "" {
+			var stats map[string]numstatEntry
+			if numstat != "" {
+				stats = parseNumstat(numstat)
+			}
+			v.Workspaces[i].Changes, v.Workspaces[i].ChangesTruncated = buildFileChanges(parsePorcelainChanges(detail), stats)
 		}
 	}
 	if len(tips) == 0 {
@@ -111,7 +118,7 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 	if e != nil {
 		return e
 	}
-	v.Nodes, e = parseGitLog(b, m)
+	v.Nodes, e = parseGitLog(b)
 	if e != nil {
 		return e
 	}
@@ -127,17 +134,18 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 		if e != nil {
 			return e
 		}
-		nodes, e := parseGitLog(b, m)
+		nodes, e := parseGitLog(b)
 		if e != nil {
 			return e
 		}
 		v.Nodes = append(v.Nodes, nodes...)
 		seen[tip] = true
 	}
-	for _, ref := range []string{"refs/heads/main", "refs/heads/master"} {
-		b, e := run(ctx, r.root, "git", "rev-parse", "--verify", ref+"^{commit}")
+	for _, ref := range []string{"main", "master"} {
+		b, e := run(ctx, r.root, "git", "rev-parse", "--verify", "refs/heads/"+ref+"^{commit}")
 		if e == nil {
 			v.DefaultTarget = strings.TrimSpace(b)
+			v.DefaultTargetRef = ref
 			break
 		}
 	}
@@ -164,7 +172,7 @@ func scanGit(ctx context.Context, r registration, limit int, m privacy.Mode, v *
 	}
 	return nil
 }
-func parseGitLog(b string, m privacy.Mode) ([]Revision, error) {
+func parseGitLog(b string) ([]Revision, error) {
 	out := []Revision{}
 	parts := strings.Split(b, "\x00")
 	for len(parts) >= 4 {
@@ -176,7 +184,7 @@ func parseGitLog(b string, m privacy.Mode) ([]Revision, error) {
 		if e != nil {
 			return nil, errors.New("invalid Git revision record")
 		}
-		out = append(out, Revision{Key: id, CommitID: id, Parents: strings.Fields(parts[1]), Timestamp: time.Unix(stamp, 0).UTC(), Description: content(strings.TrimSpace(parts[3]), m)})
+		out = append(out, Revision{Key: id, CommitID: id, Parents: strings.Fields(parts[1]), Timestamp: time.Unix(stamp, 0).UTC(), Description: strings.TrimSpace(parts[3])})
 		parts = parts[4:]
 	}
 	return out, nil

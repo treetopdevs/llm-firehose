@@ -3,6 +3,7 @@ package capture
 import (
 	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -29,7 +30,17 @@ type timelineCursor struct {
 	ID   string    `json:"id"`
 }
 
-func (e *Engine) Timeline(q TimelineQuery) (TimelinePage, error) {
+// Timeline returns one newest-first page of historical observations.
+//
+// It never reads the whole spool. The Projection's identity index names the UTC
+// day files that can hold a matching event (the repository identity plus its
+// aliases, intersected with the workspace identity and session when scoped).
+// Those days are read newest first and the walk stops as soon as limit+1
+// matching events strictly older than the cursor are in hand: every event in an
+// older day file sorts after every event in a newer one, so nothing later can
+// enter the page. Cost is bounded by the days actually needed for the page, not
+// by spool size, and ctx is honoured between and inside day files.
+func (e *Engine) Timeline(ctx context.Context, q TimelineQuery) (TimelinePage, error) {
 	out := TimelinePage{Events: []event.Event{}, Order: "newest_first"}
 	if q.SessionID != "" && q.Source == "" {
 		return out, fmt.Errorf("session_id requires source")
@@ -41,6 +52,7 @@ func (e *Engine) Timeline(q TimelineQuery) (TimelinePage, error) {
 		q.Limit = 1000
 	}
 	var cursor timelineCursor
+	cursorDay := ""
 	if q.Cursor != "" {
 		data, err := base64.RawURLEncoding.DecodeString(q.Cursor)
 		if err != nil {
@@ -49,39 +61,79 @@ func (e *Engine) Timeline(q TimelineQuery) (TimelinePage, error) {
 		if json.Unmarshal(data, &cursor) != nil || cursor.Time.IsZero() {
 			return out, fmt.Errorf("invalid cursor")
 		}
+		cursorDay = cursor.Time.UTC().Format("2006-01-02")
 	}
-	events, gap, err := spool.ReadForProjection(e.spoolDir)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return out, err
 	}
-	out.CaptureGap = gap
+
+	repo := identityValues(q.RepoID, q.RepoAliases)
+	workspace := identityValues(q.WorkspaceID, q.WorkspaceAliases)
+	var groups [][]string
+	var filter spool.Prefilter
+	for _, values := range [][]string{repo, workspace} {
+		if values == nil {
+			continue
+		}
+		groups = append(groups, values)
+		if needles, ok := spool.IdentityNeedles(values); ok {
+			filter = append(filter, needles)
+		}
+	}
+	days := e.projection.TimelineDays(groups, q.SessionID)
+
 	seen := map[string]bool{}
 	search := strings.ToLower(q.Search)
-	for _, ev := range events {
-		if ev.ID != "" && seen[ev.ID] {
-			continue
+	onGap := func() { out.CaptureGap = true }
+	matched := []event.Event{}
+	for _, day := range days {
+		if cursorDay != "" && day > cursorDay {
+			continue // every event in this file is newer than the cursor
 		}
-		if ev.ID != "" {
-			seen[ev.ID] = true
+		if err := ctx.Err(); err != nil {
+			return out, err
 		}
-		if !identityMatches(q.RepoID, q.RepoAliases, ev.RepoID, ev.JJRepoID) || !identityMatches(q.WorkspaceID, q.WorkspaceAliases, ev.WorktreeID, ev.JJWorkspaceID) || q.Source != "" && ev.Source != q.Source || q.SessionID != "" && ev.SessionID != q.SessionID || q.Category != "" && string(ev.Category) != q.Category {
-			continue
+		err := e.scanDay(ctx, e.spoolDir, day, filter, onGap, func(ev event.Event) {
+			if !identityMatches(q.RepoID, q.RepoAliases, ev.RepoID, ev.JJRepoID) || !identityMatches(q.WorkspaceID, q.WorkspaceAliases, ev.WorktreeID, ev.JJWorkspaceID) || q.Source != "" && ev.Source != q.Source || q.SessionID != "" && ev.SessionID != q.SessionID || q.Category != "" && string(ev.Category) != q.Category {
+				return
+			}
+			if search != "" && !strings.Contains(strings.ToLower(ev.Summary+" "+ev.Name+" "+ev.Agent+" "+ev.Source+" "+ev.SessionID), search) {
+				return
+			}
+			if !cursor.Time.IsZero() && (ev.Time.After(cursor.Time) || ev.Time.Equal(cursor.Time) && ev.ID >= cursor.ID) {
+				return
+			}
+			if ev.ID != "" {
+				// A stable ID replayed into a different day file keeps its
+				// first (canonical) record, exactly as a full read in file
+				// order would; replays within one file collapse here too.
+				if canonical := e.projection.EventDay(ev.ID); (canonical != "" && canonical != day) || seen[ev.ID] {
+					return
+				}
+				seen[ev.ID] = true
+			}
+			matched = append(matched, ev)
+		})
+		if err != nil {
+			return out, err
 		}
-		if search != "" && !strings.Contains(strings.ToLower(ev.Summary+" "+ev.Name+" "+ev.Agent+" "+ev.Source+" "+ev.SessionID), search) {
-			continue
+		if len(matched) > q.Limit {
+			break
 		}
-		if !cursor.Time.IsZero() && (ev.Time.After(cursor.Time) || ev.Time.Equal(cursor.Time) && ev.ID >= cursor.ID) {
-			continue
-		}
-		out.Events = append(out.Events, ev)
 	}
-	sort.Slice(out.Events, func(i, j int) bool {
-		a, b := out.Events[i], out.Events[j]
+	// Unreadable records seen at rebuild or by the live tailer are missing
+	// evidence for any query, scanned here or not.
+	if e.projection.ReadGap() {
+		out.CaptureGap = true
+	}
+	sort.SliceStable(matched, func(i, j int) bool {
+		a, b := matched[i], matched[j]
 		if a.Time.Equal(b.Time) {
 			return a.ID > b.ID
 		}
 		return a.Time.After(b.Time)
 	})
+	out.Events = matched
 	if len(out.Events) > q.Limit {
 		out.HasMore = true
 		out.Events = out.Events[:q.Limit]
@@ -90,6 +142,21 @@ func (e *Engine) Timeline(q TimelineQuery) (TimelinePage, error) {
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(data)
 	}
 	return out, nil
+}
+
+// identityValues returns an identity and its aliases without empty values, or
+// nil when the query does not scope by this identity.
+func identityValues(id string, aliases []string) []string {
+	if id == "" {
+		return nil
+	}
+	out := []string{id}
+	for _, alias := range aliases {
+		if alias != "" {
+			out = append(out, alias)
+		}
+	}
+	return out
 }
 
 // ObservedRoots returns only local paths observed before privacy processing.
