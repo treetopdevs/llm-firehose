@@ -34,6 +34,9 @@ derived store rebuilds from it. Capture never depends on the daemon being up.
 - **TDD.** Behavior changes start with a failing test; adapters use *real captured payloads*
   as fixtures, never invented shapes.
 - **Local-first.** No network calls, telemetry, or cloud dependencies.
+- **Power over privacy on the user's own machine.** Privacy modes govern captured history
+  (spool, live stream, export); local views and host-private state favor usefulness (graph
+  labels/paths readable and `graph-roots.json` persisted in every mode).
 - **Never break the agent.** Capture paths fail *silently* — surface failures in the timeline
   as `meta`/`warn` events, never interrupt a coding session.
 - **Five frozen surfaces** (`docs/contracts.md`): event envelope, privacy semantics, spool

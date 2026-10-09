@@ -18,7 +18,9 @@ func Privacy(cfg Config, home string, args []string, w io.Writer) error {
 		fmt.Fprintln(w, "change it with: firehose privacy minimal | balanced | full")
 		fmt.Fprintln(w, "  minimal   values stored as digests only")
 		fmt.Fprintln(w, "  balanced  strings truncated, raw payloads dropped (default)")
-		fmt.Fprintln(w, "  full      everything, including raw payloads and local repo paths")
+		fmt.Fprintln(w, "  full      everything, including raw payloads and local paths")
+		fmt.Fprintln(w, "modes govern captured history (spool, live stream, export);")
+		fmt.Fprintln(w, "the workspace graph shows readable names and remembers repository roots in every mode")
 		return nil
 	}
 	if len(args) > 1 {

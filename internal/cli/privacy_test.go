@@ -21,6 +21,18 @@ func TestPrivacyShowsCurrentModeAndHowToChangeIt(t *testing.T) {
 	}
 }
 
+func TestPrivacyExplainsModesGovernCapturedHistoryOnly(t *testing.T) {
+	var out bytes.Buffer
+	if err := Privacy(testConfig(t), t.TempDir(), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"captured history", "workspace graph", "every mode"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q: %s", want, out.String())
+		}
+	}
+}
+
 func TestPrivacySetWithoutDaemonWritesConfig(t *testing.T) {
 	home := t.TempDir()
 	cfg := testConfig(t)

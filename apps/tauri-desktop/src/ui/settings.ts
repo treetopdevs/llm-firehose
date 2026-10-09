@@ -72,7 +72,16 @@ export function createSettings(): { root: HTMLElement; refresh(): void } {
           ),
         );
       }
-      root.append(el("h3", {}, "privacy mode"), modes, status);
+      root.append(
+        el("h3", {}, "privacy mode"),
+        modes,
+        el(
+          "p",
+          { class: "dim" },
+          "Modes govern captured history (spool, live stream, export). The workspace graph shows readable names and remembers repository roots in every mode.",
+        ),
+        status,
+      );
 
       const info = el("dl", { class: "settings-info" });
       const add = (label: string, value: string | undefined) => {
