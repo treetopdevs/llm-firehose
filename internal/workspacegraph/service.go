@@ -47,23 +47,16 @@ func canonical(p string) (string, error) {
 	return filepath.EvalSymlinks(a)
 }
 func digest(p string) string { h := sha256.Sum256([]byte(p)); return hex.EncodeToString(h[:]) }
+
+// identity is the only mode-dependent value in a graph response. Repository.ID
+// and Workspace.ID must equal the privacy-processed identities Capture stamps on
+// events (a digest outside full mode), or session association would stop
+// matching. Every display value (labels, refs, descriptions, paths) is raw.
 func identity(p string, m privacy.Mode) string {
 	if m == privacy.ModeFull {
 		return p
 	}
 	return digest(p)
-}
-func content(p string, m privacy.Mode) string {
-	if m == privacy.ModeMinimal {
-		return digest(p)
-	}
-	if m != privacy.ModeFull {
-		r := []rune(p)
-		if len(r) > 240 {
-			return string(r[:240]) + "…"
-		}
-	}
-	return p
 }
 func (s *Service) Register(ctx context.Context, root, vcs string) (Repository, error) {
 	root, e := canonical(root)
@@ -140,7 +133,7 @@ func (s *Service) repository(r *registration) Repository {
 			status = "stale"
 		}
 	}
-	return Repository{identity(r.identity, s.mode), r.vcs, identity(r.root, s.mode), at, status}
+	return Repository{identity(r.identity, s.mode), r.vcs, r.root, at, status}
 }
 func (s *Service) Repositories() []Repository {
 	s.mu.Lock()
@@ -245,6 +238,7 @@ func clone(v Snapshot) Snapshot {
 	for i := range v.Workspaces {
 		v.Workspaces[i].Refs = append([]string{}, v.Workspaces[i].Refs...)
 		v.Workspaces[i].ChangedFiles = append([]string{}, v.Workspaces[i].ChangedFiles...)
+		v.Workspaces[i].Changes = copyChanges(v.Workspaces[i].Changes)
 	}
 	v.Edges = append([]Edge{}, v.Edges...)
 	v.Boundaries = append([]Boundary{}, v.Boundaries...)

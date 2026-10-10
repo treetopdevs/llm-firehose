@@ -443,3 +443,98 @@ func parseLine(line []byte) (event.Event, error) {
 	}
 	return ev, nil
 }
+
+// Prefilter narrows ScanDay decoding using the raw bytes of each record. A
+// record is decoded only when, for every group, it contains at least one of
+// the group's alternatives. It is a superset filter: it may let through records
+// the caller's own predicate later rejects, but never drops a record that
+// carries one of the alternatives written by this package's Writer.
+type Prefilter [][][]byte
+
+func (p Prefilter) admits(line []byte) bool {
+	for _, group := range p {
+		found := false
+		for _, needle := range group {
+			if bytes.Contains(line, needle) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// IdentityNeedles returns the encoded JSON string form of each identity value,
+// for use as a Prefilter group. ok is false when any value cannot be located
+// reliably in raw bytes (empty, non-ASCII, control, or characters a JSON
+// encoder may escape), in which case the caller must not prefilter on the group.
+func IdentityNeedles(values []string) ([][]byte, bool) {
+	needles := make([][]byte, 0, len(values))
+	for _, v := range values {
+		if v == "" {
+			return nil, false
+		}
+		for i := 0; i < len(v); i++ {
+			c := v[i]
+			if c < 0x20 || c > 0x7e || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+				return nil, false
+			}
+		}
+		needles = append(needles, []byte(`"`+v+`"`))
+	}
+	return needles, true
+}
+
+// scanCheckInterval bounds how many records ScanDay reads between context checks.
+const scanCheckInterval = 128
+
+// ScanDay streams the validated events of one UTC day file (YYYY-MM-DD) to
+// yield in file order, without holding the file in memory. A missing day is
+// empty. Unreadable, oversized, or invalid records are skipped and reported
+// through onGap; a record the filter rejects is never decoded and so is never
+// reported. The context is checked between records, so cancellation stops a
+// large file promptly with ctx.Err().
+func ScanDay(ctx context.Context, dir, day string, filter Prefilter, onGap func(), yield func(event.Event)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f, err := os.Open(filepath.Join(dir, day+".ndjson"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+	reader := bufio.NewReaderSize(f, 1<<20)
+	for n := 1; ; n++ {
+		if n%scanCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		line, _, err := readLine(reader, true)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if errors.Is(err, errOversizedRecord) {
+			onGap()
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !filter.admits(line) {
+			continue
+		}
+		var ev event.Event
+		if json.Unmarshal(line, &ev) != nil || ev.Validate() != nil {
+			onGap()
+			continue
+		}
+		yield(ev)
+	}
+}

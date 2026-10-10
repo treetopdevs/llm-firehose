@@ -9,6 +9,10 @@ valuable.
 - **TDD.** Every behavior change starts with a failing test. The test suite is
   fast (`go test ./...` runs in seconds) — keep it that way.
 - **Local-first.** No network calls, no telemetry, no cloud dependencies.
+- **Power over privacy on your own machine.** Privacy modes decide what captured
+  history (the spool, the live stream, exports) keeps. Local views and
+  host-private state favor usefulness: the workspace graph shows readable names
+  and paths, and repository roots persist, in every mode.
 - **Structured over verbose.** Every event needs a category, a one-line human
   summary, and enough payload to understand it in the detail pane.
 - **Never break the agent.** Capture paths (hooks, plugins) must fail silently

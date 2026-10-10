@@ -98,6 +98,10 @@ replacement subscription with durable snapshots and exact-ID dedupe.
 - **TDD.** Every behavior change starts with a failing test. For adapters, use *real
   captured payloads* pasted from the source as fixtures — never invent shapes.
 - **Local-first.** No network calls, no telemetry, no cloud dependencies.
+- **Power over privacy on the user's own machine.** Privacy modes govern captured history
+  (spool, live stream, export). Local views and host-private state favor usefulness: e.g.
+  workspace-graph labels/paths are readable and `graph-roots.json` persists in every mode.
+  When a redaction would cost usability in a local-only surface, prefer readable.
 - **Never break the agent.** Capture paths (hooks, plugins) must fail *silently* rather than
   interrupt a coding session — surface failures *in the timeline* as `meta`/`warn` events.
 - **The five frozen surfaces** (`docs/contracts.md`): event envelope schema, privacy

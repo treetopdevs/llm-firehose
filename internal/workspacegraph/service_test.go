@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func fixture(t *testing.T) string {
 	git(t, r, "commit", "--allow-empty", "-m", "sensitive description")
 	return r
 }
-func TestGitGraphPrivacyCompareStale(t *testing.T) {
+func TestGitGraphNamesReadableIdentitiesPrivateCompareStale(t *testing.T) {
 	ctx := context.Background()
 	root := fixture(t)
 	other := filepath.Join(t.TempDir(), "sensitive-worktree")
@@ -50,9 +51,20 @@ func TestGitGraphPrivacyCompareStale(t *testing.T) {
 	if len(snap.Workspaces) != 2 || len(snap.Nodes) != 2 {
 		t.Fatalf("%+v", snap)
 	}
-	b, _ := json.Marshal(snap)
-	if strings.Contains(string(b), root) || strings.Contains(string(b), other) {
-		t.Fatal("path leak")
+	canonicalRoot, _ := canonical(root)
+	canonicalOther, _ := canonical(other)
+	labels := map[string]bool{}
+	for _, w := range snap.Workspaces {
+		labels[w.Label] = true
+		if strings.Contains(w.ID, root) || strings.Contains(w.ID, other) || len(w.ID) != 64 {
+			t.Errorf("balanced workspace identity must stay a digest: %q", w.ID)
+		}
+	}
+	if snap.Repository.Label != canonicalRoot || !labels[canonicalRoot] || !labels[canonicalOther] {
+		t.Fatalf("labels must be the readable paths: repo=%q workspaces=%v", snap.Repository.Label, labels)
+	}
+	if strings.Contains(snap.Repository.ID, root) || len(snap.Repository.ID) != 64 {
+		t.Fatalf("balanced repository identity must stay a digest: %q", snap.Repository.ID)
 	}
 	var selected string
 	for _, w := range snap.Workspaces {
@@ -67,9 +79,9 @@ func TestGitGraphPrivacyCompareStale(t *testing.T) {
 	s.SetPrivacy(privacy.ModeMinimal)
 	rs := s.Repositories()
 	snap, e = s.Snapshot(ctx, rs[0].ID, "", true)
-	b, _ = json.Marshal(snap)
-	if e != nil || strings.Contains(string(b), "sensitive description") || strings.Contains(string(b), "feature") {
-		t.Fatalf("privacy %s %v", b, e)
+	b, _ := json.Marshal(snap)
+	if e != nil || !strings.Contains(string(b), "sensitive description") || !strings.Contains(string(b), "refs/heads/feature") || rs[0].Label != canonicalRoot {
+		t.Fatalf("minimal mode must keep descriptions, refs and labels readable: %s %v", b, e)
 	}
 	os.Rename(filepath.Join(root, ".git"), filepath.Join(root, "hidden"))
 	snap, e = s.Snapshot(ctx, rs[0].ID, "", true)
@@ -77,6 +89,94 @@ func TestGitGraphPrivacyCompareStale(t *testing.T) {
 		t.Fatalf("stale %+v %v", snap, e)
 	}
 }
+
+// Display data is identical in every mode. Only the identities that captured
+// events carry (Repository.ID, Workspace.ID) follow the privacy mode, so
+// session association keeps matching, and EventScope aliases are unchanged.
+func TestGraphIdentitiesFollowModeWhileDisplayDataIsReadable(t *testing.T) {
+	ctx := context.Background()
+	root := fixture(t)
+	canonicalRoot, _ := canonical(root)
+	long := strings.Repeat("a long readable description ", 20) // > 240 runes
+	git(t, root, "commit", "--allow-empty", "-m", long)
+	other := filepath.Join(t.TempDir(), "wt-readable")
+	git(t, root, "worktree", "add", "-b", "agent/readable", other)
+	canonicalOther, _ := canonical(other)
+	longPath := strings.Repeat("p", 120) + "/" + strings.Repeat("q", 120) + "/file.txt"
+	writeText(t, other, longPath, "x\n")
+	for _, mode := range []privacy.Mode{privacy.ModeMinimal, privacy.ModeBalanced, privacy.ModeFull} {
+		s := New(mode)
+		r, e := s.Register(ctx, root, "git")
+		if e != nil {
+			t.Fatal(e)
+		}
+		v, e := s.Snapshot(ctx, r.ID, "", true)
+		if e != nil {
+			t.Fatal(e)
+		}
+		wantRepoID, wantOtherID := digest(identityRaw(t, root)), digest(canonicalOther)
+		if mode == privacy.ModeFull {
+			wantRepoID, wantOtherID = identityRaw(t, root), canonicalOther
+		}
+		if r.ID != wantRepoID || v.Repository.ID != wantRepoID || s.Repositories()[0].ID != wantRepoID {
+			t.Errorf("%s: repository id %q / %q want %q", mode, r.ID, v.Repository.ID, wantRepoID)
+		}
+		if r.Label != canonicalRoot || v.Repository.Label != canonicalRoot || s.Repositories()[0].Label != canonicalRoot {
+			t.Errorf("%s: repository label %q want %q", mode, v.Repository.Label, canonicalRoot)
+		}
+		var found bool
+		for _, w := range v.Workspaces {
+			if w.RepoID != wantRepoID {
+				t.Errorf("%s: workspace repo id %q", mode, w.RepoID)
+			}
+			if w.Label != w.rawIdentity {
+				t.Errorf("%s: git workspace label %q must be its worktree path %q", mode, w.Label, w.rawIdentity)
+			}
+			if w.rawIdentity == canonicalOther {
+				found = true
+				if w.ID != wantOtherID {
+					t.Errorf("%s: workspace id %q want %q", mode, w.ID, wantOtherID)
+				}
+				if !reflect.DeepEqual(w.Refs, []string{"refs/heads/agent/readable"}) {
+					t.Errorf("%s: refs %v", mode, w.Refs)
+				}
+				got := changesByPath(w.Changes)
+				if _, ok := got[longPath]; !ok || len(w.ChangedFiles) == 0 || !strings.Contains(w.ChangedFiles[0], "pppp") {
+					t.Errorf("%s: long path must be raw and untruncated: %+v %q", mode, w.Changes, w.ChangedFiles)
+				}
+				repoAliases, wsAliases, e := s.EventScope(r.ID, w.ID)
+				if e != nil || repoAliases[0] != identityRaw(t, root) || repoAliases[1] != digest(identityRaw(t, root)) || wsAliases[0] != canonicalOther || wsAliases[1] != digest(canonicalOther) {
+					t.Errorf("%s: event aliases changed: %v %v %v", mode, repoAliases, wsAliases, e)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s: linked worktree missing: %+v", mode, v.Workspaces)
+		}
+		var descriptions []string
+		for _, n := range v.Nodes {
+			descriptions = append(descriptions, n.Description)
+		}
+		if !strings.Contains(strings.Join(descriptions, "|"), strings.TrimSpace(long)) {
+			t.Errorf("%s: revision description truncated or hashed: %q", mode, descriptions)
+		}
+		if v.DefaultTargetRef != "main" {
+			t.Errorf("%s: default_target_ref %q", mode, v.DefaultTargetRef)
+		}
+	}
+}
+
+// identityRaw is the unprocessed Git repository identity (canonical common dir).
+func identityRaw(t *testing.T, root string) string {
+	t.Helper()
+	common := git(t, root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	c, err := canonical(common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestGitPaginationRetainsAnchorsAndRealEdges(t *testing.T) {
 	ctx := context.Background()
 	root := fixture(t)
@@ -359,7 +459,7 @@ func TestShallowBoundaryAndDirtyFiles(t *testing.T) {
 	if len(v.Boundaries) != 1 || len(v.Edges) != 0 || v.NextCursor != "" {
 		t.Fatalf("shallow ancestry %+v", v)
 	}
-	if len(v.Workspaces[0].ChangedFiles) != 1 || strings.Contains(v.Workspaces[0].ChangedFiles[0], "private-name") {
+	if len(v.Workspaces[0].ChangedFiles) != 1 || !strings.Contains(v.Workspaces[0].ChangedFiles[0], "private-name") {
 		t.Fatalf("files %+v", v.Workspaces[0])
 	}
 }

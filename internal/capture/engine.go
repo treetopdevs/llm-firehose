@@ -48,7 +48,12 @@ type engineSeams struct {
 	retryInitial         time.Duration
 	retryMaximum         time.Duration
 	idleInterval         time.Duration
+	scanDay              dayScanner
 }
+
+// dayScanner streams one spool day file; the production implementation is
+// spool.ScanDay. Tests substitute it to prove which day files a query reads.
+type dayScanner func(ctx context.Context, dir, day string, filter spool.Prefilter, onGap func(), yield func(event.Event)) error
 
 // Engine turns Observations into Captured Events.
 type Engine struct {
@@ -74,6 +79,7 @@ type Engine struct {
 	retryInitial         time.Duration
 	retryMaximum         time.Duration
 	idleInterval         time.Duration
+	scanDay              dayScanner
 }
 
 // New constructs an engine over the configured canonical spool.
@@ -115,6 +121,9 @@ func newEngine(options Options, seams engineSeams) (*Engine, error) {
 	if seams.idleInterval <= 0 {
 		seams.idleInterval = idleInterval
 	}
+	if seams.scanDay == nil {
+		seams.scanDay = spool.ScanDay
+	}
 	engine := &Engine{
 		spoolDir:             options.SpoolDir,
 		writer:               seams.writer,
@@ -129,6 +138,7 @@ func newEngine(options Options, seams engineSeams) (*Engine, error) {
 		retryInitial:         seams.retryInitial,
 		retryMaximum:         seams.retryMaximum,
 		idleInterval:         seams.idleInterval,
+		scanDay:              seams.scanDay,
 	}
 	if seams.projector == nil {
 		engine.project = engine.applyProjection

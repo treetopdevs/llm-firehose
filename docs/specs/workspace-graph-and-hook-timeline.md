@@ -1,6 +1,6 @@
 # Firehose workspace graph and hook timeline
 
-Status: implementation specification draft · October 4, 2026
+Status: implementation specification draft · October 4, 2026 · privacy and storage revised October 9, 2026
 
 ## Goal and scope
 
@@ -26,7 +26,7 @@ These are document-backed integration points, not an implementation audit. Locat
 
 1. Choose a repository from observed activity or explicitly register a local root. Discovery is scoped to registered repositories; no whole-disk scan.
 2. Display a topological ancestry graph with shared ancestors drawn once, all merge parents retained, and disconnected histories shown separately. Layout follows parent relationships rather than timestamp order; dates are inspection metadata.
-3. Attach a distinct label for every worktree/workspace at its current revision. Multiple labels may attach to one revision. Include branch/bookmark, privacy-safe workspace identifier, dirty or conflicted indicator, agent count, and attention badge.
+3. Attach a distinct label for every worktree/workspace at its current revision. Multiple labels may attach to one revision. Include branch/bookmark, readable workspace name, dirty or conflicted indicator, agent count, and attention badge.
 4. Fit active workspace tips and their connecting history on initial load. Support pan, zoom, search, keyboard selection, and explicit expansion of collapsed ancestry. Always show every discovered workspace label; paginating history must not hide workspaces or invent direct parent edges across omitted revisions.
 5. Selecting a revision shows identifiers, description, parents, and timestamp. Selecting a workspace opens its session list and captured Firehose feed. Selecting a session opens the existing session/detail experience. Show captured content only; do not imply every provider exposes full terminal output.
 6. Refresh topology asynchronously on repository changes, window focus, and manual refresh. Debounce filesystem signals and use periodic reconciliation as a fallback. Keep selection and viewport stable. Agent activity updates through the existing feed independently of topology scans.
@@ -67,7 +67,7 @@ Suggested response objects:
 
 | Object | Required information |
 |---|---|
-| Repository | opaque ID, VCS kind, privacy-safe label, observation time, scan status |
+| Repository | opaque ID, VCS kind, readable label (canonical root path), observation time, scan status |
 | Revision | unique revision key, commit ID, optional JJ change ID, parent keys, description, timestamp, conflict state |
 | Workspace | opaque ID, repository ID, current revision key or unborn state, refs, dirty/conflict state, availability |
 | Session attachment | source + native session ID, workspace ID, last observed time, association evidence |
@@ -87,9 +87,11 @@ Bound initial history to 2,000 revisions, retaining all workspace anchors and ma
 
 ## Privacy and storage
 
-Preserve existing minimal/balanced/full semantics. Minimal and balanced modes hash `cwd`, `repo_id`, and `worktree_id`; full mode retains canonical paths. Apply equivalent protection to graph responses, cached labels, diagnostics, and any new persistence. Commit messages and branch/bookmark names may contain sensitive text: use digests in minimal mode, existing truncation semantics in balanced mode, and full values only in full mode.
+Firehose is a local, loopback-only, open-source tool; where privacy and usefulness conflict on the user's own machine, favor usefulness (maintainer decision, October 9, 2026). The minimal/balanced/full modes govern captured history only: the event spool, the live event stream, and exports keep their existing semantics (minimal and balanced hash `cwd`, `repo_id`, and `worktree_id`; full retains canonical paths).
 
-Keep raw root paths needed for scanning inside the local host's configuration/runtime boundary, outside the event spool and redacted graph responses. Clear graph caches when privacy settings change. Keep graph snapshots disposable in V1; captured activity remains backed by the existing spool. Preserve loopback binding and desktop-origin restrictions.
+Graph responses are local display data, readable in every mode: repository and workspace labels (canonical paths, JJ workspace names), branch/bookmark names, commit descriptions, and file paths are never hashed or truncated. Graph `id` fields keep following the privacy mode so they match captured event identities for session association.
+
+Persist repository roots, whether registered explicitly or discovered from agent activity, in the host-private `~/.agentfirehose/graph-roots.json` (0600) in every mode so the graph survives restarts. Keep raw roots out of the event spool. Clear graph caches when privacy settings change. Keep graph snapshots disposable; captured activity remains backed by the existing spool. Preserve loopback binding and desktop-origin restrictions.
 
 ## Acceptance and verification
 
@@ -103,7 +105,7 @@ Keep raw root paths needed for scanning inside the local host's configuration/ru
 - JJ fixtures cover multiple workspaces, working-copy movement, divergent revisions with one change ID, stale workspaces, and colocation deduplication.
 - Two agents in one workspace display separately; equal session IDs across providers do not collide; missing identity stays unassigned.
 - Clicking a workspace reveals only its correctly associated captured events. Moving a session does not rewrite past event associations.
-- Privacy tests cover paths, labels, commit descriptions, errors, cached responses, and transitions between modes.
+- Privacy tests cover transitions between modes, graph IDs that keep matching privacy-processed event identities, graph labels/descriptions/paths that stay readable in every mode, and roots that persist across restarts in every mode.
 - A changed HEAD moves its workspace label after refresh. Scan timeout or VCS failure preserves a visibly stale graph and leaves capture running.
 - A shallow/truncated history marks boundaries; it never substitutes a fabricated parent link. Large graphs retain every workspace anchor and support expansion.
 - Existing daemonless capture, stream reconciliation, session/attention behavior, and desktop navigation remain intact. Run the repository's relevant Go tests, frontend checks, and desktop build gates.

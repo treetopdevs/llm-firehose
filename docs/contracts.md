@@ -66,6 +66,15 @@ daemonless hosts use the same Admission path.
 | `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept | replaced with sha256 hex digests |
 | `full` | kept | kept verbatim | kept | kept (canonical absolute paths) |
 
+These modes govern **captured history**: the event spool, the live event stream
+and exports. They do not redact the local workspace-graph views or the
+host-private repository list, which are readable in every mode (see
+[Workspace graph](#workspace-graph-and-scoped-timeline-additive)). That change
+touches only the graph routes and the `graph-roots.json` host file: the event
+envelope, the spool format, the export format, the mode semantics in the table
+above and every non-graph route are unchanged, so there is no `schema_version`
+bump.
+
 ## Spool format
 
 - Location: `spool_dir` (default `~/.agentfirehose/spool`).
@@ -202,15 +211,20 @@ browser-origin restrictions as existing routes:
 - `POST /workspace-graph/repos` with `{root, vcs}` registers an absolute local
   directory (`vcs` is `git`, `jj`, or empty for detection). This writes only host
   registration configuration, never VCS state. Scan roots persist in the private
-  `~/.agentfirehose/graph-roots.json` host file, which is not exposed by the API.
-  Graph identities and labels are hashed outside full mode; full mode permits
-  canonical paths in graph responses.
+  `~/.agentfirehose/graph-roots.json` host file (see below), which is not exposed
+  by the API.
+  Graph `id` fields (`Repository.id`, `Workspace.id`, `repo_id`) follow the
+  privacy mode: canonical paths in `full`, SHA-256 digests in `minimal` and
+  `balanced`, exactly the identities Capture stamps on events, so a captured
+  session keeps associating with its workspace. Every graph **display** value is
+  readable and untruncated in every mode (see below).
 - `GET /workspace-graph?repo_id=...&cursor=...&refresh=true`: disposable topology
   snapshot with actual parent edges, every discovered workspace, explicit
   boundaries, warnings, stale state, and an optional continuation cursor.
 - `GET /workspace-graph/compare?repo_id=...&revision=...&target=...`: revision-set
-  differences, merge bases, and committed changed files; checkout dirty state is
-  separate workspace metadata. No operation modifies a repository or fetches.
+  differences, merge bases, and committed changed files (plus optional per-file
+  `changes`, see below); checkout dirty state is separate workspace metadata. No
+  operation modifies a repository or fetches.
 - `GET /workspace-graph/timeline`: durable event page, newest compatible `time`
   first, then descending exact ID for deterministic ties. Optional `repo_id`,
   `workspace_id`, `source`, `session_id`, `category`, `search`, `cursor`, and
@@ -219,16 +233,108 @@ browser-origin restrictions as existing routes:
   `has_more`, `order: "newest_first"`, and `capture_gap`. Exact-ID duplicates
   are removed. Cursor paging never infers cross-provider causality; clients
   reconcile the newest page after reconnect/resume to include late arrivals.
+  The query never reads the whole spool. The Projection keeps a disposable
+  index from each repository/workspace identity value (Git and JJ, including
+  the aliases the graph resolves) to the UTC day files that hold it; a request
+  reads only the intersection of those day files, newest first, and stops once
+  `limit`+1 matching events older than the cursor are in hand (every event in an
+  older day file sorts after every event in a newer one). Cost is bounded by the
+  days a page needs, not by spool size. The scan stops promptly when the client
+  abandons the request. `capture_gap` is true if the Projection saw an
+  unreadable spool record at rebuild or from the live tailer, or a record read
+  for this page was unreadable. The index is rebuilt from the spool with the
+  rest of the Projection and updated on every Admission and reconciliation.
 
 Existing event/session/attention routes retain their representations. Graph
 scans run independently of capture. Debounced metadata polling detects repository
 changes; full reconciliation every 30 seconds catches missed signals and checkout
-content changes. Explicit/focus refresh is also supported. Observed roots are learned before privacy processing
-only in a running capture engine; previously redacted unknown paths require
-explicit registration. A privacy-mode transition invalidates graph caches.
-Raw registered roots are persisted (`~/.agentfirehose/graph-roots.json`, 0600)
-only in `full` mode; leaving `full` deletes the file and returning rewrites it
-from memory, so minimal/balanced never hold raw paths on disk.
+content changes. Explicit/focus refresh is also supported. Observed roots are
+learned before privacy processing only in a running capture engine, with no
+filesystem crawl; a root that does not scan (not a repository, VCS unavailable)
+is never remembered. A privacy-mode transition invalidates graph caches, because
+`id` fields change with the mode.
+
+Repository roots are persisted in `~/.agentfirehose/graph-roots.json` (0600,
+written atomically) in **every** privacy mode, so the repository list survives a
+daemon restart. A root is added when it is registered explicitly or when a root
+learned from observed agent activity scans successfully; the file is loaded at
+startup in every mode (entries that are not absolute paths or name an unknown VCS
+are ignored) and is never deleted or rewritten because the privacy mode changed.
+The file holds raw absolute paths: it is host-private state, never part of the
+event spool, the live stream, an export or any API response, and `0600` plus the
+loopback-only, browser-origin-restricted daemon are its protection. This
+replaces the earlier rule that kept raw roots on disk only in `full` mode, which
+emptied the repository list after every restart in `minimal`/`balanced`.
+
+Display values in graph responses are never hashed or truncated, in any mode:
+`Repository.label` is the canonical root path, a Git workspace `label` is its
+worktree path, a JJ workspace `label` is the workspace name, and branch or
+bookmark names (`refs`, `default_target_ref`), revision descriptions,
+`changed_files`, comparison `changed_files` and `FileChange.path` are the VCS's
+own text. This replaces the earlier rule that hashed these values in `minimal`
+and truncated them at 240 runes in `balanced`. The same applies to the
+synthetic `unavailable` repository rows, whose `label` is the root path and
+whose `id` is an opaque digest.
+
+#### Per-file change statistics (additive)
+
+Graph snapshots and comparisons carry optional structured file changes next to the
+existing, unchanged `changed_files` string lists (`changed_files` keeps its raw
+porcelain-entry meaning). Every field below is optional and
+`omitempty`; consumers ignore what they do not know, and no `schema_version` bump
+applies.
+
+| Where | Field | Meaning |
+|---|---|---|
+| `GET /workspace-graph` snapshot | `default_target_ref` | Name of the ref behind `default_target` (`main` or `master` for Git, the bookmark for JJ). Present exactly when `default_target` is. |
+| `workspaces[]` | `changes` | Uncommitted checkout changes (a list of `FileChange`). |
+| `workspaces[]` | `changes_truncated` | `true` only when the workspace has more than 200 changed files; `changes` then holds the first 200 in the VCS's stable path order. |
+| `GET /workspace-graph/compare` | `changes` | Committed per-file changes from `target` to `selected` (a list of `FileChange`). |
+| `GET /workspace-graph/compare` | `changes_truncated` | `true` only when more than 200 files differ. |
+
+`FileChange`:
+
+- `path` (string): repository-relative path (the new path for a rename). An
+  untracked directory is listed as its individual files in `changes` (so the
+  200-entry bound counts files), while the legacy `changed_files` keeps git's
+  single `?? dir/` entry.
+- `status` (string): one of `M` modified, `A` added, `D` deleted, `R` renamed,
+  `C` copied, `T` type changed, `U` unmerged, `?` untracked. For a checkout where
+  a file is staged and also edited, the working-tree letter wins over the index
+  letter (a staged add edited again is `M`). Comparison statuses come from the
+  committed difference and are never `U` or `?`. A rename is one entry for the new
+  path; the old path is not listed.
+- `additions`, `deletions` (integers, optional): added and removed line counts.
+  Zero is a real value and is serialized (`"deletions": 0`); the fields are
+  omitted when no counts exist: untracked (`?`) and unmerged (`U`) paths, binary
+  files, a checkout whose HEAD is unborn, or when the VCS cannot supply them
+  (JJ counts are best effort and are dropped for any file whose `--stat` bar was
+  scaled; Git workspace counts are relative to HEAD, comparison counts to the
+  target revision).
+- `binary` (boolean, optional): `true` only for a binary change; counts are then
+  omitted.
+
+Privacy: `path` and `default_target_ref` are display values and are returned
+verbatim in every mode, like `changed_files` and refs (see above). `status`,
+`additions`, `deletions` and `binary` are structural metadata. Only `id` fields
+follow the privacy mode, so a privacy transition still drops the snapshot cache.
+
+Omission and bounds: `changes` is omitted for clean workspaces, for identical
+revisions, and whenever details are unavailable (the legacy fields are still
+returned); a failure to read statistics never fails the snapshot or comparison.
+At most 200 entries are returned per list, then `changes_truncated` is set.
+Statistics are collected only for dirty workspaces.
+
+Read-only collection: Git statistics run in the same shadow git directory as
+`git status` (an inert, config-sanitized git dir sharing the repository's
+objects, refs and index), as `git diff --numstat -z HEAD` with
+`--no-ext-diff --no-textconv --ignore-submodules=all` and
+`diff.autoRefreshIndex=false`, so no configured driver or filter runs and the
+real index is never rewritten. Comparisons run tree-to-tree
+(`git diff --raw -z` and `--numstat -z` with the same flags). JJ uses
+`jj diff --summary` (path and status, required) and `jj diff --stat` (counts)
+through the existing `--ignore-working-copy` runner for the workspace's last
+recorded working-copy commit, so scans never snapshot a working copy.
 
 Optional `jj_repo_id` and `jj_workspace_id` identities use the separate `jj:`
 namespace followed by canonical shared-repository/workspace paths in full mode;

@@ -19,21 +19,21 @@ func TestTimelineStablePagingAndSourceScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := e.Timeline(TimelineQuery{RepoID: "repo", Source: "codex", SessionID: "same", Limit: 1})
+	page, err := e.Timeline(context.Background(), TimelineQuery{RepoID: "repo", Source: "codex", SessionID: "same", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Events) != 1 || page.Events[0].ID != "c" || !page.HasMore {
 		t.Fatalf("page: %+v", page)
 	}
-	page, err = e.Timeline(TimelineQuery{RepoID: "repo", Source: "codex", SessionID: "same", Limit: 1, Cursor: page.NextCursor})
+	page, err = e.Timeline(context.Background(), TimelineQuery{RepoID: "repo", Source: "codex", SessionID: "same", Limit: 1, Cursor: page.NextCursor})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Events) != 1 || page.Events[0].ID != "a" || page.HasMore {
 		t.Fatalf("second: %+v", page)
 	}
-	scoped, _ := e.Timeline(TimelineQuery{RepoID: "repo", WorkspaceID: "one", Source: "codex", Limit: 10})
+	scoped, _ := e.Timeline(context.Background(), TimelineQuery{RepoID: "repo", WorkspaceID: "one", Source: "codex", Limit: 10})
 	if len(scoped.Events) != 1 || scoped.Events[0].ID != "a" {
 		t.Fatalf("scope: %+v", scoped)
 	}
@@ -57,11 +57,11 @@ func TestTimelineJJAndHistoricalAliasScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := e.Timeline(TimelineQuery{RepoID: "current", WorkspaceID: "current-ws", RepoAliases: []string{"old-repo"}, WorkspaceAliases: []string{"old-ws"}})
+	page, err := e.Timeline(context.Background(), TimelineQuery{RepoID: "current", WorkspaceID: "current-ws", RepoAliases: []string{"old-repo"}, WorkspaceAliases: []string{"old-ws"}})
 	if err != nil || len(page.Events) != 1 || page.Events[0].ID != "old" {
 		t.Fatalf("historical: %+v %v", page, err)
 	}
-	page, err = e.Timeline(TimelineQuery{RepoID: "jj-repo", WorkspaceID: "jj-ws"})
+	page, err = e.Timeline(context.Background(), TimelineQuery{RepoID: "jj-repo", WorkspaceID: "jj-ws"})
 	if err != nil || len(page.Events) != 1 || page.Events[0].ID != "jj" {
 		t.Fatalf("JJ: %+v %v", page, err)
 	}

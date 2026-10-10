@@ -52,9 +52,14 @@ func scanJJ(ctx context.Context, r registration, limit int, m privacy.Mode, v *S
 		}
 		refs := []string{}
 		for _, ref := range x.Refs {
-			refs = append(refs, content(ref, m))
+			refs = append(refs, ref)
 		}
-		v.Workspaces = append(v.Workspaces, Workspace{rawIdentity: id, ID: identity(id, m), RepoID: v.Repository.ID, Label: content(x.Name, m), Revision: x.Revision, Refs: refs, Dirty: x.Dirty, Conflicted: x.Conflicted, Availability: availability})
+		ws := Workspace{rawIdentity: id, ID: identity(id, m), RepoID: v.Repository.ID, Label: x.Name, Revision: x.Revision, Refs: refs, Dirty: x.Dirty, Conflicted: x.Conflicted, Availability: availability}
+		if x.Dirty {
+			// The recorded working-copy commit only; the working copy is never snapshotted.
+			ws.Changes, ws.ChangesTruncated = jjChanges(ctx, r.root, []string{"-r", x.Revision})
+		}
+		v.Workspaces = append(v.Workspaces, ws)
 		tips = append(tips, x.Revision)
 	}
 	if len(tips) == 0 {
@@ -65,7 +70,7 @@ func scanJJ(ctx context.Context, r registration, limit int, m privacy.Mode, v *S
 	if e != nil {
 		return e
 	}
-	v.Nodes, e = parseJJ(b, m)
+	v.Nodes, e = parseJJ(b)
 	if e != nil {
 		return e
 	}
@@ -81,7 +86,7 @@ func scanJJ(ctx context.Context, r registration, limit int, m privacy.Mode, v *S
 		if e != nil {
 			return e
 		}
-		nodes, e := parseJJ(b, m)
+		nodes, e := parseJJ(b)
 		if e != nil {
 			return e
 		}
@@ -92,13 +97,14 @@ func scanJJ(ctx context.Context, r registration, limit int, m privacy.Mode, v *S
 		b, e := run(ctx, r.root, "jj", "log", "--no-graph", "-r", ref, "-T", `commit_id ++ "\n"`)
 		if e == nil && strings.TrimSpace(b) != "" {
 			v.DefaultTarget = strings.TrimSpace(b)
+			v.DefaultTargetRef = ref
 			break
 		}
 	}
 	v.Warnings = append(v.Warnings, "JJ working-copy state is last recorded state; read-only scans do not snapshot filesystem changes")
 	return nil
 }
-func parseJJ(b string, m privacy.Mode) ([]Revision, error) {
+func parseJJ(b string) ([]Revision, error) {
 	out := []Revision{}
 	for _, line := range strings.Split(strings.TrimSpace(b), "\n") {
 		if line == "" {
@@ -108,7 +114,7 @@ func parseJJ(b string, m privacy.Mode) ([]Revision, error) {
 		if json.Unmarshal([]byte(line), &n) != nil {
 			return nil, errors.New("unsupported JJ revision output")
 		}
-		n.Description = content(strings.TrimSpace(n.Description), m)
+		n.Description = strings.TrimSpace(n.Description)
 		if n.Parents == nil {
 			n.Parents = []string{}
 		}

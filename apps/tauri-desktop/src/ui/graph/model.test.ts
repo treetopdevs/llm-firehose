@@ -1,36 +1,51 @@
 import { expect, test } from "vitest";
-import { layoutGraph, relatives, TimelineState, eventWorkspace } from "./model";
+import {
+  relatives,
+  sharedAncestorCount,
+  TimelineState,
+  eventWorkspace,
+} from "./model";
 const nodes = [
   { key: "merge", parents: ["a", "b"] },
   { key: "a", parents: ["root"] },
   { key: "b", parents: ["root"] },
   { key: "root", parents: ["omitted"] },
 ].map((n) => ({ ...n, commit_id: n.key, description: "", timestamp: "" }));
-test("layout retains actual merge parents and marks omitted parents without invented links", () => {
-  const layout = layoutGraph(nodes, []);
-  expect(layout.edges.map((e) => [e.child, e.parent])).toEqual([
-    ["merge", "a"],
-    ["merge", "b"],
-    ["a", "root"],
-    ["b", "root"],
-  ]);
-  expect(layout.boundaries).toEqual(["root"]);
-  expect(layout.points.get("root")!.y).toBeGreaterThan(
-    layout.points.get("a")!.y,
-  );
+test("relatives follow actual parents and children, merge parents included, never beyond loaded nodes", () => {
   expect(relatives(nodes, "a")).toEqual(new Set(["a", "root"]));
   expect(relatives(nodes, "a", true)).toEqual(new Set(["a", "merge"]));
-});
-test("crowded labels reserve space for every shared anchor", () => {
-  const workspaces = Array.from({ length: 25 }, (_, i) => ({
-    id: `w${i}`,
-    revision_key: "root",
-  }));
-  const l = layoutGraph(nodes, workspaces);
-  expect(l.labels.size).toBe(25);
-  expect(new Set([...l.labels.values()].map((p) => `${p.x},${p.y}`)).size).toBe(
-    25,
+  expect(relatives(nodes, "merge")).toEqual(
+    new Set(["merge", "a", "b", "root"]),
   );
+  expect(relatives(nodes, "root", true)).toEqual(
+    new Set(["root", "a", "b", "merge"]),
+  );
+});
+const dag = [
+  { key: "root", parents: [] as string[] },
+  { key: "m1", parents: ["root"] },
+  { key: "m2", parents: ["m1"] },
+  { key: "f1", parents: ["m1"] },
+  { key: "f2", parents: ["f1"] },
+  { key: "g1", parents: ["m2"] },
+  { key: "join", parents: ["f2", "g1"] },
+  { key: "far", parents: ["gone"] },
+].map((n) => ({ ...n, commit_id: n.key, description: "", timestamp: "" }));
+test("shared ancestors count the common loaded history of two revisions", () => {
+  // f2: f2 f1 m1 root; g1: g1 m2 m1 root -> m1, root
+  expect(sharedAncestorCount(dag, "f2", "g1")).toBe(2);
+  expect(sharedAncestorCount(dag, "g1", "f2")).toBe(2);
+  // ancestors include the revision itself, so an ancestor counts itself
+  expect(sharedAncestorCount(dag, "join", "f2")).toBe(4);
+  expect(sharedAncestorCount(dag, "m1", "m1")).toBe(2);
+  expect(sharedAncestorCount(dag, "join", "root")).toBe(1);
+});
+test("shared ancestors ignore omitted history and unknown revisions", () => {
+  expect(sharedAncestorCount(dag, "far", "join")).toBe(0);
+  expect(sharedAncestorCount(dag, "far", "far")).toBe(1);
+  expect(sharedAncestorCount(dag, "missing", "join")).toBe(0);
+  expect(sharedAncestorCount(dag, "join", "missing")).toBe(0);
+  expect(sharedAncestorCount([], "a", "b")).toBe(0);
 });
 const event = (
   id: string,
