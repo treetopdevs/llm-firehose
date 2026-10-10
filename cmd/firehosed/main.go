@@ -17,7 +17,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags "-X main.version=...".
-var version = "0.1.3"
+var version = "0.2.0"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
