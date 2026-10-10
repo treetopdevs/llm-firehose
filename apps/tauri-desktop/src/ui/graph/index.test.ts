@@ -2,6 +2,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { createWorkspaceGraph } from "./index";
 import { graphAPI, type Snapshot, type Workspace } from "./api";
+import { perfBudget } from "./layout.fixtures";
 import { attention, getConfig, type AttentionSession } from "../../api";
 vi.mock("../../api", () => ({
   DAEMON_URL: "http://127.0.0.1:4517",
@@ -721,7 +722,7 @@ test("2,000 revisions with 50 labels: no per-node listeners, selection stays fas
   const t0 = performance.now();
   label(root, "w10").dispatchEvent(new MouseEvent("click"));
   const elapsed = performance.now() - t0;
-  expect(elapsed).toBeLessThan(100);
+  expect(elapsed).toBeLessThan(perfBudget(100));
   expect(label(root, "w10").classList.contains("selected")).toBe(true);
 });
 

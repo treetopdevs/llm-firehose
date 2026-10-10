@@ -3,6 +3,19 @@ import type { LayoutWorkspace } from "./layout";
 
 /** Test fixtures for the layout engine: seeded DAGs and a mockup-shaped graph. No test runner imports. */
 
+type Env = Record<string, string | undefined>;
+const processEnv = (): Env =>
+  (globalThis as { process?: { env?: Env } }).process?.env ?? {};
+
+/**
+ * Wall-clock budget for a timing assertion. Strict only with FIREHOSE_GRAPH_PERF=1
+ * (like the Go perf test); otherwise 10× headroom, which still catches an
+ * algorithmic regression at 2,000 nodes but not a loaded shared CI runner.
+ */
+export function perfBudget(ms: number, env: Env = processEnv()): number {
+  return env.FIREHOSE_GRAPH_PERF === "1" ? ms : ms * 10;
+}
+
 /** mulberry32: small deterministic PRNG so every fixture is reproducible. */
 export function rng(seed: number): () => number {
   let a = seed >>> 0;

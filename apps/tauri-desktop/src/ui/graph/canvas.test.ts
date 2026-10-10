@@ -8,7 +8,7 @@ import {
   type CanvasState,
   type CanvasWorkspace,
 } from "./canvas";
-import { branchingGraph, commits, mockupGraph, node, ws } from "./layout.fixtures";
+import { branchingGraph, commits, mockupGraph, node, perfBudget, ws } from "./layout.fixtures";
 import type { GraphNode } from "./model";
 
 afterEach(() => document.body.replaceChildren());
@@ -327,10 +327,10 @@ test("2,000 revisions and 50 labels: delegated listeners only, selection toggles
   canvas.setState({ ...idle });
   canvas.setState({ ...idle, workspace: workspaces[20].id, revision: workspaces[20].revision_key! });
   const elapsed = performance.now() - t0;
-  expect(elapsed).toBeLessThan(300);
+  expect(elapsed).toBeLessThan(perfBudget(300));
   const t1 = performance.now();
   canvas.setState({ ...idle, workspace: target.id, revision: target.revision_key! });
-  expect(performance.now() - t1).toBeLessThan(100);
+  expect(performance.now() - t1).toBeLessThan(perfBudget(100));
 });
 
 test("workspace id lookups in labels never collide with revisions of the same name", () => {
