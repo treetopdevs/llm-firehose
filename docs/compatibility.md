@@ -26,6 +26,7 @@ bump the schema version, and consumers must ignore unknown fields.
 | App (shell) | Bundled firehosed | schema_version | Works with daemon… |
 |---|---|---|---|
 | 0.1.x | 0.1.x | 1 | any daemon reporting schema 1 (or none) |
+| 0.2.x | 0.2.x | 1 | any daemon reporting schema 1 (or none); the workspace graph needs 0.1.3+ (graph routes). Against a 0.1.3 daemon, graph names fall back to short digests and repositories are not remembered across restarts outside full mode |
 
 Add a row per release (release runbook §0).
 
