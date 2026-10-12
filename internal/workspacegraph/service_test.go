@@ -577,8 +577,23 @@ func TestGitScanAllowsBenignRepoConfig(t *testing.T) {
 	}
 }
 
+// Branch and remote names may contain dots (release/v0.2.0, my.fork); the
+// subsection sits between the first and last dot, so such keys stay inert.
+// Editors also add per-branch keys (VS Code's vscode-merge-base).
+func TestGitScanAllowsDottedBranchAndRemoteNames(t *testing.T) {
+	root := fixture(t)
+	git(t, root, "config", "branch.release/v0.2.0.remote", "origin")
+	git(t, root, "config", "branch.release/v0.2.0.merge", "refs/heads/release/v0.2.0")
+	git(t, root, "config", "branch.main.vscode-merge-base", "origin/main")
+	git(t, root, "config", "remote.my.fork.url", "https://example.invalid/x.git")
+	git(t, root, "config", "remote.my.fork.fetch", "+refs/heads/*:refs/remotes/my.fork/*")
+	if _, err := New(privacy.ModeFull).Register(context.Background(), root, "git"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGitScanFailsClosedOnUnknownRepoConfig(t *testing.T) {
-	for _, kv := range [][2]string{{"core.fsmonitor", "touch x"}, {"core.sshcommand", "x"}, {"custom.thing", "1"}, {"diff.d.textconv", "x"}} {
+	for _, kv := range [][2]string{{"core.fsmonitor", "touch x"}, {"core.sshcommand", "x"}, {"custom.thing", "1"}, {"diff.d.textconv", "x"}, {"diff.a.b.textconv", "x"}, {"remote.my.fork.uploadpack", "x"}, {"submodule.a.b.update", "!x"}} {
 		root := fixture(t)
 		git(t, root, "config", kv[0], kv[1])
 		if _, err := New(privacy.ModeFull).Register(context.Background(), root, "git"); err == nil {
