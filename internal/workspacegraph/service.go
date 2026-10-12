@@ -280,7 +280,7 @@ func runEnv(ctx context.Context, root, bin string, env []string, args ...string)
 	if bin == "git" {
 		args = append([]string{"-c", "core.fsmonitor=false"}, args...)
 	}
-	c := exec.CommandContext(cctx, bin, args...)
+	c := exec.CommandContext(cctx, resolveTool(bin), args...)
 	c.Dir = root
 	c.Env = append(append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"), env...)
 	var out, stderr boundedBuffer
