@@ -43,6 +43,9 @@ func guardGitConfig(ctx context.Context, root string) error {
 func inertGitKey(key string) bool {
 	parts := strings.Split(key, ".")
 	section, variable := parts[0], parts[len(parts)-1]
+	// Subsection names (branch, remote, submodule) may themselves contain dots,
+	// e.g. branch.release/v0.2.0.merge; the variable is always the last part.
+	subsection := len(parts) >= 3
 	switch section {
 	case "core":
 		switch variable {
@@ -58,14 +61,14 @@ func inertGitKey(key string) bool {
 	case "remote":
 		switch variable {
 		case "url", "pushurl", "fetch", "push", "tagopt", "prune":
-			return len(parts) == 3
+			return subsection
 		}
 	case "branch":
-		return len(parts) == 3
+		return subsection
 	case "submodule":
 		switch variable {
 		case "url", "active", "branch":
-			return len(parts) == 3
+			return subsection
 		}
 	}
 	return false
