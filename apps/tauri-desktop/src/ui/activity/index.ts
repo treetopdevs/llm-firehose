@@ -307,14 +307,14 @@ export function createActivityMap(): ActivityMap {
     let max = 0;
     for (const x of rects) if (!x.node.children) max = Math.max(max, inRange.get(x.key) ?? 0);
     const map = svg("svg", { class: "map-svg", viewBox: `0 0 ${width} ${MAP_H}`, width, height: MAP_H, role: "group", "aria-label": "Activity Map" });
-    for (const x of rects) {
+    for (const [i, x] of rects.entries()) {
       const heat = inRange.get(x.key) ?? 0;
       const title = svg("title", {}, `${pathLabel(x.node)}\nHeat in range: ${heat.toLocaleString()}\nWindow total: ${x.node.total.toLocaleString()}`);
       if (x.node.children) {
         const g = svg("g", { class: "map-dir", "data-key": x.key, tabindex: 0, role: "button" }, title);
         g.append(svg("rect", { x: x.x, y: x.y, width: x.w, height: x.h, rx: 2 }));
         if (x.label) {
-          const clip = `map-clip-${rects.indexOf(x)}`;
+          const clip = `map-clip-${i}`;
           g.append(
             svg("clipPath", { id: clip }, svg("rect", { x: x.x, y: x.y, width: Math.max(0, x.w - PAD * 2), height: LABEL_H + PAD })),
             svg("text", { x: x.x + PAD + 2, y: x.y + PAD + LABEL_H - 4, "clip-path": `url(#${clip})` }, `${stripControl(x.node.name)} · ${heat.toLocaleString()}`),
@@ -336,7 +336,7 @@ export function createActivityMap(): ActivityMap {
         const g = svg("g", { class: heat > 0 ? "map-tile" : "map-tile cold", "data-key": x.key }, title);
         g.append(svg("rect", { x: x.x, y: x.y, width: Math.max(0, x.w - 1), height: Math.max(0, x.h - 1), fill: colour(heat, max) }));
         if (x.w >= FILE_LABEL_W && x.h >= FILE_LABEL_H) {
-          const clip = `map-clip-${rects.indexOf(x)}`;
+          const clip = `map-clip-${i}`;
           g.append(
             svg("clipPath", { id: clip }, svg("rect", { x: x.x, y: x.y, width: x.w - 3, height: x.h })),
             svg("text", { x: x.x + 3, y: x.y + 12, "clip-path": `url(#${clip})` }, stripControl(x.node.name)),

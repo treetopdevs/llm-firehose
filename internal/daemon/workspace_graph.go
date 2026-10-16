@@ -423,10 +423,10 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 	snapshot, scanErr := s.graph.service.Snapshot(ctx, repoID, "", false)
 	cancel()
 	roots := activityRoots{}
-	if scanErr == nil {
+	if scanErr == nil && len(repoAliases) > 0 {
 		for _, ws := range snapshot.Workspaces {
 			_, aliases, _ := s.graph.service.EventScope(repoID, ws.ID)
-			roots.add(aliases)
+			roots.add(repoAliases[0], aliases)
 		}
 	}
 	result, err := s.engine.Activity(r.Context(), capture.ActivityQuery{RepoID: repoID, WorkspaceID: workspaceID, RepoAliases: repoAliases, WorkspaceAliases: workspaceAliases, From: from, To: to, Bucket: time.Duration(bucket) * time.Second, Resolve: roots.resolve})
@@ -462,12 +462,12 @@ type activityRoots struct {
 	all     []string
 }
 
-func (a *activityRoots) add(aliases []string) {
-	if len(aliases) == 0 {
+func (a *activityRoots) add(repoIdentity string, aliases []string) {
+	// A Git workspace's raw identity is its canonical root; a JJ workspace's is
+	// "jj:" + root, or <repo identity>:<name> when JJ reports no root at all.
+	if len(aliases) == 0 || strings.HasPrefix(aliases[0], repoIdentity+":") {
 		return
 	}
-	// A Git workspace's raw identity is its canonical root; a JJ workspace's is
-	// "jj:" + root, or repo:name when JJ reports no root at all.
 	root := strings.TrimPrefix(aliases[0], "jj:")
 	if !filepath.IsAbs(root) {
 		return

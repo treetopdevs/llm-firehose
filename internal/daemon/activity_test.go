@@ -404,3 +404,18 @@ func TestActivityRelativePathResolvesAgainstOwnRoot(t *testing.T) {
 		t.Fatalf("relative paths: %v", got)
 	}
 }
+
+// A JJ workspace with no root has the raw identity <repo identity>:<name>, which
+// still looks absolute once "jj:" is stripped; it must not become a root.
+func TestActivityRootlessJJWorkspaceIsNotARoot(t *testing.T) {
+	repo := "jj:/work/proj/.jj/repo"
+	roots := activityRoots{}
+	roots.add(repo, []string{repo + ":ghost", "digest-ghost"})
+	roots.add(repo, []string{"jj:/work/proj", "digest-root"})
+	if !reflect.DeepEqual(roots.all, []string{"/work/proj"}) || roots.byAlias["digest-ghost"] != "" {
+		t.Fatalf("roots: %v %v", roots.all, roots.byAlias)
+	}
+	if g, p := roots.resolve(event.Event{JJWorkspaceID: "digest-root"}, "/work/proj/.jj/repo:ghost/x.go"); g != "" || p != ".jj/repo:ghost/x.go" {
+		t.Fatalf("resolve: %q %q", g, p)
+	}
+}
