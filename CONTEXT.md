@@ -47,3 +47,19 @@ _Avoid_: Adapter policy, display filter
 **Daemonless Mode**:
 Operation without a long-running daemon, with the same capture guarantees under a different host.
 _Avoid_: Direct-tail mode
+
+**Activity Map**:
+A view of one repository's path hierarchy showing where Heat accumulated over a chosen time window; it reports observed activity, never code quality.
+_Avoid_: Repository Weather, heatmap of quality
+
+**Heat**:
+The count of file-category Captured Events touching one path within one time bucket, counted equally across the repository's worktrees.
+_Avoid_: Activity score, churn, hotness
+
+**Session Score**:
+A view of one session's Captured Events laid out as time-aligned tracks, one per event category, with real gaps preserved.
+_Avoid_: Agent Score, grade, rating
+
+**Error Signature**:
+A normalized identity under which recurring error observations are recognised as the same error; the basis for any claim that an error repeated or belongs to a file.
+_Avoid_: Error fingerprint, storm cell, motif
