@@ -15,6 +15,7 @@ import (
 
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/testsupport/capturehistory"
 )
 
@@ -200,6 +201,50 @@ func TestArtifactFiles(t *testing.T) {
 	}
 	if files[len(files)-1].Path != "/repo/a.ts" {
 		t.Errorf("ordering wrong, a.ts should be oldest by last touch: %+v", files)
+	}
+}
+
+// A real codex patch_apply_end recorded in minimal mode holds a {sha256,len}
+// digest where its changes map was; /artifacts/files must not list "len" and
+// "sha256" as touched files.
+func TestArtifactFilesSkipMinimalModeChangesDigest(t *testing.T) {
+	f, err := os.Open("../capture/testdata/activity_real_shapes.ndjson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var real event.Event
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		if strings.Contains(sc.Text(), `"name":"patch_apply_end"`) {
+			if err := json.Unmarshal(sc.Bytes(), &real); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if real.ID == "" {
+		t.Fatal("no patch_apply_end record in fixture")
+	}
+
+	cfg := testConfig(t)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
+	if _, err := w.Append(privacy.Redact(real, privacy.ModeMinimal)); err != nil {
+		t.Fatalf("seed append: %v", err)
+	}
+	ts := testServer(t, cfg)
+
+	resp, err := http.Get(ts.URL + "/artifacts/files")
+	if err != nil {
+		t.Fatalf("GET /artifacts/files: %v", err)
+	}
+	defer resp.Body.Close()
+	var files []FileArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("minimal-mode digest listed as touched files: %+v", files)
 	}
 }
 

@@ -398,7 +398,9 @@ func newStateTransition(sessionID string, prev SessionState, next Attention, t t
 
 // EventFilePaths extracts the file paths a file-category event touched.
 // Adapters store them differently: claude-code uses payload.file_path,
-// opencode payload.file, codex a payload.changes map keyed by path.
+// opencode payload.file, codex a payload.changes map keyed by path. A
+// minimal-mode record holds a {sha256,len} digest where the changes map was;
+// that is no path at all.
 func EventFilePaths(ev event.Event) []string {
 	if ev.Category != event.CategoryFile {
 		return nil
@@ -408,7 +410,7 @@ func EventFilePaths(ev event.Event) []string {
 			return []string{p}
 		}
 	}
-	if changes, ok := ev.Payload["changes"].(map[string]any); ok {
+	if changes, ok := ev.Payload["changes"].(map[string]any); ok && !isDigest(changes) {
 		paths := make([]string, 0, len(changes))
 		for p := range changes {
 			paths = append(paths, p)
@@ -417,6 +419,14 @@ func EventFilePaths(ev event.Event) []string {
 		return paths
 	}
 	return nil
+}
+
+// isDigest reports whether v is a privacy {sha256,len} digest. len is left
+// untyped: it is an int in memory and a float64 after a spool round trip.
+func isDigest(v map[string]any) bool {
+	_, hasSum := v["sha256"].(string)
+	_, hasLen := v["len"]
+	return len(v) == 2 && hasSum && hasLen
 }
 
 // Sessions returns session summaries, most recently active first.

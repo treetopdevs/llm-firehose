@@ -165,10 +165,11 @@ Seen in a copy of the real spool (223 days, about 96k file-category events):
    map, not even as unreadable.
 6. **Minimal-mode `changes` digests read as paths.** A Codex `changes` map
    recorded in minimal mode is a `{sha256,len}` object, and
-   `projection.EventFilePaths` returns `len` and `sha256` as two paths. The
-   Activity aggregate guards this and counts the event as unreadable; the
-   projection's file artifacts (`/artifacts/files`) still have it. Fixing that
-   changes an existing response, so it is left as a follow-up.
+   `projection.EventFilePaths` returned `len` and `sha256` as two paths.
+   Fixed in `EventFilePaths` itself: a digest yields no path, so the Activity
+   aggregate counts the event as unreadable and the projection's file
+   artifacts (`/artifacts/files`) skip it. This is a bug fix against the
+   documented "touched-file summaries" meaning, not a contract change.
 7. **Removed worktrees and outside edits are common.** Edits into a deleted
    sibling worktree (`llm-firehose-graph-mockup`) and into agent memory or
    `~/Library/...` files land under "Outside known worktrees" with raw paths.

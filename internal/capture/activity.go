@@ -6,7 +6,6 @@ import (
 	"agentfirehose/internal/event"
 	"context"
 	"fmt"
-	"maps"
 	"sort"
 	"time"
 )
@@ -125,7 +124,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 				seen[ev.ID] = true
 			}
 			out.FileEvents++
-			paths := activityPaths(ev)
+			paths := projection.EventFilePaths(ev)
 			if len(paths) == 0 {
 				out.UnreadableFileEvents++
 				return
@@ -178,20 +177,4 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 	}
 	sort.Slice(out.Paths, func(i, j int) bool { return layoutOrder(out.Paths[i], out.Paths[j]) })
 	return out, nil
-}
-
-// activityPaths extracts an event's paths. A minimal-mode record holds a
-// {sha256,len} digest where a codex changes map was; that is no path at all.
-func activityPaths(ev event.Event) []string {
-	if changes, ok := ev.Payload["changes"].(map[string]any); ok && isDigest(changes) {
-		ev.Payload = maps.Clone(ev.Payload)
-		delete(ev.Payload, "changes")
-	}
-	return projection.EventFilePaths(ev)
-}
-
-func isDigest(v map[string]any) bool {
-	_, hasSum := v["sha256"].(string)
-	_, hasLen := v["len"]
-	return len(v) == 2 && hasSum && hasLen
 }
