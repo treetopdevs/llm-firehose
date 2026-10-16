@@ -202,6 +202,11 @@ has no `file_path`/`path`/`file` and no `changes` map. Decisions:
   path. `docs/contracts.md` ("Activity heat", Privacy) says that a multi-file
   patch heats its first file. The desktop notice for unreadable events is
   unchanged and still accurate.
+- **Relative headers.** Codex resolves a relative patch path against its cwd;
+  the Activity resolver roots it at the event's worktree root (the existing
+  rule; in balanced mode cwd is a digest). A patch made from a subdirectory
+  therefore lands on the wrong path. This change sends far more events through
+  that rule (3,280 rollout calls had a relative header).
 
 Measured on a copy of the real spool (223 days):
 
