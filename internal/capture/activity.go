@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -182,12 +184,56 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 
 // activityPaths extracts an event's paths. A minimal-mode record holds a
 // {sha256,len} digest where a codex changes map was; that is no path at all.
+// A Codex apply_patch call names its paths only in its patch text, which is
+// read here and not by the projection, so /artifacts/files is unchanged.
 func activityPaths(ev event.Event) []string {
 	if changes, ok := ev.Payload["changes"].(map[string]any); ok && isDigest(changes) {
 		ev.Payload = maps.Clone(ev.Payload)
 		delete(ev.Payload, "changes")
 	}
-	return projection.EventFilePaths(ev)
+	if paths := projection.EventFilePaths(ev); len(paths) > 0 {
+		return paths
+	}
+	return applyPatchPaths(applyPatchText(ev.Payload))
+}
+
+// applyPatchText is a Codex apply_patch call's patch: the rollout
+// custom_tool_call's input, or the hook's tool_input.command. A minimal-mode
+// digest is not a string and yields nothing.
+func applyPatchText(payload map[string]any) string {
+	if payload["tool_name"] != "apply_patch" {
+		return ""
+	}
+	if s, ok := payload["input"].(string); ok {
+		return s
+	}
+	if in, ok := payload["tool_input"].(map[string]any); ok {
+		s, _ := in["command"].(string)
+		return s
+	}
+	return ""
+}
+
+var applyPatchHeaders = []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "}
+
+// applyPatchPaths returns the paths a patch's file headers name, in order and
+// once each. Only newline-terminated lines count: balanced mode cuts long text
+// at 240 runes and ends it with "…", so an unterminated last line may hold a
+// cut path.
+func applyPatchPaths(text string) []string {
+	var out []string
+	for {
+		line, rest, ok := strings.Cut(text, "\n")
+		if !ok {
+			return out
+		}
+		text = rest
+		for _, h := range applyPatchHeaders {
+			if p, ok := strings.CutPrefix(line, h); ok && p != "" && !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
 }
 
 func isDigest(v map[string]any) bool {

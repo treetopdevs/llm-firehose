@@ -383,10 +383,22 @@ Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
 
 - `paths[]`: `{path, group, total, heat}`. `heat` is sparse
   `[bucket_index, count]` pairs in ascending index order; `total` is their sum.
-  Sorted by `group`, then `path` (byte order). An event naming N paths adds 1 to
-  each. At most 2000 paths: over the cap the 2000 highest `total` are kept (ties
+  Sorted by `group`, then `path` (byte order). An event naming N distinct paths
+  adds 1 to each. At most 2000 paths: over the cap the 2000 highest `total` are kept (ties
   by group then path), `truncated` is `true` and `truncated_total` is the Heat
   of the dropped paths.
+- Paths of an event: `file_path`, `path` or `file`, else the keys of a Codex
+  `changes` map, else, for a payload with `tool_name: "apply_patch"`, the file
+  headers of its patch text (`input`, as in the Codex rollout
+  `custom_tool_call:apply_patch`, or `tool_input.command`, as in the Codex hook's
+  `PreToolUse`/`PostToolUse`). The headers read are `*** Add File: `,
+  `*** Update File: `, `*** Delete File: ` and `*** Move to: ` (a move names its
+  source and its destination). Only newline-terminated header lines count, so a
+  header cut by truncation is no path. Each event counts on its own: one Codex
+  patch observed by both the rollout and the hook adds Heat once per event that
+  names the path, as a Claude Code edit adds 1 for `PreToolUse` and 1 for
+  `PostToolUse`. These rules are this route's only; `/artifacts/files` is
+  unchanged.
 - Resolution: a path under a root of the repository's current graph workspaces
   is repository-relative and slash-separated, with `group: ""`; the innermost
   containing root wins, so an edit in another (or a nested) worktree of the same
@@ -399,13 +411,17 @@ Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
   unresolved groups carry the label `Outside known worktrees`.
 - `file_events`: in-scope file-category events counted; `unreadable_file_events`
   is those whose payload yields no path (for example a record captured in
-  minimal mode, or a Codex `apply_patch` call whose paths exist only in patch
-  text). They add no Heat.
+  minimal mode, a Codex `custom_tool_call_output:apply_patch`, whose files appear
+  only in result text, which is not read, or an `apply_patch` call whose every
+  header was cut by truncation). They add no Heat.
 - `capture_gap` has the Timeline meaning.
 
 Privacy: `path` values are display values, readable in `balanced` and `full`
 like other graph labels; balanced-mode capture truncates long payload strings at
-240 runes, so such a path arrives ending in `…` and is returned verbatim. In
+240 runes, so such a path arrives ending in `…` and is returned verbatim. The
+same truncation applies to `apply_patch` text: in practice only the first file
+header (rarely the second) survives, so a multi-file Codex patch heats its first
+file and not the rest. In `full` mode every header is read. In
 `minimal` mode paths are digests on disk, so the response is `available: false`,
 `unavailable_reason: "minimal"`, with empty `paths` and `groups`, and no spool
 day is read. Group ids are identity values and follow the privacy mode.

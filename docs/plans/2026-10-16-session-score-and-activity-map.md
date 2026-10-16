@@ -142,15 +142,12 @@ Built to `docs/plans/2026-10-16-activity-map-build-brief.md`.
 
 Seen in a copy of the real spool (223 days, about 96k file-category events):
 
-1. **Codex Heat is nearly absent.** Only the rollout `patch_apply_end` event
-   carries paths (absolute keys of `changes`), and it last appears on
-   2026-09-03. Current Codex rollout `custom_tool_call:apply_patch` and its
-   `_output`, and the Codex hook's `PreToolUse`/`PostToolUse` for `apply_patch`,
-   hold their paths only inside patch text (`*** Update File: …`, absolute or
-   relative). About 44k of 47k Codex file events therefore add no Heat and are
-   counted in `unreadable_file_events`. Parsing patch headers would fix this;
-   balanced mode truncates the text at 240 runes, so only the first header or
-   two survive. Not done: it changes what a file event's paths are.
+1. **Codex Heat was nearly absent** (fixed 2026-10-16; see "Codex apply_patch
+   paths" below). Only the rollout `patch_apply_end` event carries paths
+   (absolute keys of `changes`), and it last appears on 2026-09-03. Current Codex
+   rollout `custom_tool_call:apply_patch` and its `_output`, and the Codex hook's
+   `PreToolUse`/`PostToolUse` for `apply_patch`, hold their paths only inside
+   patch text (`*** Update File: …`, absolute or relative).
 2. **Antigravity reads are Heat.** `PostToolUse:view_file` is file-category
    with an absolute `file_path`, so antigravity reading a file counts like an
    edit (1 per read), while Claude Code reads are not file-category.
@@ -179,6 +176,52 @@ Seen in a copy of the real spool (223 days, about 96k file-category events):
    Timeline.
 9. The desktop app has a single dark theme, so there was no light theme to
    check the colour ramp against.
+
+#### Codex apply_patch paths (2026-10-16)
+
+The Activity aggregate now reads the file headers of Codex `apply_patch` text
+(`*** Add File:`, `*** Update File:`, `*** Delete File:`, `*** Move to:`), from
+the rollout call's `input` and the hook's `tool_input.command`, when an event
+has no `file_path`/`path`/`file` and no `changes` map. Decisions:
+
+- **(a) Where: the Activity aggregate only.** Parsing lives in `activityPaths`
+  (`internal/capture/activity.go`). `projection.EventFilePaths` is untouched, so
+  `/artifacts/files` (a frozen response) does not change. Teaching the projection
+  the same headers would change that response and needs its own decision.
+- **(b) Double counting: none removed. Heat still counts events.** Per patch,
+  the rollout call adds 1, the hook adds 2 (`PreToolUse` and `PostToolUse`, the
+  same as Claude Code's accepted 2 per edit), both together add 3, and a historical
+  `patch_apply_end` adds 1 more. The rollout `_output` adds nothing (see below).
+  1,241 of about 21k call ids in the spool copy were seen by both rollout and
+  hook. A path named twice in one patch adds 1. Deduplicating by `call_id`
+  would change the CONTEXT.md definition of Heat ("count of … Captured Events").
+  **Open question for the user:** keep counting events, or count each call once?
+- **(c) Truncation: in the contract.** Balanced mode cuts text at 240 runes, so
+  usually only the first header survives (14,745 headers read from 14,678 rollout
+  calls). Only newline-terminated header lines count, so a cut header is never a
+  path. `docs/contracts.md` ("Activity heat", Privacy) says that a multi-file
+  patch heats its first file. The desktop notice for unreadable events is
+  unchanged and still accurate.
+
+Measured on a copy of the real spool (223 days):
+
+| Shape | Events | Now heat a path | Still unreadable |
+|---|---|---|---|
+| rollout `custom_tool_call:apply_patch` | 14,678 | 14,678 (3,280 with a relative header) | 0 |
+| hook `PreToolUse` `apply_patch` | 8,439 | 8,399 | 40 (34 with only a cut header) |
+| hook `PostToolUse` `apply_patch` | 8,046 | 8,012 | 34 |
+| rollout `custom_tool_call_output:apply_patch` | 14,677 | 0 | 14,677 |
+
+Pinned by `internal/capture/testdata/activity_apply_patch_shapes.ndjson`
+(sanitized real records: a move, an untruncated two-file delete, a relative
+header, a cut second header, a cut only header) and the updated
+`activity_real_shapes.ndjson` expectations.
+
+Follow-up, not done: the rollout `_output` usually lists its files after
+`Success. Updated the following files:` (`A`/`M`/`D` lines; 14,135 of 14,677),
+but older captures wrap it in JSON or carry failure text. Reading it would make
+a rollout-only Codex patch 2 Heat, like a Claude Code edit, and is a separate
+format to pin.
 
 ## Shared deferred work
 

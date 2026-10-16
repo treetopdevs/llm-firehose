@@ -146,14 +146,90 @@ func TestActivityPinsRealCaptureShapes(t *testing.T) {
 		// antigravity: view_file (a read) is file-category with an absolute file_path,
 		// and its full-mode raw repo identity matches through the alias.
 		"|docs/plan.md": {{0, 1}},
+		// codex rollout custom_tool_call:apply_patch: the patch header in its input,
+		// read up to the balanced-mode truncation.
+		"|test/contract_test.exs": {{0, 1}},
+		// codex hook PreToolUse for apply_patch: the header in tool_input.command.
+		"|docs/README.md": {{0, 1}},
 	}
 	if got := heatOf(r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("heat = %v", got)
 	}
-	// codex apply_patch (rollout call + output) and the codex hook PreToolUse
-	// carry their paths only inside patch text: no Heat, counted as unreadable.
-	if r.FileEvents != 7 || r.UnreadableFileEvents != 3 {
+	// The rollout custom_tool_call_output names its files only in result text,
+	// which is not parsed: no Heat, counted as unreadable.
+	if r.FileEvents != 7 || r.UnreadableFileEvents != 1 {
 		t.Fatalf("file=%d unreadable=%d", r.FileEvents, r.UnreadableFileEvents)
+	}
+}
+
+// applyPatchShapes holds real apply_patch records by ID (see testdata/README.md).
+func applyPatchShapes(t *testing.T) []event.Event {
+	t.Helper()
+	b, err := os.ReadFile("testdata/activity_apply_patch_shapes.ndjson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []event.Event
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var ev event.Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, ev)
+	}
+	if len(out) != 5 {
+		t.Fatalf("apply_patch shapes: %d", len(out))
+	}
+	return out
+}
+
+// Codex apply_patch paths come from the patch's file headers. Each event adds
+// 1 to every distinct path it names; a header cut by balanced-mode truncation
+// (the last line, ending in "…") is no path.
+func TestActivityReadsApplyPatchHeaders(t *testing.T) {
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	e, _ := activityEngine(t, applyPatchShapes(t))
+	r, err := e.Activity(context.Background(), activityQuery(base, base.Add(time.Hour), time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][][2]int{
+		// Update File + Move to: the source and the destination.
+		"|test/support/tab_client.exs": {{0, 1}},
+		"|test_support/tab_client.exs": {{0, 1}},
+		// Two Delete File headers in an untruncated patch, outside the repository.
+		"unknown|/tmp/analyst_browser_boot.exs": {{0, 1}},
+		"unknown|/tmp/analyst_chrome_cdp.mjs":   {{0, 1}},
+		// A relative header passes through raw; the daemon resolver roots it.
+		"unknown|MEMORY.md": {{0, 1}},
+		// The first header survives truncation; the cut second one does not.
+		"|lib/code_normalizer.ex": {{0, 1}},
+	}
+	if got := heatOf(r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("heat = %v", got)
+	}
+	// The hook record whose only header was cut by truncation is unreadable.
+	if r.FileEvents != 5 || r.UnreadableFileEvents != 1 {
+		t.Fatalf("file=%d unreadable=%d", r.FileEvents, r.UnreadableFileEvents)
+	}
+}
+
+func TestApplyPatchPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		want       []string
+	}{
+		{"truncated after a header", "*** Begin Patch\n*** Update File: /work/proj/a.go\n@@\n-x…", []string{"/work/proj/a.go"}},
+		{"header cut by truncation", "*** Begin Patch\n*** Add File: /work/proj/occ_6f8…", nil},
+		{"full patch without trailing newline", "*** Begin Patch\n*** Delete File: test/home_test.exs\n*** End Patch", []string{"test/home_test.exs"}},
+		{"move adds the destination", "*** Begin Patch\n*** Update File: a/x.ex\n*** Move to: b/x.ex\n@@\n", []string{"a/x.ex", "b/x.ex"}},
+		{"a path named twice counts once", "*** Begin Patch\n*** Update File: a.go\n@@\n*** Update File: a.go\n@@\n*** End Patch\n", []string{"a.go"}},
+		{"diff lines are not headers", "*** Begin Patch\n*** Update File: a.go\n+*** Add File: b.go\n- *** Update File: c.go\n*** End Patch\n", []string{"a.go"}},
+		{"empty header", "*** Begin Patch\n*** Add File: \n*** End Patch\n", nil},
+	} {
+		if got := applyPatchPaths(tc.text); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -274,7 +350,7 @@ func TestActivityCountsUnreadableMinimalPayloads(t *testing.T) {
 	s := realShapes(t)
 	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
 	var evs []event.Event
-	for i, key := range []string{editPre, "codex patch_apply_end", "antigravity PostToolUse:view_file"} {
+	for i, key := range []string{editPre, "codex patch_apply_end", "codex custom_tool_call:apply_patch", "codex PreToolUse", "antigravity PostToolUse:view_file"} {
 		ev := privacy.Redact(shapeAt(t, s, key, fmt.Sprintf("min%d", i), base.Add(time.Minute)), privacy.ModeMinimal)
 		ev.RepoID, ev.WorktreeID = shapeRepo, shapeWorktree
 		evs = append(evs, ev)
@@ -285,7 +361,7 @@ func TestActivityCountsUnreadableMinimalPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FileEvents != 4 || r.UnreadableFileEvents != 3 || len(r.Paths) != 1 || r.Paths[0].Path != "plans/waiting-on-you.html" {
+	if r.FileEvents != 6 || r.UnreadableFileEvents != 5 || len(r.Paths) != 1 || r.Paths[0].Path != "plans/waiting-on-you.html" {
 		t.Fatalf("minimal records are unreadable, not heat: %+v", r)
 	}
 }
