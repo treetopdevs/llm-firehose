@@ -72,6 +72,21 @@ export interface FileArtifact {
   last_time: string;
 }
 
+/** A derived Error Signature summary (GET /errors). Count and sessions are global, not re-scoped by the ?session filter. */
+export interface ErrorSignature {
+  key: string; // source|category|name|class
+  source: string;
+  category: string;
+  name?: string;
+  class?: string;
+  sample?: string;
+  count: number;
+  sessions: number;
+  first_time: string;
+  last_time: string;
+  paths?: string[];
+}
+
 export interface DoctorCheck {
   name: string;
   ok: boolean;
@@ -121,6 +136,8 @@ export const sessionEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/sessions/${encodeURIComponent(id)}`);
 export const traceEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/traces/${encodeURIComponent(id)}`);
+export const errorSignatures = (session = "") =>
+  getJSON<ErrorSignature[]>(`/errors${session ? `?session=${encodeURIComponent(session)}` : ""}`);
 export const files = () => getJSON<FileArtifact[]>("/artifacts/files");
 export const doctor = () => getJSON<DoctorCheck[]>("/doctor");
 export const getConfig = () => getJSON<EngineConfig>("/config");

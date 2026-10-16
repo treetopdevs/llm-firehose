@@ -111,6 +111,38 @@ costs nothing on a long window. The spill check is sized to the label text
 is right-anchored when that does not cover the previous label, and always
 while fewer than two labels have been drawn.
 
+### Shipped 2026-10-16 (v1.2: motifs)
+
+Recurring errors are marked on the score using the daemon's Error Signature
+identity ([2026-10-16-error-signature.md](2026-10-16-error-signature.md)),
+desktop-only — nothing in Go changed. Error ticks whose events share a
+signature key that appears more than once in the session are a **motif**:
+every member gets a taller marker and a `same error ×N in this session` title
+(textually apart from the coalescing's `×N · first …` prefix), and when the
+event under the playhead is a member, the whole group lights up (`kin`,
+re-applied across redraws like `.current`; a merged column mark carries its
+earliest member's signature). Selecting an error event passes the daemon's
+signature to the detail pane, which shows a "recurring error" section: the
+sample and the global `count`/`sessions` (labelled as cross-session, since
+`GET /errors?session=` does not re-scope counts).
+
+`GET /errors` carries no member-event ids, so `score/model.ts` mirrors the
+projection's keying rule (`errorClass` precedence and
+`normalizeErrorSummary`); parity is pinned by tests over the same 11 real
+captured events as the projection's fixture (`fixture.errsig.json` =
+`testdata/errsig.ndjson`). Known parity edge: JS `\s` and Go `unicode.IsSpace`
+disagree on U+0085 (Go collapses it, JS does not) and U+FEFF (the reverse), and
+JS lowercases Greek final sigma context-sensitively where Go does not — adapter
+summaries are effectively ASCII today, and a drifted key only costs the
+cross-session annotation, never the local grouping. Cross-session facts come
+only from the daemon: the
+`/errors` fetch is tolerant, so against an older daemon without the route the
+score renders unchanged and motifs still group on the local keys, with no
+cross-session counts shown. A follow-up could add an additive member-ids
+field to `GET /errors?session=` and let the client drop the mirror. The
+feature lights up live once the Error Signature branch
+(`claude/workflow-progress-planning-37b3e0`) lands in `main`.
+
 ## Activity Map (was Repository Weather)
 
 - **Primary job:** orient after an overnight or long run over a historical
