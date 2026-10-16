@@ -508,19 +508,26 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     clear(overview);
     clear(chart);
     chart.append(el("p", { class: "dim" }, `loading ${id}…`));
+    // GET /errors is additive (2026-10-16) and pure enrichment: fetched
+    // alongside the events but never awaited, so an older daemon without the
+    // route — or one that hangs on it — costs the score nothing. Motifs group
+    // on the locally mirrored keys either way; when the signatures land, the
+    // current event's detail is refreshed to gain the cross-session facts.
+    sigs = new Map();
+    void errorSignatures(id)
+      .then((sigList) => {
+        if (v !== version) return;
+        sigs = new Map(sigList.map((s) => [s.key, s]));
+        const cur = currentId ? eventById(currentId) : undefined;
+        if (cur && tickKind(cur.event) === "error") highlight(cur);
+      })
+      .catch(() => {});
     try {
-      // GET /errors is additive (2026-10-16): against an older daemon it fails,
-      // and that must not cost the score anything — motifs then group on the
-      // locally mirrored keys alone, with no cross-session counts to show.
-      const [fetched, sigList] = await Promise.all([
-        sessionEvents(id),
-        errorSignatures(id).catch(() => [] as ErrorSignature[]),
-      ]);
+      const fetched = await sessionEvents(id);
       if (v !== version) return;
       const evs = fetched.filter((ev) => !source || ev.source === source);
       events = evs;
       byId = new Map(evs.map((e) => [e.id, e]));
-      sigs = new Map(sigList.map((s) => [s.key, s]));
       score = buildScore(evs);
       view = bounds();
       currentId = undefined;
