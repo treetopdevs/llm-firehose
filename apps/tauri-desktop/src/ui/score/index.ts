@@ -514,28 +514,39 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     clear(overview);
     clear(chart);
     chart.append(el("p", { class: "dim" }, `loading ${id}…`));
+    // GET /errors is additive (2026-10-16) and pure enrichment: fetched
+    // alongside the events but never awaited, so an older daemon without the
+    // route — or one that hangs on it — costs the score nothing. A hung fetch
+    // is aborted after SIGNATURES_TIMEOUT_MS. Motifs group on the locally
+    // mirrored keys either way; when the signatures land, their member ids
+    // replace the mirror and the current event's detail gains the
+    // cross-session facts.
+    sigs = new Map();
+    memberKeys = new Map();
+    let ready = false;
+    const sigAbort = new AbortController();
+    const sigTimer = setTimeout(() => sigAbort.abort(), SIGNATURES_TIMEOUT_MS);
+    void errorSignatures(id, sigAbort.signal)
+      .then((sigList) => {
+        if (v !== version) return;
+        sigs = new Map(sigList.map((s) => [s.key, s]));
+        memberKeys = memberSignatureKeys(sigList);
+        if (!ready) return; // the events' load picks the keys up
+        score = buildScore(events, memberKeys);
+        draw();
+        const cur = currentId ? eventById(currentId) : undefined;
+        if (cur && tickKind(cur.event) === "error") highlight(cur);
+      })
+      .catch(() => {})
+      .finally(() => clearTimeout(sigTimer));
     try {
-      // GET /errors is additive (2026-10-16): against an older daemon it fails,
-      // and that must not cost the score anything — motifs then group on the
-      // locally mirrored keys alone, with no cross-session counts to show. The
-      // same fallback covers ids the daemon's member lists do not carry, and a
-      // hung fetch: the optional request is aborted after SIGNATURES_TIMEOUT_MS
-      // so it can never keep the session's events from rendering.
-      const sigAbort = new AbortController();
-      const sigTimer = setTimeout(() => sigAbort.abort(), SIGNATURES_TIMEOUT_MS);
-      const [fetched, sigList] = await Promise.all([
-        sessionEvents(id),
-        errorSignatures(id, sigAbort.signal)
-          .catch(() => [] as ErrorSignature[])
-          .finally(() => clearTimeout(sigTimer)),
-      ]);
+      const fetched = await sessionEvents(id);
       if (v !== version) return;
       const evs = fetched.filter((ev) => !source || ev.source === source);
       events = evs;
       byId = new Map(evs.map((e) => [e.id, e]));
-      sigs = new Map(sigList.map((s) => [s.key, s]));
-      memberKeys = memberSignatureKeys(sigList);
       score = buildScore(evs, memberKeys);
+      ready = true;
       view = bounds();
       currentId = undefined;
       kinSig = undefined;

@@ -142,9 +142,12 @@ JS lowercases Greek final sigma context-sensitively where Go does not — adapte
 summaries are effectively ASCII today, and a drifted key only costs the
 cross-session annotation, never the local grouping. Cross-session facts come
 only from the daemon: the
-`/errors` fetch is tolerant, so against an older daemon without the route the
-score renders unchanged and motifs still group on the local keys, with no
-cross-session counts shown. The
+`/errors` fetch is tolerant and never awaited (the score renders from the
+events alone, aborted after a 4 s timeout if it hangs; when the signatures
+land, their member ids replace the mirror, the score is rebuilt and the
+current event's detail is refreshed), so against an older daemon without the
+route — or one that hangs on it — the score renders unchanged and motifs still
+group on the local keys, with no cross-session counts shown. The
 feature lights up live once the Error Signature branch
 (`claude/workflow-progress-planning-37b3e0`) lands in `main`.
 

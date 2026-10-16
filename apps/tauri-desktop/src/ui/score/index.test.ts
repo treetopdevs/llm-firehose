@@ -348,6 +348,24 @@ describe("session score view", () => {
     }
   });
 
+  test("a slow or hung GET /errors never blocks the score; signatures enrich the detail when they land", async () => {
+    sessionEvents.mockResolvedValue(mixEvents);
+    let finish!: (sigs: ErrorSignature[]) => void;
+    errorSignatures.mockImplementation(() => new Promise<ErrorSignature[]>((resolve) => (finish = resolve)));
+    const sigs: (ErrorSignature | undefined)[] = [];
+    const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+    await panel.open(MIX_SESSION);
+
+    // The score is fully drawn and the first event selected while /errors is still pending.
+    expect(panel.root.querySelectorAll(".score-chart .score-tick.error.motif")).toHaveLength(2);
+    expect(sigs).toEqual([undefined]);
+
+    finish([MIX_SIG]);
+    await Promise.resolve();
+    // The current event is an error, so its detail is refreshed with the signature.
+    expect(sigs).toEqual([undefined, MIX_SIG]);
+  });
+
   test("a session without repeating errors draws no motif marks", async () => {
     const panel = createScore(() => {});
     await panel.open(SID);
