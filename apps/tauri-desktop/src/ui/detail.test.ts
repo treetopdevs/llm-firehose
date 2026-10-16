@@ -112,6 +112,45 @@ describe("renderDetail", () => {
     expect(rows(pane, ".detail-meta").ended).toMatch(/\.900  2\.59s$/);
   });
 
+  test("an error with a daemon signature shows the recurring-error section: sample and global count", () => {
+    const pane = document.createElement("aside");
+    const err = ev({ id: "x1", severity: "error", summary: "failed: mix test", payload: { status: "error" } });
+    renderDetail(pane, err, () => {}, () => [], {
+      key: "codex|shell|PostToolUse|failed: mix test",
+      source: "codex",
+      category: "shell",
+      name: "PostToolUse",
+      class: "failed: mix test",
+      sample: "failed: mix test",
+      count: 3,
+      sessions: 2,
+      first_time: "2026-07-30T06:32:13.793447Z",
+      last_time: "2026-08-05T13:56:47.146775Z",
+    });
+    expect([...pane.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["recurring error", "payload"]);
+    const sig = rows(pane, ".detail-kv.signature");
+    expect(sig.sample).toBe("failed: mix test");
+    expect(sig.seen).toBe("3 times across 2 sessions");
+    expect(sig.signature).toBe("codex|shell|PostToolUse|failed: mix test");
+
+    // A first-ever error is not "recurring"; the section stays, neutrally titled.
+    renderDetail(pane, err, () => {}, () => [], {
+      key: "codex|shell|PostToolUse|failed: mix test",
+      source: "codex",
+      category: "shell",
+      count: 1,
+      sessions: 1,
+      first_time: "2026-07-30T06:32:13.793447Z",
+      last_time: "2026-07-30T06:32:13.793447Z",
+    });
+    expect([...pane.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["error signature", "payload"]);
+    expect(rows(pane, ".detail-kv.signature").seen).toBe("1 time across 1 session");
+
+    // Without a signature the section is absent, as before.
+    renderDetail(pane, err, () => {});
+    expect([...pane.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["payload"]);
+  });
+
   test("closes on the button and clears on null", () => {
     const pane = document.createElement("aside");
     let closed = 0;

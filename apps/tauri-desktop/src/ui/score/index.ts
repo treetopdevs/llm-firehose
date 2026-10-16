@@ -5,8 +5,8 @@
 // full event list that highlights the event under it and drives the detail
 // pane. Gaps are real time at every speed.
 
-import { sessionEvents } from "../../api";
-import type { FirehoseEvent } from "../../api";
+import { errorSignatures, sessionEvents } from "../../api";
+import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatClockMs, formatDuration } from "../../format";
 import type { Siblings } from "../detail";
@@ -18,6 +18,7 @@ import {
   coalesce,
   columnOf,
   digestLabel,
+  errorSignatureKey,
   eventAt,
   eventLabel,
   nextEventAfter,
@@ -78,7 +79,7 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
   return [many, tool, what, how].filter(Boolean).join(" · ");
 }
 
-export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) => void): ScorePanel {
+export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature?: ErrorSignature) => void): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
   const bar = el("div", { class: "score-bar" });
@@ -90,6 +91,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
   let sessionId = "";
   let events: FirehoseEvent[] = [];
   let byId = new Map<string, FirehoseEvent>();
+  /** The daemon's Error Signatures for this session, by key; empty when the daemon has none or lacks GET /errors. */
+  let sigs = new Map<string, ErrorSignature>();
+  /** The motif the current event belongs to, lit on every member tick in view. */
+  let kinSig: string | undefined;
+  let kinNodes: SVGElement[] = [];
+  let sigNodes = new Map<string, SVGElement[]>();
   let score: Score = buildScore([]);
   let view: View = { from: NaN, to: NaN };
   let at = NaN;
@@ -233,7 +240,23 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     if (was) nodeFor(was)?.classList.remove("current");
     currentId = target.event.id;
     nodeFor(target.event)?.classList.add("current");
-    onSelect(target.event, siblings);
+    const ev = target.event;
+    let signature: ErrorSignature | undefined;
+    kinSig = undefined;
+    if (tickKind(ev) === "error") {
+      const key = errorSignatureKey(ev);
+      signature = sigs.get(key);
+      if (score.motifs.has(key)) kinSig = key;
+    }
+    applyKin();
+    onSelect(ev, siblings, signature);
+  }
+
+  /** Lights every in-view member of the current event's motif; redraws re-apply it like .current. */
+  function applyKin() {
+    for (const n of kinNodes) n.classList.remove("kin");
+    kinNodes = kinSig ? [...(sigNodes.get(kinSig) ?? [])] : [];
+    for (const n of kinNodes) n.classList.add("kin");
   }
 
   function updatePlayhead() {
@@ -286,6 +309,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     clear(chart);
     clear(overview);
     tickNodes = new Map();
+    sigNodes = new Map();
+    kinNodes = [];
     playheadLine = undefined;
     if (!loaded()) {
       chart.append(el("p", { class: "dim" }, sessionId ? `no drawable events in session ${sessionId}` : "open a session from the sessions panel to see its score"));
@@ -295,6 +320,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     chart.append(drawChart());
     overview.append(drawOverview());
     updatePlayhead();
+    applyKin();
     refocus();
   }
 
@@ -387,10 +413,15 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
       const ev = byId.get(tk.id);
       const label = ev ? eventLabel(ev) : "";
       const many = tk.count > 1 ? `×${tk.count} · first ` : "";
+      // A repeating Error Signature is a motif: every member shares the taller
+      // marker and lights up together when one of them is current.
+      const motif = tk.sig !== undefined ? score.motifs.get(tk.sig) : undefined;
       let node: SVGElement;
       switch (tk.kind) {
         case "error":
-          node = svg("rect", { class: "score-tick error", "data-id": tk.id, x: tx - 1.5, y: mid - 10, width: 3, height: 20 });
+          node = motif
+            ? svg("rect", { class: "score-tick error motif", "data-id": tk.id, x: tx - 1.5, y: mid - 12, width: 3, height: 24 })
+            : svg("rect", { class: "score-tick error", "data-id": tk.id, x: tx - 1.5, y: mid - 10, width: 3, height: 20 });
           break;
         case "needs":
           node = svg("circle", { class: "score-tick needs", "data-id": tk.id, cx: tx, cy: mid, r: 4 });
@@ -398,7 +429,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
         default:
           node = svg("rect", { class: "score-tick", "data-id": tk.id, x: tx - 1, y: mid - 7, width: 2, height: 14 });
       }
-      node.append(svg("title", {}, `${many}${formatClockMs(ev?.time ?? "")}  ${label}`));
+      const sameError = motif ? ` · same error ×${motif} in this session` : "";
+      node.append(svg("title", {}, `${many}${formatClockMs(ev?.time ?? "")}  ${label}${sameError}`));
+      if (motif && tk.sig !== undefined) {
+        const nodes = sigNodes.get(tk.sig) ?? [];
+        nodes.push(node);
+        sigNodes.set(tk.sig, nodes);
+      }
       // A merged tick selects its earliest event; stepping from there visits the rest.
       node.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -471,14 +508,30 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     clear(overview);
     clear(chart);
     chart.append(el("p", { class: "dim" }, `loading ${id}…`));
+    // GET /errors is additive (2026-10-16) and pure enrichment: fetched
+    // alongside the events but never awaited, so an older daemon without the
+    // route — or one that hangs on it — costs the score nothing. Motifs group
+    // on the locally mirrored keys either way; when the signatures land, the
+    // current event's detail is refreshed to gain the cross-session facts.
+    sigs = new Map();
+    void errorSignatures(id)
+      .then((sigList) => {
+        if (v !== version) return;
+        sigs = new Map(sigList.map((s) => [s.key, s]));
+        const cur = currentId ? eventById(currentId) : undefined;
+        if (cur && tickKind(cur.event) === "error") highlight(cur);
+      })
+      .catch(() => {});
     try {
-      const evs = (await sessionEvents(id)).filter((ev) => !source || ev.source === source);
+      const fetched = await sessionEvents(id);
       if (v !== version) return;
+      const evs = fetched.filter((ev) => !source || ev.source === source);
       events = evs;
       byId = new Map(evs.map((e) => [e.id, e]));
       score = buildScore(evs);
       view = bounds();
       currentId = undefined;
+      kinSig = undefined;
       at = score.start;
       drawHead();
       draw();

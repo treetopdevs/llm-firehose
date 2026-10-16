@@ -17,7 +17,7 @@ export const SPEEDS = [1, 2, 5, 10, 30, 60] as const;
 export const MIN_VIEW_MS = 1000;
 
 export type TickKind = "event" | "error" | "needs";
-export type ScoreTick = { at: number; kind: TickKind; id: string };
+export type ScoreTick = { at: number; kind: TickKind; id: string; sig?: string };
 export type ScoreSpan = { from: number; to: number; open: boolean; startId: string; endId: string | undefined };
 export type Track = { category: string; ticks: ScoreTick[]; spans: ScoreSpan[] };
 /** One drawn event in playhead order. */
@@ -29,8 +29,43 @@ export type Score = {
   tracks: Track[];
   /** Every drawn event sorted by time; the playhead steps through these. */
   events: ScoreEvent[];
+  /** Error Signature keys seen more than once in this session, with their in-session counts. */
+  motifs: Map<string, number>;
 };
 export type View = { from: number; to: number };
+
+// --- error signatures ------------------------------------------------------------
+//
+// The Error Signature identity is defined once, in the capture projection
+// (internal/capture/internal/projection/errsig.go), and served at GET /errors.
+// That endpoint carries no member-event ids, so to group this session's error
+// ticks the view mirrors the keying rule; parity is pinned by model.test.ts
+// over the projection's own 11-event fixture. Cross-session facts (count,
+// sessions, sample) come only from the daemon, never from this mirror.
+
+/** Mirrors errsig.go normalizeErrorSummary: lowercase, collapse whitespace, hex runs of 6+ then digit runs to '#', 160 code points. */
+export function normalizeErrorSummary(s: string): string {
+  s = s.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+  s = s.replace(/[0-9a-f]{6,}/g, "#").replace(/[0-9]+/g, "#");
+  const runes = [...s];
+  return runes.length > 160 ? runes.slice(0, 160).join("") : s;
+}
+
+/** Mirrors errsig.go errorClass: a non-empty error_class string, else a privacy digest's first 16 characters, else the normalized summary. */
+function errorClass(ev: FirehoseEvent): string {
+  const v = ev.payload?.error_class;
+  if (typeof v === "string" && v !== "") return v;
+  if (v !== null && typeof v === "object") {
+    const sum = (v as { sha256?: unknown }).sha256;
+    if (typeof sum === "string" && sum !== "") return sum.slice(0, 16);
+  }
+  return normalizeErrorSummary(ev.summary ?? "");
+}
+
+/** The signature an error observation belongs to, as errsig.go keys it: source|category|name|class. */
+export function errorSignatureKey(ev: FirehoseEvent): string {
+  return `${ev.source}|${ev.category}|${ev.name ?? ""}|${errorClass(ev)}`;
+}
 
 /** How an event is marked on its track; what buildScore assigns and what the view keys highlights by. */
 export function tickKind(ev: FirehoseEvent): TickKind {
@@ -54,6 +89,7 @@ export function buildScore(events: readonly FirehoseEvent[]): Score {
     return tr;
   };
   const drawn: ScoreEvent[] = [];
+  const sigCounts = new Map<string, number>();
   let lastReport = NaN;
   for (const ev of events) {
     const t = Date.parse(ev.time);
@@ -66,7 +102,13 @@ export function buildScore(events: readonly FirehoseEvent[]): Score {
       continue;
     }
     if (Number.isNaN(lastReport) || t > lastReport) lastReport = t;
-    trackFor(ev.category).ticks.push({ at: t, kind: tickKind(ev), id: ev.id });
+    const kind = tickKind(ev);
+    const tick: ScoreTick = { at: t, kind, id: ev.id };
+    if (kind === "error") {
+      tick.sig = errorSignatureKey(ev);
+      sigCounts.set(tick.sig, (sigCounts.get(tick.sig) ?? 0) + 1);
+    }
+    trackFor(ev.category).ticks.push(tick);
     drawn.push({ at: t, event: ev });
   }
   for (const call of collectCalls(events)) {
@@ -95,11 +137,14 @@ export function buildScore(events: readonly FirehoseEvent[]): Score {
     tr.ticks.sort((a, b) => a.at - b.at);
     tr.spans.sort((a, b) => a.from - b.from);
   }
+  const motifs = new Map<string, number>();
+  for (const [sig, n] of sigCounts) if (n >= 2) motifs.set(sig, n);
   return {
     start: drawn.length ? drawn[0].at : NaN,
     end: drawn.length ? drawn[drawn.length - 1].at : NaN,
     tracks: ordered,
     events: drawn,
+    motifs,
   };
 }
 
@@ -179,7 +224,8 @@ export function panView(view: View, center: number, bounds: View): View {
 /** Width of one coalescing bucket in pixels. */
 export const BUCKET_PX = 1;
 
-export type DrawnTick = { at: number; kind: TickKind; id: string; count: number; column: number };
+/** `sig` follows `id`: a merged tick carries its earliest member's signature; other members' motifs show once zoomed in. */
+export type DrawnTick = { at: number; kind: TickKind; id: string; sig?: string; count: number; column: number };
 export type DrawnSpan = { from: number; to: number; open: boolean; startId: string; endId: string | undefined; count: number };
 export type DrawnTrack = { category: string; ticks: DrawnTick[]; spans: DrawnSpan[] };
 
@@ -202,10 +248,11 @@ export function coalesceTrack(track: Track, view: View, widthPx: number): DrawnT
       if (tk.at < open.at) {
         open.at = tk.at;
         open.id = tk.id;
+        open.sig = tk.sig;
       }
       continue;
     }
-    const next = { at: tk.at, kind: tk.kind, id: tk.id, count: 1, column };
+    const next = { at: tk.at, kind: tk.kind, id: tk.id, sig: tk.sig, count: 1, column };
     current[tk.kind] = next;
     ticks.push(next);
   }
