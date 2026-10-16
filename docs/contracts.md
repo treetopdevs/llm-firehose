@@ -244,6 +244,8 @@ browser-origin restrictions as existing routes:
   unreadable spool record at rebuild or from the live tailer, or a record read
   for this page was unreadable. The index is rebuilt from the spool with the
   rest of the Projection and updated on every Admission and reconciliation.
+- `GET /workspace-graph/activity`: per-path, per-time-bucket Heat for one
+  repository identity over a bounded window (see "Activity heat" below).
 
 Existing event/session/attention routes retain their representations. Graph
 scans run independently of capture. Debounced metadata polling detects repository
@@ -355,3 +357,61 @@ workspace could be resolved; it does not relocate the captured event. These
 maps support cross-view navigation across privacy transitions while preserving
 original event envelopes. Session movement updates the current attachment only;
 late observations cannot restore an older attachment.
+
+#### Activity heat (additive)
+
+`GET /workspace-graph/activity` returns Heat, the count of file-category
+Captured Events touching one path within one time bucket, for one repository
+identity. It is served through the same loopback/browser-origin restrictions and
+privacy-transition gate as the other graph routes, with `Cache-Control: no-store`.
+No `schema_version` bump applies; nothing existing changes meaning.
+
+| Param | Required | Meaning |
+|---|---|---|
+| `repo_id` | yes | Graph repository id. `400` when missing, `422` when unknown. |
+| `workspace_id` | no | Restrict to one worktree/workspace (`422` when unknown). Omitted merges every worktree by repository-relative path. |
+| `from`, `to` | no | RFC 3339. Default `to` = now, `from` = `to` − 24h. `400` unless `from < to` and the window is at most 31 days. |
+| `bucket` | no | Seconds, one of 60, 300, 900, 3600, 10800, 21600, 86400 (`400` otherwise). Default: the smallest step giving at most 240 buckets. `400` when the window holds more than 2000 buckets. |
+
+`from` is floored to a multiple of `bucket` in UTC and the floored value is
+returned, so a live refresh never shifts columns; the window is `[from, to)`.
+
+Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
+`buckets` (column count), `available`, `unavailable_reason`, `paths`, `groups`,
+`file_events`, `unreadable_file_events`, `truncated`, `truncated_total`,
+`capture_gap`.
+
+- `paths[]`: `{path, group, total, heat}`. `heat` is sparse
+  `[bucket_index, count]` pairs in ascending index order; `total` is their sum.
+  Sorted by `group`, then `path` (byte order). An event naming N paths adds 1 to
+  each. At most 2000 paths: over the cap the 2000 highest `total` are kept (ties
+  by group then path), `truncated` is `true` and `truncated_total` is the Heat
+  of the dropped paths.
+- Resolution: a path under a root of the repository's current graph workspaces
+  is repository-relative and slash-separated, with `group: ""`; the innermost
+  containing root wins, so an edit in another (or a nested) worktree of the same
+  repository merges with it. A relative captured path is taken relative to the
+  event's own worktree root (rejected if it escapes the root). Any other path
+  (a worktree no longer listed, or an edit outside the repository) keeps its raw
+  captured text, with `group` set to the event's own worktree identity value
+  (`worktree_id`, else `jj_workspace_id`, else `unknown`).
+- `groups[]`: `{id, label, resolved}` for each `group` present, resolved first;
+  unresolved groups carry the label `Outside known worktrees`.
+- `file_events`: in-scope file-category events counted; `unreadable_file_events`
+  is those whose payload yields no path (for example a record captured in
+  minimal mode, or a Codex `apply_patch` call whose paths exist only in patch
+  text). They add no Heat.
+- `capture_gap` has the Timeline meaning.
+
+Privacy: `path` values are display values, readable in `balanced` and `full`
+like other graph labels; balanced-mode capture truncates long payload strings at
+240 runes, so such a path arrives ending in `…` and is returned verbatim. In
+`minimal` mode paths are digests on disk, so the response is `available: false`,
+`unavailable_reason: "minimal"`, with empty `paths` and `groups`, and no spool
+day is read. Group ids are identity values and follow the privacy mode.
+
+Read bound: the Projection's identity-day index names the day files holding the
+repository (and workspace) identity; only those UTC days overlapping
+`[from, to)` are read, so cost is bounded by the window, not spool size. Exact-ID
+duplicates keep their first record, as in Timeline. The scan stops promptly when
+the client abandons the request.
