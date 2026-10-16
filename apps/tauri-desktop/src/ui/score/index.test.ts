@@ -5,11 +5,11 @@ const sessionEvents = vi.fn();
 const errorSignatures = vi.fn();
 vi.mock("../../api", () => ({
   sessionEvents: (id: string) => sessionEvents(id),
-  errorSignatures: (id: string) => errorSignatures(id),
+  errorSignatures: (id: string, signal?: AbortSignal) => errorSignatures(id, signal),
 }));
 
 import type { ErrorSignature, FirehoseEvent } from "../../api";
-import { createScore } from "./index";
+import { SIGNATURES_TIMEOUT_MS, createScore } from "./index";
 import { BUCKET_PX, buildScore, coalesce } from "./model";
 import fixture from "./fixture.session.json";
 import errsigFixture from "./fixture.errsig.json";
@@ -285,7 +285,7 @@ describe("session score view", () => {
     const sigs: (ErrorSignature | undefined)[] = [];
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     await panel.open(MIX_SESSION);
-    expect(errorSignatures).toHaveBeenCalledWith(MIX_SESSION);
+    expect(errorSignatures).toHaveBeenCalledWith(MIX_SESSION, expect.any(AbortSignal));
 
     // Both ticks of the repeating signature share the motif marker, and the
     // in-session count reads apart from the coalescing ×N prefix.
@@ -324,6 +324,28 @@ describe("session score view", () => {
     expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
     expect(panel.root.querySelector("p.error")).toBeNull();
     expect(sigs).toEqual([undefined]);
+  });
+
+  test("a hung GET /errors cannot keep the score loading: it is aborted after the timeout and the mirror takes over", async () => {
+    vi.useFakeTimers();
+    try {
+      sessionEvents.mockResolvedValue(mixEvents);
+      // Never resolves on its own; only the caller's abort can settle it.
+      errorSignatures.mockImplementation(
+        (_id: string, signal?: AbortSignal) =>
+          new Promise<ErrorSignature[]>((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+      );
+      const sigs: (ErrorSignature | undefined)[] = [];
+      const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+      const opening = panel.open(MIX_SESSION);
+      await vi.advanceTimersByTimeAsync(SIGNATURES_TIMEOUT_MS + 1);
+      await opening;
+      expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
+      expect(panel.root.querySelector("p.error")).toBeNull();
+      expect(sigs).toEqual([undefined]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("a session without repeating errors draws no motif marks", async () => {

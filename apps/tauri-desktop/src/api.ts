@@ -138,8 +138,8 @@ export const sessionEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/sessions/${encodeURIComponent(id)}`);
 export const traceEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/traces/${encodeURIComponent(id)}`);
-export const errorSignatures = (session = "") =>
-  getJSON<ErrorSignature[]>(`/errors${session ? `?session=${encodeURIComponent(session)}` : ""}`);
+export const errorSignatures = (session = "", signal?: AbortSignal) =>
+  getJSON<ErrorSignature[]>(`/errors${session ? `?session=${encodeURIComponent(session)}` : ""}`, signal);
 export const files = () => getJSON<FileArtifact[]>("/artifacts/files");
 export const doctor = () => getJSON<DoctorCheck[]>("/doctor");
 export const getConfig = () => getJSON<EngineConfig>("/config");

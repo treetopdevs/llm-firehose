@@ -43,6 +43,9 @@ export type ScorePanel = {
   playhead(): number;
 };
 
+/** How long the optional GET /errors fetch may take before it is aborted; the score then renders without daemon signatures. */
+export const SIGNATURES_TIMEOUT_MS = 4_000;
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LABEL_W = 110;
 const AXIS_H = 20;
@@ -515,10 +518,16 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       // GET /errors is additive (2026-10-16): against an older daemon it fails,
       // and that must not cost the score anything — motifs then group on the
       // locally mirrored keys alone, with no cross-session counts to show. The
-      // same fallback covers ids the daemon's member lists do not carry.
+      // same fallback covers ids the daemon's member lists do not carry, and a
+      // hung fetch: the optional request is aborted after SIGNATURES_TIMEOUT_MS
+      // so it can never keep the session's events from rendering.
+      const sigAbort = new AbortController();
+      const sigTimer = setTimeout(() => sigAbort.abort(), SIGNATURES_TIMEOUT_MS);
       const [fetched, sigList] = await Promise.all([
         sessionEvents(id),
-        errorSignatures(id).catch(() => [] as ErrorSignature[]),
+        errorSignatures(id, sigAbort.signal)
+          .catch(() => [] as ErrorSignature[])
+          .finally(() => clearTimeout(sigTimer)),
       ]);
       if (v !== version) return;
       const evs = fetched.filter((ev) => !source || ev.source === source);
