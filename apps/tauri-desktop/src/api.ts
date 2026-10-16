@@ -85,6 +85,8 @@ export interface ErrorSignature {
   first_time: string;
   last_time: string;
   paths?: string[];
+  /** Only with ?session=: that session's qualifying event ids in (time, id) order, capped at the 500 earliest (len == 500 means truncated). */
+  members?: string[];
 }
 
 export interface DoctorCheck {

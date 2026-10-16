@@ -21,6 +21,7 @@ import {
   errorSignatureKey,
   eventAt,
   eventLabel,
+  memberSignatureKeys,
   nextEventAfter,
   panView,
   prevEventBefore,
@@ -93,6 +94,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let byId = new Map<string, FirehoseEvent>();
   /** The daemon's Error Signatures for this session, by key; empty when the daemon has none or lacks GET /errors. */
   let sigs = new Map<string, ErrorSignature>();
+  /** The daemon's member assignment (event id → signature key); the mirrored keying is only the fallback. */
+  let memberKeys = new Map<string, string>();
   /** The motif the current event belongs to, lit on every member tick in view. */
   let kinSig: string | undefined;
   let kinNodes: SVGElement[] = [];
@@ -244,7 +247,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     let signature: ErrorSignature | undefined;
     kinSig = undefined;
     if (tickKind(ev) === "error") {
-      const key = errorSignatureKey(ev);
+      const key = memberKeys.get(ev.id) ?? errorSignatureKey(ev);
       signature = sigs.get(key);
       if (score.motifs.has(key)) kinSig = key;
     }
@@ -511,7 +514,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     try {
       // GET /errors is additive (2026-10-16): against an older daemon it fails,
       // and that must not cost the score anything — motifs then group on the
-      // locally mirrored keys alone, with no cross-session counts to show.
+      // locally mirrored keys alone, with no cross-session counts to show. The
+      // same fallback covers ids the daemon's member lists do not carry.
       const [fetched, sigList] = await Promise.all([
         sessionEvents(id),
         errorSignatures(id).catch(() => [] as ErrorSignature[]),
@@ -521,7 +525,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       events = evs;
       byId = new Map(evs.map((e) => [e.id, e]));
       sigs = new Map(sigList.map((s) => [s.key, s]));
-      score = buildScore(evs);
+      memberKeys = memberSignatureKeys(sigList);
+      score = buildScore(evs, memberKeys);
       view = bounds();
       currentId = undefined;
       kinSig = undefined;

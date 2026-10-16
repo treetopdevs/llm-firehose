@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { FirehoseEvent } from "../../api";
+import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { MAX_OPEN_SPAN_MS, buildLanes } from "../lanes/model";
 import {
   BUCKET_PX,
@@ -16,6 +16,7 @@ import {
   errorSignatureKey,
   eventAt,
   eventLabel,
+  memberSignatureKeys,
   nextEventAfter,
   normalizeErrorSummary,
   prevEventBefore,
@@ -455,6 +456,49 @@ describe("buildScore motifs", () => {
     };
     const [tk] = coalesceTrack(tr, view, 100).ticks;
     expect(tk).toMatchObject({ id: "a", sig: "k1", count: 2 });
+  });
+});
+
+// --- daemon member ids -------------------------------------------------------------
+//
+// GET /errors?session= carries each signature's member event ids (additive,
+// 2026-10-16). When present they are the authoritative grouping; the mirrored
+// keying above stays only as the fallback for older daemons, failed fetches,
+// and ids past the endpoint's 500-member cap.
+
+describe("daemon member ids over the mirrored keying", () => {
+  const mix = errs.filter((e) => e.session_id === MIX_SESSION);
+  const sig = (key: string, members?: string[]): ErrorSignature => ({
+    key,
+    source: "codex",
+    category: "shell",
+    count: 3,
+    sessions: 2,
+    first_time: "",
+    last_time: "",
+    members,
+  });
+
+  test("memberSignatureKeys maps every member id to its signature key; signatures without members contribute nothing", () => {
+    const map = memberSignatureKeys([sig("k1", ["a", "b"]), sig("k2")]);
+    expect([...map.entries()]).toEqual([
+      ["a", "k1"],
+      ["b", "k1"],
+    ]);
+  });
+
+  test("buildScore prefers the daemon's member assignment and falls back to the mirror for uncovered ids", () => {
+    const map = memberSignatureKeys([sig("daemon|says|otherwise|x", [mix[0].id])]);
+    const score = buildScore(mix, map);
+    const shell = score.tracks.find((tr) => tr.category === "shell")!;
+    expect(shell.ticks.map((tk) => tk.sig)).toEqual(["daemon|says|otherwise|x", KEY_MIX_TEST]);
+    // The daemon split the pair, so nothing repeats: no motif.
+    expect(score.motifs.size).toBe(0);
+  });
+
+  test("members built from the daemon's signatures group exactly as the mirror does over the shared fixture", () => {
+    const map = memberSignatureKeys([sig(KEY_MIX_TEST, mix.map((e) => e.id))]);
+    expect(buildScore(mix, map).motifs).toEqual(buildScore(mix).motifs);
   });
 });
 

@@ -303,6 +303,18 @@ describe("session score view", () => {
     expect(panel.root.querySelectorAll(".score-chart .score-tick.kin").length).toBeGreaterThan(0);
   });
 
+  test("the daemon's member ids drive grouping and detail lookup even when the mirror would key differently", async () => {
+    const daemonSig: ErrorSignature = { ...MIX_SIG, key: "codex|shell|PostToolUse|rekeyed by the daemon", members: mixEvents.map((e) => e.id) };
+    sessionEvents.mockResolvedValue(mixEvents);
+    errorSignatures.mockResolvedValue([daemonSig]);
+    const sigs: (ErrorSignature | undefined)[] = [];
+    const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+    await panel.open(MIX_SESSION);
+    expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
+    expect(sigs).toEqual([daemonSig]);
+    expect(panel.root.querySelectorAll(".score-chart .score-tick.kin")).toHaveLength(2);
+  });
+
   test("an older daemon without GET /errors still groups motifs locally and costs the score nothing", async () => {
     sessionEvents.mockResolvedValue(mixEvents);
     errorSignatures.mockRejectedValue(new Error("GET /errors: 404"));
