@@ -172,7 +172,7 @@ func applyPatchShapes(t *testing.T, outputs bool) []event.Event {
 	}
 	var out []event.Event
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 11 {
+	if len(lines) != 12 {
 		t.Fatalf("apply_patch shapes: %d", len(lines))
 	}
 	for _, line := range lines {
@@ -187,9 +187,10 @@ func applyPatchShapes(t *testing.T, outputs bool) []event.Event {
 	return out
 }
 
-// Codex apply_patch paths come from the patch's file headers. Each event adds
-// 1 to every distinct path it names; a header cut by balanced-mode truncation
-// (the last line, ending in "…") is no path.
+// Codex apply_patch paths come from the patch's file headers, and for a hook
+// PostToolUse also from its output summary. Each event adds 1 to every distinct
+// path it names; a header cut by balanced-mode truncation (the last line,
+// ending in "…") is no path.
 func TestActivityReadsApplyPatchHeaders(t *testing.T) {
 	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
 	e, _ := activityEngine(t, applyPatchShapes(t, false))
@@ -208,12 +209,16 @@ func TestActivityReadsApplyPatchHeaders(t *testing.T) {
 		"unknown|MEMORY.md": {{0, 1}},
 		// The first header survives truncation; the cut second one does not.
 		"|lib/code_normalizer.ex": {{0, 1}},
+		// A PostToolUse whose patch was cut before its second header: the output
+		// names both files, the header one of them.
+		"|mix.exs":                          {{0, 1}},
+		"|test/toolchain_contract_test.exs": {{0, 1}},
 	}
 	if got := heatOf(r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("heat = %v", got)
 	}
 	// The hook record whose only header was cut by truncation is unreadable.
-	if r.FileEvents != 5 || r.UnreadableFileEvents != 1 {
+	if r.FileEvents != 6 || r.UnreadableFileEvents != 1 {
 		t.Fatalf("file=%d unreadable=%d", r.FileEvents, r.UnreadableFileEvents)
 	}
 }

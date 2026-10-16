@@ -394,8 +394,9 @@ Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
   `PreToolUse`/`PostToolUse`). The headers read are `*** Add File: `,
   `*** Update File: `, `*** Delete File: ` and `*** Move to: ` (a move names its
   source and its destination). Only newline-terminated header lines count, so a
-  header cut by truncation is no path. Else, for an `apply_patch` payload with
-  no patch text (the Codex rollout `custom_tool_call_output:apply_patch`), the
+  header cut by truncation is no path. Together with those headers, for an
+  `apply_patch` payload with an `output` (the Codex rollout
+  `custom_tool_call_output:apply_patch`, or the hook's `PostToolUse`), the
   files its `output` lists after a line `Success. Updated the following files:`
   at the start of the text or of a line: each following line `A <path>`,
   `M <path>` or `D <path>`, up to the first line of another form (an empty
@@ -404,9 +405,9 @@ Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
   `output` string is read; a wrapper cut by truncation is read up to its last
   complete `\n` escape. Here too only newline-terminated lines count, and a
   failure output (`apply_patch verification failed: …`, a timeout) lists no
-  files. A move is listed as `M <destination>`. The hook's `PostToolUse` also
-  carries an `output`; only its patch text is read. Each event counts on its
-  own: one Codex patch observed by both the rollout and the hook adds Heat once
+  files. A move is listed as `M <destination>`. A `PostToolUse` names the
+  paths of its headers and of its `output` together, each once. Each event
+  counts on its own: one Codex patch observed by both the rollout and the hook adds Heat once
   per event that names the path, as a Claude Code edit adds 1 for `PreToolUse`
   and 1 for `PostToolUse`. These rules are this route's only;
   `/artifacts/files` is unchanged.
@@ -422,7 +423,8 @@ Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
   unresolved groups carry the label `Outside known worktrees`.
 - `file_events`: in-scope file-category events counted; `unreadable_file_events`
   is those whose payload yields no path (for example a record captured in
-  minimal mode, an `apply_patch` call whose every header was cut by truncation,
+  minimal mode, an `apply_patch` call whose every header, and every file its
+  `output` lists, was cut by truncation,
   or a Codex `custom_tool_call_output:apply_patch` that failed or whose every
   listed file was cut by truncation). They add no Heat.
 - `capture_gap` has the Timeline meaning.
@@ -431,12 +433,12 @@ Privacy: `path` values are display values, readable in `balanced` and `full`
 like other graph labels; balanced-mode capture truncates long payload strings at
 240 runes, so such a path arrives ending in `…` and is returned verbatim. The
 same truncation applies to `apply_patch` text: in practice only the first file
-header (rarely the second) survives, so a multi-file Codex patch heats its first
-file and not the rest. A rollout output's file list is cut the same way, usually
-after a few files. In `full` mode every header and listed file is read. In
-`minimal` mode paths are digests on disk, so the response is `available: false`,
-`unavailable_reason: "minimal"`, with empty `paths` and `groups`, and no spool
-day is read. Group ids are identity values and follow the privacy mode.
+header (rarely the second) survives, so a multi-file Codex patch's call text
+heats its first file and not the rest. An `output` file list (the rollout's or
+the hook `PostToolUse`'s) is cut the same way, usually after a few files. In
+`full` mode every header and listed file is read. In `minimal` mode paths are
+digests on disk, so the response is `available: false`, `unavailable_reason:
+"minimal"`, with empty `paths` and `groups`, and no spool day is read. Group ids are identity values and follow the privacy mode.
 
 Read bound: the Projection's identity-day index names the day files holding the
 repository (and workspace) identity; only those UTC days overlapping

@@ -10,15 +10,17 @@ short neutral text, times are moved onto 2026-10-16, and identities are the
 SHA-256 digests of `/work/proj/.git` and `/work/proj` (the antigravity record was
 recorded in full mode and keeps raw identities).
 
-`activity_apply_patch_shapes.ndjson` holds eleven real Codex `apply_patch` records
-taken from a copy of the real spool on 2026-10-16, sanitized the same way. Five
+`activity_apply_patch_shapes.ndjson` holds twelve real Codex `apply_patch` records
+taken from a copy of the real spool on 2026-10-16, sanitized the same way. Six
 are calls: a rollout `custom_tool_call:apply_patch` with `*** Update File:` +
 `*** Move to:`,
 an untruncated one deleting two `/tmp` files (paths kept verbatim), a hook
 `PostToolUse` with a relative `*** Update File:` header, a hook `PreToolUse`
 whose second header was cut by balanced-mode truncation (recorded with raw
-identities, here `/work/proj/.git` and `/work/proj`), and a hook `PreToolUse`
-whose only header was cut. Each truncated text keeps its trailing `…`.
+identities, here `/work/proj/.git` and `/work/proj`), a hook `PreToolUse`
+whose only header was cut, and a hook `PostToolUse` whose patch was cut before
+its second header while its `output` lists both files (its `transcript_path`
+dropped). Each truncated text keeps its trailing `…`.
 
 The other six are rollout `custom_tool_call_output:apply_patch` records, one per
 `output` variant: plain text listing relative paths with its fourth line cut,

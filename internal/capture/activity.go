@@ -185,9 +185,10 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 
 // activityPaths extracts an event's paths. A minimal-mode record holds a
 // {sha256,len} digest where a codex changes map was; that is no path at all.
-// A Codex apply_patch call names its paths only in its patch text, and its
-// rollout output only in its result text; both are read here and not by the
-// projection, so /artifacts/files is unchanged.
+// A Codex apply_patch event names its paths only in its patch text and its
+// result text: the rollout splits them across the call and its output, the
+// hook's PostToolUse carries both. Both are read here, once each path, and not
+// by the projection, so /artifacts/files is unchanged.
 func activityPaths(ev event.Event) []string {
 	if changes, ok := ev.Payload["changes"].(map[string]any); ok && isDigest(changes) {
 		ev.Payload = maps.Clone(ev.Payload)
@@ -196,10 +197,13 @@ func activityPaths(ev event.Event) []string {
 	if paths := projection.EventFilePaths(ev); len(paths) > 0 {
 		return paths
 	}
-	if paths := applyPatchPaths(applyPatchText(ev.Payload)); len(paths) > 0 {
-		return paths
+	paths := applyPatchPaths(applyPatchText(ev.Payload))
+	for _, p := range applyPatchSummaryPaths(applyPatchOutput(ev.Payload)) {
+		if !slices.Contains(paths, p) {
+			paths = append(paths, p)
+		}
 	}
-	return applyPatchSummaryPaths(applyPatchOutput(ev.Payload))
+	return paths
 }
 
 // applyPatchText is a Codex apply_patch call's patch: the rollout
@@ -241,11 +245,13 @@ func applyPatchPaths(text string) []string {
 	}
 }
 
-// applyPatchOutput is the result text of a Codex rollout
-// custom_tool_call_output for apply_patch, which carries no patch text. The
-// hook's PostToolUse also has an output, but only its patch text is read.
+// applyPatchOutput is a Codex apply_patch result text: the rollout
+// custom_tool_call_output's, or the hook PostToolUse's. Balanced mode often
+// cuts a patch after its first header's diff, while its output lists its
+// files one per line with no diff between them, so it can name files the
+// patch text no longer does.
 func applyPatchOutput(payload map[string]any) string {
-	if payload["tool_name"] != "apply_patch" || payload["input"] != nil || payload["tool_input"] != nil {
+	if payload["tool_name"] != "apply_patch" {
 		return ""
 	}
 	s, _ := payload["output"].(string)

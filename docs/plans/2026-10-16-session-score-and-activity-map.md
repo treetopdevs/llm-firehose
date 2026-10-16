@@ -190,8 +190,9 @@ has no `file_path`/`path`/`file` and no `changes` map. Decisions:
   the same headers would change that response and needs its own decision.
 - **(b) Double counting: none removed. Heat still counts events.** Per patch,
   the rollout adds 2 (the call and its `_output`, see "Output summaries" below),
-  the hook adds 2 (`PreToolUse` and `PostToolUse`), each the same as Claude
-  Code's accepted 2 per edit; both together add 4, and a historical
+  the hook adds 2 (`PreToolUse` and `PostToolUse`; 1 for a file only the
+  `PostToolUse` output names), each the same as Claude Code's accepted 2 per
+  edit; both together add 4, and a historical
   `patch_apply_end` adds 1 more.
   1,241 of about 21k call ids in the spool copy were seen by both rollout and
   hook. A path named twice in one patch adds 1. Deduplicating by `call_id`
@@ -201,7 +202,8 @@ has no `file_path`/`path`/`file` and no `changes` map. Decisions:
   usually only the first header survives (14,745 headers read from 14,678 rollout
   calls). Only newline-terminated header lines count, so a cut header is never a
   path. `docs/contracts.md` ("Activity heat", Privacy) says that a multi-file
-  patch heats its first file. The desktop notice for unreadable events is
+  patch's call text heats its first file; its `output` (rollout or hook
+  `PostToolUse`) usually lists more. The desktop notice for unreadable events is
   unchanged and still accurate.
 - **Relative headers.** Codex resolves a relative patch path against its cwd;
   the Activity resolver roots it at the event's worktree root (the existing
@@ -215,13 +217,13 @@ Measured on a copy of the real spool (223 days):
 |---|---|---|---|
 | rollout `custom_tool_call:apply_patch` | 14,678 | 14,678 (3,280 with a relative header) | 0 |
 | hook `PreToolUse` `apply_patch` | 8,439 | 8,399 | 40 (34 with only a cut header) |
-| hook `PostToolUse` `apply_patch` | 8,046 | 8,012 | 34 |
+| hook `PostToolUse` `apply_patch` | 8,046 | 8,012 (771 heat 786 more files from `output`) | 34 |
 | rollout `custom_tool_call_output:apply_patch` | 14,677 | 14,128 (see below) | 549 |
 
 Pinned by `internal/capture/testdata/activity_apply_patch_shapes.ndjson`
 (sanitized real records: a move, an untruncated two-file delete, a relative
-header, a cut second header, a cut only header, and six `_output` records listed
-below) and the updated `activity_real_shapes.ndjson` expectations.
+header, a cut second header, a cut only header, a `PostToolUse` whose `output`
+names a file its cut patch does not, and six `_output` records listed below) and the updated `activity_real_shapes.ndjson` expectations.
 
 **Output summaries.** The rollout `custom_tool_call_output:apply_patch` is now
 read too, when its payload has no patch text: the `A`/`M`/`D` lines after
@@ -248,18 +250,16 @@ JSON, JSON cut in `metadata`, JSON cut inside `output`, a verification failure
 naming a path, and a JSON timeout.
 
 The hook `PostToolUse` carries the same plain `output` summary (8,046 events in
-the spool copy). It is not read, because its patch text already is: headers name
-a path in 8,012. Reading the output as a fallback for the other 34, whose only
-header was cut, was measured and **decided against**: it reads 0 of them. The
-output is cut at 240 runes too, and its preamble (`Exit code…`, `Wall time…`,
-`Output:`, the success line) is longer than `*** Begin Patch\n*** Update File: `,
-so a path long enough to cut the header also cuts the output's first line.
-
-**Open question for the user:** in 7,900 `PostToolUse` events both headers and
-output name paths, and in 771 of them the output names 786 paths the headers do
-not (none is a relative/absolute twin of a header path). Reading the union of
-both would add those; it would also make a hook event's paths depend on its
-output, which no other event does.
+the spool copy), and it is read **together with** its patch headers: the event
+names each path from either, once. Headers name a path in 8,012. In 7,900 both
+name paths, and in 771 of them the output names 786 files the cut patch text
+does not (none is a relative/absolute twin of a header path), so those patches
+now heat every file they touched, not only the first. The other 34, whose only
+header was cut, stay unreadable: their output is cut too, and its preamble
+(`Exit code…`, `Wall time…`, `Output:`, the success line) is longer than
+`*** Begin Patch\n*** Update File: `, so a path long enough to cut the header
+also cuts the output's first line. A hook patch still adds 2 Heat to its first
+file; a file named only by the output gets 1 (from `PostToolUse`).
 
 ## Shared deferred work
 
