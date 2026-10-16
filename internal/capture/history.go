@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,11 +50,7 @@ func (e *Engine) Session(id string) ([]event.Event, error) {
 	if len(days) == 0 {
 		return nil, fmt.Errorf("%w: session %q", ErrNotFound, id)
 	}
-	events, err := spool.ReadDays(e.spoolDir, days)
-	if err != nil {
-		return nil, err
-	}
-	return filterDeduplicate(events, func(ev event.Event) bool { return ev.SessionID == id }, ErrNotFound, "session", id)
+	return e.history(days, id, func(ev event.Event) bool { return ev.SessionID == id }, "session")
 }
 
 // Trace returns presentation-deduplicated events sharing one trace id.
@@ -62,27 +59,40 @@ func (e *Engine) Trace(id string) ([]event.Event, error) {
 	if len(days) == 0 {
 		return nil, fmt.Errorf("%w: trace %q", ErrNotFound, id)
 	}
-	events, err := spool.ReadDays(e.spoolDir, days)
-	if err != nil {
-		return nil, err
-	}
-	return filterDeduplicate(events, func(ev event.Event) bool { return ev.TraceID == id }, ErrNotFound, "trace", id)
+	return e.history(days, id, func(ev event.Event) bool { return ev.TraceID == id }, "trace")
 }
 
-func filterDeduplicate(events []event.Event, keep func(event.Event) bool, notFound error, kind, id string) ([]event.Event, error) {
+// history streams the named day files (oldest first, as the projection
+// returns them) through the day scanner, decoding only records whose raw
+// bytes carry the quoted id, and keeps the events the exact predicate accepts
+// with stable-id replays collapsed onto their first occurrence. An id that
+// cannot be located reliably in raw bytes (non-ASCII, escapable) is scanned
+// without a prefilter. Invalid records are skipped, matching the projection
+// that produced the day list: it never counted them, so they are not part of
+// the session or trace the caller was shown.
+func (e *Engine) history(days []string, id string, keep func(event.Event) bool, kind string) ([]event.Event, error) {
+	var filter spool.Prefilter
+	if needles, ok := spool.IdentityNeedles([]string{id}); ok {
+		filter = spool.Prefilter{needles}
+	}
 	seen := make(map[string]bool)
-	out := make([]event.Event, 0, len(events))
-	for _, ev := range events {
-		if !keep(ev) || ev.ID != "" && seen[ev.ID] {
-			continue
+	var out []event.Event
+	for _, day := range days {
+		err := e.scanDay(context.Background(), e.spoolDir, day, filter, func() {}, func(ev event.Event) {
+			if !keep(ev) || ev.ID != "" && seen[ev.ID] {
+				return
+			}
+			if ev.ID != "" {
+				seen[ev.ID] = true
+			}
+			out = append(out, ev)
+		})
+		if err != nil {
+			return nil, err
 		}
-		if ev.ID != "" {
-			seen[ev.ID] = true
-		}
-		out = append(out, ev)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("%w: %s %q", notFound, kind, id)
+		return nil, fmt.Errorf("%w: %s %q", ErrNotFound, kind, id)
 	}
 	return out, nil
 }

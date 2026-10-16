@@ -24,15 +24,17 @@ import (
 // scanRecorder wraps the production day scanner so tests can prove exactly
 // which spool day files a query opened.
 type scanRecorder struct {
-	mu     sync.Mutex
-	days   []string
-	before func(day string)
+	mu      sync.Mutex
+	days    []string
+	filters []spool.Prefilter
+	before  func(day string)
 }
 
 func (r *scanRecorder) scanner() dayScanner {
 	return func(ctx context.Context, dir, day string, filter spool.Prefilter, onGap func(), yield func(event.Event)) error {
 		r.mu.Lock()
 		r.days = append(r.days, day)
+		r.filters = append(r.filters, filter)
 		before := r.before
 		r.mu.Unlock()
 		if before != nil {
@@ -48,9 +50,16 @@ func (r *scanRecorder) scanned() []string {
 	return append([]string(nil), r.days...)
 }
 
+func (r *scanRecorder) prefilters() []spool.Prefilter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]spool.Prefilter(nil), r.filters...)
+}
+
 func (r *scanRecorder) reset() {
 	r.mu.Lock()
 	r.days = nil
+	r.filters = nil
 	r.mu.Unlock()
 }
 
