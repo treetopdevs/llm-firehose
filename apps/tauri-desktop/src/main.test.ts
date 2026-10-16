@@ -46,3 +46,38 @@ test("Live is home and the shared attention strip remains available across views
   expect(document.querySelector(".attention-inbox")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
 });
+
+test("the score view is reachable from the sidebar and starts empty", async () => {
+  document.body.innerHTML = '<div id="app"></div>';
+  vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
+  vi.stubGlobal("setInterval", () => 0);
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      onopen = null;
+      onerror = null;
+      onmessage = null;
+      close() {}
+    },
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.endsWith("/health")
+              ? { status: "ok", version: "test", schema_version: 1 }
+              : url.endsWith("/attention")
+                ? { sessions: [], warnings: [] }
+                : [],
+          ),
+        ),
+    ),
+  );
+  await import("./main");
+  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "score")!;
+  btn.click();
+  expect(document.querySelector(".score")).not.toBeNull();
+  expect(document.querySelector(".score")?.textContent).toContain("open a session");
+});

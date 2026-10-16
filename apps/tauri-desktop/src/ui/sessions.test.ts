@@ -242,3 +242,23 @@ test("ordinary aggregate session rows retain history from every source", async (
     expect(panel.root.textContent).toContain("opencode aggregate evidence");
   });
 });
+
+
+test("a session row offers to open its score without opening the event list", async () => {
+  sessions.mockResolvedValue([summary({ id: "s1" })]);
+  const scored: string[] = [];
+  const panel = createSessions(() => {}, () => [], (id) => scored.push(id));
+  await panel.refresh();
+  const btn = panel.root.querySelector<HTMLButtonElement>(".session-item .score-open")!;
+  expect(btn.getAttribute("aria-label")).toBe("open score for session s1");
+  btn.click();
+  expect(scored).toEqual(["s1"]);
+  expect(sessionEvents).not.toHaveBeenCalled();
+});
+
+test("without a score callback the row has no score button", async () => {
+  sessions.mockResolvedValue([summary({ id: "s1" })]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.refresh();
+  expect(panel.root.querySelector(".score-open")).toBeNull();
+});

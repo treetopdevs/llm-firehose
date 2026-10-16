@@ -1,6 +1,6 @@
 # Session Score and Activity Map: decisions from the grilling session
 
-**Status:** Decisions agreed 2026-10-16; nothing implemented. Source concepts
+**Status:** Decisions agreed 2026-10-16; Session Score v1 shipped the same day (see below); Activity Map not started. Source concepts
 are items 10 (Agent Score) and 2 (Repository Weather) in
 `docs/brainstorms/2026-10-15-wild-visualizations/`. Canonical terms live in
 `CONTEXT.md`: Session Score, Activity Map, Heat, Error Signature.
@@ -34,6 +34,42 @@ Activity Map second.
 - **Minimal privacy mode:** categories, times, and call ids survive, so
   tracks render; summaries are digests, so labels are hashed.
 - **Surface:** desktop, SVG, no new dependencies.
+
+### Shipped 2026-10-16 (v1)
+
+`apps/tauri-desktop/src/ui/score/`: `model.ts` (tracks, playhead, viewport,
+labels), `index.ts` (SVG view, overview strip, transport), tests, and
+`fixture.session.json`, a real 101-event claude-code session captured in
+balanced mode on 2026-10-15 with personal paths rewritten. Opened from the
+`score` button on a session row; also a `score` entry in the sidebar that
+starts empty. Span pairing was lifted out of `buildLanes` into the exported
+`collectCalls` helper in `lanes/model.ts`; Lanes behaviour and tests are
+unchanged, and a parity test asserts the score's spans equal the lane's over
+the fixture. The transport has play/pause (space), speed 1× to 60×, jump to
+next and previous event (arrows), zoom in/out/fit around the playhead, and a
+whole-session overview strip that follows the playhead. Playback runs on
+`requestAnimationFrame`, moves only the cursor and the highlighted tick, and
+calls the detail renderer only when the event under the cursor changes, with
+the session's own events as the pairing siblings. Nothing in the TUI, daemon,
+or Go code changed.
+
+Observed real-capture quirks:
+
+- One `mcp__ccd_turn__wrap_up` call in the fixture has its `end` captured
+  56 ms before its `start` (19:32:52.490 vs 19:32:52.546). Lanes treats an end
+  before its start as unmatched, so both views draw it as an open span to the
+  session's last report rather than a negative one. Pinned by a test; not
+  "fixed" in the shared helper because that would change Lanes.
+- The plan assumed minimal mode digests summaries. `internal/privacy` only
+  digests payload values (to `{sha256, len}`) and path identities (to 64 hex
+  characters); `summary` stays readable in every mode. So tracks and tick
+  labels read normally, and only the tool name in span titles prints as a
+  short hash. The view handles both digest shapes and nothing else.
+- `GET /sessions/{id}` includes `firehose` `state.transition` events. As in
+  Lanes they are not activity: only `needs_input` draws, as a mark on the meta
+  track; other transitions are neither drawn nor stepped to.
+- The brief named a `stripControl` helper to reuse; none existed. A small one
+  (C0, DEL, C1, and bidi controls) lives in `score/model.ts`.
 
 ## Activity Map (was Repository Weather)
 
