@@ -247,11 +247,19 @@ destination. Fixtures: plain with relative paths and a cut fourth line, whole
 JSON, JSON cut in `metadata`, JSON cut inside `output`, a verification failure
 naming a path, and a JSON timeout.
 
-Follow-up, not done: the hook `PostToolUse` carries the same plain `output`
-summary (8,046 events). It is not read, because its patch text already is; 34
-`PostToolUse` events whose only header was cut stay unreadable although their
-output lists the file. Reading the output as a fallback there is a separate
-decision.
+The hook `PostToolUse` carries the same plain `output` summary (8,046 events in
+the spool copy). It is not read, because its patch text already is: headers name
+a path in 8,012. Reading the output as a fallback for the other 34, whose only
+header was cut, was measured and **decided against**: it reads 0 of them. The
+output is cut at 240 runes too, and its preamble (`Exit code…`, `Wall time…`,
+`Output:`, the success line) is longer than `*** Begin Patch\n*** Update File: `,
+so a path long enough to cut the header also cuts the output's first line.
+
+**Open question for the user:** in 7,900 `PostToolUse` events both headers and
+output name paths, and in 771 of them the output names 786 paths the headers do
+not (none is a relative/absolute twin of a header path). Reading the union of
+both would add those; it would also make a hook event's paths depend on its
+output, which no other event does.
 
 ## Shared deferred work
 
