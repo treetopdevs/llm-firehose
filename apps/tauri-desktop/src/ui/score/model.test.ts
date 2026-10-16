@@ -2,19 +2,27 @@ import { describe, expect, test } from "vitest";
 import type { FirehoseEvent } from "../../api";
 import { MAX_OPEN_SPAN_MS, buildLanes } from "../lanes/model";
 import {
+  BUCKET_PX,
   CATEGORY_ORDER,
+  MIN_VIEW_MS,
   SPEEDS,
   advance,
   buildScore,
   clampView,
+  coalesce,
+  coalesceTrack,
+  columnOf,
   digestLabel,
   eventAt,
   eventLabel,
   nextEventAfter,
   prevEventBefore,
+  scoreAxisTicks,
   stripControl,
+  tickKind,
   zoomView,
 } from "./model";
+import type { Track } from "./model";
 import fixture from "./fixture.session.json";
 
 // A real claude-code session captured in balanced mode on 2026-10-15 (101
@@ -209,5 +217,178 @@ describe("labels", () => {
   test("stripControl removes C0, C1, and bidi override characters", () => {
     expect(stripControl("a\u0000b\u001fc\u007fd\u009fe‪f⁦g")).toBe("abcdefg");
     expect(stripControl("tab\tkeeps\nnewline")).toBe("tab\tkeeps\nnewline");
+  });
+});
+
+// --- viewport coalescing -------------------------------------------------------
+
+const HOUR = 3_600_000;
+const CATS = ["session", "prompt", "tool", "file", "shell"];
+
+/** A synthetic long session: `n` events over `spanMs`, every 50th an error, every other tool event a call pair. */
+function bigSession(n: number, spanMs: number): FirehoseEvent[] {
+  const base = 1_800_000_000_000;
+  const out: FirehoseEvent[] = [];
+  for (let i = 0; i < n; i++) {
+    const category = CATS[i % CATS.length];
+    const call = category === "tool" ? { call_id: `c${i >> 1}`, payload: { phase: i % 2 ? "end" : "start", tool_name: "Bash" } } : {};
+    out.push({
+      id: `e${i}`,
+      time: new Date(base + Math.floor((i / n) * spanMs)).toISOString(),
+      source: "codex",
+      agent: "codex",
+      category,
+      session_id: "big",
+      severity: i % 50 === 0 ? "error" : undefined,
+      ...call,
+    } as FirehoseEvent);
+  }
+  return out;
+}
+
+describe("coalesce: drawn nodes are bounded by the viewport, not the event count", () => {
+  const W = 682; // what an 800px chart leaves for lanes
+  const big = bigSession(100_000, 1364 * HOUR);
+
+  test("a 100k-event session coalesces to at most one node per pixel column per kind on each track", () => {
+    const score = buildScore(big);
+    expect(score.events).toHaveLength(100_000);
+    const drawn = coalesce(score, { from: score.start, to: score.end }, W);
+    expect(drawn.map((tr) => tr.category)).toEqual(score.tracks.map((tr) => tr.category));
+    const columns = Math.ceil(W / BUCKET_PX) + 1;
+    for (const tr of drawn) {
+      const kinds = new Set(tr.ticks.map((tk) => tk.kind)).size;
+      expect(tr.ticks.length).toBeLessThanOrEqual(columns * kinds);
+      expect(tr.spans.length).toBeLessThanOrEqual(columns * 2);
+    }
+    const ticks = drawn.reduce((n, tr) => n + tr.ticks.length, 0);
+    expect(ticks).toBeLessThanOrEqual(columns * drawn.length * 2);
+    // Every in-view event is counted exactly once.
+    expect(drawn.reduce((n, tr) => n + tr.ticks.reduce((m, tk) => m + tk.count, 0), 0)).toBe(100_000);
+    // The playhead index is untouched by coalescing.
+    expect(nextEventAfter(score, score.start)?.event.id).toBe("e1");
+  });
+
+  test("zooming in culls to the window and keeps the bound; counts cover only what is in view", () => {
+    const score = buildScore(big);
+    const view = zoomView({ from: score.start, to: score.end }, 1000, score.start + 100 * HOUR, { from: score.start, to: score.end });
+    const drawn = coalesce(score, view, W);
+    const inView = score.events.filter((e) => e.at >= view.from && e.at <= view.to).length;
+    expect(inView).toBeGreaterThan(0);
+    expect(drawn.reduce((n, tr) => n + tr.ticks.reduce((m, tk) => m + tk.count, 0), 0)).toBe(inView);
+    for (const tr of drawn) for (const tk of tr.ticks) expect(tk.at).toBeGreaterThanOrEqual(view.from);
+  });
+
+  test("builds and coalesces 100k events well under a second", () => {
+    const t0 = performance.now();
+    const score = buildScore(big);
+    const view = { from: score.start, to: score.end };
+    coalesce(score, view, W);
+    const zoomed = zoomView(view, 4, score.start + 100 * HOUR, view);
+    coalesce(score, zoomed, W);
+    expect(scoreAxisTicks(view, W).length).toBeGreaterThanOrEqual(2);
+    expect(scoreAxisTicks(zoomed, W).length).toBeGreaterThanOrEqual(2);
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
+});
+
+describe("coalesce: merge rules", () => {
+  const view = { from: 0, to: 100_000 };
+  const W = 100; // 1000 ms per pixel
+  const tk = (at: number, kind: "event" | "error" | "needs", id: string) => ({ at, kind, id });
+  const track = (ticks: Track["ticks"], spans: Track["spans"] = []): Track => ({ category: "tool", ticks, spans });
+
+  test("ticks in the same pixel column merge into one tick carrying a count and the earliest id", () => {
+    const tr = track([tk(5_300, "event", "b"), tk(5_100, "event", "a"), tk(5_900, "event", "c"), tk(7_000, "event", "d")]);
+    const out = coalesceTrack(tr, view, W);
+    expect(out.ticks).toEqual([
+      { at: 5_100, kind: "event", id: "a", count: 3, column: 5 },
+      { at: 7_000, kind: "event", id: "d", count: 1, column: 7 },
+    ]);
+    expect(columnOf(5_999, view, W)).toBe(5);
+    expect(columnOf(6_000, view, W)).toBe(6);
+  });
+
+  test("an error tick never merges into plain ticks in its column; a needs tick keeps its own mark too", () => {
+    const tr = track([tk(5_100, "event", "a"), tk(5_200, "error", "x"), tk(5_300, "event", "b"), tk(5_400, "needs", "n")]);
+    const out = coalesceTrack(tr, view, W);
+    expect(out.ticks.map((t) => [t.kind, t.id, t.count])).toEqual([
+      ["event", "a", 2],
+      ["error", "x", 1],
+      ["needs", "n", 1],
+    ]);
+  });
+
+  test("ticks outside the window are not drawn", () => {
+    const tr = track([tk(-1, "event", "a"), tk(0, "event", "b"), tk(100_000, "event", "c"), tk(100_001, "event", "d")]);
+    expect(coalesceTrack(tr, view, W).ticks.map((t) => t.id)).toEqual(["b", "c"]);
+  });
+
+  test("spans narrower than a pixel in the same column merge; a wide span and an open span stay separate", () => {
+    const sp = (from: number, to: number, open = false, startId = `s${from}`) => ({ from, to, open, startId, endId: open ? undefined : `e${to}` });
+    const tr = track([], [sp(5_100, 5_200), sp(5_300, 5_350, true), sp(5_400, 5_500), sp(5_450, 5_480, true), sp(5_600, 9_000), sp(200_000, 200_100)]);
+    const out = coalesceTrack(tr, view, W);
+    expect(out.spans).toEqual([
+      { from: 5_100, to: 5_500, open: false, startId: "s5100", endId: "e5500", count: 2 },
+      { from: 5_300, to: 5_480, open: true, startId: "s5300", endId: undefined, count: 2 },
+      { from: 5_600, to: 9_000, open: false, startId: "s5600", endId: "e9000", count: 1 },
+    ]);
+  });
+
+  test("a small session paints the same columns coalesced as it would tick by tick", () => {
+    const score = buildScore(session);
+    const view = { from: score.start, to: score.end };
+    const W = 682;
+    const drawn = coalesce(score, view, W);
+    const raw = new Set(score.tracks.flatMap((tr) => tr.ticks.map((t) => `${tr.category}:${t.kind}:${columnOf(t.at, view, W)}`)));
+    const merged = new Set(drawn.flatMap((tr) => tr.ticks.map((t) => `${tr.category}:${t.kind}:${t.column}`)));
+    expect(merged).toEqual(raw);
+    expect(drawn.reduce((n, tr) => n + tr.ticks.reduce((m, t) => m + t.count, 0), 0)).toBe(101);
+    expect(drawn.reduce((n, tr) => n + tr.spans.reduce((m, s) => m + s.count, 0), 0)).toBe(47);
+  });
+
+  test("tickKind matches what buildScore assigns", () => {
+    expect(tickKind(ev(0))).toBe("event");
+    expect(tickKind(ev(0, { severity: "error" }))).toBe("error");
+    expect(tickKind(ev(0, { category: "error" }))).toBe("error");
+    expect(tickKind(ev(0, { source: "firehose", category: "meta", name: "state.transition", payload: { state: "needs_input" } }))).toBe("needs");
+  });
+});
+
+describe("scoreAxisTicks", () => {
+  const W = 682;
+  const start = Date.parse("2026-09-01T00:00:00Z");
+
+  test("a multi-week window, and the same window after one zoom, get at least two spaced labels with dates", () => {
+    for (const hours of [1364, 682]) {
+      const view = { from: start, to: start + hours * HOUR };
+      const ticks = scoreAxisTicks(view, W);
+      expect(ticks.length).toBeGreaterThanOrEqual(2);
+      expect(ticks.length).toBeLessThanOrEqual(W / 80 + 1);
+      const px = ticks.map((t) => ((t.at - view.from) / (view.to - view.from)) * W);
+      for (let i = 1; i < px.length; i++) expect(px[i] - px[i - 1]).toBeGreaterThanOrEqual(80 - 1e-6);
+      for (const t of ticks) {
+        expect(t.at).toBeGreaterThanOrEqual(view.from);
+        expect(t.at).toBeLessThanOrEqual(view.to);
+        expect(t.label).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/);
+      }
+    }
+  });
+
+  test("a thirteen-minute session labels minutes like Lanes does", () => {
+    const score = buildScore(session);
+    const ticks = scoreAxisTicks({ from: score.start, to: score.end }, W);
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(ticks[0].label).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  test("the narrowest window still gets two labels, in tenths of a second", () => {
+    const ticks = scoreAxisTicks({ from: start, to: start + MIN_VIEW_MS }, W);
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(ticks[0].label).toMatch(/^\d{2}:\d{2}:\d{2}\.\d$/);
+    // Whole seconds once the step reaches a second.
+    expect(scoreAxisTicks({ from: start, to: start + 10 * MIN_VIEW_MS }, W)[0].label).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    // A session shorter than any step still gets its two ends labelled.
+    expect(scoreAxisTicks({ from: start, to: start + 10 }, W)).toHaveLength(2);
   });
 });

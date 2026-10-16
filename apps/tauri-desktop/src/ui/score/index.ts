@@ -1,29 +1,34 @@
 // Session Score: replay one finished session as time-aligned tracks, one per
-// envelope category, over GET /sessions/{id}. The score is always fully
-// drawn; the playhead is a cursor that highlights the event under it and
-// drives the detail pane. Gaps are real time at every speed.
+// envelope category, over GET /sessions/{id}. Everything in the window is
+// drawn, marks sharing a pixel column as one mark with a count, so a session
+// of any size draws tracks × width nodes. The playhead is a cursor over the
+// full event list that highlights the event under it and drives the detail
+// pane. Gaps are real time at every speed.
 
 import { sessionEvents } from "../../api";
 import type { FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatClockMs, formatDuration } from "../../format";
 import type { Siblings } from "../detail";
-import { axisTicks } from "../lanes/model";
 import {
   SPEEDS,
   advance,
   buildScore,
   clampView,
+  coalesce,
+  columnOf,
   digestLabel,
   eventAt,
   eventLabel,
   nextEventAfter,
   panView,
   prevEventBefore,
+  scoreAxisTicks,
   stripControl,
+  tickKind,
   zoomView,
 } from "./model";
-import type { Score, ScoreEvent, Track, View } from "./model";
+import type { DrawnTrack, Score, ScoreEvent, View } from "./model";
 
 export type ScorePanel = {
   root: HTMLElement;
@@ -42,7 +47,8 @@ const AXIS_H = 20;
 const ROW_H = 28;
 const PAD = 8;
 const FALLBACK_W = 800;
-const LABEL_PX = 56;
+/** Width of one axis label character at the 11px axis font. */
+const LABEL_CH = 6.5;
 const MINI_ROW_H = 6;
 const ZOOM_STEP = 2;
 
@@ -63,12 +69,13 @@ function svg<K extends keyof SVGElementTagNameMap>(
 
 // Tool, then summary, then duration. In minimal mode the tool name is a
 // digest and prints as a short hash; the summary stays readable in every mode.
-function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, open: boolean, startId: string): string {
+function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, open: boolean, startId: string, count: number): string {
   const start = byId.get(startId);
   const tool = start ? digestLabel(start.payload?.tool_name) : "";
   const what = start ? eventLabel(start) : "";
   const how = open ? `open · no end captured · ${formatDuration(to - from)}+` : formatDuration(to - from);
-  return [tool, what, how].filter(Boolean).join(" · ");
+  const many = count > 1 ? `×${count} calls, first` : "";
+  return [many, tool, what, how].filter(Boolean).join(" · ");
 }
 
 export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) => void): ScorePanel {
@@ -90,7 +97,10 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
   let playing = false;
   let speed: number = SPEEDS[0];
   let version = 0;
+  /** Drawn tick per track, kind, and pixel column; the current event's node is found by its column. */
   let tickNodes = new Map<string, SVGElement>();
+  /** Lane width the chart was last drawn at; columns are computed against it, not the live width. */
+  let drawnLaneW = 0;
   let playheadLine: SVGLineElement | undefined;
   let frameStamp = 0;
 
@@ -203,10 +213,26 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     if (target.event.id !== currentId) highlight(target);
   }
 
+  function nodeKey(category: string, kind: string, column: number): string {
+    return `${category}\u0000${kind}\u0000${column}`;
+  }
+  function nodeFor(ev: FirehoseEvent): SVGElement | undefined {
+    const at = Date.parse(ev.time);
+    if (Number.isNaN(at) || at < view.from || at > view.to) return undefined;
+    return tickNodes.get(nodeKey(ev.category, tickKind(ev), columnOf(at, view, drawnLaneW)));
+  }
+  function eventById(id: string): ScoreEvent | undefined {
+    const ev = byId.get(id);
+    if (!ev) return undefined;
+    const at = Date.parse(ev.time);
+    return Number.isNaN(at) ? undefined : { at, event: ev };
+  }
+
   function highlight(target: ScoreEvent) {
-    if (currentId) tickNodes.get(currentId)?.classList.remove("current");
+    const was = currentId ? byId.get(currentId) : undefined;
+    if (was) nodeFor(was)?.classList.remove("current");
     currentId = target.event.id;
-    tickNodes.get(currentId)?.classList.add("current");
+    nodeFor(target.event)?.classList.add("current");
     onSelect(target.event, siblings);
   }
 
@@ -274,19 +300,34 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
 
   function drawChart(): SVGSVGElement {
     const w = width();
+    drawnLaneW = laneW();
     const height = AXIS_H + score.tracks.length * ROW_H + PAD;
     const canvas = svg("svg", { viewBox: `0 0 ${w} ${height}`, width: "100%", height, role: "group", "aria-label": "session score" });
     canvas.append(
       svg("defs", {}, svg("clipPath", { id: clipId }, svg("rect", { x: LABEL_W, y: 0, width: laneW(), height }))),
     );
     const axis = svg("g", { class: "score-axis" });
-    for (const tk of axisTicks(view.to, view.to - view.from, laneW())) {
+    let labelled = 0;
+    let lastLabelEnd = -Infinity;
+    for (const tk of scoreAxisTicks(view, drawnLaneW)) {
       const tx = xFor(tk.at);
       axis.append(svg("line", { x1: tx, x2: tx, y1: AXIS_H - 4, y2: height - PAD }));
-      if (tx + LABEL_PX <= w - PAD) axis.append(svg("text", { x: tx + 3, y: AXIS_H - 7 }, tk.label));
+      // Dated labels are wider than clock labels; size the spill check to the text.
+      const lw = tk.label.length * LABEL_CH + 6;
+      if (tx + lw <= w - PAD) {
+        axis.append(svg("text", { x: tx + 3, y: AXIS_H - 7 }, tk.label));
+        lastLabelEnd = tx + lw;
+        labelled++;
+      } else if (tx - lw >= lastLabelEnd || labelled < 2) {
+        // A label that would spill past the right edge is written to the
+        // left of its tick when that does not cover the previous label, and
+        // always when fewer than two labels have been drawn.
+        axis.append(svg("text", { x: tx - 3, y: AXIS_H - 7, "text-anchor": "end" }, tk.label));
+        labelled++;
+      }
     }
     canvas.append(axis);
-    score.tracks.forEach((tr, i) => canvas.append(trackRow(tr, i, w)));
+    coalesce(score, view, drawnLaneW).forEach((tr, i) => canvas.append(trackRow(tr, i, w)));
     playheadLine = svg("line", { class: "score-playhead", x1: 0, x2: 0, y1: AXIS_H - 4, y2: height - PAD });
     canvas.append(playheadLine);
     // Clicking empty track space puts the cursor there.
@@ -301,14 +342,15 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     return canvas;
   }
 
-  function trackRow(tr: Track, i: number, w: number): SVGGElement {
+  function trackRow(tr: DrawnTrack, i: number, w: number): SVGGElement {
     const y = AXIS_H + i * ROW_H;
     const mid = y + ROW_H / 2;
+    const full = score.tracks[i];
     const g = svg("g", {
       class: "score-track",
       tabindex: 0,
       role: "button",
-      "aria-label": `track ${tr.category}: ${tr.ticks.length} events, ${tr.spans.length} calls; activate to step to its next event`,
+      "aria-label": `track ${tr.category}: ${full.ticks.length} events, ${full.spans.length} calls; activate to step to its next event`,
       "data-key": tr.category,
     });
     // Enter or Space on a row steps to that category's next event after the
@@ -334,14 +376,17 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
         svg(
           "rect",
           { class: `score-span${sp.open ? " open" : ""}`, x: x1, y: mid - 4, width: x2 - x1, height: 8 },
-          svg("title", {}, stripControl(spanTitle(byId, sp.from, sp.to, sp.open, sp.startId))),
+          svg("title", {}, stripControl(spanTitle(byId, sp.from, sp.to, sp.open, sp.startId, sp.count))),
         ),
       );
     }
-    for (const tk of tr.ticks) {
+    // Plain ticks first so an error or needs-you mark in the same column stays on top.
+    const ticks = [...tr.ticks].sort((a, b) => (a.kind === "event" ? 0 : 1) - (b.kind === "event" ? 0 : 1));
+    for (const tk of ticks) {
       const tx = xFor(tk.at);
       const ev = byId.get(tk.id);
       const label = ev ? eventLabel(ev) : "";
+      const many = tk.count > 1 ? `×${tk.count} · first ` : "";
       let node: SVGElement;
       switch (tk.kind) {
         case "error":
@@ -353,16 +398,18 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
         default:
           node = svg("rect", { class: "score-tick", "data-id": tk.id, x: tx - 1, y: mid - 7, width: 2, height: 14 });
       }
-      node.append(svg("title", {}, `${formatClockMs(ev?.time ?? "")}  ${label}`));
+      node.append(svg("title", {}, `${many}${formatClockMs(ev?.time ?? "")}  ${label}`));
+      // A merged tick selects its earliest event; stepping from there visits the rest.
       node.addEventListener("click", (e) => {
         e.stopPropagation();
-        const target = score.events.find((e) => e.event.id === tk.id);
+        const target = eventById(tk.id);
         if (target) select(target);
       });
-      if (tk.id === currentId) node.classList.add("current");
-      tickNodes.set(tk.id, node);
+      tickNodes.set(nodeKey(tr.category, tk.kind, tk.column), node);
       marks.append(node);
     }
+    const cur = currentId ? byId.get(currentId) : undefined;
+    if (cur && cur.category === tr.category) nodeFor(cur)?.classList.add("current");
     g.append(marks);
     return g;
   }
@@ -372,7 +419,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings) =>
     const height = score.tracks.length * MINI_ROW_H + PAD;
     const canvas = svg("svg", { viewBox: `0 0 ${w} ${height}`, width: "100%", height, role: "img", "aria-label": "whole session overview" });
     canvas.append(svg("text", { class: "score-label", x: 10, y: height / 2 + 4 }, "whole session"));
-    score.tracks.forEach((tr, i) => {
+    coalesce(score, bounds(), laneW()).forEach((tr, i) => {
       const y = PAD / 2 + i * MINI_ROW_H;
       const g = svg("g", { class: "score-track-mini" });
       for (const sp of tr.spans) {

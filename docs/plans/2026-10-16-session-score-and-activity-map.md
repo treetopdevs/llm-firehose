@@ -71,6 +71,46 @@ Observed real-capture quirks:
 - The brief named a `stripControl` helper to reuse; none existed. A small one
   (C0, DEL, C1, and bidi controls) lives in `score/model.ts`.
 
+### Shipped 2026-10-16 (v1.1: large sessions)
+
+A real 123,273-event Codex session took 27 s to first render and 3.3 s per
+zoom in v1, because every event was its own SVG node. `score/model.ts` now
+has a pure coalescing step, `coalesce(score, view, widthPx)`: for the current
+window, ticks that fall in the same pixel column (`BUCKET_PX`, 1 px) on one
+track are drawn once, carrying a count and the earliest event's id for the
+inspector. Error and needs-you ticks never merge into plain ticks; they keep
+their own mark per column, drawn on top. Spans that would paint the same
+pixels (same start and end column, same open state) merge the same way.
+Marks outside the window are not drawn. So the chart holds at most
+tracks × columns × kinds tick nodes plus a similarly bounded number of spans,
+whatever the event count; the overview strip coalesces the same way with the
+whole session as its window. `Score.events` is untouched: zoom, jump to
+next/previous, and the playhead still step through every event, and the
+highlighted node is found by the current event's column, not its id. On the
+123k session in happy-dom: build 70 ms, coalesce 13 ms, first open about
+0.4 s (16k SVG nodes), zoom redraw about 0.3 s. A small session paints exactly the same
+columns it did tick by tick (pinned by a test on the fixture); only the
+title of a merged mark changes, to `×N · first …`.
+
+"The score is always fully drawn" now means: everything inside the window
+is drawn, and the whole session is always on the overview strip. Events
+outside the window are not in the DOM, so a test that counted 101 tick
+nodes after a zoom now counts the coalesced marks instead.
+
+Axis labels were missing after a zoom on a multi-week session because the
+Lanes step table stops at one hour: a 1364-hour window drew one tick per
+hour, ~0.5 px apart, so the labels stacked into an unreadable smear, and the
+right-edge spill rule could drop the last one. The score has its own
+`scoreAxisTicks(view, widthPx)` in `score/model.ts` (Lanes' `axisTicks` is
+unchanged): steps from 100 ms to 28 days, dates in the label once the window
+is longer than a day, the finest step with 80 px per label as in Lanes, and
+always at least two ticks: a window too narrow for any step is labelled at
+its ends. Steps are counted arithmetically, never built, so choosing one
+costs nothing on a long window. The spill check is sized to the label text
+(dated labels are wider), and a label that would spill past the right edge
+is right-anchored when that does not cover the previous label, and always
+while fewer than two labels have been drawn.
+
 ## Activity Map (was Repository Weather)
 
 - **Primary job:** orient after an overnight or long run over a historical

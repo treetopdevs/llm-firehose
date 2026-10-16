@@ -6,7 +6,31 @@ vi.mock("../../api", () => ({ sessionEvents: (id: string) => sessionEvents(id) }
 
 import type { FirehoseEvent } from "../../api";
 import { createScore } from "./index";
+import { BUCKET_PX, buildScore, coalesce } from "./model";
 import fixture from "./fixture.session.json";
+
+const HOUR = 3_600_000;
+
+/** `n` events over `spanMs` on five tracks, every 50th an error; see model.test.ts. */
+function bigSession(n: number, spanMs: number): FirehoseEvent[] {
+  const cats = ["session", "prompt", "tool", "file", "shell"];
+  const base = 1_800_000_000_000;
+  return Array.from({ length: n }, (_, i) => {
+    const category = cats[i % cats.length];
+    const call = category === "tool" ? { call_id: `c${i >> 1}`, payload: { phase: i % 2 ? "end" : "start", tool_name: "Bash" } } : {};
+    return {
+      id: `e${i}`,
+      time: new Date(base + Math.floor((i / n) * spanMs)).toISOString(),
+      source: "codex",
+      agent: "codex",
+      category,
+      session_id: "big",
+      summary: `event ${i}`,
+      severity: i % 50 === 0 ? "error" : undefined,
+      ...call,
+    } as FirehoseEvent;
+  });
+}
 
 const session = fixture as FirehoseEvent[];
 const SID = session[0].session_id!;
@@ -50,9 +74,15 @@ describe("session score view", () => {
       expect(r.getAttribute("tabindex")).toBe("0");
       expect(r.getAttribute("role")).toBe("button");
     }
-    expect(svg.querySelectorAll(".score-span")).toHaveLength(47);
+    // Marks sharing a pixel column are drawn once with a count; together they cover every event and call.
+    const drawnTicks = coalesce(buildScore(session), { from: START, to: t(session[session.length - 1].time) }, 682);
+    const tickCount = drawnTicks.reduce((n, tr) => n + tr.ticks.length, 0);
+    const spanCount = drawnTicks.reduce((n, tr) => n + tr.spans.length, 0);
+    expect(tickCount).toBeLessThan(101);
+    expect(svg.querySelectorAll(".score-tick")).toHaveLength(tickCount);
+    expect(svg.querySelectorAll(".score-span")).toHaveLength(spanCount);
     expect(svg.querySelectorAll(".score-span.open")).toHaveLength(1);
-    expect(svg.querySelectorAll(".score-tick")).toHaveLength(101);
+    expect([...svg.querySelectorAll(".score-tick title")].filter((n) => n.textContent?.startsWith("×")).length).toBeGreaterThan(0);
     expect(svg.querySelectorAll(".score-axis text").length).toBeGreaterThan(0);
     expect(panel.root.querySelector(".score-head")?.textContent).toContain(SID);
     expect(panel.root.querySelector(".score-head")?.textContent).toContain("101 events");
@@ -167,8 +197,9 @@ describe("session score view", () => {
     expect(viewW()).toBeCloseTo(whole / 2, 3);
     button(panel.root, "zoom in").click();
     expect(viewW()).toBeCloseTo(whole / 4, 3);
-    // The score stays fully drawn: every event is still in the DOM, zoomed or not.
-    expect(panel.root.querySelectorAll(".score-chart .score-tick")).toHaveLength(101);
+    // Only the window is drawn, but everything in it is: the overview still covers the whole session.
+    expect(panel.root.querySelectorAll(".score-chart .score-tick").length).toBeLessThan(101);
+    expect(panel.root.querySelectorAll(".score-overview .score-tick-mini").length).toBeGreaterThan(0);
     button(panel.root, "zoom out").click();
     expect(viewW()).toBeCloseTo(whole / 2, 3);
     button(panel.root, "fit").click();
@@ -232,5 +263,52 @@ describe("session score view", () => {
     finish(session);
     await stale;
     expect(panel.root.querySelectorAll(".score-tick")).toHaveLength(3);
+  });
+
+  test("a 100k-event multi-week session draws a bounded number of nodes, keeps dated axis labels after zoom, and steps event by event", async () => {
+    const big = bigSession(100_000, 1364 * HOUR);
+    sessionEvents.mockResolvedValue(big);
+    const selected: FirehoseEvent[] = [];
+    const panel = createScore((ev) => selected.push(ev));
+    const t0 = performance.now();
+    await panel.open("big");
+    const openMs = performance.now() - t0;
+    const chart = panel.root.querySelector<SVGSVGElement>(".score-chart svg")!;
+    const laneW = Number(chart.getAttribute("viewBox")!.split(" ")[2]) - 110 - 8;
+    const columns = Math.ceil(laneW / BUCKET_PX) + 1;
+    const tracks = chart.querySelectorAll(".score-track").length;
+    expect(tracks).toBe(5);
+    // Ticks: at most one per column per kind present (event, error); spans likewise bounded by columns.
+    expect(chart.querySelectorAll(".score-tick").length).toBeLessThanOrEqual(columns * tracks * 2);
+    expect(chart.querySelectorAll(".score-span").length).toBeLessThanOrEqual(columns * 2);
+    expect(chart.querySelectorAll(".score-tick.error").length).toBeGreaterThan(0);
+    expect(panel.root.querySelectorAll(".score-overview .score-tick-mini").length).toBeLessThanOrEqual(columns * tracks * 2);
+    expect(panel.root.querySelector(".score-head")?.textContent).toContain("100000 events");
+
+    const labels = () => [...panel.root.querySelectorAll(".score-axis text")].map((n) => n.textContent ?? "");
+    expect(labels().length).toBeGreaterThanOrEqual(2);
+    expect(labels().every((l) => /^\d{2}-\d{2} \d{2}:\d{2}$/.test(l))).toBe(true);
+    button(panel.root, "zoom in").click();
+    expect(labels().length).toBeGreaterThanOrEqual(2);
+    expect(new Set(labels()).size).toBe(labels().length);
+
+    // Jumping steps through the full event list, one event at a time, even
+    // though thousands share a pixel column; the merged tick is highlighted.
+    button(panel.root, "jump to next event").click();
+    button(panel.root, "jump to next event").click();
+    expect(selected.map((e) => e.id)).toEqual(["e0", "e1", "e2"]);
+    expect(panel.playhead()).toBe(t(big[2].time));
+    const cur = panel.root.querySelector<SVGRectElement>(".score-chart .score-tick.current")!;
+    expect(cur).not.toBeNull();
+    expect(Math.abs(Number(cur.getAttribute("x")) - playheadX(panel.root))).toBeLessThan(3);
+    expect(cur.querySelector("title")?.textContent).toMatch(/^×\d+ · /);
+    // Clicking a merged tick selects its earliest event.
+    cur.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(selected[selected.length - 1].id).toBe("e2");
+
+    // v1 took 27 s to first render on a session this size; happy-dom builds
+    // nodes slowly and shares the CPU with other suites, so this is a loose
+    // guard (model.test.ts holds the tight bound on the pure part).
+    expect(openMs).toBeLessThan(2000);
   });
 });

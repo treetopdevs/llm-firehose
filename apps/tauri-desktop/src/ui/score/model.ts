@@ -32,6 +32,12 @@ export type Score = {
 };
 export type View = { from: number; to: number };
 
+/** How an event is marked on its track; what buildScore assigns and what the view keys highlights by. */
+export function tickKind(ev: FirehoseEvent): TickKind {
+  if (isTransition(ev)) return "needs";
+  return ev.severity === "error" || ev.category === "error" ? "error" : "event";
+}
+
 function rank(category: string): number {
   const i = (CATEGORY_ORDER as readonly string[]).indexOf(category);
   return i === -1 ? CATEGORY_ORDER.length : i;
@@ -60,8 +66,7 @@ export function buildScore(events: readonly FirehoseEvent[]): Score {
       continue;
     }
     if (Number.isNaN(lastReport) || t > lastReport) lastReport = t;
-    const failed = ev.severity === "error" || ev.category === "error";
-    trackFor(ev.category).ticks.push({ at: t, kind: failed ? "error" : "event", id: ev.id });
+    trackFor(ev.category).ticks.push({ at: t, kind: tickKind(ev), id: ev.id });
     drawn.push({ at: t, event: ev });
   }
   for (const call of collectCalls(events)) {
@@ -84,6 +89,12 @@ export function buildScore(events: readonly FirehoseEvent[]): Score {
   }
   drawn.sort((a, b) => a.at - b.at);
   const ordered = [...tracks.values()].sort((a, b) => rank(a.category) - rank(b.category) || (a.category < b.category ? -1 : 1));
+  // Spool order is only roughly chronological; the coalescer walks ticks and
+  // spans in time order so one pass finds every column's earliest member.
+  for (const tr of ordered) {
+    tr.ticks.sort((a, b) => a.at - b.at);
+    tr.spans.sort((a, b) => a.from - b.from);
+  }
   return {
     start: drawn.length ? drawn[0].at : NaN,
     end: drawn.length ? drawn[drawn.length - 1].at : NaN,
@@ -156,6 +167,145 @@ export function zoomView(view: View, factor: number, anchor: number, bounds: Vie
 export function panView(view: View, center: number, bounds: View): View {
   const width = view.to - view.from;
   return clampView({ from: center - width / 2, to: center + width / 2 }, bounds);
+}
+
+// --- viewport coalescing ---------------------------------------------------------
+//
+// The score is drawn for a window of the session at a pixel width. Marks that
+// would land in the same pixel column on one track are drawn once, carrying a
+// count, so the number of nodes is bounded by tracks × columns rather than by
+// the event count. Zoom, jump, and the playhead keep using Score.events.
+
+/** Width of one coalescing bucket in pixels. */
+export const BUCKET_PX = 1;
+
+export type DrawnTick = { at: number; kind: TickKind; id: string; count: number; column: number };
+export type DrawnSpan = { from: number; to: number; open: boolean; startId: string; endId: string | undefined; count: number };
+export type DrawnTrack = { category: string; ticks: DrawnTick[]; spans: DrawnSpan[] };
+
+/** The bucket an instant falls in for a window drawn `widthPx` wide. */
+export function columnOf(at: number, view: View, widthPx: number): number {
+  return Math.floor((((at - view.from) / (view.to - view.from)) * widthPx) / BUCKET_PX);
+}
+
+export function coalesceTrack(track: Track, view: View, widthPx: number): DrawnTrack {
+  const ticks: DrawnTick[] = [];
+  // One open bucket per kind: an error or needs-you mark never disappears into
+  // the plain ticks around it.
+  const current: Partial<Record<TickKind, DrawnTick>> = {};
+  for (const tk of track.ticks) {
+    if (tk.at < view.from || tk.at > view.to) continue;
+    const column = columnOf(tk.at, view, widthPx);
+    const open = current[tk.kind];
+    if (open && open.column === column) {
+      open.count++;
+      if (tk.at < open.at) {
+        open.at = tk.at;
+        open.id = tk.id;
+      }
+      continue;
+    }
+    const next = { at: tk.at, kind: tk.kind, id: tk.id, count: 1, column };
+    current[tk.kind] = next;
+    ticks.push(next);
+  }
+  ticks.sort((a, b) => a.at - b.at || a.column - b.column);
+
+  type Bucketed = DrawnSpan & { c1: number; c2: number };
+  const spans: Bucketed[] = [];
+  // Sub-pixel spans sharing a column merge; so do spans that would paint the
+  // very same pixels. Open spans are drawn differently and never merge with
+  // closed ones, so each state keeps its own open bucket.
+  const lastBy: { open?: Bucketed; closed?: Bucketed } = {};
+  for (const sp of track.spans) {
+    if (sp.to < view.from || sp.from > view.to) continue;
+    const c1 = columnOf(sp.from, view, widthPx);
+    const c2 = columnOf(sp.to, view, widthPx);
+    const last = sp.open ? lastBy.open : lastBy.closed;
+    if (last && last.c1 === c1 && last.c2 === c2) {
+      last.count++;
+      last.to = Math.max(last.to, sp.to);
+      if (!sp.open && sp.to >= last.to) last.endId = sp.endId;
+      if (sp.from < last.from) {
+        last.from = sp.from;
+        last.startId = sp.startId;
+      }
+      continue;
+    }
+    const next = { from: sp.from, to: sp.to, open: sp.open, startId: sp.startId, endId: sp.endId, count: 1, c1, c2 };
+    if (sp.open) lastBy.open = next;
+    else lastBy.closed = next;
+    spans.push(next);
+  }
+  spans.sort((a, b) => a.from - b.from);
+  return {
+    category: track.category,
+    ticks,
+    spans: spans.map(({ c1: _c1, c2: _c2, ...sp }) => sp),
+  };
+}
+
+/** Every track of the score coalesced for one window and width; the overview strip uses the whole session as its window. */
+export function coalesce(score: Score, view: View, widthPx: number): DrawnTrack[] {
+  return score.tracks.map((tr) => coalesceTrack(tr, view, widthPx));
+}
+
+// --- axis ------------------------------------------------------------------------------
+
+const SEC = 1000;
+const MIN = 60 * SEC;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+/** Candidate label steps from a tenth of a second to four weeks; Lanes stops at an hour, a session does not. */
+const AXIS_STEPS_MS = [100, 250, 500, SEC, 2 * SEC, 5 * SEC, 10 * SEC, 30 * SEC, MIN, 5 * MIN, 15 * MIN, 30 * MIN, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 7 * DAY, 14 * DAY, 28 * DAY];
+const AXIS_MIN_LABEL_PX = 80;
+
+export type ScoreAxisTick = { at: number; label: string };
+
+function axisLabel(at: number, step: number, withDate: boolean): string {
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  let s = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (step < MIN) s += `:${pad(d.getSeconds())}`;
+  if (step < SEC) s += `.${Math.floor(d.getMilliseconds() / 100)}`;
+  return withDate ? `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${s}` : s;
+}
+
+/** How many whole multiples of `step` fall inside the window; no ticks are built to count them. */
+function stepCount(view: View, step: number): number {
+  return Math.floor(view.to / step) - Math.ceil(view.from / step) + 1;
+}
+
+function stepTicks(view: View, step: number): number[] {
+  const out: number[] = [];
+  for (let at = Math.ceil(view.from / step) * step; at <= view.to; at += step) out.push(at);
+  return out;
+}
+
+/**
+ * Whole clock times inside the window at the coarsest step that keeps labels
+ * readable, and always at least two of them: a window too narrow for any
+ * step is labelled at its ends. Dates appear once a window is longer than a day.
+ */
+export function scoreAxisTicks(view: View, widthPx: number): ScoreAxisTick[] {
+  const windowMs = view.to - view.from;
+  const withDate = windowMs > DAY;
+  if (!(windowMs > 0) || !(widthPx > 0)) return [];
+  const pxPerMs = widthPx / windowMs;
+  // Finest to coarsest, as Lanes does: the first step with room for its
+  // labels wins if two of its ticks fall in the window; otherwise the
+  // coarsest step that still puts two ticks in the window, labels crowding or not.
+  let chosen: number | undefined;
+  for (const step of AXIS_STEPS_MS) {
+    if (stepCount(view, step) >= 2) chosen = step;
+    if (step * pxPerMs >= AXIS_MIN_LABEL_PX) break;
+  }
+  if (chosen === undefined) {
+    const step = AXIS_STEPS_MS[0];
+    return [view.from, view.to].map((at) => ({ at, label: axisLabel(at, step, withDate) }));
+  }
+  const step = chosen;
+  return stepTicks(view, step).map((at) => ({ at, label: axisLabel(at, step, withDate) }));
 }
 
 const DIGEST = /^[0-9a-f]{64}$/;
