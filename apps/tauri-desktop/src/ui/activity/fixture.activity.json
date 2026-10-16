@@ -1,0 +1,583 @@
+{
+  "repo_id": "a669bae23d0bd85247ef0007bbb70083ae5bcbe6ea03c1258837f4cc6ffb95e5",
+  "workspace_id": "",
+  "from": "2026-10-08T00:00:00Z",
+  "to": "2026-10-16T16:00:00Z",
+  "bucket_seconds": 3600,
+  "buckets": 208,
+  "available": true,
+  "unavailable_reason": "",
+  "paths": [
+    {
+      "path": "apps/tauri-desktop/src/ui/score/index.test.ts",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          203,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "apps/tauri-desktop/src/ui/score/index.ts",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          203,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "apps/tauri-desktop/src/ui/score/model.test.ts",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          203,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "apps/tauri-desktop/src/ui/score/model.ts",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          203,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "docs/plans/2026-10-16-activity-map-build-brief.md",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          204,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "internal/capture/activity.go",
+      "group": "",
+      "total": 4,
+      "heat": [
+        [
+          205,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "internal/capture/activity_scale_test.go",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          205,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "internal/capture/activity_test.go",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          205,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "internal/daemon/activity_test.go",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          205,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "internal/daemon/workspace_graph.go",
+      "group": "",
+      "total": 2,
+      "heat": [
+        [
+          205,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/.claude/projects/-Users-me-develop-llm-firehose/memory/desktop-preview-setup.md",
+      "group": "44f12b057addbecd508f67ac3b8d37bdd15b690c218050b62a8885b91eef1215",
+      "total": 2,
+      "heat": [
+        [
+          204,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/.claude/projects/-Users-me-develop-llm-firehose/memory/power-over-privacy.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          42,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/AGENTS.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/CLAUDE.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/CONTRIBUTING.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/README.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 6,
+      "heat": [
+        [
+          43,
+          6
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/canvas.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 6,
+      "heat": [
+        [
+          23,
+          2
+        ],
+        [
+          61,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/canvas.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/index.requests.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/index.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 4,
+      "heat": [
+        [
+          61,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/index.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/inspector.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/inspector.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/layout.fixtures.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 4,
+      "heat": [
+        [
+          23,
+          2
+        ],
+        [
+          61,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/layout.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 8,
+      "heat": [
+        [
+          23,
+          2
+        ],
+        [
+          61,
+          6
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/layout.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 4,
+      "heat": [
+        [
+          23,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/model.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/names.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/names.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/toolbar.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/graph/zz_review_probe.test.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/apps/tauri-desktop/src/ui/settings.ts",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/docs/compatibility.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          62,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/docs/plans/2026-10-08-graph-mockup-fidelity.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 20,
+      "heat": [
+        [
+          23,
+          4
+        ],
+        [
+          43,
+          16
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/docs/specs/workspace-graph-and-hook-timeline.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 10,
+      "heat": [
+        [
+          43,
+          10
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/capture/graph_history_scale_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/capture/internal/projection/identity_days_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          42,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/capture/internal/spool/scan_day_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          42,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/cli/privacy.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 4,
+      "heat": [
+        [
+          43,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/cli/privacy_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          43,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/workspacegraph/changes_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/workspacegraph/fixture_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/workspacegraph/guard.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 4,
+      "heat": [
+        [
+          111,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/workspacegraph/service.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          111,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/workspacegraph/service_test.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          111,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/develop/llm-firehose-graph-mockup/internal/workspacegraph/tools.go",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          111,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/private/tmp/claude/scratchpad/wf/codex-review/prompt.md",
+      "group": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "total": 2,
+      "heat": [
+        [
+          23,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Users/me/Library/Application Support/Claude/side-session-notes/local_24349112-a9b5-4ee9-bbaf-05b48285a37b/session-score-v1-handover.md",
+      "group": "e7b4f752f2aa103e7f9cc95911d21ad6d985080888f088f1cb0ecf595fc03c41",
+      "total": 2,
+      "heat": [
+        [
+          204,
+          2
+        ]
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "",
+      "label": "",
+      "resolved": true
+    },
+    {
+      "id": "44f12b057addbecd508f67ac3b8d37bdd15b690c218050b62a8885b91eef1215",
+      "label": "Outside known worktrees",
+      "resolved": false
+    },
+    {
+      "id": "5b4563134487688c6b302b62e70e58ec48e5b5a95d217126a9581e56f50385b4",
+      "label": "Outside known worktrees",
+      "resolved": false
+    },
+    {
+      "id": "e7b4f752f2aa103e7f9cc95911d21ad6d985080888f088f1cb0ecf595fc03c41",
+      "label": "Outside known worktrees",
+      "resolved": false
+    }
+  ],
+  "file_events": 150,
+  "unreadable_file_events": 2,
+  "truncated": false,
+  "truncated_total": 0,
+  "capture_gap": false
+}

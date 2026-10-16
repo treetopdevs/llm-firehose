@@ -72,6 +72,38 @@ export interface EventPage {
   capture_gap?: boolean;
   associations?: Record<string, { repo_id: string; workspace_id: string }>;
 }
+/** One path's Heat: sparse [bucket_index, count] pairs, ascending; `total` is their sum. */
+export interface ActivityPath {
+  path: string;
+  /** "" for a repository-relative path; otherwise the event's own worktree identity. */
+  group: string;
+  total: number;
+  heat: [number, number][];
+}
+export interface ActivityGroup {
+  id: string;
+  label: string;
+  resolved: boolean;
+}
+/** GET /workspace-graph/activity (docs/contracts.md, "Activity heat"). */
+export interface ActivityResponse {
+  repo_id: string;
+  workspace_id: string;
+  /** Floored to the bucket in UTC. */
+  from: string;
+  to: string;
+  bucket_seconds: number;
+  buckets: number;
+  available: boolean;
+  unavailable_reason: string;
+  paths: ActivityPath[];
+  groups: ActivityGroup[];
+  file_events: number;
+  unreadable_file_events: number;
+  truncated: boolean;
+  truncated_total: number;
+  capture_gap: boolean;
+}
 async function request<T>(
   path: string,
   params: Record<string, string> = {},
@@ -106,4 +138,7 @@ export const graphAPI = {
   /** Aborting `signal` cancels the request and frees its connection; the promise then rejects with an AbortError. */
   timeline: (params: Record<string, string>, signal?: AbortSignal) =>
     request<EventPage>("/timeline", params, undefined, signal),
+  /** Heat per path per bucket; aborting `signal` cancels it like `timeline`. */
+  activity: (params: Record<string, string>, signal?: AbortSignal) =>
+    request<ActivityResponse>("/activity", params, undefined, signal),
 };

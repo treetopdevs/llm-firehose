@@ -30,3 +30,13 @@ test("requests without a signal are unchanged", async () => {
   for (const call of fetchMock.mock.calls as unknown as [string, RequestInit | undefined][])
     expect(call[1]?.signal).toBeUndefined();
 });
+
+test("activity asks /workspace-graph/activity with its params and signal", async () => {
+  const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ paths: [] }) }));
+  vi.stubGlobal("fetch", fetchMock);
+  const controller = new AbortController();
+  await graphAPI.activity({ repo_id: "r", from: "2026-10-16T00:00:00Z" }, controller.signal);
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe("http://daemon.test/workspace-graph/activity?repo_id=r&from=2026-10-16T00%3A00%3A00Z");
+  expect(init.signal).toBe(controller.signal);
+});
