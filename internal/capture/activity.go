@@ -5,6 +5,7 @@ import (
 	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -184,8 +185,9 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 
 // activityPaths extracts an event's paths. A minimal-mode record holds a
 // {sha256,len} digest where a codex changes map was; that is no path at all.
-// A Codex apply_patch call names its paths only in its patch text, which is
-// read here and not by the projection, so /artifacts/files is unchanged.
+// A Codex apply_patch call names its paths only in its patch text, and its
+// rollout output only in its result text; both are read here and not by the
+// projection, so /artifacts/files is unchanged.
 func activityPaths(ev event.Event) []string {
 	if changes, ok := ev.Payload["changes"].(map[string]any); ok && isDigest(changes) {
 		ev.Payload = maps.Clone(ev.Payload)
@@ -194,7 +196,10 @@ func activityPaths(ev event.Event) []string {
 	if paths := projection.EventFilePaths(ev); len(paths) > 0 {
 		return paths
 	}
-	return applyPatchPaths(applyPatchText(ev.Payload))
+	if paths := applyPatchPaths(applyPatchText(ev.Payload)); len(paths) > 0 {
+		return paths
+	}
+	return applyPatchSummaryPaths(applyPatchOutput(ev.Payload))
 }
 
 // applyPatchText is a Codex apply_patch call's patch: the rollout
@@ -234,6 +239,82 @@ func applyPatchPaths(text string) []string {
 			}
 		}
 	}
+}
+
+// applyPatchOutput is the result text of a Codex rollout
+// custom_tool_call_output for apply_patch, which carries no patch text. The
+// hook's PostToolUse also has an output, but only its patch text is read.
+func applyPatchOutput(payload map[string]any) string {
+	if payload["tool_name"] != "apply_patch" || payload["input"] != nil || payload["tool_input"] != nil {
+		return ""
+	}
+	s, _ := payload["output"].(string)
+	return s
+}
+
+const applyPatchSummary = "Success. Updated the following files:\n"
+
+// applyPatchSummaryPaths returns the paths an apply_patch result lists after
+// its "Success. Updated the following files:" line, one "A ", "M " or "D " line
+// each, in order and once each. Older captures wrap the text in
+// {"output": ...}. As for headers, only newline-terminated lines count, so a
+// line cut by truncation is no path; a failure lists nothing.
+func applyPatchSummaryPaths(output string) []string {
+	if strings.HasPrefix(output, "{") {
+		output = unwrapApplyPatchOutput(output)
+	}
+	text, ok := strings.CutPrefix(output, applyPatchSummary)
+	if !ok {
+		if _, text, ok = strings.Cut(output, "\n"+applyPatchSummary); !ok {
+			return nil
+		}
+	}
+	var out []string
+	for {
+		line, rest, ok := strings.Cut(text, "\n")
+		if !ok || len(line) < 2 || !strings.ContainsRune("AMD", rune(line[0])) || line[1] != ' ' {
+			return out
+		}
+		text = rest
+		if p := line[2:]; p != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+}
+
+// unwrapApplyPatchOutput returns the "output" string of a JSON-wrapped result.
+// A wrapper cut by truncation inside that string is read up to its last
+// complete "\n" escape.
+func unwrapApplyPatchOutput(s string) string {
+	var w struct {
+		Output string `json:"output"`
+	}
+	if json.Unmarshal([]byte(s), &w) == nil {
+		return w.Output
+	}
+	lit, ok := strings.CutPrefix(s, `{"output":"`)
+	if !ok {
+		return ""
+	}
+	end := 0
+scan:
+	for i := 0; i < len(lit); i++ {
+		switch lit[i] {
+		case '"':
+			end = i
+			break scan
+		case '\\':
+			i++
+			if i < len(lit) && lit[i] == 'n' {
+				end = i + 1
+			}
+		}
+	}
+	var out string
+	if json.Unmarshal([]byte(`"`+lit[:end]+`"`), &out) != nil {
+		return ""
+	}
+	return out
 }
 
 func isDigest(v map[string]any) bool {

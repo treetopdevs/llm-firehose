@@ -189,9 +189,10 @@ has no `file_path`/`path`/`file` and no `changes` map. Decisions:
   `/artifacts/files` (a frozen response) does not change. Teaching the projection
   the same headers would change that response and needs its own decision.
 - **(b) Double counting: none removed. Heat still counts events.** Per patch,
-  the rollout call adds 1, the hook adds 2 (`PreToolUse` and `PostToolUse`, the
-  same as Claude Code's accepted 2 per edit), both together add 3, and a historical
-  `patch_apply_end` adds 1 more. The rollout `_output` adds nothing (see below).
+  the rollout adds 2 (the call and its `_output`, see "Output summaries" below),
+  the hook adds 2 (`PreToolUse` and `PostToolUse`), each the same as Claude
+  Code's accepted 2 per edit; both together add 4, and a historical
+  `patch_apply_end` adds 1 more.
   1,241 of about 21k call ids in the spool copy were seen by both rollout and
   hook. A path named twice in one patch adds 1. Deduplicating by `call_id`
   would change the CONTEXT.md definition of Heat ("count of … Captured Events").
@@ -215,18 +216,42 @@ Measured on a copy of the real spool (223 days):
 | rollout `custom_tool_call:apply_patch` | 14,678 | 14,678 (3,280 with a relative header) | 0 |
 | hook `PreToolUse` `apply_patch` | 8,439 | 8,399 | 40 (34 with only a cut header) |
 | hook `PostToolUse` `apply_patch` | 8,046 | 8,012 | 34 |
-| rollout `custom_tool_call_output:apply_patch` | 14,677 | 0 | 14,677 |
+| rollout `custom_tool_call_output:apply_patch` | 14,677 | 14,128 (see below) | 549 |
 
 Pinned by `internal/capture/testdata/activity_apply_patch_shapes.ndjson`
 (sanitized real records: a move, an untruncated two-file delete, a relative
-header, a cut second header, a cut only header) and the updated
-`activity_real_shapes.ndjson` expectations.
+header, a cut second header, a cut only header, and six `_output` records listed
+below) and the updated `activity_real_shapes.ndjson` expectations.
 
-Follow-up, not done: the rollout `_output` usually lists its files after
-`Success. Updated the following files:` (`A`/`M`/`D` lines; 14,135 of 14,677),
-but older captures wrap it in JSON or carry failure text. Reading it would make
-a rollout-only Codex patch 2 Heat, like a Claude Code edit, and is a separate
-format to pin.
+**Output summaries.** The rollout `custom_tool_call_output:apply_patch` is now
+read too, when its payload has no patch text: the `A`/`M`/`D` lines after
+`Success. Updated the following files:`, newline-terminated only, as for
+headers. A rollout-only Codex patch therefore adds 2 Heat, like a Claude Code
+edit. Every `_output` in the spool copy has `status: completed`, failures
+included, so status says nothing; anchoring on the success line is what keeps
+failures at 0 Heat. Variants in the spool copy (all 14,677 are strings):
+
+| `output` variant | Events | Read | Decision |
+|---|---|---|---|
+| plain `Exit code: …\nOutput:\nSuccess. Updated the following files:\n…` | 6,413 | 6,406 | read; 7 hold only a cut first path |
+| JSON `{"output":"Success. Updated …","metadata":{…}}`, whole | 7,491 | 7,491 | read the inner `output` (2,176 list a relative path) |
+| JSON wrapper cut by truncation | 231 | 231 | read up to the last complete `\n` escape when it begins `{"output":"` (all 231 do; 87 cut only in `metadata`, 144 inside `output`) |
+| JSON `command timed out after … milliseconds` | 3 | 0 | no success line: unreadable |
+| plain `apply_patch verification failed: …` | 532 | 0 | names a path, but no success line: unreadable |
+| plain `patch rejected: …`, `execution error: …` | 7 | 0 | unreadable |
+
+The read events list 15,270 paths, 3,401 of them relative (rooted at the
+event's worktree root, as for headers). A move is listed as `M <destination>`
+only, so the call heats source and destination and its output heats the
+destination. Fixtures: plain with relative paths and a cut fourth line, whole
+JSON, JSON cut in `metadata`, JSON cut inside `output`, a verification failure
+naming a path, and a JSON timeout.
+
+Follow-up, not done: the hook `PostToolUse` carries the same plain `output`
+summary (8,046 events). It is not read, because its patch text already is; 34
+`PostToolUse` events whose only header was cut stay unreadable although their
+output lists the file. Reading the output as a fallback there is a separate
+decision.
 
 ## Shared deferred work
 

@@ -147,38 +147,42 @@ func TestActivityPinsRealCaptureShapes(t *testing.T) {
 		// and its full-mode raw repo identity matches through the alias.
 		"|docs/plan.md": {{0, 1}},
 		// codex rollout custom_tool_call:apply_patch: the patch header in its input,
-		// read up to the balanced-mode truncation.
-		"|test/contract_test.exs": {{0, 1}},
+		// read up to the balanced-mode truncation; and its custom_tool_call_output:
+		// the first line of the "Updated the following files:" summary (the second
+		// was cut by truncation).
+		"|test/contract_test.exs": {{0, 2}},
 		// codex hook PreToolUse for apply_patch: the header in tool_input.command.
 		"|docs/README.md": {{0, 1}},
 	}
 	if got := heatOf(r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("heat = %v", got)
 	}
-	// The rollout custom_tool_call_output names its files only in result text,
-	// which is not parsed: no Heat, counted as unreadable.
-	if r.FileEvents != 7 || r.UnreadableFileEvents != 1 {
+	if r.FileEvents != 7 || r.UnreadableFileEvents != 0 {
 		t.Fatalf("file=%d unreadable=%d", r.FileEvents, r.UnreadableFileEvents)
 	}
 }
 
-// applyPatchShapes holds real apply_patch records by ID (see testdata/README.md).
-func applyPatchShapes(t *testing.T) []event.Event {
+// applyPatchShapes holds real apply_patch records (see testdata/README.md): the
+// calls, or the rollout custom_tool_call_output records when outputs is true.
+func applyPatchShapes(t *testing.T, outputs bool) []event.Event {
 	t.Helper()
 	b, err := os.ReadFile("testdata/activity_apply_patch_shapes.ndjson")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out []event.Event
-	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 11 {
+		t.Fatalf("apply_patch shapes: %d", len(lines))
+	}
+	for _, line := range lines {
 		var ev event.Event
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			t.Fatal(err)
 		}
-		out = append(out, ev)
-	}
-	if len(out) != 5 {
-		t.Fatalf("apply_patch shapes: %d", len(out))
+		if (ev.Name == "custom_tool_call_output:apply_patch") == outputs {
+			out = append(out, ev)
+		}
 	}
 	return out
 }
@@ -188,7 +192,7 @@ func applyPatchShapes(t *testing.T) []event.Event {
 // (the last line, ending in "…") is no path.
 func TestActivityReadsApplyPatchHeaders(t *testing.T) {
 	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
-	e, _ := activityEngine(t, applyPatchShapes(t))
+	e, _ := activityEngine(t, applyPatchShapes(t, false))
 	r, err := e.Activity(context.Background(), activityQuery(base, base.Add(time.Hour), time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +215,69 @@ func TestActivityReadsApplyPatchHeaders(t *testing.T) {
 	// The hook record whose only header was cut by truncation is unreadable.
 	if r.FileEvents != 5 || r.UnreadableFileEvents != 1 {
 		t.Fatalf("file=%d unreadable=%d", r.FileEvents, r.UnreadableFileEvents)
+	}
+}
+
+// A rollout custom_tool_call_output names its files after "Success. Updated the
+// following files:", as plain text or, in older captures, inside a JSON
+// {"output": ...} wrapper. A line cut by balanced-mode truncation is no path,
+// and a failure output names none.
+func TestActivityReadsApplyPatchOutputSummaries(t *testing.T) {
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	e, _ := activityEngine(t, applyPatchShapes(t, true))
+	r, err := e.Activity(context.Background(), activityQuery(base, base.Add(time.Hour), time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][][2]int{
+		// Plain text with relative paths; the fourth line was cut.
+		"unknown|priv/repo/migrations/20260522210000_create_pow_sessions.exs": {{0, 1}},
+		"unknown|lib/analyst/pow/session.ex":                                  {{0, 1}},
+		"unknown|lib/analyst/pow/postgres_credentials_store.ex":               {{0, 1}},
+		// JSON-wrapped, untruncated.
+		"|lib/isx_leads/types/case_code.ex": {{0, 1}},
+		"|lib/isx_leads/normalization.ex":   {{0, 1}},
+		// JSON-wrapped, cut in its metadata: the output string is whole.
+		"|test/cadence_web/controllers/api/v1/simulation_persona_controller_test.exs": {{0, 1}},
+		// JSON-wrapped, cut inside the output string: the third line is lost.
+		"|test/isx_leads_web/live/notification_bell_component_test.exs": {{0, 1}},
+		"|test/isx_leads/notifications/dispatcher_test.exs":             {{0, 1}},
+	}
+	if got := heatOf(r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("heat = %v", got)
+	}
+	// A verification failure naming a path and a JSON-wrapped timeout.
+	if r.FileEvents != 6 || r.UnreadableFileEvents != 2 {
+		t.Fatalf("file=%d unreadable=%d", r.FileEvents, r.UnreadableFileEvents)
+	}
+}
+
+func TestApplyPatchSummaryPaths(t *testing.T) {
+	const ok = "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\n"
+	for _, tc := range []struct {
+		name, output string
+		want         []string
+	}{
+		{"plain", ok + "A a.go\nM /work/proj/b.go\nD c.go\n", []string{"a.go", "/work/proj/b.go", "c.go"}},
+		{"cut last line", ok + "M a.go\nM b…", []string{"a.go"}},
+		{"marker cut", "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the fol…", nil},
+		{"first path cut", ok + "M /work/pr…", nil},
+		{"marker not at a line start", "echo Success. Updated the following files:\nM a.go\n", nil},
+		{"failure naming a path", "apply_patch verification failed: Failed to find expected lines in /work/proj/a.go:\n  x\n", nil},
+		{"list ends at another line", ok + "M a.go\nR b.go\nM c.go\n", []string{"a.go"}},
+		{"a path listed twice counts once", ok + "M a.go\nM a.go\n", []string{"a.go"}},
+		{"empty path", ok + "M \nM a.go\n", []string{"a.go"}},
+		{"json", `{"output":"Success. Updated the following files:\nA a.go\nM b.go\n","metadata":{"exit_code":0}}`, []string{"a.go", "b.go"}},
+		{"json cut in metadata", `{"output":"Success. Updated the following files:\nM a.go\n","metadata":{"exit_co…`, []string{"a.go"}},
+		{"json cut in output", `{"output":"Success. Updated the following files:\nM a.go\nM b.g…`, []string{"a.go"}},
+		{"json cut in an escape", `{"output":"Success. Updated the following files:\nM a.go\nM \u00…`, []string{"a.go"}},
+		{"json escaped backslash is no newline", `{"output":"Success. Updated the following files:\nM a\\nb.go\nM c…`, []string{`a\nb.go`}},
+		{"json timeout", `{"output":"command timed out after 10005 milliseconds\n","metadata":{"exit_code":124}}`, nil},
+		{"json without output", `{"metadata":{"exit_code":0}}`, nil},
+	} {
+		if got := applyPatchSummaryPaths(tc.output); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -350,7 +417,7 @@ func TestActivityCountsUnreadableMinimalPayloads(t *testing.T) {
 	s := realShapes(t)
 	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
 	var evs []event.Event
-	for i, key := range []string{editPre, "codex patch_apply_end", "codex custom_tool_call:apply_patch", "codex PreToolUse", "antigravity PostToolUse:view_file"} {
+	for i, key := range []string{editPre, "codex patch_apply_end", "codex custom_tool_call:apply_patch", "codex custom_tool_call_output:apply_patch", "codex PreToolUse", "antigravity PostToolUse:view_file"} {
 		ev := privacy.Redact(shapeAt(t, s, key, fmt.Sprintf("min%d", i), base.Add(time.Minute)), privacy.ModeMinimal)
 		ev.RepoID, ev.WorktreeID = shapeRepo, shapeWorktree
 		evs = append(evs, ev)
@@ -361,7 +428,7 @@ func TestActivityCountsUnreadableMinimalPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.FileEvents != 6 || r.UnreadableFileEvents != 5 || len(r.Paths) != 1 || r.Paths[0].Path != "plans/waiting-on-you.html" {
+	if r.FileEvents != 7 || r.UnreadableFileEvents != 6 || len(r.Paths) != 1 || r.Paths[0].Path != "plans/waiting-on-you.html" {
 		t.Fatalf("minimal records are unreadable, not heat: %+v", r)
 	}
 }
