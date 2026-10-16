@@ -1,6 +1,8 @@
 # GET /sessions/{id} performance: findings (2026-10-16)
 
-Status: measured, fix recommended, nothing implemented.
+Status: fix A implemented in `internal/capture/history.go` (branch
+`claude/sharp-feynman-8b9a32`); before/after measured below under
+"Result after fix A".
 
 Target: session `019f3e42-c2e2-7503-902c-a6c2d4b2fb85` (Codex, 123,273 events,
 2026-07-07 to 2026-09-02). The Session Score desktop view replays it through
@@ -217,6 +219,48 @@ prefilter. Then re-measure against the live daemon with the same `curl -w`
 command and record the numbers here. Rebuilding the Homebrew formula with
 go1.27 is a separate 1.6x tailwind on decode, not the fix.
 
+## Result after fix A (2026-10-16)
+
+`Engine.Session` and `Engine.Trace` now loop over `scanDay` (production
+`spool.ScanDay`) with `Prefilter{IdentityNeedles(id)}`, keeping the exact
+`SessionID == id` / `TraceID == id` check and the first-seen stable-id dedupe
+in the yield function. Ids that `IdentityNeedles` refuses (non-ASCII or
+escapable) scan with a nil prefilter. One semantic change, pinned by
+`TestSessionMatchesFullReadMinusInvalidRecords` and its Trace twin: records
+that fail `event.Validate` are now skipped, as `ScanDay`, the projection, and
+the workspace timeline already do; the old full-decode path returned them.
+The session the projection shows (its day set, its event count) never
+included such records, so the response now agrees with it. Not a frozen
+surface: same route, same JSON array, same dedupe.
+
+Measured with a rebuilt `firehosed` on `127.0.0.1:4599`, `HOME` pointing at a
+temp directory holding a copy of the 28 day files from 2026-07 to 2026-09
+whose bytes mention the session id (a superset of the 22 days `SessionDays`
+returns; the extra six only quote the id inside other sessions' payloads).
+The live daemon on 4517 was not touched. Three `curl -w` runs per build,
+warm page cache, the same `-o /dev/null` command as above. The response body
+hashes identically before and after (131,945,256 bytes, 123,273 events).
+
+| Build | Time to first byte, 3 runs | Daemon CPU time after 4 requests |
+|---|---|---|
+| before, go1.27.2 default (json v2) | 10.29 s, 9.83 s, 8.54 s | 44.3 s |
+| after, go1.27.2 default (json v2) | 3.63 s, 2.87 s, 2.92 s | 24.2 s |
+| before, `GOEXPERIMENT=nojsonv2` (classic json, as shipped) | 8.97 s, 8.70 s, 9.00 s | 46.9 s |
+| after, `GOEXPERIMENT=nojsonv2` | 3.85 s, 3.23 s, 3.07 s | 27.9 s |
+
+An earlier before run of the json v2 build on a quieter machine gave 6.82 s,
+6.47 s, 6.77 s; the spread between that and the 8.5 to 10.3 s pass is
+background load, so read the table as roughly 3x, not a precise ratio. The
+CPU-time column includes the ~10 s projection build at startup, so the
+per-request CPU went from about 8 to 9 s to about 3 to 4 s. The remaining
+time is decoding the session's own 123k records plus the 0.5 s encode; the
+lighter envelope (fix C) is the next step for both the server and the
+webview's 440 MB heap.
+
+Not done here: `Engine.Event(id)` still full-decodes one day file per
+evidence link through `spool.ReadDays`; `Session`/`Trace` take no context,
+so a client that disconnects does not cancel the scan.
+
 ## How these numbers were produced
 
 - `curl -s -o body.json -w 'size=%{size_download} ttfb=%{time_starttransfer} total=%{time_total}' http://127.0.0.1:4517/sessions/<id>`
@@ -224,3 +268,4 @@ go1.27 is a separate 1.6x tailwind on decode, not the fix.
 - Spool share: `wc -l` and `grep -c <id>` over the 22 day files named by the response's event dates.
 - Go harness: temporary `_test.go` files in `internal/capture` (not committed) timing `projection.Build`, `spool.ReadDays`, `filterDeduplicate`, `json.Encode`, `ScanDay` with and without `Prefilter`, a byte-offset index prototype, and `Engine.Session` over a copy of the spool in the scratchpad, with `-cpuprofile` and `-memprofile`, run with the default `GOEXPERIMENT` and with `nojsonv2`.
 - Webview proxy: `node` reading the body, `Buffer.toString`, `JSON.parse`, and per-line `JSON.parse` over the same events re-stringified.
+- After-fix table: `HOME=<tmp> firehosed -addr 127.0.0.1:4599` for each of four builds (`go build ./cmd/firehosed` at the parent commit and at the fix, each with and without `GOEXPERIMENT=nojsonv2`), wait on `/health`, then the `curl -w` command above three times, `ps -o cputime` on the daemon, and `shasum` of one saved body per build. Spool copy deleted afterwards.
