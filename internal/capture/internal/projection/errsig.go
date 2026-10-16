@@ -21,6 +21,11 @@ const (
 	errorSummaryMaxRunes = 160
 	errorDigestTokenLen  = 16
 	errorSignaturePaths  = 20
+	// errorSignatureSessionMembers caps how many qualifying event ids one
+	// signature remembers per session. The earliest (Time, ID) members are
+	// kept, so the list is order-independent; len(members) == cap is the
+	// truncation signal for consumers.
+	errorSignatureSessionMembers = 500
 )
 
 var (
@@ -42,11 +47,26 @@ type ErrorSignature struct {
 	FirstTime time.Time `json:"first_time"`
 	LastTime  time.Time `json:"last_time"`
 	Paths     []string  `json:"paths,omitempty"` // sorted, capped at 20
+	// Members is session-scoped: set only when a session filter is applied,
+	// holding that session's qualifying event ids in (Time, ID) order, capped
+	// at 500 earliest (len == 500 means truncated). Omitted otherwise.
+	Members []string `json:"members,omitempty"`
+}
+
+// memberObs orders one member observation; Time first so Members reads
+// chronologically, ID as the deterministic tiebreak.
+type memberObs struct {
+	time time.Time
+	id   string
 }
 
 type errorSignatureEntry struct {
 	ErrorSignature
-	sessions map[string]bool
+	// members holds per-session qualifying event observations, each slice
+	// sorted by (Time, ID) and capped at errorSignatureSessionMembers keeping
+	// the earliest, so the result does not depend on application order. The
+	// map keys double as the distinct-session set (Sessions).
+	members map[string][]memberObs
 	// sampleTime/sampleID identify the observation Sample came from. Sample is
 	// pinned to the earliest (Time, ID) observation with a non-empty summary,
 	// not the first applied, so a rebuild that reads the spool in a different
@@ -134,7 +154,7 @@ func (ix *Projection) foldErrorSignature(ev event.Event) {
 				FirstTime: ev.Time,
 				LastTime:  ev.Time,
 			},
-			sessions: map[string]bool{},
+			members: map[string][]memberObs{},
 		}
 		ix.errSigs[key] = e
 	}
@@ -152,8 +172,27 @@ func (ix *Projection) foldErrorSignature(ev event.Event) {
 	if !ev.Time.Before(e.LastTime) {
 		e.LastTime = ev.Time
 	}
+	// Membership follows the same order-independence rule as Paths: each
+	// session's slice stays sorted by (Time, ID) and a cap keeps the earliest
+	// members. The caller has already passed the exact-ID dedupe, so an id can
+	// only fold once; the equality skip below is defensive.
 	if ev.SessionID != "" {
-		e.sessions[ev.SessionID] = true
+		ms := e.members[ev.SessionID]
+		i := sort.Search(len(ms), func(i int) bool {
+			if !ms[i].time.Equal(ev.Time) {
+				return ms[i].time.After(ev.Time)
+			}
+			return ms[i].id >= ev.ID
+		})
+		if !(i < len(ms) && ms[i].id == ev.ID) {
+			ms = append(ms, memberObs{})
+			copy(ms[i+1:], ms[i:])
+			ms[i] = memberObs{time: ev.Time, id: ev.ID}
+			if len(ms) > errorSignatureSessionMembers {
+				ms = ms[:errorSignatureSessionMembers]
+			}
+		}
+		e.members[ev.SessionID] = ms
 	}
 	// A signature ties only to paths its own event carries; no inference from
 	// neighbouring events. Keep the set sorted and keep the smallest paths when
@@ -174,21 +213,29 @@ func (ix *Projection) foldErrorSignature(ev event.Event) {
 
 // ErrorSignatures returns Error Signature summaries, most recently seen first
 // (LastTime desc, then Key asc). An empty sessionID returns every signature;
-// otherwise only signatures that include that session. Filtering selects which
-// signatures appear: Count and Sessions remain global and are not re-scoped to
-// the session. The result is never nil.
+// otherwise only signatures that include that session, each additionally
+// carrying Members: that session's qualifying event ids. Filtering selects
+// which signatures appear: Count and Sessions remain global and are not
+// re-scoped to the session. The result is never nil.
 func (ix *Projection) ErrorSignatures(sessionID string) []ErrorSignature {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	out := make([]ErrorSignature, 0, len(ix.errSigs))
 	for _, e := range ix.errSigs {
-		if sessionID != "" && !e.sessions[sessionID] {
+		if sessionID != "" && len(e.members[sessionID]) == 0 {
 			continue
 		}
 		sig := e.ErrorSignature
-		sig.Sessions = len(e.sessions)
+		sig.Sessions = len(e.members)
 		if e.Paths != nil {
 			sig.Paths = append([]string(nil), e.Paths...)
+		}
+		if sessionID != "" {
+			ms := e.members[sessionID]
+			sig.Members = make([]string, len(ms))
+			for i, m := range ms {
+				sig.Members[i] = m.id
+			}
 		}
 		out = append(out, sig)
 	}

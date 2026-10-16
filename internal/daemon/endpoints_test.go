@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -679,9 +680,13 @@ func TestErrorsEndpoint(t *testing.T) {
 	seedErrorFixture(t, cfg.SpoolDir)
 	ts := testServer(t, cfg)
 
-	status, sigs, _ := getErrors(t, ts, "")
+	status, sigs, unfilteredRaw := getErrors(t, ts, "")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
+	}
+	// members is session-scoped: the unfiltered listing never carries it.
+	if strings.Contains(unfilteredRaw, `"members"`) {
+		t.Errorf("unfiltered /errors must omit members: %s", unfilteredRaw)
 	}
 	if len(sigs) != 5 {
 		t.Fatalf("got %d signatures, want 5: %+v", len(sigs), sigs)
@@ -707,9 +712,17 @@ func TestErrorsEndpoint(t *testing.T) {
 	// This session holds one of the three mix test errors; the signature must
 	// still report the global Count 3 / Sessions 2.
 	sessionID := "019faf77-c87d-7b22-a292-75e4f40f25bf"
-	_, filtered, _ := getErrors(t, ts, "?session="+url.QueryEscape(sessionID))
+	_, filtered, filteredRaw := getErrors(t, ts, "?session="+url.QueryEscape(sessionID))
 	if len(filtered) != 1 || filtered[0].Key != mix.Key || filtered[0].Count != 3 || filtered[0].Sessions != 2 {
 		t.Errorf("filtered = %+v, want only the mix test signature with global Count 3 Sessions 2", filtered)
+	}
+	// With the session filter each signature carries that session's qualifying
+	// event ids — only that session's, even though the signature spans two.
+	if want := []string{"c5089b7d2673ba045c26b47175717f12"}; len(filtered) != 1 || !reflect.DeepEqual(filtered[0].Members, want) {
+		t.Errorf("filtered members = %+v, want %v", filtered, want)
+	}
+	if !strings.Contains(filteredRaw, `"members"`) {
+		t.Errorf("filtered /errors must carry members: %s", filteredRaw)
 	}
 }
 
