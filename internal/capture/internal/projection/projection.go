@@ -56,6 +56,7 @@ type Projection struct {
 	sessions map[string]*sessionEntry
 	traces   map[string]*traceEntry
 	files    map[string]*fileEntry
+	errSigs  map[string]*errorSignatureEntry
 	seen     map[string]string
 	inbox    map[inboxKey]*InboxSession
 	warnings map[inboxKey]Evidence
@@ -93,6 +94,7 @@ func New() *Projection {
 		sessions: map[string]*sessionEntry{},
 		traces:   map[string]*traceEntry{},
 		files:    map[string]*fileEntry{},
+		errSigs:  map[string]*errorSignatureEntry{},
 		seen:     map[string]string{},
 		inbox:    map[inboxKey]*InboxSession{},
 		warnings: map[inboxKey]Evidence{},
@@ -323,6 +325,8 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 			f.Sources = append(f.Sources, ev.Source)
 		}
 	}
+
+	ix.foldErrorSignature(ev)
 	return transitions, true
 }
 

@@ -63,7 +63,7 @@ func Transition(prev Attention, ev event.Event) (Attention, bool) {
 		// Stay done for non-activity, non-end events (e.g. meta).
 	}
 
-	if ev.Category == event.CategoryError || ev.Severity == event.SeverityError {
+	if isErrorObservation(ev) {
 		next.HasError = true
 	}
 

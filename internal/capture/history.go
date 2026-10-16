@@ -18,10 +18,11 @@ var ErrNotFound = errors.New("capture: not found")
 
 // Capture-owned query shapes retain the frozen local HTTP JSON representation.
 type (
-	InboxSnapshot = projection.InboxSnapshot
-	Session       = projection.Session
-	TraceSummary  = projection.Trace
-	FileArtifact  = projection.FileArtifact
+	InboxSnapshot  = projection.InboxSnapshot
+	Session        = projection.Session
+	TraceSummary   = projection.Trace
+	FileArtifact   = projection.FileArtifact
+	ErrorSignature = projection.ErrorSignature
 )
 
 func (e *Engine) applyProjection(ev event.Event) error {
@@ -40,6 +41,13 @@ func (e *Engine) applyProjection(ev event.Event) error {
 
 // Sessions returns projected session summaries, most recently active first.
 func (e *Engine) Sessions() []Session { return e.projection.Sessions() }
+
+// ErrorSignatures returns derived Error Signature summaries, most recently
+// seen first. A non-empty sessionID selects only signatures that include that
+// session; Count and Sessions remain global, not re-scoped to it. Never nil.
+func (e *Engine) ErrorSignatures(sessionID string) []ErrorSignature {
+	return e.projection.ErrorSignatures(sessionID)
+}
 
 // Files returns projected file summaries, most recently touched first.
 func (e *Engine) Files() []FileArtifact { return e.projection.Files() }
