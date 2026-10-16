@@ -366,6 +366,28 @@ describe("session score view", () => {
     expect(sigs).toEqual([undefined, MIX_SIG]);
   });
 
+  test("late-arriving member ids rebuild the grouping in place", async () => {
+    sessionEvents.mockResolvedValue(mixEvents);
+    let finish!: (sigs: ErrorSignature[]) => void;
+    errorSignatures.mockImplementation(() => new Promise<ErrorSignature[]>((resolve) => (finish = resolve)));
+    const sigs: (ErrorSignature | undefined)[] = [];
+    const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+    await panel.open(MIX_SESSION);
+    // The mirror grouped the pair as a motif while /errors was pending.
+    expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
+
+    // The daemon's member ids split the pair into two signatures: the score
+    // is rebuilt on their authority, and the motif dissolves.
+    const a: ErrorSignature = { ...MIX_SIG, key: "codex|shell|PostToolUse|a", members: [mixEvents[0].id] };
+    const b: ErrorSignature = { ...MIX_SIG, key: "codex|shell|PostToolUse|b", members: [mixEvents[1].id] };
+    finish([a, b]);
+    await Promise.resolve();
+    expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(0);
+    expect(panel.root.querySelectorAll(".score-tick.error")).toHaveLength(2);
+    // The current event is an error; its refreshed detail carries its own signature.
+    expect(sigs[sigs.length - 1]).toEqual(a);
+  });
+
   test("a session without repeating errors draws no motif marks", async () => {
     const panel = createScore(() => {});
     await panel.open(SID);
