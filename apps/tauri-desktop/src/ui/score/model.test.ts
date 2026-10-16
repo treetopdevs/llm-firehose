@@ -13,9 +13,11 @@ import {
   coalesceTrack,
   columnOf,
   digestLabel,
+  errorSignatureKey,
   eventAt,
   eventLabel,
   nextEventAfter,
+  normalizeErrorSummary,
   prevEventBefore,
   scoreAxisTicks,
   stripControl,
@@ -24,6 +26,7 @@ import {
 } from "./model";
 import type { Track } from "./model";
 import fixture from "./fixture.session.json";
+import errsigFixture from "./fixture.errsig.json";
 
 // A real claude-code session captured in balanced mode on 2026-10-15 (101
 // events, 13 minutes, five categories). Spool order, as GET /sessions/{id}
@@ -352,6 +355,106 @@ describe("coalesce: merge rules", () => {
     expect(tickKind(ev(0, { severity: "error" }))).toBe("error");
     expect(tickKind(ev(0, { category: "error" }))).toBe("error");
     expect(tickKind(ev(0, { source: "firehose", category: "meta", name: "state.transition", payload: { state: "needs_input" } }))).toBe("needs");
+  });
+});
+
+// --- error signatures (motifs) ---------------------------------------------------
+//
+// The keying rule mirrors internal/capture/internal/projection/errsig.go, and
+// parity is pinned here over the same 11 real captured events that package's
+// fixture holds (testdata/errsig.ndjson → fixture.errsig.json). If these keys
+// ever disagree with the projection's, the view's local grouping and its lookup
+// into GET /errors drift apart — fix the mirror, not the test.
+
+const errs = errsigFixture as FirehoseEvent[];
+const KEY_TURN_ABORTED = "codex|error|turn_aborted|turn_aborted";
+const KEY_RATE_LIMIT = "claude-code|error|StopFailure|rate_limit";
+const KEY_AUTH_FAILED = "claude-code|error|StopFailure|authentication_failed";
+const KEY_MIX_TEST = "codex|shell|PostToolUse|failed: mix test";
+const KEY_SED = "codex|shell|PostToolUse|failed: sed -n '#,#p' src/assets/vue/pages/profile.vue";
+const MIX_SESSION = "019fd182-8513-7461-a816-e786f1fe439e";
+const SED_SESSION = "019faa0f-4b75-75b0-b8b3-48f248fb6916";
+
+describe("errorSignatureKey parity with the projection over the shared fixture", () => {
+  test("the 11 real events key into exactly the projection's 5 signatures", () => {
+    const keys = errs.map(errorSignatureKey);
+    expect(keys).toEqual([
+      KEY_TURN_ABORTED,
+      KEY_TURN_ABORTED,
+      KEY_RATE_LIMIT,
+      KEY_RATE_LIMIT,
+      KEY_AUTH_FAILED,
+      KEY_AUTH_FAILED,
+      KEY_MIX_TEST,
+      KEY_MIX_TEST,
+      KEY_MIX_TEST,
+      KEY_SED,
+      KEY_SED,
+    ]);
+    expect(new Set(keys).size).toBe(5);
+  });
+
+  test("normalizeErrorSummary lowercases, collapses whitespace, replaces hex then digit runs, and truncates to 160 code points", () => {
+    expect(normalizeErrorSummary("  Failed:   Mix\tTest \n")).toBe("failed: mix test");
+    expect(normalizeErrorSummary("sed -n '670,1010p' a.vue")).toBe("sed -n '#,#p' a.vue");
+    expect(normalizeErrorSummary("sed -n '890,1055p' a.vue")).toBe("sed -n '#,#p' a.vue");
+    // A hex id mixing digits and letters collapses to one '#', not fragments.
+    expect(normalizeErrorSummary("request deadbeef1234 failed")).toBe("request # failed");
+    expect(normalizeErrorSummary("z".repeat(200))).toHaveLength(160);
+  });
+
+  test("class precedence: error_class string, then a privacy digest's first 16 characters, then the normalized summary", () => {
+    const base = errs[2]; // real StopFailure carrying error_class=rate_limit
+    expect(errorSignatureKey(base)).toBe(KEY_RATE_LIMIT);
+    // Minimal mode digests payload values to {sha256, len}; the class is the
+    // first 16 characters of the digest, as the projection takes it.
+    const digested = { ...base, payload: { ...base.payload, error_class: { sha256: "0123456789abcdef".repeat(4), len: 10 } } };
+    expect(errorSignatureKey(digested)).toBe("claude-code|error|StopFailure|0123456789abcdef");
+    // An empty error_class falls through to the summary.
+    const empty = { ...base, payload: { ...base.payload, error_class: "" } };
+    expect(errorSignatureKey(empty)).toBe("claude-code|error|StopFailure|agent response failed");
+    const none = { ...base, payload: undefined, summary: undefined };
+    expect(errorSignatureKey(none)).toBe("claude-code|error|StopFailure|");
+  });
+});
+
+describe("buildScore motifs", () => {
+  test("error ticks carry their signature key; a key repeating in the session is a motif with its in-session count", () => {
+    const score = buildScore(errs.filter((e) => e.session_id === MIX_SESSION));
+    const shell = score.tracks.find((tr) => tr.category === "shell")!;
+    expect(shell.ticks.map((tk) => [tk.kind, tk.sig])).toEqual([
+      ["error", KEY_MIX_TEST],
+      ["error", KEY_MIX_TEST],
+    ]);
+    expect([...score.motifs.entries()]).toEqual([[KEY_MIX_TEST, 2]]);
+  });
+
+  test("the sed pair groups through digit normalization even though the ranges differ", () => {
+    const score = buildScore(errs.filter((e) => e.session_id === SED_SESSION));
+    expect(score.motifs.get(KEY_SED)).toBe(2);
+  });
+
+  test("a signature seen once in the session is no motif; plain ticks carry no signature", () => {
+    const score = buildScore(errs.filter((e) => e.session_id === "9c122c36-e2b6-4b3c-9d3d-5e7e18f033b1"));
+    expect(score.tracks[0].ticks[0].sig).toBe(KEY_RATE_LIMIT);
+    expect(score.motifs.size).toBe(0);
+    const plain = buildScore(session);
+    expect(plain.motifs.size).toBe(0);
+    expect(plain.tracks.every((tr) => tr.ticks.every((tk) => tk.sig === undefined))).toBe(true);
+  });
+
+  test("coalesced error ticks carry the earliest member's signature", () => {
+    const view = { from: 0, to: 100_000 };
+    const tr: Track = {
+      category: "shell",
+      ticks: [
+        { at: 5_300, kind: "error", id: "b", sig: "k2" },
+        { at: 5_100, kind: "error", id: "a", sig: "k1" },
+      ],
+      spans: [],
+    };
+    const [tk] = coalesceTrack(tr, view, 100).ticks;
+    expect(tk).toMatchObject({ id: "a", sig: "k1", count: 2 });
   });
 });
 

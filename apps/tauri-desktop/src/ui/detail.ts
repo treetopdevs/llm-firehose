@@ -1,4 +1,4 @@
-import type { FirehoseEvent } from "../api";
+import type { ErrorSignature, FirehoseEvent } from "../api";
 import { clear, el } from "../dom";
 import { formatClockMs, formatDuration, formatValue, latencyLabel, workspaceLabel } from "../format";
 import { coalesce } from "../state";
@@ -44,7 +44,7 @@ function kvTable(title: string, payload: Record<string, unknown> | undefined, om
 // dump. Start and end are paired by call id, the duration is the difference,
 // and the start payload is the request, the end payload the response. The
 // full JSON stays behind a disclosure for when it is really wanted.
-export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => []): void {
+export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature): void {
   clear(pane);
   if (!ev) {
     pane.classList.remove("open");
@@ -111,6 +111,19 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
   const omit = new Set<string>();
   if (toolName) omit.add("tool_name");
   const sections: Node[] = [];
+  if (signature) {
+    // The daemon's Error Signature for this error: counts are global across the
+    // whole captured history, not scoped to the open session.
+    const dl = el("dl", { class: "detail-kv signature" });
+    if (signature.sample) dl.append(el("dt", {}, "sample"), el("dd", {}, signature.sample));
+    dl.append(
+      el("dt", {}, "seen"),
+      el("dd", {}, `${signature.count} ${signature.count === 1 ? "time" : "times"} across ${signature.sessions} ${signature.sessions === 1 ? "session" : "sessions"}`),
+    );
+    dl.append(el("dt", {}, "signature"), el("dd", {}, signature.key));
+    // A signature exists from the first occurrence; it is only "recurring" past it.
+    sections.push(el("h3", {}, signature.count > 1 ? "recurring error" : "error signature"), dl);
+  }
   if (start || end) {
     omit.add("phase");
     if (start) sections.push(...kvTable("request", start.payload, omit));

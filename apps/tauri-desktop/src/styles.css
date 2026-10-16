@@ -684,6 +684,9 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .score-span.open { fill: var(--accent); opacity: 0.5; }
 .score-tick { fill: var(--text); cursor: pointer; }
 .score-tick.error { fill: var(--err); }
+/* A motif: error ticks sharing an Error Signature. The taller mark is drawn by the view; kin lights the group of the current event. */
+.score-tick.error.motif { stroke: var(--err); stroke-width: 0.5; fill-opacity: 0.9; }
+.score-tick.kin { stroke: var(--err); stroke-width: 1.5; }
 .score-tick.needs { fill: #ff9f43; }
 .score-tick.current { fill: var(--accent); }
 .score-playhead { stroke: var(--accent); stroke-width: 1.5; pointer-events: none; }
