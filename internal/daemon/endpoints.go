@@ -10,15 +10,22 @@ import (
 	"agentfirehose/internal/cli"
 )
 
-// Session and FileArtifact are served straight from the derived index; the
+// Session, FileArtifact and ErrorSignature are served straight from the derived index; the
 // JSON shapes are part of the local API contract.
 type (
-	Session      = capture.Session
-	FileArtifact = capture.FileArtifact
+	Session        = capture.Session
+	FileArtifact   = capture.FileArtifact
+	ErrorSignature = capture.ErrorSignature
 )
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.engine.Sessions())
+}
+
+// handleErrors serves derived Error Signature summaries, optionally limited to
+// signatures that include one session (counts stay global).
+func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.engine.ErrorSignatures(r.URL.Query().Get("session")))
 }
 
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {

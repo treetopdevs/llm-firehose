@@ -1,6 +1,6 @@
 # Error Signature v1: build brief
 
-**Status:** Brief agreed 2026-10-16; not started. Source: the "Shared deferred
+**Status:** Brief agreed 2026-10-16; shipped the same day (see end). Source: the "Shared deferred
 work" section of
 [2026-10-16-session-score-and-activity-map.md](2026-10-16-session-score-and-activity-map.md).
 Canonical term in `CONTEXT.md`: Error Signature — "A normalized identity under
@@ -86,7 +86,7 @@ type ErrorSignature struct {
     Category  string    `json:"category"`
     Name      string    `json:"name,omitempty"`
     Class     string    `json:"class,omitempty"`
-    Sample    string    `json:"sample,omitempty"`   // first non-empty raw summary seen
+    Sample    string    `json:"sample,omitempty"`   // raw summary of the earliest (Time, ID) carrier
     Count     int       `json:"count"`
     Sessions  int       `json:"sessions"`           // distinct session_ids (set kept internal)
     FirstTime time.Time `json:"first_time"`
@@ -155,3 +155,30 @@ redacted copies of the same error still share one signature.
 
 `gofmt -l .` (empty) → `go vet ./...` → `go test ./...`. TDD: the failing
 test lands before the behavior. Standard library only.
+
+## Shipped 2026-10-16
+
+As specified above, with one deliberate deviation: `Sample` is pinned to the
+summary of the earliest `(Time, ID)` qualifying observation, not the first
+applied. "First seen" depends on application order, and a rebuild reads the
+spool in file order while the live process folded events in arrival order —
+the same spool would have shown a different sample after a restart. With the
+pin, the determinism test compares every field across Build, reversed, and
+rotated application orders with no exclusions.
+
+Files: `internal/capture/internal/projection/errsig.go` (+`errsig_test.go`,
+12 tests over the real fixture, including minimal-mode redaction through
+`internal/privacy` and the paths cap), a one-line refactor of
+`attention.go`'s `HasError` onto the shared `isErrorObservation`,
+`history.go`'s Engine passthrough, `GET /errors` in `internal/daemon`
+(endpoints.go, daemon.go, endpoint tests driving all 11 fixture events
+through real admission), and the contracts.md row.
+
+Reviewed through three lenses (determinism/concurrency, frozen
+surfaces/privacy shapes, test/fixture authenticity); no must-fix findings.
+Known inherited edge: `EventFilePaths` still misreads a minimal-mode
+`changes` digest as paths (fix lives on `claude/friendly-haibt-461b3e`,
+f52d681); a signature over such an event would list `len`/`sha256` as paths
+until that branch merges — add a minimal-mode file-error test then. A `|`
+inside an event `name` could in principle collide two keys; adapter names
+carry none today.

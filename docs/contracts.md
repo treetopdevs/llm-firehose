@@ -160,6 +160,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /attention/event?id={id}` | exact captured envelope by stable ID, or 404; additive evidence lookup |
 | `GET /sessions` | session summaries (derived Projection), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
 | `GET /sessions/{id}` | all events for one session, oldest first |
+| `GET /errors[?session={id}]` | derived Error Signature summaries `[{key, source, category, name, class, sample, count, sessions, first_time, last_time, paths}]`, most recently seen first; `[]` when none. With `session`, only signatures that include that session are listed, but `count` and `sessions` stay global (not re-scoped). Host-local derived state, never spooled; additive |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |

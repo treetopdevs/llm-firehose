@@ -623,3 +623,112 @@ func TestAttentionAPIAndExactEvidence(t *testing.T) {
 		t.Fatal("attention bypassed local API origin policy")
 	}
 }
+
+// seedErrorFixture admits the real captured Error Signature fixture through a
+// standalone engine, so the daemon under test rebuilds it from the spool.
+func seedErrorFixture(t *testing.T, dir string) {
+	t.Helper()
+	f, err := os.Open(filepath.Join("..", "capture", "internal", "projection", "testdata", "errsig.ndjson"))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer f.Close()
+	w := capturehistory.NewAdmitter(dir)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		var ev event.Event
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			t.Fatalf("decode fixture: %v", err)
+		}
+		if _, err := w.Append(ev); err != nil {
+			t.Fatalf("seed append: %v", err)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scan fixture: %v", err)
+	}
+}
+
+func getErrors(t *testing.T, ts *httptest.Server, query string) (int, []ErrorSignature, string) {
+	t.Helper()
+	resp, err := http.Get(ts.URL + "/errors" + query)
+	if err != nil {
+		t.Fatalf("GET /errors%s: %v", query, err)
+	}
+	defer resp.Body.Close()
+	var raw strings.Builder
+	var sigs []ErrorSignature
+	dec := json.NewDecoder(resp.Body)
+	var msg json.RawMessage
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	raw.Write(msg)
+	if err := json.Unmarshal(msg, &sigs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	return resp.StatusCode, sigs, raw.String()
+}
+
+func TestErrorsEndpoint(t *testing.T) {
+	cfg := testConfig(t)
+	seedErrorFixture(t, cfg.SpoolDir)
+	ts := testServer(t, cfg)
+
+	status, sigs, _ := getErrors(t, ts, "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if len(sigs) != 5 {
+		t.Fatalf("got %d signatures, want 5: %+v", len(sigs), sigs)
+	}
+	total := 0
+	byKey := map[string]ErrorSignature{}
+	for i, s := range sigs {
+		total += s.Count
+		byKey[s.Key] = s
+		if i > 0 && sigs[i-1].LastTime.Before(s.LastTime) {
+			t.Errorf("not most-recent-first at %d: %v before %v", i, sigs[i-1].LastTime, s.LastTime)
+		}
+	}
+	if total != 11 {
+		t.Errorf("total count = %d, want 11 fixture events", total)
+	}
+	mix := byKey["codex|shell|PostToolUse|failed: mix test"]
+	if mix.Count != 3 || mix.Sessions != 2 {
+		t.Errorf("mix test signature = %+v, want Count 3 Sessions 2", mix)
+	}
+
+	// Session filter selects signatures; counts stay global.
+	// This session holds one of the three mix test errors; the signature must
+	// still report the global Count 3 / Sessions 2.
+	sessionID := "019faf77-c87d-7b22-a292-75e4f40f25bf"
+	_, filtered, _ := getErrors(t, ts, "?session="+url.QueryEscape(sessionID))
+	if len(filtered) != 1 || filtered[0].Key != mix.Key || filtered[0].Count != 3 || filtered[0].Sessions != 2 {
+		t.Errorf("filtered = %+v, want only the mix test signature with global Count 3 Sessions 2", filtered)
+	}
+}
+
+func TestErrorsEndpointEmptyIsArray(t *testing.T) {
+	ts := testServer(t, testConfig(t))
+	for _, q := range []string{"", "?session=nope"} {
+		status, sigs, raw := getErrors(t, ts, q)
+		if status != http.StatusOK {
+			t.Fatalf("%q status = %d, want 200", q, status)
+		}
+		if sigs == nil || len(sigs) != 0 || strings.TrimSpace(raw) != "[]" {
+			t.Errorf("%q body = %s, want []", q, raw)
+		}
+	}
+	// An unknown session on a populated engine is also [] rather than 404.
+	cfg := testConfig(t)
+	seedErrorFixture(t, cfg.SpoolDir)
+	_, sigs, raw := getErrors(t, testServer(t, cfg), "?session=nope")
+	if len(sigs) != 0 || strings.TrimSpace(raw) != "[]" {
+		t.Errorf("unknown session body = %s, want []", raw)
+	}
+}
