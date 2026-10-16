@@ -24,6 +24,48 @@ export type Lane = {
 
 type Acc = Lane & { since: number };
 
+/** One tool call's observed phases: the first start and the first end captured for a session × call id. */
+export type CallPhases = {
+  session: string;
+  start?: number;
+  end?: number;
+  startEvent?: FirehoseEvent;
+  endEvent?: FirehoseEvent;
+};
+
+/**
+ * Pairs start and end observations by session and call id, in the order the
+ * calls were first seen. Only the first start and the first end count, so a
+ * dual observation of one phase cannot stretch a span. Whether an unpaired or
+ * inverted pair draws as open, and to where, is the caller's rule.
+ */
+export function collectCalls(events: readonly FirehoseEvent[]): CallPhases[] {
+  const calls = new Map<string, CallPhases>();
+  const order: CallPhases[] = [];
+  for (const ev of events) {
+    if (!ev.session_id || !ev.call_id || isTransition(ev)) continue;
+    const t = Date.parse(ev.time);
+    if (Number.isNaN(t)) continue;
+    const phase = ev.payload?.phase;
+    if (phase !== "start" && phase !== "end") continue;
+    const key = `${ev.session_id}\0${ev.call_id}`;
+    let sp = calls.get(key);
+    if (!sp) {
+      sp = { session: ev.session_id };
+      calls.set(key, sp);
+      order.push(sp);
+    }
+    if (phase === "start" && sp.start === undefined) {
+      sp.start = t;
+      sp.startEvent = ev;
+    } else if (phase === "end" && sp.end === undefined) {
+      sp.end = t;
+      sp.endEvent = ev;
+    }
+  }
+  return order;
+}
+
 function later(current: number, candidate: number): number {
   return Number.isNaN(current) || candidate > current ? candidate : current;
 }
@@ -45,9 +87,6 @@ export function buildLanes(
     return l;
   };
 
-  type Span = { session: string; start?: number; end?: number };
-  const spans = new Map<string, Span>();
-  const order: string[] = [];
   for (const ev of events) {
     if (!ev.session_id) continue;
     const t = Date.parse(ev.time);
@@ -62,18 +101,8 @@ export function buildLanes(
       const failed = ev.severity === "error" || ev.category === "error";
       l.ticks.push({ at: t, kind: failed ? "error" : "event" });
     }
-    const phase = ev.payload?.phase;
-    if (!ev.call_id || (phase !== "start" && phase !== "end")) continue;
-    const key = `${ev.session_id}\0${ev.call_id}`;
-    let sp = spans.get(key);
-    if (!sp) {
-      sp = { session: ev.session_id };
-      spans.set(key, sp);
-      order.push(key);
-    }
-    if (phase === "start" && sp.start === undefined) sp.start = t;
-    else if (phase === "end" && sp.end === undefined) sp.end = t;
   }
+  const calls = collectCalls(events);
   for (const s of summaries) {
     if (!s.id) continue;
     const l = laneFor(s.id, s.agent || s.source);
@@ -84,8 +113,7 @@ export function buildLanes(
     if (!Number.isNaN(last)) l.lastAt = later(l.lastAt, last);
   }
 
-  for (const key of order) {
-    const sp = spans.get(key)!;
+  for (const sp of calls) {
     if (sp.start === undefined) continue;
     const l = acc.get(sp.session)!;
     let to = sp.end;

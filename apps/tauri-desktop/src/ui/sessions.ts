@@ -48,6 +48,7 @@ function statusOf(entries: readonly AttentionSession[], nowMs: number): Status {
 export function createSessions(
   onSelect: (ev: FirehoseEvent) => void,
   recentEvents: () => readonly FirehoseEvent[],
+  onOpenScore?: (id: string) => void,
 ): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
@@ -105,11 +106,21 @@ export function createSessions(
       el("span", { class: "cell summary" }, summary),
     );
     const sub = [workspaceLabel(s.repo, s.cwd), `${s.events} events`].filter(Boolean).join(" · ");
+    const subRow = el("div", { class: "session-sub" }, el("span", {}, sub));
+    if (onOpenScore) {
+      // The score replays this one session; the row itself still opens the list.
+      const score = el("button", { class: "score-open", "aria-label": `open score for session ${s.id}`, title: "replay this session as a score" }, "score");
+      score.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onOpenScore(s.id);
+      });
+      subRow.append(score);
+    }
     const item = el(
       "div",
       { class: "session-item", tabindex: "0" },
       row,
-      el("div", { class: "session-sub" }, sub),
+      subRow,
       el("div", { class: "session-id dim" }, s.id),
     );
     item.addEventListener("click", () => openSession(s.id));

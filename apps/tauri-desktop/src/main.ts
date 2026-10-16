@@ -17,6 +17,7 @@ import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
 import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
+import { createScore } from "./ui/score";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspace } from "./ui/workspace";
@@ -33,7 +34,18 @@ const siblings = (ev: FirehoseEvent) =>
 const showDetail = (ev: FirehoseEvent) =>
   renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings);
 
-const sessionsPanel = createSessions(showDetail, () => feedState.events());
+// The score replays one finished session, so its detail pairs calls from
+// that session's history rather than the live buffer.
+const scorePanel = createScore((ev, sessionSiblings) =>
+  renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), sessionSiblings),
+);
+
+function openScore(id: string, source?: string) {
+  show("score");
+  void scorePanel.open(id, source);
+}
+
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore);
 
 function openSession(id: string, source?:string) {
   sessionsPanel.setScope(null);
@@ -63,6 +75,7 @@ const panels = {
   matrix: matrixPanel,
   lanes: lanesPanel,
   sessions: sessionsPanel,
+  score: scorePanel,
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
