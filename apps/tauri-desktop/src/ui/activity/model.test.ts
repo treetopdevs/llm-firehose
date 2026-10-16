@@ -60,6 +60,14 @@ describe("buildTree", () => {
     expect(files(outside)).toEqual(["/tmp/o/b.go", "/tmp/o/a.go"]);
   });
 
+  test("an unresolved group that is a known worktree is named by it; raw absolute paths keep their leading slash", () => {
+    const g = "44f12b05".padEnd(64, "0");
+    const r = resp([p("/Users/me/notes/a.md", [[0, 1]], g), p("/tmp/b.md", [[0, 1]], "f".repeat(64))]);
+    const outside = buildTree(r, new Map([[g, "wild-visualizations"]])).children!.at(-1)!;
+    expect(outside.children!.map((c) => c.name)).toEqual(["wild-visualizations", "#ffffffff"]);
+    expect(outside.children![0].children![0].name).toBe("/Users/me/notes");
+  });
+
   test("the real response keeps every path exactly once, in response order", () => {
     const tree = buildTree(real);
     const all = files(tree);

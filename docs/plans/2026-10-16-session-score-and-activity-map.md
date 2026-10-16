@@ -1,6 +1,6 @@
 # Session Score and Activity Map: decisions from the grilling session
 
-**Status:** Decisions agreed 2026-10-16; Session Score v1 shipped the same day (see below); Activity Map not started. Source concepts
+**Status:** Decisions agreed 2026-10-16; Session Score v1 and Activity Map v1 shipped the same day (see each section's Shipped notes). Source concepts
 are items 10 (Agent Score) and 2 (Repository Weather) in
 `docs/brainstorms/2026-10-15-wild-visualizations/`. Canonical terms live in
 `CONTEXT.md`: Session Score, Activity Map, Heat, Error Signature.
@@ -99,6 +99,86 @@ Observed real-capture quirks:
   explicit unavailable notice and no tiles.
 - **Surface:** desktop-only tab sharing Graph/Timeline repository scope, SVG,
   no new dependencies. No TUI view in v1.
+
+### Shipped 2026-10-16 (v1)
+
+Built to `docs/plans/2026-10-16-activity-map-build-brief.md`.
+
+- **Endpoint.** `GET /workspace-graph/activity` (`internal/daemon/workspace_graph.go`,
+  behind `graphResponse`), backed by `Engine.Activity` in
+  `internal/capture/activity.go`, which reads only the UTC days the window
+  overlaps (a scale test pins two day files read out of forty and agreement with
+  a full-spool reference). Bucket ladder, default bucket, UTC flooring, the
+  2000-path cap and the minimal-mode gate (no spool read) are as briefed.
+  Documented as "Activity heat (additive)" in `docs/contracts.md`; no
+  `schema_version` bump, nothing existing changed.
+- **Resolver.** Workspace roots come from the current snapshot through
+  `EventScope` (raw and digest aliases; `jj:` stripped; rootless JJ workspaces
+  skipped). One deviation from the brief's literal order: an absolute path
+  resolves against the *innermost* known root that contains it, the event's own
+  root included, rather than the own root first. Real repositories nest Claude
+  Code worktrees under `<repo>/.claude/worktrees/`; own-root-first would file an
+  edit made from the main checkout into a nested worktree as
+  `.claude/worktrees/<name>/x.go` instead of merging it with `x.go`. Relative
+  paths resolve against the event's own root; `..` escapes stay unresolved.
+- **Desktop.** A third Workspaces tab, "Map" (`apps/tauri-desktop/src/ui/activity/`):
+  order-preserving split treemap with single-child directory chains collapsed,
+  2h/8h/24h/7d presets, Live (refetched on the graph's 15 s poll once 10 s
+  stale; the map ignores attention arrivals), worktree filter, directory zoom
+  with breadcrumb, a per-bucket strip with a keyboard and pointer brush,
+  "Hottest in range", and the briefed notices. Unresolved groups are named by
+  the snapshot workspace whose id they carry (the event's own worktree editing
+  outside every root), else a short digest. `fixture.activity.json` is a real
+  response from a temporary daemon over copied spool days of this repository.
+- **Live check.** Temporary daemon on `127.0.0.1:4627` with a temp HOME and copies
+  of real spool days, vite on 1420 with `VITE_DAEMON_URL`, headless Chromium
+  (the built-in browser pane could not open localhost). Screenshots of an
+  overnight brush over 24h, a Live 2h window, one worktree, and minimal mode were
+  taken and not committed (they show personal paths). The drag brush lost its
+  anchor after the first redraw; that was found in the live check, pinned by a
+  test, and fixed.
+
+#### Real-capture quirks
+
+Seen in a copy of the real spool (223 days, about 96k file-category events):
+
+1. **Codex Heat is nearly absent.** Only the rollout `patch_apply_end` event
+   carries paths (absolute keys of `changes`), and it last appears on
+   2026-09-03. Current Codex rollout `custom_tool_call:apply_patch` and its
+   `_output`, and the Codex hook's `PreToolUse`/`PostToolUse` for `apply_patch`,
+   hold their paths only inside patch text (`*** Update File: …`, absolute or
+   relative). About 44k of 47k Codex file events therefore add no Heat and are
+   counted in `unreadable_file_events`. Parsing patch headers would fix this;
+   balanced mode truncates the text at 240 runes, so only the first header or
+   two survive. Not done: it changes what a file event's paths are.
+2. **Antigravity reads are Heat.** `PostToolUse:view_file` is file-category
+   with an absolute `file_path`, so antigravity reading a file counts like an
+   edit (1 per read), while Claude Code reads are not file-category.
+3. **Claude Code is 2 Heat per edit** (`PreToolUse` and `PostToolUse`, both
+   with an absolute `file_path`), as accepted for v1.
+4. **opencode has no real captures** on this machine, so its shape is not
+   pinned from real data. The adapter copies the tool's `file`/`filePath`
+   verbatim; relative values are handled as root-relative by the resolver, and
+   that branch is pinned with a constructed event.
+5. **About 19k file events carry neither `repo_id` nor `worktree_id`** (an agent
+   started outside any repository). They match no repository and appear on no
+   map, not even as unreadable.
+6. **Minimal-mode `changes` digests read as paths.** A Codex `changes` map
+   recorded in minimal mode is a `{sha256,len}` object, and
+   `projection.EventFilePaths` returns `len` and `sha256` as two paths. The
+   Activity aggregate guards this and counts the event as unreadable; the
+   projection's file artifacts (`/artifacts/files`) still have it. Fixing that
+   changes an existing response, so it is left as a follow-up.
+7. **Removed worktrees and outside edits are common.** Edits into a deleted
+   sibling worktree (`llm-firehose-graph-mockup`) and into agent memory or
+   `~/Library/...` files land under "Outside known worktrees" with raw paths.
+8. **Some repositories never get a map.** The graph refuses to scan a repository
+   whose git config defines commands (one large repository here), and a
+   colocated JJ repository registered as `jj` matches only events captured with
+   a JJ identity (2 of about 170 file events for one repository), the same as
+   Timeline.
+9. The desktop app has a single dark theme, so there was no light theme to
+   check the colour ramp against.
 
 ## Shared deferred work
 

@@ -67,7 +67,7 @@ function insert(top: TreeNode, entry: ActivityPath) {
     const key = `${entry.group}\0${prefix}`;
     let next = node.children!.find((c) => c.key === key);
     if (!next) {
-      next = dirNode(key, segments[i], prefix, entry.group);
+      next = dirNode(key, absolute && i === 0 ? `/${segments[i]}` : segments[i], prefix, entry.group);
       node.children!.push(next);
     }
     next.total += entry.total;
@@ -100,9 +100,11 @@ function collapseChains(node: TreeNode): TreeNode {
 /**
  * Directory tree of a response. Resolved (repository-relative) paths sit at the
  * top level; each unresolved group gets its own node, and those go last under one
- * "Outside known worktrees" node, keeping their raw paths.
+ * "Outside known worktrees" node, keeping their raw paths. A group whose id is
+ * a known workspace (the event's own worktree, editing outside every root) is
+ * named by `names`; any other group shows its id as a short digest.
  */
-export function buildTree(resp: ActivityResponse): TreeNode {
+export function buildTree(resp: ActivityResponse, names: ReadonlyMap<string, string> = new Map()): TreeNode {
   const root = dirNode("", "", "", "");
   const outside = dirNode("\0outside", OUTSIDE_LABEL, "", "");
   const groups = new Map<string, TreeNode>();
@@ -113,9 +115,8 @@ export function buildTree(resp: ActivityResponse): TreeNode {
     }
     let g = groups.get(entry.group);
     if (!g) {
-      const label = resp.groups.find((x) => x.id === entry.group)?.label;
-      const id = digestLabel(entry.group) || entry.group;
-      g = dirNode(`${entry.group}\0`, label && label !== OUTSIDE_LABEL ? label : id, "", entry.group);
+      const name = names.get(entry.group) || digestLabel(entry.group) || entry.group;
+      g = dirNode(`${entry.group}\0`, name, "", entry.group);
       groups.set(entry.group, g);
       outside.children!.push(g);
     }

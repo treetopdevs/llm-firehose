@@ -130,6 +130,7 @@ export function createActivityMap(): ActivityMap {
     load(true);
   };
 
+  const groupNames = () => new Map(workspaces.map((w) => [w.id, w.name]));
   const minimal = () => privacy === "minimal" || resp?.unavailable_reason === "minimal";
   const span = () => PRESETS.find((p) => p.id === preset)!.ms;
   const scopeKey = () => [repo, worktree, preset, live ? "live" : String(frozenEnd)].join("\0");
@@ -178,7 +179,7 @@ export function createActivityMap(): ActivityMap {
         loading = false;
         fetchedAt = Date.now();
         resp = { ...next, paths: next.paths ?? [], groups: next.groups ?? [] };
-        tree = buildTree(resp);
+        tree = buildTree(resp, groupNames());
         if (zoom && !findNode(tree, zoom)) zoom = "";
         render();
       },
@@ -396,27 +397,32 @@ export function createActivityMap(): ActivityMap {
       e.preventDefault();
       setRange(r, next[0], next[1]);
     });
-    let anchor = -1;
-    const bucketAt = (e: PointerEvent) => {
-      const box = strip.getBoundingClientRect();
-      const px = box.width > 0 ? ((e.clientX - box.left) / box.width) * width : e.offsetX;
-      return Math.max(0, Math.min(r.buckets - 1, Math.floor(px / bw)));
-    };
     strip.addEventListener("pointerdown", (e) => {
-      anchor = bucketAt(e);
-      strip.setPointerCapture?.(e.pointerId);
-      setRange(r, anchor, anchor + 1);
+      // Every brush change redraws the strip, so the drag lives on the window
+      // and reads the current strip each time.
+      const r0 = r;
+      const bucketAt = (ev: PointerEvent) => {
+        const box = (scrub.querySelector(".map-strip") ?? strip).getBoundingClientRect();
+        const frac = box.width > 0 ? (ev.clientX - box.left) / box.width : 0;
+        return Math.max(0, Math.min(r0.buckets - 1, Math.floor(frac * r0.buckets)));
+      };
+      const anchor = bucketAt(e);
+      const move = (ev: PointerEvent) => {
+        if (resp !== r0) return stop();
+        const at = bucketAt(ev);
+        setRange(r0, Math.min(anchor, at), Math.max(anchor, at) + 1);
+      };
+      const stop = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+      e.preventDefault();
+      setRange(r0, anchor, anchor + 1);
     });
-    strip.addEventListener("pointermove", (e) => {
-      if (anchor < 0) return;
-      const at = bucketAt(e);
-      setRange(r, Math.min(anchor, at), Math.max(anchor, at) + 1);
-    });
-    const end_ = () => {
-      anchor = -1;
-    };
-    strip.addEventListener("pointerup", end_);
-    strip.addEventListener("pointercancel", end_);
     strip.addEventListener("dblclick", () => setRange(r, 0, r.buckets));
 
     const whole = el("button", { type: "button", class: "map-whole", "data-key": "map-whole" }, "Whole window");
@@ -443,7 +449,8 @@ export function createActivityMap(): ActivityMap {
       return;
     }
     for (const h of hot) {
-      const where = h.group ? `${digestLabel(h.group) || stripControl(h.group)} · outside known worktrees` : "";
+      const owner = groupNames().get(h.group) || digestLabel(h.group) || h.group;
+      const where = h.group ? `${stripControl(owner)} · outside known worktrees` : "";
       list.append(
         el(
           "li",

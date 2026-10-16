@@ -139,6 +139,22 @@ describe("activity map view", () => {
     expect(button(map.root, "Whole window").disabled).toBe(true);
   });
 
+  test("dragging across the strip brushes every bucket it crosses, across redraws", async () => {
+    const map = await open({ ...real, buckets: 10 });
+    const width = Number(strip(map.root).getAttribute("width"));
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width, height: 72, right: width, bottom: 72, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    const at = (bucket: number) => ({ clientX: (bucket + 0.5) * (width / 10), clientY: 10, bubbles: true, pointerId: 1 });
+    strip(map.root).dispatchEvent(new PointerEvent("pointerdown", at(2)));
+    strip(map.root).dispatchEvent(new PointerEvent("pointermove", at(4)));
+    // The strip was redrawn by the first move; the drag continues on the new one.
+    strip(map.root).dispatchEvent(new PointerEvent("pointermove", at(6)));
+    window.dispatchEvent(new PointerEvent("pointerup", at(6)));
+    strip(map.root).dispatchEvent(new PointerEvent("pointermove", at(9)));
+    rect.mockRestore();
+    expect(strip(map.root).getAttribute("aria-valuenow")).toBe("2");
+    expect(Number(strip(map.root).querySelector(".map-brush")!.getAttribute("width"))).toBeCloseTo((5 * width) / 10);
+  });
+
   test("clicking a directory zooms into it; the breadcrumb leads back", async () => {
     const map = await open();
     const dir = map.root.querySelector<SVGGElement>(".map-dir")!;
