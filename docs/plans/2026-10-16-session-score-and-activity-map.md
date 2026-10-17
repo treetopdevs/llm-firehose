@@ -266,8 +266,9 @@ the rollout call's `input` and the hook's `tool_input.command`, when an event
 has no `file_path`/`path`/`file` and no `changes` map. Decisions:
 
 - **(a) Where: the Activity aggregate only.** Parsing lives in `activityPaths`
-  (`internal/capture/activity.go`). `projection.EventFilePaths` is untouched, so
-  `/artifacts/files` (a frozen response) does not change. Teaching the projection
+  (`internal/capture/activity.go`). `projection.EventFilePaths` learns no patch
+  parsing (its only change is the minimal-mode digest guard), so
+  `/artifacts/files` (a frozen response) does not change for real captures. Teaching the projection
   the same headers would change that response and needs its own decision.
 - **(b) Double counting: none removed. Heat still counts events.** Per patch,
   the rollout adds 2 (the call and its `_output`, see "Output summaries" below),
