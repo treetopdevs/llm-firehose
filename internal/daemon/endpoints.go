@@ -30,6 +30,12 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Validate the view before touching the spool so a typo never scans.
+	view := r.URL.Query().Get("view")
+	if view != "" && view != "full" && view != "timeline" {
+		http.Error(w, fmt.Sprintf("unknown view %q (want full or timeline)", view), http.StatusBadRequest)
+		return
+	}
 	evs, err := s.engine.Session(id)
 	if err != nil {
 		if errors.Is(err, capture.ErrNotFound) {
@@ -38,6 +44,11 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if view == "timeline" {
+		for i := range evs {
+			evs[i] = capture.TimelineView(evs[i])
+		}
 	}
 	writeJSON(w, evs)
 }
@@ -136,8 +147,11 @@ func (s *Server) handleAttention(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleEventByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	ev, err := s.engine.Event(r.URL.Query().Get("id"))
+	ev, err := s.engine.Event(r.Context(), r.URL.Query().Get("id"))
 	if err != nil {
+		if r.Context().Err() != nil {
+			return // client aborted; the scan stopped with it
+		}
 		if errors.Is(err, capture.ErrNotFound) {
 			http.Error(w, "captured event unavailable", http.StatusNotFound)
 		} else {

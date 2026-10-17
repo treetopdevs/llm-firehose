@@ -138,19 +138,67 @@ func exportSpool(spoolDir string, w io.Writer) (int, error) {
 // Attention returns source-scoped, evidence-backed supervision state.
 func (e *Engine) Attention() InboxSnapshot { return e.projection.Inbox() }
 
-// Event retrieves an exact captured event for an evidence link.
-func (e *Engine) Event(id string) (event.Event, error) {
+// Event retrieves an exact captured event for an evidence link. It scans only
+// the event's day, prefiltered on the quoted id like history(), so it decodes
+// the matching record and the rare foreign record that quotes the id, not the
+// whole day. An id that cannot be needled reliably is scanned without one.
+// A cancelled ctx (the HTTP client went away) aborts the day scan.
+func (e *Engine) Event(ctx context.Context, id string) (event.Event, error) {
 	day := e.projection.EventDay(id)
-	if day != "" {
-		evs, err := spool.ReadDays(e.spoolDir, []string{day})
-		if err != nil {
-			return event.Event{}, err
+	if day == "" {
+		return event.Event{}, fmt.Errorf("%w: event %q", ErrNotFound, id)
+	}
+	var filter spool.Prefilter
+	if needles, ok := spool.IdentityNeedles([]string{id}); ok {
+		filter = spool.Prefilter{needles}
+	}
+	var found event.Event
+	var have bool
+	err := e.scanDay(ctx, e.spoolDir, day, filter, func() {}, func(ev event.Event) {
+		if !have && ev.ID == id {
+			found, have = ev, true
 		}
-		for _, ev := range evs {
-			if ev.ID == id {
-				return ev, nil
+	})
+	if err != nil {
+		return event.Event{}, err
+	}
+	if !have {
+		return event.Event{}, fmt.Errorf("%w: event %q", ErrNotFound, id)
+	}
+	return found, nil
+}
+
+// timelinePayloadKeys are the payload keys the timeline view keeps.
+var timelinePayloadKeys = [...]string{"phase", "state", "tool_name", "error_class", "duration_ms", "status", "item_type"}
+
+// TimelineView projects an admitted event onto the timeline allowlist: the
+// envelope fields a session replay reads, and only the allowlisted payload
+// keys, values copied as-is (privacy digests intact). Everything else is
+// zeroed so omitempty drops it; an empty payload is omitted. The result is a
+// strict subset of the input, never a substitute envelope, and the input's
+// payload map is not mutated.
+func TimelineView(ev event.Event) event.Event {
+	out := event.Event{
+		SchemaVersion: ev.SchemaVersion,
+		ID:            ev.ID,
+		Time:          ev.Time,
+		Source:        ev.Source,
+		Agent:         ev.Agent,
+		SessionID:     ev.SessionID,
+		TurnID:        ev.TurnID,
+		CallID:        ev.CallID,
+		Category:      ev.Category,
+		Name:          ev.Name,
+		Severity:      ev.Severity,
+		Summary:       ev.Summary,
+	}
+	for _, k := range timelinePayloadKeys {
+		if v, ok := ev.Payload[k]; ok {
+			if out.Payload == nil {
+				out.Payload = make(map[string]any, len(timelinePayloadKeys))
 			}
+			out.Payload[k] = v
 		}
 	}
-	return event.Event{}, fmt.Errorf("%w: event %q", ErrNotFound, id)
+	return out
 }

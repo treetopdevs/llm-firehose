@@ -790,3 +790,96 @@ func TestErrorsEndpointEmptyIsArray(t *testing.T) {
 		t.Errorf("unknown session body = %s, want []", raw)
 	}
 }
+
+func TestSessionByIDTimelineView(t *testing.T) {
+	cfg := testConfig(t)
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
+	base := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	for i, ev := range []event.Event{
+		{ID: "t1", Time: base, Source: "claude-code", Agent: "claude", SessionID: "sv", CallID: "c1",
+			Category: event.CategoryTool, Name: "PreToolUse", Summary: "Bash", Transport: "hook",
+			CWD: "/work/proj", RepoID: "/work/proj/.git",
+			Payload: map[string]any{"tool_name": "Bash", "phase": "start", "command": "ls"}},
+		{ID: "t2", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "sv", CallID: "c1",
+			Category: event.CategoryTool, Name: "PostToolUse", Summary: "Bash done", Transport: "hook",
+			CWD: "/work/proj", RepoID: "/work/proj/.git",
+			Payload: map[string]any{"output": "secret-ish"}},
+	} {
+		if _, err := w.Append(ev); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+	ts := testServer(t, cfg)
+	get := func(q string) (int, []byte) {
+		resp, err := http.Get(ts.URL + "/sessions/sv" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var buf strings.Builder
+		if _, err := bufio.NewReader(resp.Body).WriteTo(&buf); err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, []byte(buf.String())
+	}
+
+	fullStatus, full := get("")
+	if fullStatus != http.StatusOK {
+		t.Fatalf("full status = %d", fullStatus)
+	}
+	if st, explicit := get("?view=full"); st != http.StatusOK || string(explicit) != string(full) {
+		t.Fatalf("view=full differs from absent view (status %d)", st)
+	}
+	status, body := get("?view=timeline")
+	if status != http.StatusOK {
+		t.Fatalf("timeline status = %d: %s", status, body)
+	}
+	var fullEvs, tlEvs []event.Event
+	if err := json.Unmarshal(full, &fullEvs); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &tlEvs); err != nil {
+		t.Fatal(err)
+	}
+	if len(tlEvs) != len(fullEvs) || len(tlEvs) != 2 {
+		t.Fatalf("timeline len = %d, full len = %d", len(tlEvs), len(fullEvs))
+	}
+	for i := range tlEvs {
+		if tlEvs[i].ID != fullEvs[i].ID {
+			t.Fatalf("event %d id = %s, want %s", i, tlEvs[i].ID, fullEvs[i].ID)
+		}
+	}
+	for _, banned := range []string{`"transport"`, `"cwd"`, `"repo_id"`, `"capture_time"`, "secret-ish", `"command"`} {
+		if strings.Contains(string(body), banned) {
+			t.Errorf("timeline body contains %s: %s", banned, body)
+		}
+	}
+	if !strings.Contains(string(full), `"transport"`) {
+		t.Errorf("full body lost transport; fixture is not exercising the projection")
+	}
+	if tlEvs[0].Payload["tool_name"] != "Bash" || tlEvs[1].Payload != nil {
+		t.Errorf("timeline payloads wrong: %+v / %+v", tlEvs[0].Payload, tlEvs[1].Payload)
+	}
+
+	if st, msg := get("?view=bogus"); st != http.StatusBadRequest || !strings.Contains(string(msg), "timeline") {
+		t.Errorf("view=bogus = %d %q, want 400 naming accepted values", st, msg)
+	}
+	// An invalid view is rejected before the lookup, so even an unknown
+	// session answers 400, not 404.
+	resp, err := http.Get(ts.URL + "/sessions/does-not-exist?view=bogus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bogus view on unknown session = %d, want 400", resp.StatusCode)
+	}
+	resp, err = http.Get(ts.URL + "/sessions/does-not-exist?view=timeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("timeline on unknown session = %d, want 404", resp.StatusCode)
+	}
+}
