@@ -97,3 +97,17 @@ that failed first:
 Five more existing tests in the first `describe` now attach the Score: four
 rely on `open()` rendering, and the play/tick test now also counts the
 projected re-render that pressing Play makes on full envelopes.
+
+## Second re-check
+
+A second narrow re-check of `e93b8b2` confirmed the three fixes above and
+found two more P2s. Both predate this PR. Both are fixed, each with a test
+that failed first:
+
+- **Automatic playback reopened a closed pane** at the next event boundary.
+  Closing the pane now sets a `dismissed` flag. While it is set, the frame
+  loop's moves (and the rewind when Play restarts from the end) only move
+  the current mark. Any explicit selection renders and clears the flag.
+- **A pending `open()` ignored dismissal.** The load captures the selection
+  token after its own reset and renders the first event only if no dismissal
+  or other selection happened while it loaded.

@@ -897,4 +897,44 @@ describe("session score timeline view", () => {
     expect(capturedEvent).not.toHaveBeenCalled();
     expect(panel.root.querySelector(".score-tick")).not.toBeNull(); // still drawn for when it is shown again
   });
+
+  test("after the pane is closed during playback, the frame loop's moves leave it closed; an explicit step reopens it", async () => {
+    sessionEvents.mockResolvedValue(projected);
+    const { panel, calls, last, cur } = recorder();
+    await panel.open(SID);
+    await flush();
+    button(panel.root, "play").click();
+    last()[3](); // close the pane
+    calls.length = 0;
+    const started = cur();
+    const speed = panel.root.querySelector<HTMLSelectElement>("select")!;
+    speed.value = speed.options[speed.options.length - 1].value;
+    speed.dispatchEvent(new Event("change"));
+    for (let i = 0; i < 3; i++) panel.tick(100);
+    expect(panel.root.querySelector(".score-tick.current")?.getAttribute("data-id")).not.toBe(started); // the cursor moved
+    expect(calls).toHaveLength(0);
+    button(panel.root, "play").click(); // pausing on a closed pane stays closed
+    await flush();
+    expect(calls).toHaveLength(0);
+    button(panel.root, "jump to next event").click();
+    expect(calls).toHaveLength(1);
+  });
+
+  test("closing the pane while a session loads keeps it closed when the load lands", async () => {
+    sessionEvents.mockResolvedValue(projected);
+    const { panel, calls, last } = recorder();
+    await panel.open(SID);
+    await flush();
+    let land!: (evs: FirehoseEvent[]) => void;
+    sessionEvents.mockImplementation(() => new Promise<FirehoseEvent[]>((r) => (land = r)));
+    const opening = panel.open(SID);
+    last()[3](); // close the pane while loading
+    calls.length = 0;
+    capturedEvent.mockClear();
+    land(projected);
+    await opening;
+    await flush();
+    expect(calls).toHaveLength(0);
+    expect(capturedEvent).not.toHaveBeenCalled();
+  });
 });

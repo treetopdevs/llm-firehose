@@ -133,6 +133,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let selection = 0;
   /** Whether the detail pane shows the score's current event (not dismissed, not taken by another view). */
   let shown = false;
+  /** The pane was closed; the frame loop's moves leave it closed until an explicit selection. */
+  let dismissed = false;
   let currentSignature: ErrorSignature | undefined;
 
   const siblings: Siblings = (ev) =>
@@ -194,7 +196,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   function play() {
     if (!loaded()) return;
-    if (at >= score.end) setPlayhead(score.start);
+    if (at >= score.end) setPlayhead(score.start, true);
     setPlaying(true);
   }
 
@@ -239,14 +241,20 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   // --- playhead ---------------------------------------------------------------
 
-  /** Moves the cursor; the event under it is the latest at or before it. */
-  function setPlayhead(next: number) {
+  /**
+   * Moves the cursor; the event under it is the latest at or before it.
+   * Playback's moves only mark the event when the pane was closed.
+   */
+  function setPlayhead(next: number, fromPlayback = false) {
     at = next;
     // Follow the cursor when it leaves the window; this redraws once per window width.
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
     const under = eventAt(score, at);
-    if (under && under.event.id !== currentId) highlight(under);
+    if (under && under.event.id !== currentId) {
+      if (fromPlayback && dismissed) mark(under);
+      else highlight(under);
+    }
   }
 
   /** Puts the cursor on one specific event, even when several share its instant. */
@@ -281,6 +289,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   /** The pane's close button: nothing in flight, nor pausing, may reopen it. */
   const dismiss = () => {
     shown = false;
+    dismissed = true;
     cancelDetail();
   };
 
@@ -338,6 +347,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   function render(ev: FirehoseEvent) {
     cancelDetail();
     shown = true;
+    dismissed = false;
     if (playing) {
       // Projected even when an older daemon sent full envelopes.
       onSelect(timelineProjection(ev), (e) => siblings(e).map(timelineProjection), currentSignature, dismiss);
@@ -389,7 +399,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   function tick(elapsedMs: number) {
     if (!playing || !loaded()) return;
     const step = advance(score, at, elapsedMs, speed);
-    setPlayhead(step.at);
+    setPlayhead(step.at, true);
     if (step.done) setPlaying(false);
   }
 
@@ -621,6 +631,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     fullById = new Map();
     currentId = undefined;
     setPlaying(false);
+    // Closing the pane, or another selection, while this loads keeps the load from rendering.
+    const sel = selection;
     sessionId = id;
     clear(head);
     clear(overview);
@@ -669,12 +681,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       at = score.start;
       drawHead();
       draw();
-      // A load that lands after the user left the Score draws but leaves the
-      // shared detail pane to whichever view is shown.
+      // A load that lands after the user left the Score, or closed the pane,
+      // draws but leaves the shared detail pane alone.
       const under = eventAt(score, at);
       if (under) {
         mark(under);
-        if (root.isConnected) render(under.event);
+        if (root.isConnected && sel === selection) render(under.event);
       }
     } catch (err) {
       if (v !== version) return;
