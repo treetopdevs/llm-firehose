@@ -182,3 +182,14 @@ f52d681); a signature over such an event would list `len`/`sha256` as paths
 until that branch merges — add a minimal-mode file-error test then. A `|`
 inside an event `name` could in principle collide two keys; adapter names
 carry none today.
+
+## Addendum 2026-10-16: session-scoped member event ids
+
+`GET /errors?session={id}` now additionally carries `members` on each
+signature: that session's qualifying event ids in `(Time, ID)` order, capped
+at the 500 earliest per signature+session (`len == 500` signals truncation).
+Without the `session` filter the field is omitted. Additive only — same
+projection order-independence rules as `Paths`, pinned by the extended
+determinism test (session-filtered snapshots across Build, reversed, rotated,
+and replay). This lets clients group a session's error events by signature
+without mirroring the keying rule.

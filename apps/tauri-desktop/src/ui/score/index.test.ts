@@ -5,11 +5,11 @@ const sessionEvents = vi.fn();
 const errorSignatures = vi.fn();
 vi.mock("../../api", () => ({
   sessionEvents: (id: string) => sessionEvents(id),
-  errorSignatures: (id: string) => errorSignatures(id),
+  errorSignatures: (id: string, signal?: AbortSignal) => errorSignatures(id, signal),
 }));
 
 import type { ErrorSignature, FirehoseEvent } from "../../api";
-import { createScore } from "./index";
+import { SIGNATURES_TIMEOUT_MS, createScore } from "./index";
 import { BUCKET_PX, buildScore, coalesce } from "./model";
 import fixture from "./fixture.session.json";
 import errsigFixture from "./fixture.errsig.json";
@@ -285,7 +285,7 @@ describe("session score view", () => {
     const sigs: (ErrorSignature | undefined)[] = [];
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     await panel.open(MIX_SESSION);
-    expect(errorSignatures).toHaveBeenCalledWith(MIX_SESSION);
+    expect(errorSignatures).toHaveBeenCalledWith(MIX_SESSION, expect.any(AbortSignal));
 
     // Both ticks of the repeating signature share the motif marker, and the
     // in-session count reads apart from the coalescing ×N prefix.
@@ -303,6 +303,18 @@ describe("session score view", () => {
     expect(panel.root.querySelectorAll(".score-chart .score-tick.kin").length).toBeGreaterThan(0);
   });
 
+  test("the daemon's member ids drive grouping and detail lookup even when the mirror would key differently", async () => {
+    const daemonSig: ErrorSignature = { ...MIX_SIG, key: "codex|shell|PostToolUse|rekeyed by the daemon", members: mixEvents.map((e) => e.id) };
+    sessionEvents.mockResolvedValue(mixEvents);
+    errorSignatures.mockResolvedValue([daemonSig]);
+    const sigs: (ErrorSignature | undefined)[] = [];
+    const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+    await panel.open(MIX_SESSION);
+    expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
+    expect(sigs).toEqual([daemonSig]);
+    expect(panel.root.querySelectorAll(".score-chart .score-tick.kin")).toHaveLength(2);
+  });
+
   test("an older daemon without GET /errors still groups motifs locally and costs the score nothing", async () => {
     sessionEvents.mockResolvedValue(mixEvents);
     errorSignatures.mockRejectedValue(new Error("GET /errors: 404"));
@@ -312,6 +324,28 @@ describe("session score view", () => {
     expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
     expect(panel.root.querySelector("p.error")).toBeNull();
     expect(sigs).toEqual([undefined]);
+  });
+
+  test("a hung GET /errors cannot keep the score loading: it is aborted after the timeout and the mirror takes over", async () => {
+    vi.useFakeTimers();
+    try {
+      sessionEvents.mockResolvedValue(mixEvents);
+      // Never resolves on its own; only the caller's abort can settle it.
+      errorSignatures.mockImplementation(
+        (_id: string, signal?: AbortSignal) =>
+          new Promise<ErrorSignature[]>((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+      );
+      const sigs: (ErrorSignature | undefined)[] = [];
+      const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+      const opening = panel.open(MIX_SESSION);
+      await vi.advanceTimersByTimeAsync(SIGNATURES_TIMEOUT_MS + 1);
+      await opening;
+      expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
+      expect(panel.root.querySelector("p.error")).toBeNull();
+      expect(sigs).toEqual([undefined]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("a slow or hung GET /errors never blocks the score; signatures enrich the detail when they land", async () => {
@@ -330,6 +364,28 @@ describe("session score view", () => {
     await Promise.resolve();
     // The current event is an error, so its detail is refreshed with the signature.
     expect(sigs).toEqual([undefined, MIX_SIG]);
+  });
+
+  test("late-arriving member ids rebuild the grouping in place", async () => {
+    sessionEvents.mockResolvedValue(mixEvents);
+    let finish!: (sigs: ErrorSignature[]) => void;
+    errorSignatures.mockImplementation(() => new Promise<ErrorSignature[]>((resolve) => (finish = resolve)));
+    const sigs: (ErrorSignature | undefined)[] = [];
+    const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+    await panel.open(MIX_SESSION);
+    // The mirror grouped the pair as a motif while /errors was pending.
+    expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
+
+    // The daemon's member ids split the pair into two signatures: the score
+    // is rebuilt on their authority, and the motif dissolves.
+    const a: ErrorSignature = { ...MIX_SIG, key: "codex|shell|PostToolUse|a", members: [mixEvents[0].id] };
+    const b: ErrorSignature = { ...MIX_SIG, key: "codex|shell|PostToolUse|b", members: [mixEvents[1].id] };
+    finish([a, b]);
+    await Promise.resolve();
+    expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(0);
+    expect(panel.root.querySelectorAll(".score-tick.error")).toHaveLength(2);
+    // The current event is an error; its refreshed detail carries its own signature.
+    expect(sigs[sigs.length - 1]).toEqual(a);
   });
 
   test("a session without repeating errors draws no motif marks", async () => {

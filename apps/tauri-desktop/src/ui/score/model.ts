@@ -3,7 +3,7 @@
 // (docs/plans/2026-10-16-session-score-and-activity-map.md). Pure derivation;
 // span pairing is the Lanes model's, so both views agree on every call.
 
-import type { FirehoseEvent } from "../../api";
+import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { isTransition } from "../../spark";
 import { MAX_OPEN_SPAN_MS, collectCalls } from "../lanes/model";
 
@@ -38,10 +38,21 @@ export type View = { from: number; to: number };
 //
 // The Error Signature identity is defined once, in the capture projection
 // (internal/capture/internal/projection/errsig.go), and served at GET /errors.
-// That endpoint carries no member-event ids, so to group this session's error
-// ticks the view mirrors the keying rule; parity is pinned by model.test.ts
-// over the projection's own 11-event fixture. Cross-session facts (count,
-// sessions, sample) come only from the daemon, never from this mirror.
+// With ?session= the endpoint carries each signature's member event ids
+// (additive, 2026-10-16), and those are the authoritative grouping:
+// memberSignatureKeys turns them into an id → key map that buildScore prefers.
+// The mirrored keying below remains only as the fallback for older daemons
+// without the field, failed fetches, and ids past the endpoint's 500-member
+// cap; parity is pinned by model.test.ts over the projection's own 11-event
+// fixture. Cross-session facts (count, sessions, sample) come only from the
+// daemon, never from this mirror.
+
+/** Event id → signature key, from the daemon's session-scoped member ids. */
+export function memberSignatureKeys(sigs: readonly ErrorSignature[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const s of sigs) for (const id of s.members ?? []) out.set(id, s.key);
+  return out;
+}
 
 /** Mirrors errsig.go normalizeErrorSummary: lowercase, collapse whitespace, hex runs of 6+ then digit runs to '#', 160 code points. */
 export function normalizeErrorSummary(s: string): string {
@@ -78,7 +89,7 @@ function rank(category: string): number {
   return i === -1 ? CATEGORY_ORDER.length : i;
 }
 
-export function buildScore(events: readonly FirehoseEvent[]): Score {
+export function buildScore(events: readonly FirehoseEvent[], members?: ReadonlyMap<string, string>): Score {
   const tracks = new Map<string, Track>();
   const trackFor = (category: string): Track => {
     let tr = tracks.get(category);
@@ -105,7 +116,7 @@ export function buildScore(events: readonly FirehoseEvent[]): Score {
     const kind = tickKind(ev);
     const tick: ScoreTick = { at: t, kind, id: ev.id };
     if (kind === "error") {
-      tick.sig = errorSignatureKey(ev);
+      tick.sig = members?.get(ev.id) ?? errorSignatureKey(ev);
       sigCounts.set(tick.sig, (sigCounts.get(tick.sig) ?? 0) + 1);
     }
     trackFor(ev.category).ticks.push(tick);

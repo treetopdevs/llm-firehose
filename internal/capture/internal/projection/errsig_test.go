@@ -264,6 +264,79 @@ func TestErrorSignaturesSessionFilter(t *testing.T) {
 	}
 }
 
+func TestErrorSignatureSessionMembers(t *testing.T) {
+	ix := foldProjection(loadErrsigFixture(t))
+
+	// Without a session filter no signature carries members.
+	for _, sig := range ix.ErrorSignatures("") {
+		if sig.Members != nil {
+			t.Errorf("%s: unfiltered signatures must omit members, got %v", sig.Key, sig.Members)
+		}
+	}
+
+	// With a session filter, members are that session's qualifying event ids in
+	// (Time, ID) order — only that session's, even when the signature spans more.
+	mix := ix.ErrorSignatures("019fd182-8513-7461-a816-e786f1fe439e")
+	if len(mix) != 1 {
+		t.Fatalf("mix session filter wrong: %+v", mix)
+	}
+	wantMix := []string{"4572dfa2e2a3386cb8001acb0c545920", "ac5c49a2029268271b6b61485e6de6fa"}
+	if !reflect.DeepEqual(mix[0].Members, wantMix) {
+		t.Errorf("mix members = %v, want %v", mix[0].Members, wantMix)
+	}
+	if mix[0].Count != 3 || mix[0].Sessions != 2 {
+		t.Errorf("members must not re-scope global counts: %+v", mix[0])
+	}
+
+	other := ix.ErrorSignatures("019faf77-c87d-7b22-a292-75e4f40f25bf")
+	if len(other) != 1 || !reflect.DeepEqual(other[0].Members, []string{"c5089b7d2673ba045c26b47175717f12"}) {
+		t.Errorf("other mix session members wrong: %+v", other)
+	}
+
+	sed := ix.ErrorSignatures("019faa0f-4b75-75b0-b8b3-48f248fb6916")
+	wantSed := []string{"84b0e3e3218a1d107795159e885a1d69", "2fae6a3da1814827d00cbfce35f2becd"}
+	if len(sed) != 1 || !reflect.DeepEqual(sed[0].Members, wantSed) {
+		t.Errorf("sed members = %+v, want %v", sed, wantSed)
+	}
+
+	// The accessor hands out copies, not internal state.
+	sed[0].Members[0] = "mutated"
+	again := ix.ErrorSignatures("019faa0f-4b75-75b0-b8b3-48f248fb6916")
+	if !reflect.DeepEqual(again[0].Members, wantSed) {
+		t.Errorf("accessor leaked members: %v", again[0].Members)
+	}
+}
+
+func sessionErrorEvent(id, session string, at time.Time) event.Event {
+	return event.Event{ID: id, Time: at, Source: "codex", SessionID: session,
+		Category: event.CategoryError, Name: "boom", Summary: "boom"}
+}
+
+func TestErrorSignatureMembersCapKeepsEarliest(t *testing.T) {
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	n := errorSignatureSessionMembers + 5
+	forward := New()
+	backward := New()
+	for i := 0; i < n; i++ {
+		forward.Apply(sessionErrorEvent(fmt.Sprintf("m%04d", i), "s1", base.Add(time.Duration(i)*time.Second)))
+	}
+	for i := n - 1; i >= 0; i-- {
+		backward.Apply(sessionErrorEvent(fmt.Sprintf("m%04d", i), "s1", base.Add(time.Duration(i)*time.Second)))
+	}
+	fm := forward.ErrorSignatures("s1")[0].Members
+	bm := backward.ErrorSignatures("s1")[0].Members
+	if len(fm) != errorSignatureSessionMembers || !reflect.DeepEqual(fm, bm) {
+		t.Fatalf("cap must be %d and order-independent:\n%v\n%v", errorSignatureSessionMembers, len(fm), len(bm))
+	}
+	if fm[0] != "m0000" || fm[len(fm)-1] != fmt.Sprintf("m%04d", errorSignatureSessionMembers-1) {
+		t.Errorf("cap should keep the earliest members in (Time, ID) order, got %s..%s", fm[0], fm[len(fm)-1])
+	}
+	// Count keeps counting past the cap; len(members) == cap is the truncation signal.
+	if c := forward.ErrorSignatures("s1")[0].Count; c != n {
+		t.Errorf("Count = %d, want %d", c, n)
+	}
+}
+
 func TestErrorSignaturesIgnoreNonErrors(t *testing.T) {
 	ix := foldProjection(seedEvents())
 	if sigs := ix.ErrorSignatures(""); len(sigs) != 0 {
@@ -276,9 +349,21 @@ func TestErrorSignaturesIgnoreNonErrors(t *testing.T) {
 	}
 }
 
+// errSigSnapshots captures ErrorSignatures unfiltered plus filtered by every
+// session the events mention, so determinism checks cover session members too.
+func errSigSnapshots(ix *Projection, evs []event.Event) map[string][]ErrorSignature {
+	out := map[string][]ErrorSignature{"": ix.ErrorSignatures("")}
+	for _, ev := range evs {
+		if ev.SessionID != "" {
+			out[ev.SessionID] = ix.ErrorSignatures(ev.SessionID)
+		}
+	}
+	return out
+}
+
 func TestErrorSignaturesDeterminism(t *testing.T) {
 	evs := loadErrsigFixture(t)
-	want := foldProjection(evs).ErrorSignatures("")
+	want := errSigSnapshots(foldProjection(evs), evs)
 
 	// Build over a spool directory holding the fixture agrees with the fold on
 	// every field.
@@ -294,7 +379,7 @@ func TestErrorSignaturesDeterminism(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := built.ErrorSignatures(""); !reflect.DeepEqual(got, want) {
+	if got := errSigSnapshots(built, evs); !reflect.DeepEqual(got, want) {
 		t.Errorf("Build vs fold mismatch:\n%+v\n%+v", got, want)
 	}
 
@@ -315,20 +400,20 @@ func TestErrorSignaturesDeterminism(t *testing.T) {
 				t.Fatalf("%s: event %s reported as replay", name, ev.ID)
 			}
 		}
-		if got := ix.ErrorSignatures(""); !reflect.DeepEqual(got, want) {
+		if got := errSigSnapshots(ix, evs); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s order mismatch:\n%+v\n%+v", name, got, want)
 		}
 	}
 
 	// Replaying every id a second time changes nothing.
 	ix := foldProjection(evs)
-	before := ix.ErrorSignatures("")
+	before := errSigSnapshots(ix, evs)
 	for _, ev := range evs {
 		if _, isNew := ix.ApplyResult(ev); isNew {
 			t.Fatalf("replay of %s reported as new", ev.ID)
 		}
 	}
-	if after := ix.ErrorSignatures(""); !reflect.DeepEqual(before, after) {
+	if after := errSigSnapshots(ix, evs); !reflect.DeepEqual(before, after) {
 		t.Errorf("replay changed signatures:\n%+v\n%+v", before, after)
 	}
 }

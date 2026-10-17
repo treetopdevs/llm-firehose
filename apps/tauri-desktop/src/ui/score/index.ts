@@ -21,6 +21,7 @@ import {
   errorSignatureKey,
   eventAt,
   eventLabel,
+  memberSignatureKeys,
   nextEventAfter,
   panView,
   prevEventBefore,
@@ -41,6 +42,9 @@ export type ScorePanel = {
   tick(elapsedMs: number): void;
   playhead(): number;
 };
+
+/** How long the optional GET /errors fetch may take before it is aborted; the score then renders without daemon signatures. */
+export const SIGNATURES_TIMEOUT_MS = 4_000;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LABEL_W = 110;
@@ -93,6 +97,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let byId = new Map<string, FirehoseEvent>();
   /** The daemon's Error Signatures for this session, by key; empty when the daemon has none or lacks GET /errors. */
   let sigs = new Map<string, ErrorSignature>();
+  /** The daemon's member assignment (event id → signature key); the mirrored keying is only the fallback. */
+  let memberKeys = new Map<string, string>();
   /** The motif the current event belongs to, lit on every member tick in view. */
   let kinSig: string | undefined;
   let kinNodes: SVGElement[] = [];
@@ -244,7 +250,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     let signature: ErrorSignature | undefined;
     kinSig = undefined;
     if (tickKind(ev) === "error") {
-      const key = errorSignatureKey(ev);
+      const key = memberKeys.get(ev.id) ?? errorSignatureKey(ev);
       signature = sigs.get(key);
       if (score.motifs.has(key)) kinSig = key;
     }
@@ -510,25 +516,37 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     chart.append(el("p", { class: "dim" }, `loading ${id}…`));
     // GET /errors is additive (2026-10-16) and pure enrichment: fetched
     // alongside the events but never awaited, so an older daemon without the
-    // route — or one that hangs on it — costs the score nothing. Motifs group
-    // on the locally mirrored keys either way; when the signatures land, the
-    // current event's detail is refreshed to gain the cross-session facts.
+    // route — or one that hangs on it — costs the score nothing. A hung fetch
+    // is aborted after SIGNATURES_TIMEOUT_MS. Motifs group on the locally
+    // mirrored keys either way; when the signatures land, their member ids
+    // replace the mirror and the current event's detail gains the
+    // cross-session facts.
     sigs = new Map();
-    void errorSignatures(id)
+    memberKeys = new Map();
+    let ready = false;
+    const sigAbort = new AbortController();
+    const sigTimer = setTimeout(() => sigAbort.abort(), SIGNATURES_TIMEOUT_MS);
+    void errorSignatures(id, sigAbort.signal)
       .then((sigList) => {
         if (v !== version) return;
         sigs = new Map(sigList.map((s) => [s.key, s]));
+        memberKeys = memberSignatureKeys(sigList);
+        if (!ready) return; // the events' load picks the keys up
+        score = buildScore(events, memberKeys);
+        draw();
         const cur = currentId ? eventById(currentId) : undefined;
         if (cur && tickKind(cur.event) === "error") highlight(cur);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => clearTimeout(sigTimer));
     try {
       const fetched = await sessionEvents(id);
       if (v !== version) return;
       const evs = fetched.filter((ev) => !source || ev.source === source);
       events = evs;
       byId = new Map(evs.map((e) => [e.id, e]));
-      score = buildScore(evs);
+      score = buildScore(evs, memberKeys);
+      ready = true;
       view = bounds();
       currentId = undefined;
       kinSig = undefined;

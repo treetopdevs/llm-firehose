@@ -126,22 +126,28 @@ signature to the detail pane, which shows a "recurring error" section: the
 sample and the global `count`/`sessions` (labelled as cross-session, since
 `GET /errors?session=` does not re-scope counts).
 
-`GET /errors` carries no member-event ids, so `score/model.ts` mirrors the
-projection's keying rule (`errorClass` precedence and
-`normalizeErrorSummary`); parity is pinned by tests over the same 11 real
-captured events as the projection's fixture (`fixture.errsig.json` =
-`testdata/errsig.ndjson`). Known parity edge: JS `\s` and Go `unicode.IsSpace`
+The named follow-up shipped 2026-10-16: `GET /errors?session=` now carries
+each signature's `members` (that session's qualifying event ids, capped at the
+500 earliest; see [2026-10-16-error-signature.md](2026-10-16-error-signature.md)
+addendum), and when present those are the authoritative grouping —
+`memberSignatureKeys` builds an id → key map that `buildScore` and the detail
+lookup prefer. `score/model.ts` keeps the mirrored keying rule (`errorClass`
+precedence and `normalizeErrorSummary`) only as the fallback for older daemons
+without the field, failed fetches, and ids past the cap; parity stays pinned
+by tests over the same 11 real captured events as the projection's fixture
+(`fixture.errsig.json` = `testdata/errsig.ndjson`). Known parity edge in the
+fallback: JS `\s` and Go `unicode.IsSpace`
 disagree on U+0085 (Go collapses it, JS does not) and U+FEFF (the reverse), and
 JS lowercases Greek final sigma context-sensitively where Go does not — adapter
 summaries are effectively ASCII today, and a drifted key only costs the
 cross-session annotation, never the local grouping. Cross-session facts come
 only from the daemon: the
 `/errors` fetch is tolerant and never awaited (the score renders from the
-events alone and the current event's detail is refreshed when the signatures
-land), so against an older daemon without the route — or one that hangs on
-it — the score renders unchanged and motifs still group on the local keys,
-with no cross-session counts shown. A follow-up could add an additive member-ids
-field to `GET /errors?session=` and let the client drop the mirror. The
+events alone, aborted after a 4 s timeout if it hangs; when the signatures
+land, their member ids replace the mirror, the score is rebuilt and the
+current event's detail is refreshed), so against an older daemon without the
+route — or one that hangs on it — the score renders unchanged and motifs still
+group on the local keys, with no cross-session counts shown. The
 feature lights up live once the Error Signature branch
 (`claude/workflow-progress-planning-37b3e0`) lands in `main`.
 

@@ -44,7 +44,8 @@ func (e *Engine) Sessions() []Session { return e.projection.Sessions() }
 
 // ErrorSignatures returns derived Error Signature summaries, most recently
 // seen first. A non-empty sessionID selects only signatures that include that
-// session; Count and Sessions remain global, not re-scoped to it. Never nil.
+// session, each carrying that session's member event ids; Count and Sessions
+// remain global, not re-scoped to it. Never nil.
 func (e *Engine) ErrorSignatures(sessionID string) []ErrorSignature {
 	return e.projection.ErrorSignatures(sessionID)
 }
