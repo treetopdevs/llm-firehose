@@ -222,3 +222,14 @@ As specified, with these notes:
   `graph/index.requests.test.ts` bursts) failed in parallel runs on this
   machine at a load average above 700 and passed with
   `--no-file-parallelism`. They are untouched by this change.
+- **Codex review fixes.** A Codex Sol 6.1 xhigh adversarial review found two
+  desktop races and nothing in the backend, privacy, contracts or allowlist
+  ([review](../reviews/2026-10-17-session-timeline-view-codex.md)). A late
+  full-detail result could overwrite another view's selection or reopen a
+  closed pane: results now render only under the pane-selection token they
+  started with, and only while the Score is attached. A new selection, the
+  pane's close button (a `dismiss` callback main.ts wires in), `open()` and the
+  view being shown again (`refresh()`) each bump the token and abort the fetch.
+  Explicit steps during playback fetched full detail and cached envelopes
+  rendered through `fuller()`: playback now renders projected fields only, and
+  pausing renders cached envelopes at once and fetches the rest.
