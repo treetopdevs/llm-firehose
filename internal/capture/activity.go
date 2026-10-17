@@ -127,7 +127,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 				seen[ev.ID] = true
 			}
 			out.FileEvents++
-			paths := projection.EventFilePaths(ev)
+			paths := activityPaths(ev)
 			if len(paths) == 0 {
 				out.UnreadableFileEvents++
 				return
