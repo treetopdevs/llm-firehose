@@ -207,6 +207,58 @@ func ReadForProjection(dir string) ([]event.Event, bool, error) {
 	return all, gaps, nil
 }
 
+// ScanForProjection streams the same records ReadForProjection returns, in
+// the same order, to yield without holding the spool in memory. Oversized,
+// undecodable, or invalid records are reported through onGap exactly where
+// ReadForProjection reports gaps. A missing dir is empty; a listed file that
+// cannot be opened (including one removed after listing) is an error.
+func ScanForProjection(dir string, onGap func(), yield func(event.Event)) error {
+	files, err := spoolFiles(dir)
+	if err != nil {
+		return err
+	}
+	var scratch []byte
+	for _, file := range files {
+		if scratch, err = scanFileForProjection(file, scratch, onGap, yield); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scanFileForProjection(path string, scratch []byte, onGap func(), yield func(event.Event)) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return scratch, err
+	}
+	defer f.Close()
+	reader := bufio.NewReaderSize(f, 1<<20)
+	for {
+		var line []byte
+		line, _, scratch, err = readLineInto(reader, true, scratch)
+		if errors.Is(err, io.EOF) {
+			return scratch, nil
+		}
+		if errors.Is(err, errOversizedRecord) {
+			onGap()
+			continue
+		}
+		if err != nil {
+			return scratch, err
+		}
+		// line is backed by scratch and overwritten by the next record. That
+		// is safe because json.Unmarshal copies every string it decodes into
+		// ev (Event has no []byte or json.RawMessage fields), so no yielded
+		// event aliases the buffer.
+		var ev event.Event
+		if json.Unmarshal(line, &ev) != nil || ev.Validate() != nil {
+			onGap()
+			continue
+		}
+		yield(ev)
+	}
+}
+
 func readFileReport(path string, onGap func()) ([]event.Event, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -384,7 +436,16 @@ func (t *Tailer) pollAck(deliver func(event.Event) error) {
 // larger than maxRecordBytes are quarantined: the remainder through the next
 // newline (or EOF) is consumed and errOversizedRecord is returned.
 func readLine(reader *bufio.Reader, acceptFinal bool) ([]byte, int64, error) {
-	var raw []byte
+	line, consumed, _, err := readLineInto(reader, acceptFinal, nil)
+	return line, consumed, err
+}
+
+// readLineInto is readLine backed by a caller-owned scratch buffer. It returns
+// the buffer to pass to the next call; the returned line aliases it and is
+// valid only until then. On an oversized record the incoming scratch is
+// returned, so a reallocation past maxRecordBytes is not retained.
+func readLineInto(reader *bufio.Reader, acceptFinal bool, scratch []byte) ([]byte, int64, []byte, error) {
+	raw := scratch[:0]
 	for {
 		chunk, err := reader.ReadSlice('\n')
 		raw = append(raw, chunk...)
@@ -394,27 +455,27 @@ func readLine(reader *bufio.Reader, acceptFinal bool) ([]byte, int64, error) {
 				skipped, skipErr := discardThroughNewline(reader)
 				consumed += skipped
 				if skipErr != nil && !errors.Is(skipErr, io.EOF) {
-					return nil, consumed, skipErr
+					return nil, consumed, scratch, skipErr
 				}
 			}
-			return nil, consumed, errOversizedRecord
+			return nil, consumed, scratch, errOversizedRecord
 		}
 		if err == nil {
 			line := bytes.TrimSuffix(raw, []byte{'\n'})
 			line = bytes.TrimSuffix(line, []byte{'\r'})
-			return line, int64(len(raw)), nil
+			return line, int64(len(raw)), raw, nil
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
 		if errors.Is(err, io.EOF) {
 			if len(raw) == 0 || !acceptFinal {
-				return nil, 0, io.EOF
+				return nil, 0, raw, io.EOF
 			}
 			line := bytes.TrimSuffix(raw, []byte{'\r'})
-			return line, int64(len(raw)), nil
+			return line, int64(len(raw)), raw, nil
 		}
-		return nil, 0, err
+		return nil, 0, raw, err
 	}
 }
 

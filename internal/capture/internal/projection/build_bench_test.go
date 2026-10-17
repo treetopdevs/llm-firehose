@@ -78,11 +78,12 @@ func writeSyntheticSpool(tb testing.TB, dir string, days, perDay int) {
 }
 
 func BenchmarkBuild(b *testing.B) {
+	const days, perDay = 10, 10000
 	dir := b.TempDir()
-	writeSyntheticSpool(b, dir, 10, 10000)
+	writeSyntheticSpool(b, dir, days, perDay)
 	b.ReportAllocs()
 	b.ResetTimer()
-	var heapSys, heapInuse uint64
+	var heapSys, heapInuse, totalAlloc uint64
 	for i := 0; i < b.N; i++ {
 		runtime.GC()
 		var before runtime.MemStats
@@ -95,8 +96,11 @@ func BenchmarkBuild(b *testing.B) {
 		runtime.ReadMemStats(&after)
 		heapSys = after.HeapSys
 		heapInuse = after.HeapInuse
+		totalAlloc = after.TotalAlloc - before.TotalAlloc
 		runtime.KeepAlive(ix)
 	}
 	b.ReportMetric(float64(heapSys)/(1<<20), "HeapSys-MiB")
 	b.ReportMetric(float64(heapInuse)/(1<<20), "HeapInuse-MiB")
+	b.ReportMetric(float64(totalAlloc)/1e6, "TotalAlloc-MB")
+	b.ReportMetric(float64(totalAlloc)/(days*perDay), "B/event")
 }

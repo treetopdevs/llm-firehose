@@ -1,6 +1,6 @@
 # Projection Build at startup: stream the spool instead of materializing it
 
-Date: 2026-10-17. Status: brief (results appended below when the slice lands).
+Date: 2026-10-17. Status: landed (results below).
 
 ## Problem
 
@@ -67,6 +67,14 @@ After streaming, JSON decode is about 57 % of `Build` CPU.
    as before. `Build` applies events as they arrive and never holds the spool.
    `ReadForProjection` stays: the equivalence test uses it as the reference and
    `graph_history_scale_test.go` uses it.
+   Correction found while building: `applyInbox` does read `gap`. The old
+   `Build` seeded the read-gap `CaptureGap` before applying any event, and an
+   id-less legacy record replaces it only if strictly newer, while an applied
+   `firehose`/`parse-error`/`meta` record with an id overwrites it outright.
+   Streaming only learns about gaps at the end, so `Build` folds the seed in
+   afterwards with the same rule (`resetsGap` mirrors the overwrite
+   condition), and stamps the seed before the scan as before.
+   `TestBuildEquivalenceReadGapMeetsInboxGaps` covers 11 orderings.
 2. **Reuse the line buffer** in the streaming path. `json.Unmarshal` copies
    every string it decodes, so a scratch slice can back each line. The tailer
    and the other readers keep their current `readLine` behavior.
@@ -101,4 +109,31 @@ After streaming, JSON decode is about 57 % of `Build` CPU.
 
 ## Results
 
-(appended when the slice lands)
+Same synthetic spool and command as the baseline.
+
+| Metric | Baseline | Streaming (this slice) | Change |
+|---|---|---|---|
+| B/op | 803.6 MB | 229.5 MB | −71 % |
+| B/event (TotalAlloc delta) | ≈ 8,023 | 2,295 | −71 % |
+| allocs/op | 3.58 M | 3.38 M | −6 % |
+| HeapSys after Build | 331 MiB | 55 MiB | −83 % |
+| HeapInuse after Build | 240 MiB | 37 MiB | −84 % |
+
+Peak heap is now about the Projection's own live size, not the spool size.
+Scaled linearly, the 7.4 GB HeapSys on a real spool should fall to roughly the
+size of the live projection (≈ 1.2 to 1.4 GB on that machine, per the session
+perf doc). That is an estimate: the live spool was not read.
+
+Tests that guard it:
+- `TestBuildAllocationsPerEvent`: under 5,000 B/event (failed at 8,023 first).
+- `TestBuildEquivalence*`: every unexported field and every exported view of
+  `Build` equals the `ReadForProjection` + `Apply` reference, over the real
+  fixtures (split by day and in one file), a synthetic spool, a spool with an
+  undecodable line, a record that fails `Validate`, a 9 MiB oversized record,
+  and ids duplicated across days, plus the read-gap orderings above.
+- `spool/scan_projection_test.go`: `ScanForProjection` yields exactly what
+  `ReadForProjection` returns, with the same gap flag, open errors, CRLF, a
+  final line without newline, and no aliasing of the reused line buffer.
+
+Deferred (own ticket): an on-disk checkpoint for sealed day files, the only
+remaining lever on decode CPU (≈ 57 % of `Build` CPU). See decision 5.
