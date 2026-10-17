@@ -27,6 +27,7 @@ bump the schema version, and consumers must ignore unknown fields.
 |---|---|---|---|
 | 0.1.x | 0.1.x | 1 | any daemon reporting schema 1 (or none) |
 | 0.2.x | 0.2.x | 1 | any daemon reporting schema 1 (or none); the workspace graph needs 0.1.3+ (graph routes). Against a 0.1.3 daemon, graph names fall back to short digests and repositories are not remembered across restarts outside full mode |
+| 0.3.x | 0.3.x | 1 | any daemon reporting schema 1 (or none). Both routes below are new in 0.3.0. `GET /errors` enriches Session Score error motifs with cross-session signature details; against a 0.2.x daemon the score still groups motifs from locally mirrored keys, and only that enrichment is unavailable. The Activity Map needs `GET /workspace-graph/activity` and is unavailable against a 0.2.x daemon. The rest of the app is unaffected |
 
 Add a row per release (release runbook §0).
 
