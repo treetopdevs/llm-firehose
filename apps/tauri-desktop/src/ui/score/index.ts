@@ -83,7 +83,11 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
   return [many, tool, what, how].filter(Boolean).join(" · ");
 }
 
-export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature?: ErrorSignature) => void): ScorePanel {
+/**
+ * `onSelect` renders the detail pane; `dismiss` is the score's half of that
+ * pane's close button, so a fetch still in flight never reopens it.
+ */
+export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
   const bar = el("div", { class: "score-bar" });
@@ -120,6 +124,14 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let fullById = new Map<string, FirehoseEvent>();
   /** The one in-flight full-detail fetch group; starting another aborts it. */
   let detailAbort: AbortController | undefined;
+  /**
+   * Which selection owns the detail pane. A new selection, dismissing the
+   * pane, opening a session, and the view being shown again each bump it; a
+   * fetched result renders only under the token it started with.
+   */
+  let selection = 0;
+  /** Whether the detail pane shows the score's current event (not dismissed, not taken by another view). */
+  let shown = false;
   let currentSignature: ErrorSignature | undefined;
 
   const siblings: Siblings = (ev) =>
@@ -151,16 +163,16 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     playBtn.textContent = playing ? "❚❚" : "▶";
     if (playing) {
       // Starting playback: no detail fetch may be in flight while the cursor moves.
-      detailAbort?.abort();
-      detailAbort = undefined;
+      cancelDetail();
       frameStamp = 0;
       requestAnimationFrame(frame);
     } else if (wasPlaying && root.isConnected) {
-      // Playback stopped on the event under the cursor: fetch its full detail now.
-      // A detached view (the user left the Score) is paused silently instead, so
-      // the shared detail pane is never written from a hidden panel.
+      // Playback stopped on the event under the cursor: render its full detail
+      // now, cached or fetched, unless the pane was dismissed. A detached view
+      // (the user left the Score) is paused silently instead, so the shared
+      // detail pane is never written from a hidden panel.
       const cur = currentId ? byId.get(currentId) : undefined;
-      if (cur) fetchFull(cur);
+      if (cur && shown) render(cur);
     }
   }
 
@@ -238,7 +250,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     at = target.at;
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
-    if (target.event.id !== currentId) highlight(target, true);
+    if (target.event.id !== currentId) highlight(target);
   }
 
   function nodeKey(category: string, kind: string, column: number): string {
@@ -256,6 +268,18 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     return Number.isNaN(at) ? undefined : { at, event: ev };
   }
 
+  /** Drops any in-flight detail fetch and the selection it was for. */
+  function cancelDetail() {
+    selection++;
+    detailAbort?.abort();
+    detailAbort = undefined;
+  }
+  /** The pane's close button: nothing in flight, nor pausing, may reopen it. */
+  const dismiss = () => {
+    shown = false;
+    cancelDetail();
+  };
+
   /** The full envelope when one was fetched, else the projected event the session loaded with. */
   const fuller = (ev: FirehoseEvent) => fullById.get(ev.id) ?? ev;
   const fullSiblings: Siblings = (ev) => siblings(ev).map(fuller);
@@ -263,18 +287,21 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   /**
    * Fetches the full envelopes of an event and its call siblings that are not
    * cached, then re-renders the detail if that event is still the current one.
-   * One group at a time; failures leave the projected rendering standing.
+   * One group at a time, and only while paused; failures leave the projected
+   * rendering standing. The result renders only under the selection token
+   * `sel` and while the score is the shown view.
    */
-  function fetchFull(ev: FirehoseEvent) {
+  function fetchFull(ev: FirehoseEvent, sel: number) {
     detailAbort?.abort();
     detailAbort = undefined;
+    if (playing) return;
     const wanted = [ev, ...siblings(ev)].map((e) => e.id).filter((id, i, all) => !fullById.has(id) && all.indexOf(id) === i);
     if (wanted.length === 0) return;
     const v = version;
     const ctl = new AbortController();
     detailAbort = ctl;
     void Promise.all(wanted.map((id) => capturedEvent(id, ctl.signal).then((full) => full, () => undefined))).then((got) => {
-      if (v !== version || ctl.signal.aborted) return;
+      if (v !== version || sel !== selection || ctl.signal.aborted || !root.isConnected) return;
       if (detailAbort === ctl) detailAbort = undefined;
       let any = false;
       got.forEach((full, i) => {
@@ -283,12 +310,34 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
           any = true;
         }
       });
-      if (any && currentId === ev.id) onSelect(fuller(ev), fullSiblings, currentSignature);
+      if (any && currentId === ev.id && !playing) onSelect(fuller(ev), fullSiblings, currentSignature, dismiss);
     });
   }
 
-  /** `explicit` is a step, click or jump; it fetches even mid-playback, where the frame loop's moves do not. */
-  function highlight(target: ScoreEvent, explicit = false) {
+  /** Makes `target` current and renders it. */
+  function highlight(target: ScoreEvent) {
+    mark(target);
+    render(target.event);
+  }
+
+  /**
+   * Renders the current event as a new pane selection. Playback shows
+   * projected fields only, explicit steps included; full envelopes, cached or
+   * fetched, render while paused.
+   */
+  function render(ev: FirehoseEvent) {
+    cancelDetail();
+    shown = true;
+    if (playing) {
+      onSelect(ev, siblings, currentSignature, dismiss);
+      return;
+    }
+    onSelect(fuller(ev), fullSiblings, currentSignature, dismiss);
+    fetchFull(ev, selection);
+  }
+
+  /** Moves the current mark, its motif kin, and its signature to `target` without rendering. */
+  function mark(target: ScoreEvent) {
     const was = currentId ? byId.get(currentId) : undefined;
     if (was) nodeFor(was)?.classList.remove("current");
     currentId = target.event.id;
@@ -303,12 +352,6 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     }
     applyKin();
     currentSignature = signature;
-    onSelect(fuller(ev), fullSiblings, signature);
-    if (explicit || !playing) fetchFull(ev);
-    else {
-      detailAbort?.abort();
-      detailAbort = undefined;
-    }
   }
 
   /** Lights every in-view member of the current event's motif; redraws re-apply it like .current. */
@@ -563,8 +606,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     const v = ++version;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.
-    detailAbort?.abort();
-    detailAbort = undefined;
+    cancelDetail();
     fullById = new Map();
     currentId = undefined;
     setPlaying(false);
@@ -594,7 +636,11 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
         score = buildScore(events, memberKeys);
         draw();
         const cur = currentId ? eventById(currentId) : undefined;
-        if (cur && tickKind(cur.event) === "error") highlight(cur);
+        if (cur && tickKind(cur.event) === "error") {
+          // Late signatures re-render only a pane this score still owns.
+          mark(cur);
+          if (shown && root.isConnected) render(cur.event);
+        }
       })
       .catch(() => {})
       .finally(() => clearTimeout(sigTimer));
@@ -622,6 +668,10 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   async function refresh() {
+    // Shown again: another view may have taken the pane meanwhile, and
+    // whatever was in flight predates that.
+    shown = false;
+    cancelDetail();
     drawHead();
     draw();
   }

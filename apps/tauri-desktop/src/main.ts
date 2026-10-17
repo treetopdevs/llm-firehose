@@ -36,8 +36,17 @@ const showDetail = (ev: FirehoseEvent) =>
 
 // The score replays one finished session, so its detail pairs calls from
 // that session's history rather than the live buffer.
-const scorePanel = createScore((ev, sessionSiblings, signature) =>
-  renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), sessionSiblings, signature),
+const scorePanel = createScore((ev, sessionSiblings, signature, dismiss) =>
+  renderDetail(
+    detailPane,
+    ev,
+    () => {
+      dismiss();
+      renderDetail(detailPane, null, () => {});
+    },
+    sessionSiblings,
+    signature,
+  ),
 );
 
 function openScore(id: string, source?: string) {
