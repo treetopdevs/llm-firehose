@@ -41,7 +41,8 @@ import {
   workspaceName,
   workspacePath,
 } from "./names";
-import { createToolbar, type SearchResult } from "./toolbar";
+import { createToolbar, type SearchResult, type WorkspaceTab } from "./toolbar";
+import { createActivityMap } from "../activity";
 
 /** Workspaces beyond this many on one revision collapse into a counted cluster. */
 const MAX_STACK = 3;
@@ -82,7 +83,7 @@ export function createWorkspaceGraph(
   let repo = "";
   let snapshot: Snapshot | undefined;
   let sessions: AttentionSession[] = [];
-  let tab: "graph" | "timeline" = "graph";
+  let tab: WorkspaceTab = "graph";
   let workspace = "";
   let revision = "";
   let session = "";
@@ -302,6 +303,7 @@ export function createWorkspaceGraph(
     },
   });
   const graphPane = el("div", { class: "graph-pane" }, canvas.root, inspector.root);
+  const activityMap = createActivityMap();
 
   const toolbar = createToolbar({
     selectRepo: (id) => {
@@ -521,6 +523,7 @@ export function createWorkspaceGraph(
     if (oldTimeline) timelineScrollTop = oldTimeline.scrollTop;
     const restore = keepFocus(root);
     main.classList.toggle("is-timeline", tab === "timeline");
+    main.classList.toggle("is-map", tab === "map");
     updateToolbar();
     if (!snapshot) {
       // Nothing is known about this repository yet: no warnings, no counts, no graph.
@@ -547,6 +550,16 @@ export function createWorkspaceGraph(
         body.append(graphPane);
       }
       sync();
+    } else if (tab === "map") {
+      if (body.firstElementChild !== activityMap.root || body.childElementCount !== 1) {
+        clear(body);
+        body.append(activityMap.root);
+      }
+      activityMap.update(
+        repo,
+        snapshot.workspaces.map((w) => ({ id: w.id, name: displayName(w) })),
+        privacyMode,
+      );
     } else {
       clear(body);
       renderTimeline();
@@ -922,6 +935,8 @@ export function createWorkspaceGraph(
   function historyKind(): "timeline" | "activity" | undefined {
     if (!repo || !root.isConnected) return undefined;
     if (tab === "timeline") return "timeline";
+    // The Map fetches its own aggregate; it needs no event history.
+    if (tab === "map") return undefined;
     return workspace ? "activity" : undefined;
   }
   function abortHistory() {
@@ -1079,9 +1094,10 @@ export function createWorkspaceGraph(
         if (canvas.autoActive()) canvas.fit(activeIds());
       }
       if (root.isConnected) {
-        // The graph tab only recolors; the timeline keeps its full redraw.
+        // The graph tab only recolors; the timeline keeps its full redraw. The
+        // map follows the 15 s poll, not attention arrivals.
         if (tab === "graph") syncActivity();
-        else render();
+        else if (tab === "timeline") render();
       }
       if (a.gaps?.length) {
         setStatus();

@@ -245,6 +245,8 @@ browser-origin restrictions as existing routes:
   unreadable spool record at rebuild or from the live tailer, or a record read
   for this page was unreadable. The index is rebuilt from the spool with the
   rest of the Projection and updated on every Admission and reconciliation.
+- `GET /workspace-graph/activity`: per-path, per-time-bucket Heat for one
+  repository identity over a bounded window (see "Activity heat" below).
 
 Existing event/session/attention routes retain their representations. Graph
 scans run independently of capture. Debounced metadata polling detects repository
@@ -356,3 +358,91 @@ workspace could be resolved; it does not relocate the captured event. These
 maps support cross-view navigation across privacy transitions while preserving
 original event envelopes. Session movement updates the current attachment only;
 late observations cannot restore an older attachment.
+
+#### Activity heat (additive)
+
+`GET /workspace-graph/activity` returns Heat, the count of file-category
+Captured Events touching one path within one time bucket, for one repository
+identity. It is served through the same loopback/browser-origin restrictions and
+privacy-transition gate as the other graph routes, with `Cache-Control: no-store`.
+No `schema_version` bump applies; nothing existing changes meaning.
+
+| Param | Required | Meaning |
+|---|---|---|
+| `repo_id` | yes | Graph repository id. `400` when missing, `422` when unknown. |
+| `workspace_id` | no | Restrict to one worktree/workspace (`422` when unknown). Omitted merges every worktree by repository-relative path. |
+| `from`, `to` | no | RFC 3339. Default `to` = now, `from` = `to` − 24h. `400` unless `from < to` and the window is at most 31 days. |
+| `bucket` | no | Seconds, one of 60, 300, 900, 3600, 10800, 21600, 86400 (`400` otherwise). Default: the smallest step giving at most 240 buckets. `400` when the window holds more than 2000 buckets. |
+
+`from` is floored to a multiple of `bucket` in UTC and the floored value is
+returned, so a live refresh never shifts columns; the window is `[from, to)`.
+
+Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
+`buckets` (column count), `available`, `unavailable_reason`, `paths`, `groups`,
+`file_events`, `unreadable_file_events`, `truncated`, `truncated_total`,
+`capture_gap`.
+
+- `paths[]`: `{path, group, total, heat}`. `heat` is sparse
+  `[bucket_index, count]` pairs in ascending index order; `total` is their sum.
+  Sorted by `group`, then `path` (byte order). An event naming N distinct paths
+  adds 1 to each. At most 2000 paths: over the cap the 2000 highest `total` are kept (ties
+  by group then path), `truncated` is `true` and `truncated_total` is the Heat
+  of the dropped paths.
+- Paths of an event: `file_path`, `path` or `file`, else the keys of a Codex
+  `changes` map, else, for a payload with `tool_name: "apply_patch"`, the file
+  headers of its patch text (`input`, as in the Codex rollout
+  `custom_tool_call:apply_patch`, or `tool_input.command`, as in the Codex hook's
+  `PreToolUse`/`PostToolUse`). The headers read are `*** Add File: `,
+  `*** Update File: `, `*** Delete File: ` and `*** Move to: ` (a move names its
+  source and its destination). Only newline-terminated header lines count, so a
+  header cut by truncation is no path. Together with those headers, for an
+  `apply_patch` payload with an `output` (the Codex rollout
+  `custom_tool_call_output:apply_patch`, or the hook's `PostToolUse`), the
+  files its `output` lists after a line `Success. Updated the following files:`
+  at the start of the text or of a line: each following line `A <path>`,
+  `M <path>` or `D <path>`, up to the first line of another form (an empty
+  path is skipped). An `output`
+  beginning with `{` is the older JSON wrapper `{"output":"…", …}` and its
+  `output` string is read; a wrapper cut by truncation is read up to its last
+  complete `\n` escape. Here too only newline-terminated lines count, and a
+  failure output (`apply_patch verification failed: …`, a timeout) lists no
+  files. A move is listed as `M <destination>`. A `PostToolUse` names the
+  paths of its headers and of its `output` together, each once. Each event
+  counts on its own: one Codex patch observed by both the rollout and the hook adds Heat once
+  per event that names the path, as a Claude Code edit adds 1 for `PreToolUse`
+  and 1 for `PostToolUse`. These rules are this route's only;
+  `/artifacts/files` is unchanged.
+- Resolution: a path under a root of the repository's current graph workspaces
+  is repository-relative and slash-separated, with `group: ""`; the innermost
+  containing root wins, so an edit in another (or a nested) worktree of the same
+  repository merges with it. A relative captured path is taken relative to the
+  event's own worktree root (rejected if it escapes the root). Any other path
+  (a worktree no longer listed, or an edit outside the repository) keeps its raw
+  captured text, with `group` set to the event's own worktree identity value
+  (`worktree_id`, else `jj_workspace_id`, else `unknown`).
+- `groups[]`: `{id, label, resolved}` for each `group` present, resolved first;
+  unresolved groups carry the label `Outside known worktrees`.
+- `file_events`: in-scope file-category events counted; `unreadable_file_events`
+  is those whose payload yields no path (for example a record captured in
+  minimal mode, an `apply_patch` call whose every header, and every file its
+  `output` lists, was cut by truncation,
+  or a Codex `custom_tool_call_output:apply_patch` that failed or whose every
+  listed file was cut by truncation). They add no Heat.
+- `capture_gap` has the Timeline meaning.
+
+Privacy: `path` values are display values, readable in `balanced` and `full`
+like other graph labels; balanced-mode capture truncates long payload strings at
+240 runes, so such a path arrives ending in `…` and is returned verbatim. The
+same truncation applies to `apply_patch` text: in practice only the first file
+header (rarely the second) survives, so a multi-file Codex patch's call text
+heats its first file and not the rest. An `output` file list (the rollout's or
+the hook `PostToolUse`'s) is cut the same way, usually after a few files. In
+`full` mode every header and listed file is read. In `minimal` mode paths are
+digests on disk, so the response is `available: false`, `unavailable_reason:
+"minimal"`, with empty `paths` and `groups`, and no spool day is read. Group ids are identity values and follow the privacy mode.
+
+Read bound: the Projection's identity-day index names the day files holding the
+repository (and workspace) identity; only those UTC days overlapping
+`[from, to)` are read, so cost is bounded by the window, not spool size. Exact-ID
+duplicates keep their first record, as in Timeline. The scan stops promptly when
+the client abandons the request.

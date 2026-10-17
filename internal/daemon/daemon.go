@@ -110,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /workspace-graph", s.graphResponse(s.handleGraph))
 	mux.HandleFunc("GET /workspace-graph/compare", s.graphResponse(s.handleGraphCompare))
 	mux.HandleFunc("GET /workspace-graph/timeline", s.graphResponse(s.handleGraphTimeline))
+	mux.HandleFunc("GET /workspace-graph/activity", s.graphResponse(s.handleGraphActivity))
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /config", s.handleConfig)
 	mux.HandleFunc("POST /config", s.handleConfigUpdate)

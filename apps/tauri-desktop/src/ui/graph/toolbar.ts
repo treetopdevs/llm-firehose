@@ -60,11 +60,13 @@ export interface ToolbarState {
   repo: string;
   /** "7 worktrees"; empty before the first snapshot. */
   count: string;
-  tab: "graph" | "timeline";
+  tab: WorkspaceTab;
 }
+/** The workspace section's views; they share one repository scope. */
+export type WorkspaceTab = "graph" | "timeline" | "map";
 export interface ToolbarHandlers {
   selectRepo(id: string): void;
-  setTab(tab: "graph" | "timeline"): void;
+  setTab(tab: WorkspaceTab): void;
   fit(): void;
   all(): void;
   search(query: string): SearchResult[];
@@ -207,13 +209,14 @@ export function createToolbar(h: ToolbarHandlers) {
   allBtn.onclick = () => h.all();
   fitGroup.append(fitBtn, allBtn);
 
-  // Graph / Timeline.
+  // Graph / Timeline / Map.
   const tabs = el("div", { class: "graph-tabs", role: "tablist", "aria-label": "Workspace view" });
   const tabButtons = {
     graph: el("button", { type: "button", role: "tab" }, "Graph"),
     timeline: el("button", { type: "button", role: "tab" }, "Timeline"),
+    map: el("button", { type: "button", role: "tab", title: "Activity Map: where file activity was captured" }, "Map"),
   };
-  for (const name of ["graph", "timeline"] as const) {
+  for (const name of ["graph", "timeline", "map"] as const) {
     tabButtons[name].onclick = () => h.setTab(name);
     tabs.append(tabButtons[name]);
   }
@@ -299,7 +302,7 @@ export function createToolbar(h: ToolbarHandlers) {
     repoSelect.disabled = s.repos.length === 0;
     count.textContent = s.count;
     count.hidden = !s.count;
-    for (const name of ["graph", "timeline"] as const) {
+    for (const name of ["graph", "timeline", "map"] as const) {
       const on = s.tab === name;
       tabButtons[name].classList.toggle("active", on);
       tabButtons[name].setAttribute("aria-selected", on ? "true" : "false");

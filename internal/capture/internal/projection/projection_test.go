@@ -1,14 +1,18 @@
 package projection
 
 import (
+	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 )
 
 func seedEvents() []event.Event {
@@ -105,6 +109,51 @@ func TestFilesAggregation(t *testing.T) {
 	f := files[0]
 	if f.Path != "/repo/auth.go" || f.Events != 2 || len(f.Sources) != 2 {
 		t.Errorf("artifact wrong: %+v", f)
+	}
+}
+
+// realPatchApplyEnd is the real codex rollout patch_apply_end record from the
+// capture testdata (see internal/capture/testdata/README.md).
+func realPatchApplyEnd(t *testing.T) event.Event {
+	t.Helper()
+	f, err := os.Open("../../testdata/activity_real_shapes.ndjson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		if !strings.Contains(sc.Text(), `"name":"patch_apply_end"`) {
+			continue
+		}
+		var ev event.Event
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			t.Fatal(err)
+		}
+		return ev
+	}
+	t.Fatal("no patch_apply_end record in fixture")
+	return event.Event{}
+}
+
+// A codex changes map recorded in minimal mode is a {sha256,len} digest: its
+// keys are not paths, so the event touches no file artifact. The same record
+// unredacted still yields its real path.
+func TestFilesIgnoreMinimalModeChangesDigest(t *testing.T) {
+	real := realPatchApplyEnd(t)
+	minimal := privacy.Redact(real, privacy.ModeMinimal)
+	minimal.ID = "minimal-" + real.ID
+
+	ix := foldProjection([]event.Event{minimal})
+	if files := ix.Files(); len(files) != 0 {
+		t.Fatalf("minimal-mode digest read as paths: %+v", files)
+	}
+
+	ix.Apply(real)
+	files := ix.Files()
+	if len(files) != 1 || files[0].Path != "/work/proj/test/pipeline/identifier_resolution_test.exs" || files[0].Events != 1 {
+		t.Fatalf("real changes map lost its path: %+v", files)
 	}
 }
 

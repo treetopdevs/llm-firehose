@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"agentfirehose/internal/capture"
+	"agentfirehose/internal/event"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/workspace"
 	"agentfirehose/internal/workspacegraph"
 	"context"
@@ -11,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -308,6 +312,220 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 		capture.TimelinePage
 		Associations map[string]association `json:"associations"`
 	}{page, associations})
+}
+
+// activityBuckets is the bucket ladder in seconds; the default is the smallest
+// step giving at most activityDefaultBuckets columns.
+var activityBuckets = []int{60, 300, 900, 3600, 10800, 21600, 86400}
+
+const (
+	activityDefaultBuckets = 240
+	activityMaxBuckets     = 2000
+	activityMaxWindow      = 31 * 24 * time.Hour
+	activityOutsideLabel   = "Outside known worktrees"
+)
+
+type activityGroup struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Resolved bool   `json:"resolved"`
+}
+
+// handleGraphActivity reports Heat (file-category observations per path per
+// time bucket) for one repository identity. Paths are display values, readable
+// in balanced and full mode like every other graph label; in minimal mode they
+// are digests on disk, so the response is explicitly unavailable and no spool
+// day is read.
+func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	repoID, workspaceID := q.Get("repo_id"), q.Get("workspace_id")
+	if repoID == "" {
+		http.Error(w, "repo_id is required", 400)
+		return
+	}
+	to := time.Now().UTC()
+	if v := q.Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			http.Error(w, "to must be RFC 3339", 400)
+			return
+		}
+		to = t.UTC()
+	}
+	from := to.Add(-24 * time.Hour)
+	if v := q.Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			http.Error(w, "from must be RFC 3339", 400)
+			return
+		}
+		from = t.UTC()
+	}
+	if !from.Before(to) || to.Sub(from) > activityMaxWindow {
+		http.Error(w, "window must satisfy from < to and span at most 31 days", 400)
+		return
+	}
+	bucket := 0
+	if v := q.Get("bucket"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || !slices.Contains(activityBuckets, n) {
+			http.Error(w, "bucket must be one of 60, 300, 900, 3600, 10800, 21600, 86400", 400)
+			return
+		}
+		bucket = n
+	} else {
+		bucket = activityBuckets[len(activityBuckets)-1]
+		for _, step := range activityBuckets {
+			if to.Sub(from) <= time.Duration(step*activityDefaultBuckets)*time.Second {
+				bucket = step
+				break
+			}
+		}
+	}
+	floored, buckets := capture.ActivityWindow(from, to, time.Duration(bucket)*time.Second)
+	if buckets > activityMaxBuckets {
+		http.Error(w, "window holds more than 2000 buckets; choose a larger bucket", 400)
+		return
+	}
+	repoAliases, workspaceAliases, err := s.graph.service.EventScope(repoID, workspaceID)
+	if err != nil {
+		http.Error(w, "repository or workspace unknown; register the repository or refresh", 422)
+		return
+	}
+	resp := struct {
+		RepoID            string                 `json:"repo_id"`
+		WorkspaceID       string                 `json:"workspace_id"`
+		From              time.Time              `json:"from"`
+		To                time.Time              `json:"to"`
+		BucketSeconds     int                    `json:"bucket_seconds"`
+		Buckets           int                    `json:"buckets"`
+		Available         bool                   `json:"available"`
+		UnavailableReason string                 `json:"unavailable_reason"`
+		Paths             []capture.ActivityPath `json:"paths"`
+		Groups            []activityGroup        `json:"groups"`
+		FileEvents        int                    `json:"file_events"`
+		Unreadable        int                    `json:"unreadable_file_events"`
+		Truncated         bool                   `json:"truncated"`
+		TruncatedTotal    int                    `json:"truncated_total"`
+		CaptureGap        bool                   `json:"capture_gap"`
+	}{RepoID: repoID, WorkspaceID: workspaceID, From: floored, To: to, BucketSeconds: bucket, Buckets: buckets, Paths: []capture.ActivityPath{}, Groups: []activityGroup{}}
+	s.mu.RLock()
+	minimal := s.cfg.PrivacyMode == string(privacy.ModeMinimal)
+	s.mu.RUnlock()
+	w.Header().Set("Cache-Control", "no-store")
+	if minimal {
+		resp.UnavailableReason = "minimal"
+		writeJSON(w, resp)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	snapshot, scanErr := s.graph.service.Snapshot(ctx, repoID, "", false)
+	cancel()
+	roots := activityRoots{}
+	if scanErr == nil && len(repoAliases) > 0 {
+		for _, ws := range snapshot.Workspaces {
+			_, aliases, _ := s.graph.service.EventScope(repoID, ws.ID)
+			roots.add(repoAliases[0], aliases)
+		}
+	}
+	result, err := s.engine.Activity(r.Context(), capture.ActivityQuery{RepoID: repoID, WorkspaceID: workspaceID, RepoAliases: repoAliases, WorkspaceAliases: workspaceAliases, From: from, To: to, Bucket: time.Duration(bucket) * time.Second, Resolve: roots.resolve})
+	if err != nil {
+		if r.Context().Err() != nil {
+			return // the client abandoned the request; the scan has already stopped
+		}
+		http.Error(w, "activity query failed", 500)
+		return
+	}
+	resp.Available = true
+	resp.Paths, resp.FileEvents, resp.Unreadable = result.Paths, result.FileEvents, result.UnreadableFileEvents
+	resp.Truncated, resp.TruncatedTotal, resp.CaptureGap = result.Truncated, result.TruncatedTotal, result.CaptureGap
+	seen := map[string]bool{}
+	for _, p := range result.Paths { // already in group order: "" first
+		if seen[p.Group] {
+			continue
+		}
+		seen[p.Group] = true
+		if p.Group == "" {
+			resp.Groups = append(resp.Groups, activityGroup{Resolved: true})
+		} else {
+			resp.Groups = append(resp.Groups, activityGroup{ID: p.Group, Label: activityOutsideLabel})
+		}
+	}
+	writeJSON(w, resp)
+}
+
+// activityRoots maps each workspace identity alias (raw and digest) to its
+// readable root, joining digested event identities to the workspace graph.
+type activityRoots struct {
+	byAlias map[string]string
+	all     []string
+}
+
+func (a *activityRoots) add(repoIdentity string, aliases []string) {
+	// A Git workspace's raw identity is its canonical root; a JJ workspace's is
+	// "jj:" + root, or <repo identity>:<name> when JJ reports no root at all.
+	if len(aliases) == 0 || strings.HasPrefix(aliases[0], repoIdentity+":") {
+		return
+	}
+	root := strings.TrimPrefix(aliases[0], "jj:")
+	if !filepath.IsAbs(root) {
+		return
+	}
+	if a.byAlias == nil {
+		a.byAlias = map[string]string{}
+	}
+	for _, alias := range aliases {
+		a.byAlias[alias] = root
+	}
+	a.all = append(a.all, root)
+}
+
+// resolve returns ("", repository-relative path) when path lies under a known
+// root, preferring the innermost root that contains it; otherwise the event's
+// own worktree identity as the group and the raw path.
+func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
+	own, ownID := "", ""
+	for _, id := range []string{ev.WorktreeID, ev.JJWorkspaceID} {
+		if id == "" {
+			continue
+		}
+		if ownID == "" {
+			ownID = id
+		}
+		if root, ok := a.byAlias[id]; ok && own == "" {
+			own = root
+		}
+	}
+	unresolved := func() (string, string) {
+		if ownID == "" {
+			return "unknown", path
+		}
+		return ownID, path
+	}
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		if own == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return unresolved()
+		}
+		return "", filepath.ToSlash(clean)
+	}
+	best := ""
+	for _, root := range a.all {
+		if len(root) > len(best) && under(root, clean) {
+			best = root
+		}
+	}
+	if best == "" {
+		return unresolved()
+	}
+	rel, _ := filepath.Rel(best, clean)
+	return "", filepath.ToSlash(rel)
+}
+
+func under(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Root configuration is loaded before the server is exposed to requests. The
