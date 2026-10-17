@@ -110,8 +110,6 @@ func New() *Projection {
 // by the spool reader and recorded as a read gap.
 func Build(dir string) (*Projection, error) {
 	ix := New()
-	// Stamped before the scan, as the materializing Build stamped it.
-	seed := &CaptureGap{Source: "firehose", Time: time.Now().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
 	gaps, reset := false, false
 	err := spool.ScanForProjection(dir, func() { gaps = true }, func(ev event.Event) {
 		if _, applied := ix.ApplyResult(ev); applied && resetsGap(ev) {
@@ -129,6 +127,10 @@ func Build(dir string) (*Projection, error) {
 	// which replaced the seed only if strictly newer than it.
 	if gaps {
 		if !reset {
+			// Stamped after the scan, as the materializing Build stamped it
+			// after reading the whole spool: the instant decides whether a
+			// newer id-less record outranks it.
+			seed := &CaptureGap{Source: "firehose", Time: buildNow().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
 			if g := ix.gap; g == nil || !(g.Time.After(seed.Time) || g.Time.Equal(seed.Time) && g.Source > seed.Source) {
 				ix.gap = seed
 			}
@@ -142,6 +144,9 @@ func Build(dir string) (*Projection, error) {
 func resetsGap(ev event.Event) bool {
 	return ev.ID != "" && ev.Source == "firehose" && ev.Name == "parse-error" && ev.Category == event.CategoryMeta
 }
+
+// buildNow stamps the rebuild's read gap; a seam for tests.
+var buildNow = time.Now
 
 // SourceFirehose is the synthetic source for stream-only derived frames.
 const SourceFirehose = "firehose"

@@ -47,7 +47,7 @@ func referenceBuild(t *testing.T, dir string) *Projection {
 	}
 	ix := New()
 	if gaps {
-		ix.gap = &CaptureGap{Source: "firehose", Time: time.Now().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
+		ix.gap = &CaptureGap{Source: "firehose", Time: buildNow().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
 		ix.readGap = true
 	}
 	for _, ev := range evs {
@@ -58,6 +58,10 @@ func referenceBuild(t *testing.T, dir string) *Projection {
 
 func assertBuildEquivalent(t *testing.T, dir string) {
 	t.Helper()
+	// Both builds stamp the read gap from the same fixed clock, so every gap,
+	// captured or synthetic, compares exactly. 10:30 sits between the legacy
+	// fixtures' times so the clock boundary is exercised.
+	defer setBuildNow(time.Date(2026, 9, 1, 10, 30, 0, 0, time.UTC))()
 	want := referenceBuild(t, dir)
 	got, err := Build(dir)
 	if err != nil {
@@ -67,18 +71,8 @@ func assertBuildEquivalent(t *testing.T, dir string) {
 		t.Fatal("reference projection is empty; fixture spool not read")
 	}
 
-	// The gap's Time is the rebuild's wall clock, so only its presence and
-	// remaining fields must match.
-	gotGap, wantGap := got.gap, want.gap
-	if (gotGap == nil) != (wantGap == nil) {
-		t.Fatalf("gap=%v, reference gap=%v", gotGap, wantGap)
-	}
-	if gotGap != nil {
-		g, w := *gotGap, *wantGap
-		g.Time, w.Time = time.Time{}, time.Time{}
-		if g != w {
-			t.Fatalf("gap=%+v, reference gap=%+v", g, w)
-		}
+	if !reflect.DeepEqual(got.gap, want.gap) {
+		t.Fatalf("gap=%+v, reference gap=%+v", got.gap, want.gap)
 	}
 
 	state := []struct {
@@ -103,12 +97,6 @@ func assertBuildEquivalent(t *testing.T, dir string) {
 	}
 
 	gotInbox, wantInbox := got.Inbox(), want.Inbox()
-	for i := range gotInbox.Gaps {
-		gotInbox.Gaps[i].Time = time.Time{}
-	}
-	for i := range wantInbox.Gaps {
-		wantInbox.Gaps[i].Time = time.Time{}
-	}
 	views := []struct {
 		name      string
 		got, want any
@@ -243,6 +231,7 @@ func TestBuildEquivalenceReadGapMeetsInboxGaps(t *testing.T) {
 		corrupt     = "{corrupt\n"
 		legacyPast  = `{"schema_version":1,"time":"2026-09-01T10:00:00Z","source":"generic","category":"meta","summary":"old"}` + "\n"
 		legacyLater = `{"schema_version":1,"time":"2026-09-01T11:00:00Z","source":"generic","category":"meta","summary":"later"}` + "\n"
+		legacyAtClk = `{"schema_version":1,"time":"2026-09-01T10:30:00Z","source":"generic","category":"meta","summary":"at clock"}` + "\n"
 		legacyFut   = `{"schema_version":1,"time":"2099-01-01T00:00:00Z","source":"generic","category":"meta","summary":"future"}` + "\n"
 		parseErr    = `{"schema_version":1,"id":"pe1","time":"2026-09-01T09:00:00Z","source":"firehose","name":"parse-error","category":"meta","severity":"warn","summary":"bad record"}` + "\n"
 		parseErrDup = `{"schema_version":1,"id":"pe1","time":"2026-09-01T09:00:00Z","source":"firehose","name":"parse-error","category":"meta","severity":"warn","summary":"bad record"}` + "\n"
@@ -253,6 +242,8 @@ func TestBuildEquivalenceReadGapMeetsInboxGaps(t *testing.T) {
 		"gap only":                   corrupt + plain,
 		"past legacy":                corrupt + plain + legacyPast,
 		"future legacy":              corrupt + plain + legacyFut,
+		"legacy at the clock":        corrupt + plain + legacyAtClk,
+		"later legacy":               corrupt + plain + legacyLater,
 		"parse-error then legacy":    corrupt + parseErr + legacyPast,
 		"legacy then parse-error":    corrupt + legacyPast + parseErr + legacyLater,
 		"future then parse-error":    legacyFut + parseErr + corrupt,
@@ -268,5 +259,37 @@ func TestBuildEquivalenceReadGapMeetsInboxGaps(t *testing.T) {
 			writeDayFile(t, dir, "2026-09-01", []byte(content))
 			assertBuildEquivalent(t, dir)
 		})
+	}
+}
+
+// setBuildNow pins the rebuild clock and returns a restore func.
+func setBuildNow(at time.Time) func() {
+	prev := buildNow
+	buildNow = func() time.Time { return at }
+	return func() { buildNow = prev }
+}
+
+// The materializing Build stamped the read gap after reading the whole spool,
+// and which gap survives depends on that instant (an id-less record replaces
+// it only when strictly newer). Streaming must sample the clock after the
+// scan too. The clock here repairs the spool when called: sampled before the
+// scan, the scan would see no unreadable record and record no read gap.
+func TestBuildStampsReadGapAfterScan(t *testing.T) {
+	dir := t.TempDir()
+	plain := `{"schema_version":1,"id":"p1","time":"2026-09-01T08:00:00Z","source":"generic","category":"meta","summary":"plain"}` + "\n"
+	writeDayFile(t, dir, "2026-09-01", []byte("{corrupt\n"+plain))
+	at := time.Date(2026, 9, 1, 10, 30, 0, 0, time.UTC)
+	prev := buildNow
+	defer func() { buildNow = prev }()
+	buildNow = func() time.Time {
+		writeDayFile(t, dir, "2026-09-01", []byte(plain))
+		return at
+	}
+	ix, err := Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ix.ReadGap() || ix.gap == nil || !ix.gap.Time.Equal(at) || ix.gap.Source != "firehose" {
+		t.Fatalf("read gap=%v gap=%+v, want the read gap stamped at %v after the scan", ix.ReadGap(), ix.gap, at)
 	}
 }

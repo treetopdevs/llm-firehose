@@ -73,8 +73,12 @@ After streaming, JSON decode is about 57 % of `Build` CPU.
    `firehose`/`parse-error`/`meta` record with an id overwrites it outright.
    Streaming only learns about gaps at the end, so `Build` folds the seed in
    afterwards with the same rule (`resetsGap` mirrors the overwrite
-   condition), and stamps the seed before the scan as before.
-   `TestBuildEquivalenceReadGapMeetsInboxGaps` covers 11 orderings.
+   condition). The seed is stamped after the scan, as the old `Build`
+   stamped it after reading the whole spool; that instant decides whether a
+   newer id-less record outranks it (Codex review F1). The equivalence tests
+   pin the clock through the `buildNow` seam, so every gap time is compared
+   exactly. `TestBuildEquivalenceReadGapMeetsInboxGaps` covers 13 orderings and
+   `TestBuildStampsReadGapAfterScan` pins the stamping instant.
 2. **Reuse the line buffer** in the streaming path. `json.Unmarshal` copies
    every string it decodes, so a scratch slice can back each line. The tailer
    and the other readers keep their current `readLine` behavior.
