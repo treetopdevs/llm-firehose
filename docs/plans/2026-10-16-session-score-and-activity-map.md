@@ -1,6 +1,6 @@
 # Session Score and Activity Map: decisions from the grilling session
 
-**Status:** Decisions agreed 2026-10-16; Session Score v1 shipped the same day (see below); Activity Map not started. Source concepts
+**Status:** Decisions agreed 2026-10-16; Session Score v1 and Activity Map v1 shipped the same day (see each section's Shipped notes). Source concepts
 are items 10 (Agent Score) and 2 (Repository Weather) in
 `docs/brainstorms/2026-10-15-wild-visualizations/`. Canonical terms live in
 `CONTEXT.md`: Session Score, Activity Map, Heat, Error Signature.
@@ -179,6 +179,167 @@ feature lights up live once the Error Signature branch
   explicit unavailable notice and no tiles.
 - **Surface:** desktop-only tab sharing Graph/Timeline repository scope, SVG,
   no new dependencies. No TUI view in v1.
+
+### Shipped 2026-10-16 (v1)
+
+Built to `docs/plans/2026-10-16-activity-map-build-brief.md`.
+
+- **Endpoint.** `GET /workspace-graph/activity` (`internal/daemon/workspace_graph.go`,
+  behind `graphResponse`), backed by `Engine.Activity` in
+  `internal/capture/activity.go`, which reads only the UTC days the window
+  overlaps (a scale test pins two day files read out of forty and agreement with
+  a full-spool reference). Bucket ladder, default bucket, UTC flooring, the
+  2000-path cap and the minimal-mode gate (no spool read) are as briefed.
+  Documented as "Activity heat (additive)" in `docs/contracts.md`; no
+  `schema_version` bump, nothing existing changed.
+- **Resolver.** Workspace roots come from the current snapshot through
+  `EventScope` (raw and digest aliases; `jj:` stripped; rootless JJ workspaces
+  skipped). One deviation from the brief's literal order: an absolute path
+  resolves against the *innermost* known root that contains it, the event's own
+  root included, rather than the own root first. Real repositories nest Claude
+  Code worktrees under `<repo>/.claude/worktrees/`; own-root-first would file an
+  edit made from the main checkout into a nested worktree as
+  `.claude/worktrees/<name>/x.go` instead of merging it with `x.go`. Relative
+  paths resolve against the event's own root; `..` escapes stay unresolved.
+- **Desktop.** A third Workspaces tab, "Map" (`apps/tauri-desktop/src/ui/activity/`):
+  order-preserving split treemap with single-child directory chains collapsed,
+  2h/8h/24h/7d presets, Live (refetched on the graph's 15 s poll once 10 s
+  stale; the map ignores attention arrivals), worktree filter, directory zoom
+  with breadcrumb, a per-bucket strip with a keyboard and pointer brush,
+  "Hottest in range", and the briefed notices. Unresolved groups are named by
+  the snapshot workspace whose id they carry (the event's own worktree editing
+  outside every root), else a short digest. `fixture.activity.json` is a real
+  response from a temporary daemon over copied spool days of this repository.
+- **Live check.** Temporary daemon on `127.0.0.1:4627` with a temp HOME and copies
+  of real spool days, vite on 1420 with `VITE_DAEMON_URL`, headless Chromium
+  (the built-in browser pane could not open localhost). Screenshots of an
+  overnight brush over 24h, a Live 2h window, one worktree, and minimal mode were
+  taken and not committed (they show personal paths). The drag brush lost its
+  anchor after the first redraw; that was found in the live check, pinned by a
+  test, and fixed.
+
+#### Real-capture quirks
+
+Seen in a copy of the real spool (223 days, about 96k file-category events):
+
+1. **Codex Heat was nearly absent** (fixed 2026-10-16; see "Codex apply_patch
+   paths" below). Only the rollout `patch_apply_end` event carries paths
+   (absolute keys of `changes`), and it last appears on 2026-09-03. Current Codex
+   rollout `custom_tool_call:apply_patch` and its `_output`, and the Codex hook's
+   `PreToolUse`/`PostToolUse` for `apply_patch`, hold their paths only inside
+   patch text (`*** Update File: …`, absolute or relative).
+2. **Antigravity reads are Heat.** `PostToolUse:view_file` is file-category
+   with an absolute `file_path`, so antigravity reading a file counts like an
+   edit (1 per read), while Claude Code reads are not file-category.
+3. **Claude Code is 2 Heat per edit** (`PreToolUse` and `PostToolUse`, both
+   with an absolute `file_path`), as accepted for v1.
+4. **opencode has no real captures** on this machine, so its shape is not
+   pinned from real data. The adapter copies the tool's `file`/`filePath`
+   verbatim; relative values are handled as root-relative by the resolver, and
+   that branch is pinned with a constructed event.
+5. **About 19k file events carry neither `repo_id` nor `worktree_id`** (an agent
+   started outside any repository). They match no repository and appear on no
+   map, not even as unreadable.
+6. **Minimal-mode `changes` digests read as paths.** A Codex `changes` map
+   recorded in minimal mode is a `{sha256,len}` object, and
+   `projection.EventFilePaths` returns `len` and `sha256` as two paths. The
+   Activity aggregate guards this and counts the event as unreadable; the
+   projection's file artifacts (`/artifacts/files`) still have it. Fixing that
+   changes an existing response, so it is left as a follow-up.
+7. **Removed worktrees and outside edits are common.** Edits into a deleted
+   sibling worktree (`llm-firehose-graph-mockup`) and into agent memory or
+   `~/Library/...` files land under "Outside known worktrees" with raw paths.
+8. **Some repositories never get a map.** The graph refuses to scan a repository
+   whose git config defines commands (one large repository here), and a
+   colocated JJ repository registered as `jj` matches only events captured with
+   a JJ identity (2 of about 170 file events for one repository), the same as
+   Timeline.
+9. The desktop app has a single dark theme, so there was no light theme to
+   check the colour ramp against.
+
+#### Codex apply_patch paths (2026-10-16)
+
+The Activity aggregate now reads the file headers of Codex `apply_patch` text
+(`*** Add File:`, `*** Update File:`, `*** Delete File:`, `*** Move to:`), from
+the rollout call's `input` and the hook's `tool_input.command`, when an event
+has no `file_path`/`path`/`file` and no `changes` map. Decisions:
+
+- **(a) Where: the Activity aggregate only.** Parsing lives in `activityPaths`
+  (`internal/capture/activity.go`). `projection.EventFilePaths` is untouched, so
+  `/artifacts/files` (a frozen response) does not change. Teaching the projection
+  the same headers would change that response and needs its own decision.
+- **(b) Double counting: none removed. Heat still counts events.** Per patch,
+  the rollout adds 2 (the call and its `_output`, see "Output summaries" below),
+  the hook adds 2 (`PreToolUse` and `PostToolUse`; 1 for a file only the
+  `PostToolUse` output names), each the same as Claude Code's accepted 2 per
+  edit; both together add 4, and a historical
+  `patch_apply_end` adds 1 more.
+  1,241 of about 21k call ids in the spool copy were seen by both rollout and
+  hook. A path named twice in one patch adds 1. Deduplicating by `call_id`
+  would change the CONTEXT.md definition of Heat ("count of … Captured Events").
+  **Open question for the user:** keep counting events, or count each call once?
+- **(c) Truncation: in the contract.** Balanced mode cuts text at 240 runes, so
+  usually only the first header survives (14,745 headers read from 14,678 rollout
+  calls). Only newline-terminated header lines count, so a cut header is never a
+  path. `docs/contracts.md` ("Activity heat", Privacy) says that a multi-file
+  patch's call text heats its first file; its `output` (rollout or hook
+  `PostToolUse`) usually lists more. The desktop notice for unreadable events is
+  unchanged and still accurate.
+- **Relative headers.** Codex resolves a relative patch path against its cwd;
+  the Activity resolver roots it at the event's worktree root (the existing
+  rule; in balanced mode cwd is a digest). A patch made from a subdirectory
+  therefore lands on the wrong path. This change sends far more events through
+  that rule (3,280 rollout calls had a relative header).
+
+Measured on a copy of the real spool (223 days):
+
+| Shape | Events | Now heat a path | Still unreadable |
+|---|---|---|---|
+| rollout `custom_tool_call:apply_patch` | 14,678 | 14,678 (3,280 with a relative header) | 0 |
+| hook `PreToolUse` `apply_patch` | 8,439 | 8,399 | 40 (34 with only a cut header) |
+| hook `PostToolUse` `apply_patch` | 8,046 | 8,012 (771 heat 786 more files from `output`) | 34 |
+| rollout `custom_tool_call_output:apply_patch` | 14,677 | 14,128 (see below) | 549 |
+
+Pinned by `internal/capture/testdata/activity_apply_patch_shapes.ndjson`
+(sanitized real records: a move, an untruncated two-file delete, a relative
+header, a cut second header, a cut only header, a `PostToolUse` whose `output`
+names a file its cut patch does not, and six `_output` records listed below) and the updated `activity_real_shapes.ndjson` expectations.
+
+**Output summaries.** The rollout `custom_tool_call_output:apply_patch` is now
+read too, when its payload has no patch text: the `A`/`M`/`D` lines after
+`Success. Updated the following files:`, newline-terminated only, as for
+headers. A rollout-only Codex patch therefore adds 2 Heat, like a Claude Code
+edit. Every `_output` in the spool copy has `status: completed`, failures
+included, so status says nothing; anchoring on the success line is what keeps
+failures at 0 Heat. Variants in the spool copy (all 14,677 are strings):
+
+| `output` variant | Events | Read | Decision |
+|---|---|---|---|
+| plain `Exit code: …\nOutput:\nSuccess. Updated the following files:\n…` | 6,413 | 6,406 | read; 7 hold only a cut first path |
+| JSON `{"output":"Success. Updated …","metadata":{…}}`, whole | 7,491 | 7,491 | read the inner `output` (2,176 list a relative path) |
+| JSON wrapper cut by truncation | 231 | 231 | read up to the last complete `\n` escape when it begins `{"output":"` (all 231 do; 87 cut only in `metadata`, 144 inside `output`) |
+| JSON `command timed out after … milliseconds` | 3 | 0 | no success line: unreadable |
+| plain `apply_patch verification failed: …` | 532 | 0 | names a path, but no success line: unreadable |
+| plain `patch rejected: …`, `execution error: …` | 7 | 0 | unreadable |
+
+The read events list 15,270 paths, 3,401 of them relative (rooted at the
+event's worktree root, as for headers). A move is listed as `M <destination>`
+only, so the call heats source and destination and its output heats the
+destination. Fixtures: plain with relative paths and a cut fourth line, whole
+JSON, JSON cut in `metadata`, JSON cut inside `output`, a verification failure
+naming a path, and a JSON timeout.
+
+The hook `PostToolUse` carries the same plain `output` summary (8,046 events in
+the spool copy), and it is read **together with** its patch headers: the event
+names each path from either, once. Headers name a path in 8,012. In 7,900 both
+name paths, and in 771 of them the output names 786 files the cut patch text
+does not (none is a relative/absolute twin of a header path), so those patches
+now heat every file they touched, not only the first. The other 34, whose only
+header was cut, stay unreadable: their output is cut too, and its preamble
+(`Exit code…`, `Wall time…`, `Output:`, the success line) is longer than
+`*** Begin Patch\n*** Update File: `, so a path long enough to cut the header
+also cuts the output's first line. A hook patch still adds 2 Heat to its first
+file; a file named only by the output gets 1 (from `PostToolUse`).
 
 ## Shared deferred work
 

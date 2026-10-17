@@ -14,6 +14,7 @@ vi.mock("./api", () => ({
     repos: vi.fn(),
     snapshot: vi.fn(),
     timeline: vi.fn(),
+    activity: vi.fn(),
     compare: vi.fn(),
     register: vi.fn(),
   },
@@ -407,7 +408,7 @@ test("header shows the repository, the worktree count and search with its shortc
   expect(q(root, ".graph-search-hint").textContent).toBe("⌘K");
   expect(root.querySelector(".graph-workspace-list")).toBeNull();
   expect(root.querySelector(".graph-controls")).toBeNull();
-  expect(qa(root, ".graph-tabs button").map((b) => b.textContent)).toEqual(["Graph", "Timeline"]);
+  expect(qa(root, ".graph-tabs button").map((b) => b.textContent)).toEqual(["Graph", "Timeline", "Map"]);
   expect(qa(root, ".graph-fit button").map((b) => b.textContent)).toEqual(["Fit", "All"]);
 });
 
@@ -1149,4 +1150,60 @@ test("digest worktree labels from an older daemon still read as the branch, with
   expect(root.querySelector(".graph-inspector .insp-path")).toBeNull();
   expect(root.querySelector(".graph-inspector .insp-repo-path")).toBeNull();
   expect(root.textContent).not.toContain("a".repeat(64));
+});
+
+const mapResponse = {
+  repo_id: "r",
+  workspace_id: "",
+  from: "2026-10-16T00:00:00Z",
+  to: "2026-10-16T04:00:00Z",
+  bucket_seconds: 3600,
+  buckets: 4,
+  available: true,
+  unavailable_reason: "",
+  paths: [{ path: "internal/a.go", group: "", total: 2, heat: [[1, 2]] as [number, number][] }],
+  groups: [{ id: "", label: "", resolved: true }],
+  file_events: 2,
+  unreadable_file_events: 0,
+  truncated: false,
+  truncated_total: 0,
+  capture_gap: false,
+};
+
+test("the Map tab draws the Activity Map for the shared repository and hides graph-only controls", async () => {
+  vi.mocked(graphAPI.activity).mockResolvedValue(mapResponse);
+  const { root } = await richSetup();
+  const timelineCalls = vi.mocked(graphAPI.timeline).mock.calls.length;
+  click(root, "Map");
+  await flush();
+  const tab = qa(root, ".graph-tabs button").find((b) => b.textContent === "Map")!;
+  expect(tab.getAttribute("aria-selected")).toBe("true");
+  expect(q(root, ".graph-main").classList.contains("is-map")).toBe(true);
+  expect(root.querySelector(".graph-canvas")).toBeNull();
+  expect(root.querySelector(".activity-map")).toBeTruthy();
+  expect(vi.mocked(graphAPI.activity)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(graphAPI.activity).mock.calls[0][0].repo_id).toBe(richSnapshot().repository.id);
+  expect(qa(root, ".map-tile")).toHaveLength(1);
+  expect(q(root, 'input[aria-label="Search graph"]').closest("[hidden]")).toBeTruthy();
+  // The map never asks for durable timeline history.
+  expect(vi.mocked(graphAPI.timeline).mock.calls.length).toBe(timelineCalls);
+  // Worktree choices are the snapshot's workspaces.
+  const options = [...root.querySelectorAll<HTMLSelectElement>('.activity-map select[aria-label="Worktree"] option')];
+  expect(options.length).toBe(richSnapshot().workspaces.length + 1);
+  click(root, "Graph");
+  expect(root.querySelector(".graph-canvas")).toBeTruthy();
+  expect(root.querySelector(".activity-map")).toBeNull();
+  click(root, "Map");
+  await flush();
+  expect(root.querySelector(".activity-map")).toBeTruthy();
+});
+
+test("⌘K from the Map returns to the Graph and focuses search", async () => {
+  vi.mocked(graphAPI.activity).mockResolvedValue(mapResponse);
+  const { root } = await richSetup();
+  click(root, "Map");
+  await flush();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  expect(root.querySelector(".graph-canvas")).toBeTruthy();
+  expect(document.activeElement).toBe(q(root, 'input[aria-label="Search graph"]'));
 });
