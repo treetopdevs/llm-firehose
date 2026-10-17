@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -128,7 +127,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 				seen[ev.ID] = true
 			}
 			out.FileEvents++
-			paths := activityPaths(ev)
+			paths := projection.EventFilePaths(ev)
 			if len(paths) == 0 {
 				out.UnreadableFileEvents++
 				return
@@ -183,17 +182,13 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 	return out, nil
 }
 
-// activityPaths extracts an event's paths. A minimal-mode record holds a
-// {sha256,len} digest where a codex changes map was; that is no path at all.
-// A Codex apply_patch event names its paths only in its patch text and its
+// activityPaths extracts an event's paths. A minimal-mode {sha256,len} digest
+// where a codex changes map was is no path; projection.EventFilePaths guards
+// that. A Codex apply_patch event names its paths only in its patch text and its
 // result text: the rollout splits them across the call and its output, the
 // hook's PostToolUse carries both. Both are read here, once each path, and not
 // by the projection, so /artifacts/files is unchanged.
 func activityPaths(ev event.Event) []string {
-	if changes, ok := ev.Payload["changes"].(map[string]any); ok && isDigest(changes) {
-		ev.Payload = maps.Clone(ev.Payload)
-		delete(ev.Payload, "changes")
-	}
 	if paths := projection.EventFilePaths(ev); len(paths) > 0 {
 		return paths
 	}
@@ -321,10 +316,4 @@ scan:
 		return ""
 	}
 	return out
-}
-
-func isDigest(v map[string]any) bool {
-	_, hasSum := v["sha256"].(string)
-	_, hasLen := v["len"]
-	return len(v) == 2 && hasSum && hasLen
 }
