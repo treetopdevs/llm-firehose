@@ -134,8 +134,8 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
 export const health = () => getJSON<Health>("/health");
 export const recent = (limit = 500) => getJSON<FirehoseEvent[]>(`/events?limit=${limit}`);
 export const sessions = () => getJSON<SessionSummary[]>("/sessions");
-export const sessionEvents = (id: string) =>
-  getJSON<FirehoseEvent[]>(`/sessions/${encodeURIComponent(id)}`);
+export const sessionEvents = (id: string, view?: "timeline") =>
+  getJSON<FirehoseEvent[]>(`/sessions/${encodeURIComponent(id)}${view ? `?view=${view}` : ""}`);
 export const traceEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/traces/${encodeURIComponent(id)}`);
 export const errorSignatures = (session = "", signal?: AbortSignal) =>
@@ -214,4 +214,4 @@ export interface AttentionSnapshot {
 }
 
 export const attention = (signal?:AbortSignal) => getJSON<AttentionSnapshot>("/attention",signal);
-export const capturedEvent = (id: string) => getJSON<FirehoseEvent>(`/attention/event?id=${encodeURIComponent(id)}`);
+export const capturedEvent = (id: string, signal?: AbortSignal) => getJSON<FirehoseEvent>(`/attention/event?id=${encodeURIComponent(id)}`, signal);

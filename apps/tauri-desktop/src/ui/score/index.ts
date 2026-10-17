@@ -5,7 +5,7 @@
 // full event list that highlights the event under it and drives the detail
 // pane. Gaps are real time at every speed.
 
-import { errorSignatures, sessionEvents } from "../../api";
+import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatClockMs, formatDuration } from "../../format";
@@ -116,6 +116,11 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let drawnLaneW = 0;
   let playheadLine: SVGLineElement | undefined;
   let frameStamp = 0;
+  /** Full envelopes fetched for the detail pane, by id, for the open session only. */
+  let fullById = new Map<string, FirehoseEvent>();
+  /** The one in-flight full-detail fetch group; starting another aborts it. */
+  let detailAbort: AbortController | undefined;
+  let currentSignature: ErrorSignature | undefined;
 
   const siblings: Siblings = (ev) =>
     ev.call_id ? events.filter((o) => o.source === ev.source && o.session_id === ev.session_id && o.call_id === ev.call_id) : [];
@@ -140,12 +145,22 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   bar.append(playBtn, prevBtn, nextBtn, speedSel, el("span", { class: "score-gap" }), zoomIn, zoomOut, fitBtn, clock);
 
   function setPlaying(on: boolean) {
+    const wasPlaying = playing;
     playing = on && loaded();
     playBtn.setAttribute("aria-pressed", String(playing));
     playBtn.textContent = playing ? "❚❚" : "▶";
     if (playing) {
+      // Starting playback: no detail fetch may be in flight while the cursor moves.
+      detailAbort?.abort();
+      detailAbort = undefined;
       frameStamp = 0;
       requestAnimationFrame(frame);
+    } else if (wasPlaying && root.isConnected) {
+      // Playback stopped on the event under the cursor: fetch its full detail now.
+      // A detached view (the user left the Score) is paused silently instead, so
+      // the shared detail pane is never written from a hidden panel.
+      const cur = currentId ? byId.get(currentId) : undefined;
+      if (cur) fetchFull(cur);
     }
   }
 
@@ -223,7 +238,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     at = target.at;
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
-    if (target.event.id !== currentId) highlight(target);
+    if (target.event.id !== currentId) highlight(target, true);
   }
 
   function nodeKey(category: string, kind: string, column: number): string {
@@ -241,7 +256,39 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     return Number.isNaN(at) ? undefined : { at, event: ev };
   }
 
-  function highlight(target: ScoreEvent) {
+  /** The full envelope when one was fetched, else the projected event the session loaded with. */
+  const fuller = (ev: FirehoseEvent) => fullById.get(ev.id) ?? ev;
+  const fullSiblings: Siblings = (ev) => siblings(ev).map(fuller);
+
+  /**
+   * Fetches the full envelopes of an event and its call siblings that are not
+   * cached, then re-renders the detail if that event is still the current one.
+   * One group at a time; failures leave the projected rendering standing.
+   */
+  function fetchFull(ev: FirehoseEvent) {
+    detailAbort?.abort();
+    detailAbort = undefined;
+    const wanted = [ev, ...siblings(ev)].map((e) => e.id).filter((id, i, all) => !fullById.has(id) && all.indexOf(id) === i);
+    if (wanted.length === 0) return;
+    const v = version;
+    const ctl = new AbortController();
+    detailAbort = ctl;
+    void Promise.all(wanted.map((id) => capturedEvent(id, ctl.signal).then((full) => full, () => undefined))).then((got) => {
+      if (v !== version || ctl.signal.aborted) return;
+      if (detailAbort === ctl) detailAbort = undefined;
+      let any = false;
+      got.forEach((full, i) => {
+        if (full && full.id === wanted[i]) {
+          fullById.set(full.id, full);
+          any = true;
+        }
+      });
+      if (any && currentId === ev.id) onSelect(fuller(ev), fullSiblings, currentSignature);
+    });
+  }
+
+  /** `explicit` is a step, click or jump; it fetches even mid-playback, where the frame loop's moves do not. */
+  function highlight(target: ScoreEvent, explicit = false) {
     const was = currentId ? byId.get(currentId) : undefined;
     if (was) nodeFor(was)?.classList.remove("current");
     currentId = target.event.id;
@@ -255,7 +302,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       if (score.motifs.has(key)) kinSig = key;
     }
     applyKin();
-    onSelect(ev, siblings, signature);
+    currentSignature = signature;
+    onSelect(fuller(ev), fullSiblings, signature);
+    if (explicit || !playing) fetchFull(ev);
+    else {
+      detailAbort?.abort();
+      detailAbort = undefined;
+    }
   }
 
   /** Lights every in-view member of the current event's motif; redraws re-apply it like .current. */
@@ -508,6 +561,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   async function open(id: string, source?: string) {
     const v = ++version;
+    // Drop the previous session's detail state before pausing, so stopping
+    // playback cannot fetch that session's current event into the new cache.
+    detailAbort?.abort();
+    detailAbort = undefined;
+    fullById = new Map();
+    currentId = undefined;
     setPlaying(false);
     sessionId = id;
     clear(head);
@@ -540,7 +599,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       .catch(() => {})
       .finally(() => clearTimeout(sigTimer));
     try {
-      const fetched = await sessionEvents(id);
+      const fetched = await sessionEvents(id, "timeline");
       if (v !== version) return;
       const evs = fetched.filter((ev) => !source || ev.source === source);
       events = evs;
