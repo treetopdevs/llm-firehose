@@ -148,7 +148,7 @@ func TestAttentionWarningEvidenceAndQueriesAreDetached(t *testing.T) {
 	if len(got.Warnings) != 1 || got.Warnings[0].EventID != "warning" {
 		t.Fatalf("missing capture warning: %+v", got)
 	}
-	exact, err := e.Event("warning")
+	exact, err := e.Event(context.Background(), "warning")
 	if err != nil || !reflect.DeepEqual(exact, admitted) {
 		t.Fatalf("wrong evidence: %+v %v", exact, err)
 	}
@@ -160,7 +160,7 @@ func TestAttentionWarningEvidenceAndQueriesAreDetached(t *testing.T) {
 	if !reflect.DeepEqual(e.Attention(), clean) {
 		t.Fatal("snapshot mutation or rebuild altered evidence")
 	}
-	if _, err := e.Event("missing"); err == nil {
+	if _, err := e.Event(context.Background(), "missing"); err == nil {
 		t.Fatal("missing evidence succeeded")
 	}
 }

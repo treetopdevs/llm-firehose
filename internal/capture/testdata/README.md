@@ -29,3 +29,9 @@ wrapper cut inside its `output` string, a plain `apply_patch verification
 failed:` naming a path (its quoted code replaced with neutral lines), and a JSON
 `command timed out` wrapper. Their original identities differed; all now carry
 the `/work/proj` digests.
+
+`fixture.session.json` and `fixture.errsig.json` are verbatim copies of the Session
+Score fixtures in `apps/tauri-desktop/src/ui/score/` (a real 101-event balanced-mode
+claude-code session, and real minimal-mode Error Signature records with digest-shaped
+`error_class`). `TestTimelineViewKeepsExactlyTheAllowlist` reads them. Keep them in
+sync with the desktop copies if those are ever regenerated.

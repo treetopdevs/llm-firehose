@@ -395,3 +395,24 @@ export function eventLabel(ev: FirehoseEvent): string {
   const text = ev.summary || digestLabel(ev.payload?.tool_name) || ev.name || ev.category;
   return stripControl(digestLabel(text) || text);
 }
+
+/** Envelope fields the daemon's `?view=timeline` keeps (docs/plans/2026-10-17-session-timeline-view.md). */
+export const TIMELINE_FIELDS = ["schema_version", "id", "time", "source", "agent", "session_id", "turn_id", "call_id", "category", "name", "severity", "summary"] as const;
+/** Payload keys the timeline view keeps, values copied as-is. */
+export const TIMELINE_PAYLOAD_KEYS = ["phase", "state", "tool_name", "error_class", "duration_ms", "status", "item_type"] as const;
+
+/**
+ * What the daemon's timeline view would send for one event: the allowlisted
+ * envelope fields and payload keys, nothing else, an empty payload omitted.
+ * The daemon is the real projector; this mirror lets tests derive the
+ * projected fixture from the real full one instead of hand-writing it.
+ */
+export function timelineProjection(ev: FirehoseEvent): FirehoseEvent {
+  const out: Record<string, unknown> = {};
+  const src = ev as unknown as Record<string, unknown>;
+  for (const k of TIMELINE_FIELDS) if (src[k] !== undefined) out[k] = src[k];
+  const payload: Record<string, unknown> = {};
+  for (const k of TIMELINE_PAYLOAD_KEYS) if (ev.payload?.[k] !== undefined) payload[k] = ev.payload[k];
+  if (Object.keys(payload).length > 0) out.payload = payload;
+  return out as unknown as FirehoseEvent;
+}

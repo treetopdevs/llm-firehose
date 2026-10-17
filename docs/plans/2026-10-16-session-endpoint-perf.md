@@ -1,6 +1,6 @@
 # GET /sessions/{id} performance: findings (2026-10-16)
 
-Status: fix A implemented in `internal/capture/history.go` (branch
+Status: fix A implemented 2026-10-16, fix C shipped 2026-10-17 (see C below). Fix A was built in `internal/capture/history.go` (branch
 `claude/sharp-feynman-8b9a32`); before/after measured below under
 "Result after fix A".
 
@@ -198,6 +198,8 @@ Serve the timeline fields plus a few payload scalars.
   contracts.md update.
 - Verdict: the right follow-on after A for the webview's memory, not the fix
   for the latency.
+- Shipped 2026-10-17 as `GET /sessions/{id}?view=timeline`; see
+  [2026-10-17-session-timeline-view.md](2026-10-17-session-timeline-view.md).
 
 ### D. Streaming NDJSON response or a session-scoped spool shard
 
@@ -257,9 +259,11 @@ time is decoding the session's own 123k records plus the 0.5 s encode; the
 lighter envelope (fix C) is the next step for both the server and the
 webview's 440 MB heap.
 
-Not done here: `Engine.Event(id)` still full-decodes one day file per
-evidence link through `spool.ReadDays`; `Session`/`Trace` take no context,
-so a client that disconnects does not cancel the scan.
+Done 2026-10-17 (see
+[2026-10-17-session-timeline-view.md](2026-10-17-session-timeline-view.md)):
+`Engine.Event(ctx, id)` scans its day prefiltered on the quoted id and a
+disconnected `/attention/event` client cancels the scan. Still not done:
+`Session`/`Trace` take no context.
 
 ## How these numbers were produced
 
