@@ -185,3 +185,40 @@ Before/after numbers, if taken, come from a temporary daemon over copied spool
 days (as the Activity Map live check did), never the live 0.2.1 daemon on
 4517, which cannot serve the view. Append a "Shipped" section here and update
 fix C and the "Not done here" line in the perf doc.
+
+## Shipped 2026-10-17
+
+As specified, with these notes:
+
+- **Go.** `capture.TimelineView` and `GET /sessions/{id}?view=timeline` in
+  `internal/capture/history.go` and `internal/daemon/endpoints.go`; an unknown
+  `view` is 400 before any spool scan. `Engine.Event` gained a `ctx` parameter
+  (a review finding: aborting the client fetch did not stop the server's day
+  scan, since `Event` scanned under `context.Background()`), and
+  `/attention/event` passes the request context and stays silent when the
+  client has gone. The Score fixtures are copied into
+  `internal/capture/testdata/` (noted in its README) so the Go tests read the
+  same real captures.
+- **Fixture correction.** The brief said `fixture.errsig.json` holds
+  minimal-mode digest shapes. It is a balanced-mode capture with plain
+  `error_class` strings. Digest pass-through is pinned instead by running the
+  same real events through `privacy.Redact(ModeMinimal)` in
+  `TestTimelineViewPassesMinimalModeDigestsThrough`.
+- **Desktop.** `timelineProjection` in `score/model.ts` mirrors the allowlist
+  so tests derive the projected fixture from the real one. The Score opens with
+  the timeline view and lazily fetches full envelopes (event plus call
+  siblings) for the detail pane. Guards beyond the brief, each pinned by a
+  test: starting playback aborts any in-flight detail fetch, so a restart from
+  the end (which rewinds first) never fetches mid-play; a detached Score that
+  pauses itself fetches nothing and never writes the shared detail pane; and
+  `open()` drops the previous session's detail state before pausing, so the old
+  session's current event is never fetched into the new cache.
+- **Not measured.** No before/after bytes were taken: the live daemon is 0.2.1
+  and a temporary daemon over copied spool days was not run this time. The
+  perf doc's measured projection of the same field set (132 MB to roughly 42 MB
+  for the 123k-event session) is the expectation.
+- **Desktop test suite under load.** The wall-clock budget tests
+  (`score/model.test.ts` 100k coalesce, `score/index.test.ts` 100k open,
+  `graph/index.requests.test.ts` bursts) failed in parallel runs on this
+  machine at a load average above 700 and passed with
+  `--no-file-parallelism`. They are untouched by this change.
