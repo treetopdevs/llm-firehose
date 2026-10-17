@@ -28,6 +28,7 @@ import {
   scoreAxisTicks,
   stripControl,
   tickKind,
+  timelineProjection,
   zoomView,
 } from "./model";
 import type { DrawnTrack, Score, ScoreEvent, View } from "./model";
@@ -162,8 +163,11 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     playBtn.setAttribute("aria-pressed", String(playing));
     playBtn.textContent = playing ? "❚❚" : "▶";
     if (playing) {
-      // Starting playback: no detail fetch may be in flight while the cursor moves.
+      // Starting playback: no detail fetch may be in flight while the cursor
+      // moves, and a pane showing full fields drops back to projected ones.
       cancelDetail();
+      const cur = currentId ? byId.get(currentId) : undefined;
+      if (cur && shown && root.isConnected && [cur, ...siblings(cur)].some(beyondProjection)) render(cur);
       frameStamp = 0;
       requestAnimationFrame(frame);
     } else if (wasPlaying && root.isConnected) {
@@ -280,6 +284,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     cancelDetail();
   };
 
+  /** Whether the pane renders more of `ev` than its projection: a fetched envelope, or an older daemon's full one. */
+  const beyondProjection = (ev: FirehoseEvent) => {
+    const shownEv = fuller(ev);
+    return JSON.stringify(shownEv) !== JSON.stringify(timelineProjection(shownEv));
+  };
+
   /** The full envelope when one was fetched, else the projected event the session loaded with. */
   const fuller = (ev: FirehoseEvent) => fullById.get(ev.id) ?? ev;
   const fullSiblings: Siblings = (ev) => siblings(ev).map(fuller);
@@ -329,7 +339,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     cancelDetail();
     shown = true;
     if (playing) {
-      onSelect(ev, siblings, currentSignature, dismiss);
+      // Projected even when an older daemon sent full envelopes.
+      onSelect(timelineProjection(ev), (e) => siblings(e).map(timelineProjection), currentSignature, dismiss);
       return;
     }
     onSelect(fuller(ev), fullSiblings, currentSignature, dismiss);
@@ -658,8 +669,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       at = score.start;
       drawHead();
       draw();
+      // A load that lands after the user left the Score draws but leaves the
+      // shared detail pane to whichever view is shown.
       const under = eventAt(score, at);
-      if (under) highlight(under);
+      if (under) {
+        mark(under);
+        if (root.isConnected) render(under.event);
+      }
     } catch (err) {
       if (v !== version) return;
       clear(chart);

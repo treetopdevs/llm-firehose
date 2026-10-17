@@ -74,3 +74,26 @@ The timeline-view tests now attach the Score to the document, as `main.ts`
 does when it is the shown view, because a detached Score no longer renders
 fetched results. The test that covers a detached Score pausing itself detaches
 explicitly.
+
+## Re-check of the fixes
+
+A narrow Codex `gpt-6.1-sol` xhigh re-check of `5600946` reproduced three
+more P2s with an in-memory harness. It confirmed the close, refresh,
+pause-after-dismiss and late-signature cancellation as correct, and the
+`main.ts` close wiring by inspection. All three are fixed, each with a test
+that failed first:
+
+- **Pressing Play left full detail on screen** until the cursor reached the
+  next event. Starting playback now re-renders the current event with
+  projected fields whenever the pane was showing more than the projection.
+- **A delayed `open()` wrote the shared pane after the user left the Score.**
+  The session still draws. The pane is rendered, and its fetch started, only
+  while the Score is attached.
+- **An older daemon's full envelopes rendered during playback**, since that
+  daemon ignores `view=timeline`. Playback now renders through
+  `timelineProjection` (the event and its call siblings), so it shows
+  projected fields whatever the daemon sent.
+
+Five more existing tests in the first `describe` now attach the Score: four
+rely on `open()` rendering, and the play/tick test now also counts the
+projected re-render that pressing Play makes on full envelopes.

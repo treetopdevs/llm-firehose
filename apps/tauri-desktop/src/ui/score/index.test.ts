@@ -140,6 +140,7 @@ describe("session score view", () => {
       selected.push(ev);
       siblings = sib;
     });
+    document.body.append(panel.root); // the shown view renders the detail pane
     await panel.open(SID);
     expect(panel.playhead()).toBe(START);
     expect(selected.map((e) => e.id)).toEqual([session[0].id]);
@@ -164,20 +165,24 @@ describe("session score view", () => {
   test("play advances at the chosen speed through real gaps, selects only on change, and stops at the end", async () => {
     const onSelect = vi.fn();
     const panel = createScore(onSelect);
+    document.body.append(panel.root); // the shown view renders the detail pane
     await panel.open(SID);
     const play = button(panel.root, "play");
     expect(play.getAttribute("aria-pressed")).toBe("false");
     play.click();
     expect(play.getAttribute("aria-pressed")).toBe("true");
+    // These are full envelopes (an older daemon's response): pressing play re-renders the first event projected.
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSelect.mock.calls[1][0]).toEqual(timelineProjection(session[0]));
 
     panel.tick(1000);
     expect(panel.playhead()).toBe(START + 1000);
     // Still inside the first event's reign: no new selection.
-    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledTimes(2);
     panel.tick(1000);
     expect(panel.playhead()).toBe(START + 2000);
-    expect(onSelect).toHaveBeenCalledTimes(2);
-    expect(onSelect.mock.calls[1][0].id).toBe(session[1].id);
+    expect(onSelect).toHaveBeenCalledTimes(3);
+    expect(onSelect.mock.calls[2][0].id).toBe(session[1].id);
 
     const speed = panel.root.querySelector<HTMLSelectElement>("select[aria-label='speed']")!;
     expect([...speed.options].map((o) => o.value)).toEqual(["1", "2", "5", "10", "30", "60"]);
@@ -348,6 +353,7 @@ describe("session score view", () => {
       );
       const sigs: (ErrorSignature | undefined)[] = [];
       const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
+      document.body.append(panel.root); // the shown view renders the detail pane
       const opening = panel.open(MIX_SESSION);
       await vi.advanceTimersByTimeAsync(SIGNATURES_TIMEOUT_MS + 1);
       await opening;
@@ -444,6 +450,7 @@ describe("session score view", () => {
     sessionEvents.mockResolvedValue(big);
     const selected: FirehoseEvent[] = [];
     const panel = createScore((ev) => selected.push(ev));
+    document.body.append(panel.root); // the shown view renders the detail pane
     const t0 = performance.now();
     await panel.open("big");
     const openMs = performance.now() - t0;
@@ -837,5 +844,57 @@ describe("session score timeline view", () => {
     expect(capturedEvent).not.toHaveBeenCalled();
     expect(last()[0]).toEqual(pair);
     expect(last()[1](last()[0])).toContainEqual(pairStart);
+  });
+
+  test("pressing play on a fully detailed event re-renders it with projected fields", async () => {
+    sessionEvents.mockResolvedValue(projected);
+    const { panel, calls, last, cur } = recorder();
+    await panel.open(SID);
+    await flush();
+    goTo(panel, pair.id, cur);
+    await flush();
+    expect(last()[0]).toEqual(pair);
+    calls.length = 0;
+    button(panel.root, "play").click();
+    expect(calls).toHaveLength(1);
+    expect(last()[0]).toEqual(timelineProjection(pair));
+    expect(last()[1](last()[0]).every((e) => JSON.stringify(e) === JSON.stringify(timelineProjection(e as FirehoseEvent)))).toBe(true);
+    button(panel.root, "play").click();
+  });
+
+  test("an older daemon's full envelopes are rendered projected during playback", async () => {
+    sessionEvents.mockResolvedValue(session); // ignores view=timeline
+    const { panel, calls, last } = recorder();
+    await panel.open(SID);
+    await flush();
+    button(panel.root, "play").click();
+    calls.length = 0;
+    button(panel.root, "jump to next event").click();
+    expect(calls).toHaveLength(1);
+    expect(last()[0]).toEqual(timelineProjection(last()[0]));
+    expect(last()[1](last()[0]).every((e) => JSON.stringify(e) === JSON.stringify(timelineProjection(e as FirehoseEvent)))).toBe(true);
+    // Paused on it, it is full again; pressing play drops it back to projected.
+    button(panel.root, "play").click();
+    expect(last()[0]).not.toEqual(timelineProjection(last()[0]));
+    calls.length = 0;
+    button(panel.root, "play").click();
+    expect(calls).toHaveLength(1);
+    expect(last()[0]).toEqual(timelineProjection(last()[0]));
+    button(panel.root, "play").click();
+  });
+
+  test("a session load that lands after leaving the score neither renders nor fetches", async () => {
+    let land!: (evs: FirehoseEvent[]) => void;
+    sessionEvents.mockImplementation(() => new Promise<FirehoseEvent[]>((r) => (land = r)));
+    const { panel, calls } = recorder();
+    const opening = panel.open(SID);
+    panel.root.remove(); // show("live") while loading
+    capturedEvent.mockClear();
+    land(projected);
+    await opening;
+    await flush();
+    expect(calls).toHaveLength(0);
+    expect(capturedEvent).not.toHaveBeenCalled();
+    expect(panel.root.querySelector(".score-tick")).not.toBeNull(); // still drawn for when it is shown again
   });
 });
