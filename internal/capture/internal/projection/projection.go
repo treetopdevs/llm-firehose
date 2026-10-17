@@ -104,24 +104,49 @@ func New() *Projection {
 	}
 }
 
-// Build rebuilds the Projection from every event in the spool directory. A
-// missing directory yields an empty Projection; unparseable lines are skipped by
-// the spool reader.
+// Build rebuilds the Projection from every event in the spool directory,
+// streaming each day file into Apply so the spool is never held in memory. A
+// missing directory yields an empty Projection; unreadable records are skipped
+// by the spool reader and recorded as a read gap.
 func Build(dir string) (*Projection, error) {
-	evs, gaps, err := spool.ReadForProjection(dir)
+	ix := New()
+	gaps, reset := false, false
+	err := spool.ScanForProjection(dir, func() { gaps = true }, func(ev event.Event) {
+		if _, applied := ix.ApplyResult(ev); applied && resetsGap(ev) {
+			reset = true
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
-	ix := New()
+	// The materializing Build seeded the read gap before applying any event,
+	// and applyInbox reads gap, so fold the seed in after the scan exactly as
+	// it would have played out first. An applied parse-error record overwrites
+	// gap unconditionally, erasing the seed, so the streamed gap already
+	// matches. Otherwise gap can only hold the newest id-less legacy record,
+	// which replaced the seed only if strictly newer than it.
 	if gaps {
-		ix.gap = &CaptureGap{Source: "firehose", Time: time.Now().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
+		if !reset {
+			// Stamped after the scan, as the materializing Build stamped it
+			// after reading the whole spool: the instant decides whether a
+			// newer id-less record outranks it.
+			seed := &CaptureGap{Source: "firehose", Time: buildNow().UTC(), Summary: "Some spool records could not be read while rebuilding history."}
+			if g := ix.gap; g == nil || !(g.Time.After(seed.Time) || g.Time.Equal(seed.Time) && g.Source > seed.Source) {
+				ix.gap = seed
+			}
+		}
 		ix.readGap = true
-	}
-	for _, ev := range evs {
-		ix.Apply(ev)
 	}
 	return ix, nil
 }
+
+// resetsGap reports whether applyInbox overwrites gap unconditionally for ev.
+func resetsGap(ev event.Event) bool {
+	return ev.ID != "" && ev.Source == "firehose" && ev.Name == "parse-error" && ev.Category == event.CategoryMeta
+}
+
+// buildNow stamps the rebuild's read gap; a seam for tests.
+var buildNow = time.Now
 
 // SourceFirehose is the synthetic source for stream-only derived frames.
 const SourceFirehose = "firehose"
@@ -156,15 +181,15 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 		return nil, false
 	}
 
+	day := ev.Time.UTC().Format("2006-01-02")
 	if ev.ID != "" {
 		if ix.seen[ev.ID] != "" {
 			return nil, false
 		}
-		ix.seen[ev.ID] = ev.Time.UTC().Format("2006-01-02")
+		ix.seen[ev.ID] = day
 	}
 
 	ix.applyInbox(ev)
-	day := ev.Time.UTC().Format("2006-01-02")
 	ix.indexDay(ev, day)
 	var transitions []*event.Event
 
