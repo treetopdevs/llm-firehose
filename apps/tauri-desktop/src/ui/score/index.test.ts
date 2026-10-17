@@ -916,6 +916,16 @@ describe("session score timeline view", () => {
     button(panel.root, "play").click(); // pausing on a closed pane stays closed
     await flush();
     expect(calls).toHaveLength(0);
+    // Clicking the event playback marked, which is already current, reopens the pane.
+    // A click on empty track space at the playhead lands on that same event.
+    const markedAt = panel.playhead();
+    const chart = panel.root.querySelector<SVGSVGElement>(".score-chart svg")!;
+    chart.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: playheadX(panel.root) }));
+    expect(panel.playhead()).toBeCloseTo(markedAt, -3);
+    expect(calls).toHaveLength(1);
+    expect(t(last()[0].time)).toBeLessThanOrEqual(panel.playhead());
+    last()[3](); // close again
+    calls.length = 0;
     button(panel.root, "jump to next event").click();
     expect(calls).toHaveLength(1);
   });

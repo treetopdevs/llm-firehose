@@ -251,9 +251,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
     const under = eventAt(score, at);
-    if (under && under.event.id !== currentId) {
+    if (!under) return;
+    if (under.event.id !== currentId) {
       if (fromPlayback && dismissed) mark(under);
       else highlight(under);
+    } else if (!fromPlayback && !shown) {
+      // An explicit move onto the current event reopens a pane it does not hold.
+      render(under.event);
     }
   }
 
@@ -263,6 +267,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
     if (target.event.id !== currentId) highlight(target);
+    else if (!shown) render(target.event);
   }
 
   function nodeKey(category: string, kind: string, column: number): string {

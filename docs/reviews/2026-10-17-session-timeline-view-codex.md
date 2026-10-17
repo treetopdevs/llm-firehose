@@ -111,3 +111,13 @@ that failed first:
 - **A pending `open()` ignored dismissal.** The load captures the selection
   token after its own reset and renders the first event only if no dismissal
   or other selection happened while it loaded.
+
+## Third re-check
+
+A third narrow re-check of `8676cac` confirmed both fixes. It found one P2
+introduced by them: after playback moved the mark onto an event while the
+pane was closed, an explicit click on that already-current event (its tick,
+or empty track space within its reign) did not reopen the pane, because the
+unchanged-id guard skipped rendering. A tick click or canvas click on the
+current event now renders it whenever the pane is not the Score's. Pinned in
+the dismissed-playback test, which failed first.
