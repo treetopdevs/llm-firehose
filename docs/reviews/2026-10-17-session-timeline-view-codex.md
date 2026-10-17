@@ -121,3 +121,10 @@ or empty track space within its reign) did not reopen the pane, because the
 unchanged-id guard skipped rendering. A tick click or canvas click on the
 current event now renders it whenever the pane is not the Score's. Pinned in
 the dismissed-playback test, which failed first.
+
+## Fourth re-check
+
+A narrow re-check of `1ff705f`: **no P0-P2 findings**. Both reopen paths work
+paused and playing. Repeated clicks while the pane is shown cause no extra
+renders. Dismissed playback, end/restart, refresh, and stale-fetch
+cancellation remain correct.
