@@ -75,3 +75,6 @@ _Avoid_: Session duration, effort score, causal history, proof of resolution
 **Evidence Court**:
 A manual host-private notebook linking user-written claims and evidence requirements to Captured Event receipts; an attached receipt is an association, not a verified claim.
 _Avoid_: Truth score, automatic verdict, proof of correctness
+**Handoff Subway**:
+A map of explicit user annotations linking Captured Event receipts across session/source pairs; annotated transfers are not source-confirmed handoffs or causal proof.
+_Avoid_: Inferred handoff, automatic causality, complete context transfer
