@@ -28,4 +28,4 @@ Specification review of the same immutable range: no actionable implementation d
 
 ## Hosted gate
 
-[PR #35](https://github.com/treetopdevs/llm-firehose/pull/35) owns the current CI/review state. Initial Go CI passed; desktop platform builds were pending when this record was written. The PR's Autofix checkbox was enabled and read back checked. A checked control records configuration, not proof that an unattended repair has run. Merging remains human-approved.
+[PR #35](https://github.com/treetopdevs/llm-firehose/pull/35) owns the current CI/review state. Initial Go CI passed; desktop platform builds were pending when this record was written. The PR's Autofix checkbox was initially enabled and read back checked, then the service reset it and reported: 'Add Carrot credits or activate Agent usage billing to use Autofix'. Hosted Autofix is blocked on account billing; direct in-session remediation continues. Merging remains human-approved.
