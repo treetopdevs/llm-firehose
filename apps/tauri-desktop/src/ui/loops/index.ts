@@ -1,7 +1,8 @@
 import { capturedEvent, errorSignatures, sessionEvents, sessions } from "../../api";
-import type { ErrorSignature, FirehoseEvent } from "../../api";
+import type { ErrorSignature, FirehoseEvent, SessionSummary } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
-import { formatDuration } from "../../format";
+import { formatDuration, sessionName, shortId } from "../../format";
+import { sessionIdChip } from "../session-chip";
 import { eventLabel, stripControl } from "../score/model";
 import {sequenceRuns,compareSequences} from "./sequence";
 import {renderSequenceComparison} from "./sequence-view";
@@ -26,6 +27,8 @@ export function createLoops() {
     el("div", {class: "loops-controls"}, el("label", {}, "Session ", sessionSelect), el("label", {}, "Source ", sourceSelect), refreshButton, sessionStatus), body, notice, detail);
   let phase: "idle" | "loading" | "error" | "ready" = "idle";
   let sessionId = "";
+  /** The last session list drawn, so an open session is named rather than numbered. */
+  let known = new Map<string, SessionSummary>();
   let source: string | undefined;
   let events: FirehoseEvent[] = [];
   let signatures: ErrorSignature[] = [];
@@ -102,7 +105,9 @@ export function createLoops() {
     if (phase === "loading" || phase === "error") return;
     const restore = keepFocus(root); clear(body);
     if (!sessionId) { body.append(el("p", {}, "Choose a session to inspect recurring errors.")); return; }
-    body.append(el("p", {class: "dim"}, `Session ${sessionId} · ${source || "all sources (signatures stay separate)"} · ${model.events.length} captured events in this snapshot`));
+    const s = known.get(sessionId);
+    body.append(el("div", {class: "loops-heading"}, el("strong", {}, s ? sessionName(s) : `session ${shortId(sessionId)}`),
+      el("span", {class: "dim"}, `${source || "all sources (signatures stay separate)"} · ${model.events.length} captured events in this snapshot`), sessionIdChip(sessionId)));
     body.append(el("p", {class: "loops-disclosure", role: "status"},
       model.fallbackCount ? `${model.fallbackCount} error observations across this loaded session/source use local fallback identity. Authoritative membership is missing, unavailable, pending, or capped; local grouping may differ.` : "All loaded error observations use authoritative signature membership.",
       signatureStatus === "pending" ? " Signature lookup pending." : signatureStatus === "unavailable" ? " Signature lookup unavailable." : ""));
@@ -195,8 +200,16 @@ export function createLoops() {
     const historyCtl = new AbortController(); historyAbort = historyCtl;
     signatureAbort?.abort(); clearTimeout(signatureTimer);
     sessionId = id; source = selectedSource; events = []; signatures = []; signatureStatus = "pending"; activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0;
-    if (![...sessionSelect.options].some(o => o.value === id)) sessionSelect.append(el("option", {value: id}, id));
-    sessionSelect.value = id; selectSources(); clear(body); body.append(el("p", {role: "status"}, `Loading ${id}…`));
+    if (![...sessionSelect.options].some(o => o.value === id)) sessionSelect.append(el("option", {value: id}, `session ${shortId(id)}`));
+    sessionSelect.value = id; selectSources(); clear(body); body.append(el("p", {role: "status"}, `Loading ${known.has(id) ? sessionName(known.get(id)!) : `session ${shortId(id)}`}…`));
+    // Opened by id from another panel before the list loaded: fetch the
+    // summary so the heading and the picker show the name, not the id.
+    if (!known.has(id)) void Promise.resolve().then(() => sessions()).then(list => {
+      const s = list?.find(x => x.id === id); if (!s || current !== version) return;
+      known.set(id, s);
+      const option = [...sessionSelect.options].find(o => o.value === id); if (option) option.textContent = optionLabel(s, list);
+      if (phase === "ready") draw();
+    }).catch(() => {});
     const ctl = new AbortController(); signatureAbort = ctl;
     let loaded = false;
     signatureTimer = setTimeout(() => { ctl.abort(); if (current === version) { signatureStatus = "unavailable"; if (loaded) derive(); } }, SIGNATURE_TIMEOUT_MS);
@@ -221,10 +234,16 @@ export function createLoops() {
     try {
       const list = await sessions(); if (token !== listingVersion) return;
       clear(sessionSelect); sessionSelect.append(el("option", {value: ""}, "Choose a session"));
-      for (const s of list) sessionSelect.append(el("option", {value: s.id}, `${s.agent || s.source} · ${s.id}`));
-      if (sessionId && !list.some(s => s.id === sessionId)) sessionSelect.append(el("option", {value: sessionId}, sessionId));
+      known = new Map(list.map(s => [s.id, s]));
+      for (const s of list) sessionSelect.append(el("option", {value: s.id}, optionLabel(s, list)));
+      if (sessionId && !list.some(s => s.id === sessionId)) sessionSelect.append(el("option", {value: sessionId}, `session ${shortId(sessionId)}`));
       sessionSelect.value = sessionId; sessionStatus.textContent = list.length ? "" : "No sessions available.";
     } catch { if (token === listingVersion) sessionStatus.textContent = "Session list unavailable. Refresh to retry."; }
+  }
+  /** An option cannot hold a chip: two sessions with the same name are told apart by a short id. */
+  function optionLabel(s: SessionSummary, list: SessionSummary[]): string {
+    const name = sessionName(s);
+    return list.some(o => o.id !== s.id && sessionName(o) === name) ? `${name} · ${shortId(s.id)}` : name;
   }
   sessionSelect.addEventListener("change", () => {
     if (sessionSelect.value) { void open(sessionSelect.value); return; }

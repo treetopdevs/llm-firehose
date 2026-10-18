@@ -1,6 +1,8 @@
-import { capturedEvent, errorSignatures, errorSignatureSessions } from "../../api";
-import type { ErrorSignature, ErrorSignatureSession, ErrorSignatureSessions } from "../../api";
+import { capturedEvent, errorSignatures, errorSignatureSessions, sessions } from "../../api";
+import type { ErrorSignature, ErrorSignatureSession, ErrorSignatureSessions, SessionSummary } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
+import { sessionName, shortId } from "../../format";
+import { sessionIdChip } from "../session-chip";
 
 const PAGE_SIZE = 50;
 type Navigate = (session: string, source: string) => void;
@@ -63,7 +65,12 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
       clear(detail); detail.append(el("p", {role: "alert"}, "Evidence unavailable. The captured event could not be loaded or did not match this session."), button("Retry evidence", () => void showEvidence(row)));
     }
   }
-  function drawSessions(page: ErrorSignatureSessions, signature: ErrorSignature) {
+  /** A matching row carries only an id and a source; the sessions list names it. Unlisted rows read as source and short id. */
+  function rowName(row: ErrorSignatureSession, known: Map<string, SessionSummary>): string {
+    const s = known.get(row.session_id);
+    return s ? sessionName(s) : `${row.source} · ${shortId(row.session_id)}`;
+  }
+  function drawSessions(page: ErrorSignatureSessions, signature: ErrorSignature, known: Map<string, SessionSummary>) {
     clear(history);
     history.append(el("h3", {}, signature.sample || signature.class || signature.key), el("p", {class: "dim"}, signature.key),
       el("p", {class: "dim", role: "status"}, `Snapshot loaded ${new Date().toLocaleTimeString()}. Each page is a fresh snapshot; new arrivals can move rows between pages.`),
@@ -82,7 +89,7 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
         strip.append(el("span", {style: `left:${(first-start)/span*100}%;width:${(last-first)/span*100}%`}));
       }
       list.append(el("li", {class: "strata-row"},
-        el("div", {class: "strata-row-heading"}, el("strong", {title: row.session_id}, row.session_id), el("span", {}, `${row.source} · ${row.count} matching observations`)),
+        el("div", {class: "strata-row-heading"}, el("strong", {title: rowName(row, known)}, rowName(row, known)), el("span", {}, `${row.source} · ${row.count} matching observations`), sessionIdChip(row.session_id)),
         strip, el("div", {class: "strata-times"}, el("time", {datetime: row.first_time}, `First ${row.first_time}`), el("time", {datetime: row.last_time}, `Last ${row.last_time}`)),
         el("div", {class: "strata-actions"}, button("View evidence", () => void showEvidence(row), `evidence:${row.session_id}`), button("Open Loops", () => openLoops(row.session_id, row.source), `loops:${row.session_id}`), button("Open Score", () => openScore(row.session_id, row.source), `score:${row.session_id}`))));
     }
@@ -95,10 +102,15 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
     sessionAbort?.abort(); cancelDetail(); const ctl = new AbortController(); sessionAbort = ctl;
     clear(history); history.append(el("p", {role: "status"}, "Loading matching sessions…"));
     try {
-      const page = await errorSignatureSessions(signature.key, offset, PAGE_SIZE, ctl.signal);
+      // The sessions list is pure naming: fetched alongside the page, and an
+      // unavailable list (older daemon, offline) costs the page nothing.
+      const [page, list] = await Promise.all([
+        errorSignatureSessions(signature.key, offset, PAGE_SIZE, ctl.signal),
+        Promise.resolve().then(() => sessions()).catch(() => undefined),
+      ]);
       if (ctl.signal.aborted || token !== sessionVersion || active?.key !== signature.key) return;
       if (page.key !== signature.key || page.offset !== offset || page.limit !== PAGE_SIZE) throw new Error("Mismatched session page");
-      drawSessions(page, signature);
+      drawSessions(page, signature, new Map((list ?? []).map(s => [s.id, s])));
     } catch (error) {
       if (ctl.signal.aborted || token !== sessionVersion || active?.key !== signature.key) return;
       clear(history); history.append(el("p", {role: "alert"}, `Matching sessions unavailable: ${String(error)}. ${/\b404\b/.test(String(error)) ? "An older daemon may not support this endpoint, or the signature may no longer exist in the current projection. Refresh signatures; if this persists, update or restart the daemon." : "Retry or refresh signatures to load a new snapshot."}`), button("Retry sessions", () => void loadSessions(offset)));

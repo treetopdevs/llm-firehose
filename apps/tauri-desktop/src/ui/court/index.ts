@@ -1,6 +1,8 @@
-import { capturedEvent } from "../../api";
+import { capturedEvent, sessions } from "../../api";
 import type { FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
+import { sessionName, shortId } from "../../format";
+import { sessionIdChip } from "../session-chip";
 import { createNotebook, STORAGE_KEY } from "./notebook";
 import type { Claim, Notebook, Receipt, Requirement } from "./notebook";
 
@@ -114,7 +116,16 @@ export function createCourt(openScore: (session: string, source: string) => void
         if (selected().requirement?.receipt || !preview || token !== version || claimID !== selectedClaim || requirementID !== selectedRequirement) return;
         const identity = {...preview}; mutation(next => { next.claims.find(c => c.id === selectedClaim)!.requirements.find(r => r.id === selectedRequirement)!.receipt = identity; });
       }));
-      if (receipt.session_id) detail.append(button("Open Score", () => { cancelPreview(); openScore(receipt.session_id, receipt.source); }));
+      if (receipt.session_id) {
+        // The session is named, not numbered: its summary is fetched after the
+        // evidence lands, and an unlisted session reads as source and short id.
+        const name = el("strong", {}, `${receipt.source} · ${shortId(receipt.session_id)}`);
+        detail.append(el("p", {class: "court-session"}, "Session: ", name, " ", sessionIdChip(receipt.session_id)), button("Open Score", () => { cancelPreview(); openScore(receipt.session_id, receipt.source); }));
+        void Promise.resolve().then(() => sessions()).then(list => {
+          const s = list?.find(x => x.id === receipt.session_id);
+          if (s && !ctl.signal.aborted && token === version && preview === receipt) name.textContent = sessionName(s);
+        }).catch(() => {});
+      }
     } catch (error) {
       if (ctl.signal.aborted || token !== version) return;
       clear(detail); detail.append(el("p", {role: "alert"}, error instanceof Error && /identity mismatch/.test(error.message) ? `${error.message}. ${saved ? "Returned evidence conflicts with the saved identity. This receipt must not be relied on; inspect or remove it." : "Returned evidence does not match the requested event. Nothing attached."}` : `Evidence unavailable: ${(error instanceof Error ? error.message : String(error))}. ${saved ? "The stored reference is retained for inspection, without evidence verification." : "Nothing attached."}`));

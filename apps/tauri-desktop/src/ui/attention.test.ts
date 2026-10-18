@@ -414,3 +414,13 @@ test("unrecorded capture gaps are inspectable and show workspace identity separa
     false,
   );
 });
+
+test("inbox rows are headed by the session's name; the id is a copyable chip", async () => {
+  snapshot = { sessions: [{ ...session("r1"), title: "Fix the flaky test" }, session("active", false)], warnings: [] };
+  const panel = mount();
+  await panel.refresh();
+  const rows = [...panel.root.querySelectorAll(".attention-row")];
+  expect(rows.map((r) => r.querySelector("h3")?.textContent)).toEqual(["Fix the flaky test", "codex in app"]);
+  expect(rows.map((r) => r.querySelector(".session-id")?.textContent)).toEqual(["r1", "active"]);
+  expect(rows[0].querySelector("h3")?.textContent).not.toContain("r1");
+});

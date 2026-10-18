@@ -62,6 +62,8 @@ export interface SessionSummary {
   has_error?: boolean;
   last_summary?: string;
   last_category?: string;
+  /** Additive: the source's session title (latest wins) or a first-prompt excerpt. */
+  title?: string;
 }
 
 export interface FileArtifact {
@@ -236,6 +238,8 @@ export interface AttentionSession {
   last: AttentionEvidence;
   pending?: AttentionEvidence;
   uncertainty?: string;
+  /** Additive: same title as the /sessions summary. */
+  title?: string;
 }
 
 export interface AttentionSnapshot {

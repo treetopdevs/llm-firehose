@@ -5,10 +5,11 @@
 // full event list that highlights the event under it and drives the detail
 // pane. Gaps are real time at every speed.
 
-import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
-import type { ErrorSignature, FirehoseEvent } from "../../api";
+import { capturedEvent, errorSignatures, sessionEvents, sessions } from "../../api";
+import type { ErrorSignature, FirehoseEvent, SessionSummary } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
-import { formatClockMs, formatDuration } from "../../format";
+import { formatClockMs, formatDuration, sessionName, sessionWhere, shortId } from "../../format";
+import { sessionIdChip } from "../session-chip";
 import type { Siblings } from "../detail";
 import {
   SPEEDS,
@@ -98,6 +99,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   const clipId = `score-clip-${++clipSeq}`;
 
   let sessionId = "";
+  /** The /sessions summary of the open session, when the daemon lists it; it names the score. */
+  let summary: SessionSummary | undefined;
   let events: FirehoseEvent[] = [];
   let byId = new Map<string, FirehoseEvent>();
   /** The daemon's Error Signatures for this session, by key; empty when the daemon has none or lacks GET /errors. */
@@ -441,7 +444,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     kinNodes = [];
     playheadLine = undefined;
     if (!loaded()) {
-      chart.append(el("p", { class: "dim" }, sessionId ? `no drawable events in session ${sessionId}` : "open a session from the sessions panel to see its score"));
+      chart.append(el("p", { class: "dim" }, sessionId ? `no drawable events in ${name()}` : "open a session from the sessions panel to see its score"));
       refocus();
       return;
     }
@@ -613,17 +616,31 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     return canvas;
   }
 
+  /** What the open session is called: its summary's name, else the agent and a short id. The uuid is never the name. */
+  function name(): string {
+    if (summary) return sessionName(summary);
+    const first = events[0];
+    // Only the agent is taken from the events: the timeline view carries no
+    // workspace, so a name derived from one would differ between daemons.
+    return sessionName({ id: sessionId, source: first?.source ?? "", agent: first?.agent });
+  }
+
   function drawHead() {
     clear(head);
     if (!sessionId) return;
     const first = events[0];
-    const parts = [
-      `session ${sessionId}`,
-      first ? first.agent || first.source : "",
+    const where = summary ? sessionWhere(summary) : { label: "", full: undefined };
+    const facts = [
+      summary?.agent || summary?.source || (first ? first.agent || first.source : ""),
+      where.label,
       `${events.length} events`,
       loaded() ? `${formatClockMs(new Date(score.start).toISOString())} → ${formatClockMs(new Date(score.end).toISOString())} · ${formatDuration(score.end - score.start)}` : "",
     ].filter(Boolean);
-    head.textContent = stripControl(parts.join(" · "));
+    head.append(
+      el("span", { class: "score-name", title: name() }, stripControl(name())),
+      el("span", { class: "score-facts", title: where.full ?? "" }, stripControl(facts.join(" · "))),
+      sessionIdChip(sessionId),
+    );
   }
 
   // --- data -----------------------------------------------------------------------
@@ -639,10 +656,18 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     // Closing the pane, or another selection, while this loads keeps the load from rendering.
     const sel = selection;
     sessionId = id;
+    summary = undefined;
     clear(head);
     clear(overview);
     clear(chart);
-    chart.append(el("p", { class: "dim" }, `loading ${id}…`));
+    chart.append(el("p", { class: "dim" }, `loading session ${shortId(id)}…`));
+    // Opened by id from another panel: fetch the summary alongside the
+    // history so the heading is the session's name, not its id. An older
+    // daemon, or a session no longer listed, just leaves the fallback name.
+    const summaryLoad = Promise.resolve()
+      .then(() => sessions())
+      .then((list) => list?.find((s) => s.id === id))
+      .catch(() => undefined);
     // GET /errors is additive (2026-10-16) and pure enrichment: fetched
     // alongside the events but never awaited, so an older daemon without the
     // route — or one that hangs on it — costs the score nothing. A hung fetch
@@ -673,8 +698,9 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       .catch(() => {})
       .finally(() => clearTimeout(sigTimer));
     try {
-      const fetched = await sessionEvents(id, "timeline");
+      const [fetched, found] = await Promise.all([sessionEvents(id, "timeline"), summaryLoad]);
       if (v !== version) return;
+      summary = found;
       const evs = fetched.filter((ev) => !source || ev.source === source);
       events = evs;
       byId = new Map(evs.map((e) => [e.id, e]));
