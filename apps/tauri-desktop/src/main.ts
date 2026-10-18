@@ -115,7 +115,7 @@ const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
   if (active === "loom" && name !== "loom") panels.loom.deactivate();
-  if (name === "loom") clear(detailPane);
+  if (name === "loom") renderDetail(detailPane, null, () => {});
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
