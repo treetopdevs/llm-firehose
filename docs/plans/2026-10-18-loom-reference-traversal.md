@@ -1,0 +1,21 @@
+# Causal Loom: bounded native reference traversal
+
+Fresh main base d2c4488; branch codex/loom-neighborhood. PR43 is already merged and green. PR49/50 session naming work is independent and left untouched.
+
+## Outcome
+Follow an observation's recorded OpenCode parent-message chain upstream, downstream or both, at explicit depth1–4 within the loaded exact source/session. Default remains both directions at depth1. This extends the initial one-hop experiment; it does not infer causal links or cross-agent relationships.
+
+## Contract
+Keep existing buildLoom scope, namespace, duplicate/conflict exclusions and native parent interpretation. Traverse only resolved parent references. Display adjacent missing/conflicting references as terminal evidence, never use them to expand traversal. Iterative breadth-first expansion with visited groups and unique references terminates cycles and uses shortest reference distance. Depth counts references, not receipt membership. Start from focus observation's own identifier groups; membership never bridges unrelated message groups. Return deterministic model order and do not mutate input. Clamp programmatic depth to1–4 (nonfinite defaults1).
+
+Persistent labelled Direction and Reference depth selects redraw the current focus neighborhood locally, reset group/reference/member pagination, clear selected group and cancel any pending receipt. Do not fetch history or receipts on option changes. Preserve focus on the select. Scope changes reset to defaults; changing focused observation preserves exploration options. Existing20-group/20-reference/40-member rendering and complete paginated lists remain. Label direction/depth and caveats; depth is a traversal limit, not a bound on loaded history or total model memory.
+
+## TDD and gates
+User-delegated seams: pure public traversal using normalized mutations of existing real OpenCode fixture (explicitly graph-contract cases, not new raw adapter payloads); visible DOM controls, paging/reset, receipt abort and late response rejection. Cover chains, forks, cycles, depth cap, missing/conflicting terminal references, direction, deterministic output, foreign scopes and absent focus. Preserve all one-hop tests.
+
+Run targeted red-green tests, full frontend tests/build, Go format/vet/full tests/CLI, sidecar and Rust tests. Requested Argon4 High if substantive access is available, otherwise Sonnet5.5 High plan and final diff review; independent spec/standards review, fix findings, commit/PR, hosted checks/comments. Browser proof uses isolated fixtures only. No runtime network, dependency, capture, API or persistence changes. Main merge requires user approval.
+
+## Plan-review decisions
+Sonnet5.5 High fallback used because substantive Argon quota is exhausted. Clarify both as undirected breadth-first traversal, including siblings through shared parents; the review's assertion that the first test excluded siblings was incorrect (the committed expectation includes sibling). Upstream/downstream remain directed. Include an edge and its far endpoint only when reached from a frontier at distance less than depth; unresolved edges consume one hop but never expand. Edges between visited groups appear only if encountered in such a frontier. All direct identifier groups remain in every mode. Public loomTraversal(model,eventId,direction,depth) returns groups/parents in model order; loomNeighborhood delegates to both/1. An absent focus yields empty arrays.
+
+Fractional depths floor, finite depths clamp1–4, all nonfinite values default1. Direction is a typed union supplied by fixed select options. Both controls use DOM values as source of truth. Scope edits and explicit reload reset them; focus/search/errors/paging preserve them. Changing options clears completed as well as pending receipts and all selected members/pages. Cache the neighborhood per loaded model/focus/direction/depth so pagination does not rescan relationships. Add10k fan-out and reset/paging coverage. Keep explicit20-row map/page limits and disclose cross-page arrow omission, unexplored beyond-depth references, and resolved meaning any captured receipt carries the target message identity. No complete ancestry claim or total-memory bound.
