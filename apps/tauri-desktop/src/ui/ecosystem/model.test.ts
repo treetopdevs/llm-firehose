@@ -135,3 +135,11 @@ test("10k fixture-derived receipts keep stable bed counts and exact replay prefi
   expect(model.beds).toHaveLength(4);
   expect(replayBeds(model, 2345).reduce((n, bed) => n + bed.eventIds.length, 0)).toBe(2345);
 });
+
+// Normalized contract mutations of the captured file receipt.
+test("RFC3339 clocks preserve fractional order and reject invalid calendar strings", () => {
+ const times=[['a','2026-10-18T12:00:00.000002Z'],['z','2026-10-18T08:00:00.000001-04:00'],['bad','2026-02-30T00:00:00Z'],['loose','1']];
+ const model=buildEcosystem(times.map(([id,time])=>({...files[0],id,time})),source,session);
+ expect(model.events.map(e=>e.id)).toEqual(['z','a']);
+ expect(model.undated.map(e=>e.id)).toEqual(['bad','loose']);
+});

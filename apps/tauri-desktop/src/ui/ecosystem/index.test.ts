@@ -88,3 +88,21 @@ test("Play at the latest cursor preserves snapshot provenance and exclusion coun
  expect(before).toContain(event.session_id!);expect(before).toContain("loaded");expect(before).toContain("missing captured IDs omitted");
  click(panel.root,"Play");expect(panel.root.textContent).toContain(before!);expect(panel.root.textContent).toContain("At latest observation");
 });
+
+test("choice refresh preserves playback and inspected receipt",async()=>{
+ vi.useFakeTimers();
+ api.sessionEvents.mockResolvedValue(Array.from({length:3},(_,i)=>({...event,id:`e${i}`})));
+ const panel=createEcosystem(); await load(panel); click(panel.root,'Beginning'); click(panel.root,'Play');
+ await panel.refresh(); expect(panel.root.textContent).toContain('Pause');
+ vi.advanceTimersByTime(250); expect(panel.root.textContent).toContain('1 of 3 dated');
+ click(panel.root,'Select file bed'); api.capturedEvent.mockResolvedValue({...event,id:'e0'});
+ click(panel.root,'Inspect captured receipt'); await settle(); await panel.refresh();
+ expect(panel.root.textContent).toContain('Full captured receipt');
+ expect(panel.root.querySelector('.ecosystem-members')?.textContent).toContain(event.name);
+ panel.deactivate();
+});
+test("map caption retains filtered totals on later pages",async()=>{
+ api.sessionEvents.mockResolvedValue(Array.from({length:45},(_,i)=>({...event,id:`e${i}`,payload:{...event.payload,file_path:`file${i}`}})));
+ const panel=createEcosystem();await load(panel);click(panel.root,'Next beds');
+ expect(panel.root.querySelector('.ecosystem-map')?.textContent).toContain('21–40 of 45 filtered / 45 total file beds');
+});
