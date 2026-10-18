@@ -1,6 +1,6 @@
 # Session Stratigraphy v1
 
-Status: implemented; remediation and final review in progress. Base: main `a5df67fc5cce0e66130f055e0d8a038f4ad42c17`, including merged PR #35.
+Status: implemented and locally validated; final adversarial, standards and spec reviews passed on `620e9c3`. PR #36 ready; hosted checks tracked on the PR. Base: main `a5df67fc5cce0e66130f055e0d8a038f4ad42c17`, including merged PR #35.
 
 ## Outcome
 
