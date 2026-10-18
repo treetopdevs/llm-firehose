@@ -458,15 +458,20 @@ are `{key, total, counts}` where `key` is the existing canonical Error Signature
 and `counts` contains ascending `[bucket_index, count]` pairs in the same window.
 Only paths carried by the error event itself are attributed, including recognized
 apply-patch input/output paths; no temporal or cross-event inference occurs.
+Unlike Error Signature path summaries, the overlay reads these explicit fields
+for qualifying errors in any category, including tool and shell. A stored path
+may name a directory or attempted patch target; attribution is not proof of a
+file mutation or defect. Non-error, non-file observations are excluded before
+aggregation deduplication.
 Source/category/name/class identity uses the existing error qualification and
 normalization. Repository/workspace, half-open window and canonical-ID filters
 match Heat. `total` includes omitted signatures; each retained signature's counts
-are exact. Keep at most2000 error paths by descending total then group/path, and
+are exact. Keep at most 2000 error paths by descending total then group/path, and
 20 signatures per path by descending total then key. Omission fields count
 omitted paths/signatures in the full loaded window, not in a brushed subrange.
 The original Heat fields, ordering/caps, minimal-mode unavailable gate and scan
 day bounds are unchanged. Aggregation memory still scales with matching history.
 Older daemon responses omit these fields; clients must show overlay unavailable,
-not claim zero errors. Recurrence is at least2 observations of the same signature
+not claim zero errors. Recurrence is at least 2 observations of the same signature
 on the same resolved group/path in the selected buckets; it is not retries,
 root cause, or evidence that the file is defective.

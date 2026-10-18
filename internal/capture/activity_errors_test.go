@@ -98,3 +98,60 @@ func TestActivityErrorsCountAnObservationOncePerResolvedPath(t *testing.T) {
 		t.Fatalf("one observation must not fabricate recurrence: %+v", r.ErrorPaths)
 	}
 }
+
+// Category and workspace mutations of a captured normalized receipt.
+func TestActivityErrorsExplicitPathsAcrossCategoriesAndWorkspaceScope(t *testing.T) {
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	original := shapeAt(t, realShapes(t), editPost, "seed", base)
+	var records []event.Event
+	for i, category := range []event.Category{event.CategoryTool, event.CategoryShell} {
+		e := original
+		e.ID = fmt.Sprint(i)
+		e.Category = category
+		e.Severity = event.SeverityError
+		e.Payload = map[string]any{"path": "/work/proj/directory"}
+		records = append(records, e)
+	}
+	ordinary := original
+	ordinary.ID = "ordinary"
+	ordinary.Category = event.CategoryTool
+	ordinary.Severity = event.SeverityInfo
+	records = append(records, ordinary)
+	foreign := records[0]
+	foreign.ID = "foreign"
+	foreign.WorktreeID = "elsewhere"
+	records = append(records, foreign)
+	e, _ := activityEngine(t, records)
+	q := activityQuery(base, base.Add(time.Hour), time.Minute)
+	q.WorkspaceID = shapeWorktree
+	result, err := e.Activity(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FileEvents != 0 || len(result.Paths) != 0 || len(result.ErrorPaths) != 1 || result.ErrorPaths[0].Total != 2 || result.ErrorPaths[0].Path != "directory" {
+		t.Fatalf("explicit path attribution or scope: %+v", result)
+	}
+}
+
+func TestActivityErrorReplayAcrossDaysKeepsCanonicalRecord(t *testing.T) {
+	first := time.Date(2026, 10, 15, 23, 50, 0, 0, time.UTC)
+	original := shapeAt(t, realShapes(t), editPost, "error-replay", first)
+	original.Severity = event.SeverityError
+	replay := original
+	replay.Time = first.Add(20 * time.Minute)
+	e, _ := activityEngine(t, []event.Event{original, replay})
+	all, err := e.Activity(context.Background(), activityQuery(first.Add(-time.Hour), first.Add(2*time.Hour), time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.ErrorPaths) != 1 || all.ErrorPaths[0].Total != 1 {
+		t.Fatalf("canonical error counted twice: %+v", all)
+	}
+	later, err := e.Activity(context.Background(), activityQuery(first.Add(15*time.Minute), first.Add(2*time.Hour), time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(later.ErrorPaths) != 0 {
+		t.Fatalf("replayed noncanonical day counted: %+v", later)
+	}
+}

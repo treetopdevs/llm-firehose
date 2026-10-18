@@ -258,3 +258,8 @@ test("repeated file errors outline terrain without changing Heat and include err
  expect(map.root.querySelectorAll('.map-storm').length).toBe(1);
  expect(map.root.textContent).toContain('error-only.go');expect(map.root.textContent).toContain('3 error paths omitted');
 });
+
+test("nonempty older daemon map discloses unavailable errors",async()=>{
+ const map=await open({...real,error_paths:undefined});
+ expect(map.root.textContent).toContain('File-linked error overlay unavailable from this daemon.');
+});

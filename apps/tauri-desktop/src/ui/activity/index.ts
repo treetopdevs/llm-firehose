@@ -245,6 +245,7 @@ export function createActivityMap(): ActivityMap {
     notices.append(el("p", { class: `map-notice ${kind}`.trim() }, text));
   }
 
+  const errorPage = {page: 0};
   function render() {
     const restore = keepFocus(root);
     renderHead();
@@ -284,7 +285,7 @@ export function createActivityMap(): ActivityMap {
     if (!r.error_paths) notice("File-linked error overlay unavailable from this daemon.");
     else {
       if (r.omitted_error_paths) notice(`${r.omitted_error_paths} error paths omitted from the loaded window; overlay and list are incomplete.`, "warn");
-      list.after(renderErrorPaths(errorRange(r.error_paths,a,b)));
+      list.after(renderErrorPaths(errorRange(r.error_paths,a,b),groupNames(),errorPage));
     }
     restore();
   }

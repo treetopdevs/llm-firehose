@@ -121,6 +121,10 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 			if ev.Time.Before(from) || !ev.Time.Before(out.To) {
 				return
 			}
+			signature, isError := projection.ErrorObservationKey(ev)
+			if ev.Category != event.CategoryFile && !isError {
+				return // unrelated history never enters the aggregation dedupe set
+			}
 			if ev.ID != "" {
 				// A stable ID replayed into a different day file keeps its
 				// first (canonical) record, exactly as Timeline does.
@@ -131,7 +135,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 			}
 			paths := activityPaths(ev)
 			bucket := int(ev.Time.Sub(from) / q.Bucket)
-			if signature, ok := projection.ErrorObservationKey(ev); ok {
+			if isError {
 				// Read explicit path fields on this error only; keep its original
 				// category for signature identity and Heat eligibility.
 				pathEvent := ev
