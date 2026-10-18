@@ -112,6 +112,7 @@ let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
+  if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);

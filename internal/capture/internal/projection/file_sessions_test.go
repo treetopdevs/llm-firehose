@@ -1,8 +1,10 @@
 package projection
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"runtime"
 	"testing"
@@ -159,4 +161,38 @@ func TestFileSessionsScale(t *testing.T) {
 		t.Fatalf("scale ceiling exceeded: allocation=%d JSON=%d", allocated, len(encoded))
 	}
 	runtime.KeepAlive(ix)
+}
+
+func BenchmarkFileSessionsSnapshot(b *testing.B) {
+	data, err := os.ReadFile("../../testdata/activity_real_shapes.ndjson")
+	if err != nil {
+		b.Fatal(err)
+	}
+	var real event.Event
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if bytes.Contains(line, []byte(`"name":"patch_apply_end"`)) {
+			if err := json.Unmarshal(line, &real); err != nil {
+				b.Fatal(err)
+			}
+			break
+		}
+	}
+	if real.ID == "" {
+		b.Fatal("missing real patch fixture")
+	}
+	ix := New()
+	for i := 0; i < 10000; i++ {
+		ev := real
+		ev.ID = fmt.Sprint(i)
+		ev.SessionID = fmt.Sprint(i)
+		ix.Apply(ev)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows := ix.FileSessions()
+		if _, err := json.Marshal(rows); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

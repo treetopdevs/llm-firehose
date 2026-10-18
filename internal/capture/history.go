@@ -22,6 +22,7 @@ type (
 	Session           = projection.Session
 	TraceSummary      = projection.Trace
 	FileArtifact      = projection.FileArtifact
+	FileSession       = projection.FileSession
 	ErrorSignature    = projection.ErrorSignature
 	ErrorSession      = projection.ErrorSession
 	ErrorSessionsPage = projection.ErrorSessionsPage
@@ -220,3 +221,6 @@ func (e *Engine) ErrorSessions(key string, offset, limit int) (ErrorSessionsPage
 	}
 	return page, nil
 }
+
+// FileSessions returns exact recorded workspace/path/source/session summaries.
+func (e *Engine) FileSessions() []FileSession { return e.projection.FileSessions() }

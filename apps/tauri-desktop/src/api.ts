@@ -159,7 +159,9 @@ export const errorSignatures = (session = "", signal?: AbortSignal) =>
   getJSON<ErrorSignature[]>(`/errors${session ? `?session=${encodeURIComponent(session)}` : ""}`, signal);
 export const errorSignatureSessions = (key: string, offset = 0, limit = 50, signal?: AbortSignal) =>
   getJSON<ErrorSignatureSessions>(`/errors/sessions?key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}`, signal);
-export const files = () => getJSON<FileArtifact[]>("/artifacts/files");
+export const files = (signal?: AbortSignal) => getJSON<FileArtifact[]>("/artifacts/files",signal);
+export interface FileSession {workspace_kind:string;workspace:string;path:string;source:string;session_id:string;events:number;first_time:string;last_time:string;last_event_id:string}
+export const fileSessions = (signal?:AbortSignal) => getJSON<FileSession[]>("/artifacts/file-sessions",signal);
 export const doctor = () => getJSON<DoctorCheck[]>("/doctor");
 export const getConfig = () => getJSON<EngineConfig>("/config");
 export const setConfig = (patch: EngineConfig) =>

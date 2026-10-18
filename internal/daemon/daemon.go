@@ -128,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /errors/sessions", s.handleErrorSessions)
 	mux.HandleFunc("GET /traces/{id}", s.handleTraceByID)
 	mux.HandleFunc("GET /artifacts/files", s.handleArtifactFiles)
+	mux.HandleFunc("GET /artifacts/file-sessions", s.handleFileSessions)
 	mux.HandleFunc("GET /doctor", s.handleDoctor)
 	mux.HandleFunc("POST /install/{adapter}", s.handleInstall)
 	mux.HandleFunc("POST /export", s.handleExport)

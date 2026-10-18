@@ -77,3 +77,27 @@ The fixes for 1–3 (and 7's endpoint list) belong in the plan text, so the plan
 ## Response
 
 All findings are addressed by the numbered plan corrections. Projection-only test-first implementation was concurrent with review; API/UI remain unimplemented pending follow-up.
+
+## Follow-up
+
+**PASS.** I found no remaining blockers. I read the plan, the review, and the code they cite. I ran no tests, made no edits, and used no network or delegation.
+
+**Review blockers**
+- **Blocker 1, receipt route:** Resolved by corrections 1 and 8. `GET /attention/event` is registered at `internal/daemon/daemon.go:124`, and `capturedEvent(id, signal)` is at `api.ts:236`. An empty ID disables inspection. The plan also checks the selected path and scope kind/value against the returned envelope, which closes the gap that ID/source/session alone left open. `handleEventByID` returns the full envelope with the same redaction as the projection. That is why comparing scope digests on the client works.
+- **Blocker 2, digested scope and truncated paths:** Resolved by correction 2, and the plan's premise holds. `privacy.Redact` runs `digestPath` on all five identity fields, and it is a plain unsalted sha256 (`privacy.go:55-69`). Digests are therefore stable, and exact-identity grouping on them is sound. Labelling them as opaque is correct, and so is making repo name descriptive only. Excluding ellipsis-ending paths from shared badges is conservative and fine. The plan also covers minimal mode, where there are no rows.
+- **Blocker 3, grouping rules:** Resolved by correction 3. It removes the repo-name fallback, declines `repo_id`/`JJRepoID` as scope, and states that cross-kind, nested-cwd and missing-scope records are not comparable. Sharing means identical kind/value/path only. A session in several scopes is counted once per scope.
+
+**Review gaps**
+- **Gap 4, scale:** Correction 4 keeps the full-array snapshot on purpose. It adds a measured 10,000-row gate with 64 MiB allocation and 16 MiB JSON ceilings plus a benchmark. It says this is evidence at that size, not a runtime bound. It also says a failed gate means revising the design.
+- **Gap 5, event counts:** Correction 5 fixes the column wording and the caveats.
+- **Gap 6, lifecycle:** Correction 6 adds persisted mode, a `deactivate()` that invalidates both requests, activation on navigation, and a `main.ts` regression test.
+- **Gap 7, old daemons and docs:** Correction 7 covers the typed `fileSessions(signal?)`, the `capture.FileSession` alias, the 404 state with Retry, and both docs.
+- **Gaps 8–9, dedupe and equivalence:** Corrections 8 and 3 cover these. The ID-less decision is explicit, and the tests are listed: duplicate IDs, ID-less repeats, multi-path events, out-of-order rebuild, and a session moving between scopes.
+- **Gap 10, TDD ordering:** Correction 9 records it. I checked `/tmp/file-session-red.txt` and `/tmp/file-session-green.txt`. They exist and match the plan's account: red shows `ix.FileSessions undefined`, and green is `ok` for the projection package.
+
+**Non-blocking nits**
+1. Correction 1 says to use "documented" extraction rules, but `EventFilePaths` is documented only in its code comment (`projection.go:431-435`). Correction 7 should also put the extraction rules (the `file_path`, `path`, `file` keys, the `changes` map, and the digest exclusion) in `docs/contracts.md`. Add a shared-fixture test for the TypeScript port so it cannot drift from the Go function.
+2. Correction 6 says to persist the Files mode but not where. Name the storage, for example the same `localStorage` pattern the other panels use, and the key.
+3. The `/tmp` red/green files won't last. If the TDD record matters, copy the lines into the review doc.
+
+Durable test-first record: red `ix.FileSessions undefined`; green `ok agentfirehose/internal/capture/internal/projection`. HTTP red status404; green test suite passed. The first DOM attempt had missing test environment; after correcting that setup, the original implementation failed on missing Activity by session control, and the new implementation passed. A later stale-list regression failed before the assignment-order fix.
