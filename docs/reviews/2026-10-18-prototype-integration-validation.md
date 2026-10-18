@@ -1,3 +1,7 @@
+# History cancellation integration checkpoint — 9b72c66
+
+Merged reviewed PR #48 code; preserved full/timeline/correlation views and scoped Files accessors. Added correlation to HTTP cancellation/healthy-response tests. Empty gofmt, go vet, full Go tests, CLI build, affected capture/daemon/spool race tests,750 frontend tests across58 files, production build, rebuilt sidecar and3 Rust tests pass. Both independent reviewers and Sonnet5.5 High PASS; documentation findings corrected. Report: 2026-10-18-history-cancellation-integration-sonnet.md. No new browser or installed-desktop proof is claimed for this backend-only change. Updated-head hosted checks remain separate.
+
 ## Shared Airspace integration checkpoint — ed9ca51
 
 Fast-forward from aef9ab4 to reviewed stacked PR #47 head ed9ca51. Exact source-tree equality with the slice verified; no merge conflict or additional application changes. The slice already contains the combined app and passed 750 frontend tests across58 files and production build. Go formatting/vet/full tests/CLI, rebuilt sidecar and Rust3 passed; no backend/native change in this slice. Independent spec/standards and Sonnet5.5 High follow-ups PASS; residual low notes fixed with regressions. Browser evidence retains its documented6ce01f3 scope. See 2026-10-18-airspace-shared-validation.md and implementation review.
