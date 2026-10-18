@@ -794,3 +794,16 @@ span.agent-dot.big { width: 14px; height: 14px; }
   .strata-row-heading, .strata-times { flex-direction: column; align-items: flex-start; }
   .strata-row-heading strong { max-width: 100%; flex: none; }
 }
+
+.handoffs { padding: 20px; max-width: 1150px; margin: auto; }
+.handoffs h2 { margin-top: 0; }
+.handoffs p, .handoffs h4 { overflow-wrap: anywhere; }
+.handoff-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+.handoffs label { display: inline-flex; gap: 8px; align-items: center; }
+.handoffs input { min-width: 200px; max-width: 60vw; }
+.handoffs pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.handoffs button { margin: 3px; }
+.handoff-links { padding-left: 24px; }
+.handoff-links li, .handoff-recent-row { border-bottom: 1px solid var(--border); padding: 10px 0; }
+.handoff-confirm:not(:empty) { border: 1px solid var(--accent); padding: 12px; margin: 12px 0; }
+.handoffs button:focus-visible, .handoffs input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

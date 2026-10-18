@@ -71,3 +71,7 @@ _Avoid_: Loop detector, retry count, proof of a fix
 **Session Stratigraphy**:
 A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
 _Avoid_: Session duration, effort score, causal history, proof of resolution
+
+**Handoff Subway**:
+A map of explicit user annotations linking Captured Event receipts across session/source pairs; annotated transfers are not source-confirmed handoffs or causal proof.
+_Avoid_: Inferred handoff, automatic causality, complete context transfer
