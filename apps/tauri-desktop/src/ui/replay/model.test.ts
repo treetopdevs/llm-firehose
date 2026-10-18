@@ -37,3 +37,8 @@ test("object property order is not a metadata conflict", () => {
   const reordered = Object.fromEntries(Object.entries(real[0]).reverse()) as unknown as FirehoseEvent;
   expect(buildReplayRoute([real[0], reordered], source, session)).toMatchObject({events: [real[0]], duplicates: 1, conflicts: 0});
 });
+
+test("strict clocks reject calendar overflow and order fractional instants",()=>{
+ const input=[['a','2026-10-18T12:00:00.000002Z'],['z','2026-10-18T08:00:00.000001-04:00'],['bad','2026-02-30T00:00:00Z'],['loose','1']].map(([id,time])=>({...real[0],id,time}));
+ const route=buildReplayRoute(input,source,session);expect(route.events.map(e=>e.id)).toEqual(['z','a','bad','loose']);expect(route.invalidTimes).toBe(2);
+});

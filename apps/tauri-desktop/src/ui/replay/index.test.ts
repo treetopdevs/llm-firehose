@@ -92,3 +92,18 @@ test("route and branch lists are bounded, search local, and annotation text is e
 test("unavailable UUID and invalid steps retain the unsaved draft without writes",async()=>{
  const panel=createReplay();await route(panel);click(panel.root,"Select observation");click(panel.root,"Inspect captured receipt");await settle();const uuid=vi.spyOn(crypto,"randomUUID").mockImplementationOnce(()=>{throw Error("unsupported");});click(panel.root,"New hypothetical branch");expect(panel.root.textContent).toContain("Could not create branch ID");uuid.mockRestore();click(panel.root,"New hypothetical branch");input(panel.root,"Branch title","valid title");input(panel.root,"Hypothetical steps","one\n\nthree");click(panel.root,"Save branch");expect(panel.root.textContent).toContain("Save failed");expect(storage.setItem).not.toHaveBeenCalled();expect(panel.root.querySelector<HTMLTextAreaElement>('[aria-label="Hypothetical steps"]')?.value).toBe("one\n\nthree");
 });
+
+test("read-only notebook refuses new drafts after receipt verification",async()=>{
+ raw='broken';const panel=createReplay();await route(panel);click(panel.root,'Select observation');click(panel.root,'Inspect captured receipt');await settle();click(panel.root,'New hypothetical branch');
+ expect(panel.root.textContent).toContain('Cannot create a branch while the notebook is read-only');
+ expect(panel.root.querySelector<HTMLElement>('[aria-label="Hypothetical branch editor"]')?.hidden).toBe(true);
+});
+test("delete warns explicitly about current unsaved edits",async()=>{
+ const panel=createReplay();await draft(panel);click(panel.root,'Save branch');input(panel.root,'Branch title','Changed');click(panel.root,'Delete branch');
+ expect(panel.root.querySelector('.replay-confirmation')?.textContent).toContain('Unsaved edits to this branch will also be lost');
+});
+test("invalid captured clock is labelled undated in selection and map",async()=>{
+ api.sessionEvents.mockResolvedValue([{...event,time:'1'}]);const panel=createReplay();await route(panel);click(panel.root,'Select observation');
+ expect(panel.root.querySelector('[aria-label="Selected observation"]')?.textContent).toContain('Undated');
+ expect(panel.root.querySelector('.replay-map button')?.textContent).toContain('Undated');
+});

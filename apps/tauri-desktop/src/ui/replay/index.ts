@@ -1,7 +1,7 @@
 import { attention, sessionEvents, capturedEvent } from "../../api";
 import type { FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
-import { buildReplayRoute } from "./model";
+import { buildReplayRoute, replayTimeLabel } from "./model";
 import { readReplayBook, saveReplayBook } from "./notebook";
 import type { ReplayBook, ReplayBranch } from "./notebook";
 import { renderReplayMap } from "./map";
@@ -23,14 +23,13 @@ export function createReplay(openScore: (id: string, source: string) => void = (
     function sameScope() { return !!editor && !!route && editor.source === loadedSource && editor.sessionId === loadedSession; }
     function drawMap() { clear(map); if (!route)
         return; const matching = sameScope(); if (editor && !matching)
-        map.append(el("p", {}, "Branch reference belongs to a different source/session. Load branch route to compare; no anchor or alternative is paired here.")); if (matching && !route.events.some(e => e.id === editor!.eventId))
-        map.append(el("p", {}, "Saved anchor not in loaded snapshot. No nearby observation substitutes for it.")); map.append(renderReplayMap(route.events, matching ? editor!.eventId : undefined, matching ? steps.value.split("\n").filter(s => s.trim()) : [], selectObservation)); }
+        map.append(el("p", {}, "Branch reference belongs to a different source/session. Load branch route to compare; no anchor or alternative is paired here.")); map.append(renderReplayMap(route.events, matching ? editor!.eventId : undefined, matching ? steps.value.split("\n").filter(s => s.trim()) : [], selectObservation)); }
     function pager(host: HTMLElement, page: number, total: number, size: number, name: string, change: (p: number) => void) { if (total <= size)
         return; const previous = button(`Previous ${name}`, () => change(page - 1)), next = button(`Next ${name}`, () => change(page + 1)); previous.disabled = page === 0; next.disabled = (page + 1) * size >= total; host.append(el("div", { class: "replay-controls" }, previous, el("span", {}, `${page * size + 1}–${Math.min((page + 1) * size, total)} of ${total}`), next)); }
     function drawRoute() { clear(routeList); drawMap(); if (!route)
         return; const needle = search.value.toLocaleLowerCase(); const filtered = route.events.filter(e => [e.id, e.summary, e.name, e.category].join(" ").toLocaleLowerCase().includes(needle)); routePage = Math.min(routePage, Math.max(0, Math.ceil(filtered.length / 40) - 1)); routeList.append(el("p", {}, `${filtered.length} filtered / ${route.events.length} captured observations. Invalid clocks are undated; no timing inference.`)); const list = el("ol", { start: String(routePage * 40 + 1) }); for (const event of filtered.slice(routePage * 40, routePage * 40 + 40))
-        list.append(el("li", { class: "replay-observation" }, el("span", {}, `${Number.isFinite(Date.parse(event.time)) ? event.time : "Undated"} · ${event.summary || event.name || event.id}`), button("Select observation", () => selectObservation(event), `Select observation ${event.source} / ${event.session_id} / ${event.id}`))); routeList.append(list); pager(routeList, routePage, filtered.length, 40, "observations", page => { clearFocus(); routePage = page; drawRoute(); }); }
-    function selectObservation(event: FirehoseEvent) { clearFocus(); focus = event; selection.append(el("h3", {}, `Captured observation ${event.id}`), el("p", {}, `${loadedSource} / ${loadedSession} · ${event.time} · ${event.summary || event.name || ""}`), el("p", { class: "dim" }, "Timeline metadata only. Inspect the captured receipt before creating a hypothetical branch."), button("Inspect captured receipt", () => void inspect(event))); selection.focus(); }
+        list.append(el("li", { class: "replay-observation" }, el("span", {}, `${replayTimeLabel(event.time)} · ${event.summary || event.name || event.id}`), button("Select observation", () => selectObservation(event), `Select observation ${event.source} / ${event.session_id} / ${event.id}`))); routeList.append(list); pager(routeList, routePage, filtered.length, 40, "observations", page => { clearFocus(); routePage = page; drawRoute(); }); }
+    function selectObservation(event: FirehoseEvent) { clearFocus(); focus = event; selection.append(el("h3", {}, `Captured observation ${event.id}`), el("p", {}, `${loadedSource} / ${loadedSession} · ${replayTimeLabel(event.time)} · ${event.summary || event.name || ""}`), el("p", { class: "dim" }, "Timeline metadata only. Inspect the captured receipt before creating a hypothetical branch."), button("Inspect captured receipt", () => void inspect(event))); selection.focus(); }
     async function inspect(event: FirehoseEvent) { cancelReceipt(); const current = receiptVersion, scope = loadVersion, ctl = new AbortController(); receiptAbort = ctl; evidence.append(el("p", { role: "status" }, "Loading captured receipt…")); try {
         const full = await capturedEvent(event.id, ctl.signal);
         if (ctl.signal.aborted || current !== receiptVersion || scope !== loadVersion || focus?.id !== event.id)
@@ -48,7 +47,7 @@ export function createReplay(openScore: (id: string, source: string) => void = (
     } }
     function form() { editorRegion.hidden = !editor; title.disabled = !editor; steps.disabled = !editor; saveButton.disabled = !editor || !writable; loadBranchButton.disabled = !editor; reference.textContent = editor ? `Immutable anchor reference: ${editor.source} / ${editor.sessionId} / ${editor.eventId}. Stored references are not current receipt verification.` : ""; }
     function fill(branch: ReplayBranch | undefined) { editor = branch ? { ...branch, steps: [...branch.steps] } : undefined; title.value = branch?.title ?? ""; steps.value = branch?.steps.join("\n") ?? ""; dirty = false; clear(confirmation); form(); drawMap(); }
-    function newBranch() { if (dirty) {
+    function newBranch() { if (!writable) { bookStatus.textContent = "Cannot create a branch while the notebook is read-only. Recover the stored notebook first."; return; } if (dirty) {
         bookStatus.textContent = "Unsaved edits. Save or explicitly Discard edits before starting another branch.";
         return;
     } if (!verified || !verified.session_id) {
@@ -73,7 +72,7 @@ export function createReplay(openScore: (id: string, source: string) => void = (
     function discard() { const prior = editor && book.branches.find(b => b.id === editor!.id); fill(prior); bookStatus.textContent = "Unsaved edits discarded explicitly."; }
     function drawBranches() { clear(branchList); branchPage = Math.min(branchPage, Math.max(0, Math.ceil(book.branches.length / 20) - 1)); branchList.append(el("p", {}, `${book.branches.length} saved hypothetical branches`)); const list = el("ul", { class: "replay-branches" }); for (const branch of book.branches.slice(branchPage * 20, branchPage * 20 + 20))
         list.append(el("li", {}, el("h4", {}, branch.title), el("p", {}, `${branch.source} / ${branch.sessionId} / ${branch.eventId}`), button("Open branch", () => openBranch(branch), `Open branch ${branch.title} / ${branch.id}`), button("Delete branch", () => confirmDelete(branch)))); branchList.append(list); pager(branchList, branchPage, book.branches.length, 20, "branches", page => { cancelReceipt(); clear(confirmation); branchPage = page; drawBranches(); }); }
-    function confirmDelete(branch: ReplayBranch) { clear(confirmation); confirmation.append(el("p", {}, `Delete hypothetical branch “${branch.title}” anchored at ${branch.source} / ${branch.sessionId} / ${branch.eventId}? Its saved text will be removed.`), button("Confirm delete branch", () => { if (!writable)
+    function confirmDelete(branch: ReplayBranch) { clear(confirmation); confirmation.append(el("p", {}, `Delete hypothetical branch “${branch.title}” anchored at ${branch.source} / ${branch.sessionId} / ${branch.eventId}? Its saved text will be removed.${dirty && editor?.id === branch.id ? " Unsaved edits to this branch will also be lost." : ""}`), button("Confirm delete branch", () => { if (!writable)
         return; const next = { version: 1 as const, branches: book.branches.filter(b => b.id !== branch.id) }; const result = saveReplayBook(storage, token, next); if (!result.ok) {
         bookStatus.textContent = `Delete failed: ${result.error}. Saved branch and edits retained.`;
         return;
@@ -134,7 +133,7 @@ export function createReplay(openScore: (id: string, source: string) => void = (
         string
     ]; source.value = s; session.value = id; });
     search.addEventListener("input", () => { clearFocus(); routePage = 0; drawRoute(); });
-    function deactivate() { choiceVersion++; choiceAbort?.abort(); loadVersion++; loadAbort?.abort(); cancelReceipt(); if (!route)
+    function deactivate() { choicesStatus.textContent = "Session choices paused. Refresh on return."; choiceVersion++; choiceAbort?.abort(); loadVersion++; loadAbort?.abort(); cancelReceipt(); if (!route)
         routeStatus.textContent = "No captured route loaded. Load explicitly."; }
     choices.append(el("option", { value: "" }, "Choose source/session"));
     refreshNotebook();
