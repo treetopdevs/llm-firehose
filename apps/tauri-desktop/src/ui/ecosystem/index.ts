@@ -20,7 +20,7 @@ export function createEcosystem(openScore: (id: string, source: string) => void 
     function pager(host: HTMLElement, page: number, total: number, size: number, name: string, change: (p: number) => void) { if (total <= size)
         return; const previous = button(`Previous ${name}`, () => change(page - 1)), next = button(`Next ${name}`, () => change(page + 1)); previous.disabled = page === 0; next.disabled = (page + 1) * size >= total; host.append(el("div", { class: "ecosystem-controls" }, previous, el("span", {}, `${page * size + 1}–${Math.min((page + 1) * size, total)} of ${total}`), next)); }
     function observations(host: HTMLElement, events: FirehoseEvent[], page: number, name: string, change: (p: number) => void) { const list = el("ol", { class: `ecosystem-${name}`, start: String(page * 40 + 1) }); for (const event of events.slice(page * 40, page * 40 + 40))
-        list.append(el("li", {}, el("span", {}, `${event.time} · ${event.id} · ${patchPhase(event)} · native phase: ${typeof event.payload?.phase === "string" ? event.payload.phase : "not recorded"}; status: ${typeof event.payload?.status === "string" ? event.payload.status : "not recorded"}`), button("Inspect captured receipt", () => void inspect(event), `Inspect ${event.source} / ${event.session_id} / ${event.id}`))); host.append(list); pager(host, page, events.length, 40, name, change); }
+        list.append(el("li", {}, el("span", {}, `${event.time} · ${event.id} · tool: ${event.name || "not recorded"} · ${patchPhase(event)} · native phase: ${typeof event.payload?.phase === "string" ? event.payload.phase : "not recorded"}; status: ${typeof event.payload?.status === "string" ? event.payload.status : "not recorded"}`), button("Inspect captured receipt", () => void inspect(event), `Inspect ${event.source} / ${event.session_id} / ${event.id}`))); host.append(list); pager(host, page, events.length, 40, name, change); }
     function draw() {
         clear(board);
         clear(other);
@@ -35,7 +35,7 @@ export function createEcosystem(openScore: (id: string, source: string) => void 
         const matching = beds.filter(b => `${b.path} ${b.workspace}`.toLocaleLowerCase().includes(needle));
         bedPage = Math.min(bedPage, Math.max(0, Math.ceil(matching.length / 20) - 1));
         const page = matching.slice(bedPage * 20, bedPage * 20 + 20);
-        board.append(el("h3", {}, `${matching.length} filtered / ${beds.length} file beds`), el("p", { class: "dim" }, "Map and list show the same stable page of 20 beds. Empty beds retain position during replay; density does not imply conflict or quality."), renderEcosystemMap(page, visible, selectBed));
+        board.append(el("h3", {}, `${matching.length} filtered / ${beds.length} file beds`), el("p", { class: "dim" }, "Map and list show the same stable page of 20 beds. Empty beds retain position during replay; density does not imply conflict or quality."), renderEcosystemMap(page, visible, selectBed, {offset: bedPage * 20, filtered: matching.length, total: beds.length}));
         const list = el("ul", { class: "ecosystem-beds" });
         for (const bed of page)
             list.append(el("li", { class: "ecosystem-bed" }, el("span", {}, `${bed.path} · ${bed.workspace} · ${bed.eventIds.length} visible observations`), button("Select file bed", () => selectBed(bed), `Select file bed ${bed.workspace} / ${bed.path}`)));
@@ -102,7 +102,7 @@ export function createEcosystem(openScore: (id: string, source: string) => void 
             return;
         status.textContent = `File history unavailable: ${error instanceof Error ? error.message : String(error)}. Load again to retry.`;
     } }
-    async function refresh() { pause(); cancelReceipt(); const token = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choiceStatus.textContent = "Loading session choices…"; try {
+    async function refresh() { const token = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choiceStatus.textContent = "Loading session choices…"; try {
         const result = await attention(ctl.signal);
         if (ctl.signal.aborted || token !== choiceVersion)
             return;

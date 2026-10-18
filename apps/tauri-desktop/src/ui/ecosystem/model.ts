@@ -53,6 +53,20 @@ function canonical(value: unknown): string {
   return `{${Object.keys(object).filter(k => object[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${canonical(object[k])}`).join(",")}}`;
 }
 
+/** Strict stored RFC3339 clock, retaining sub-millisecond ordering. */
+function clock(value: string): {seconds: number; fraction: string} | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!m) return;
+  const [,year,month,day,hour,minute,second,fraction = "",zone] = m;
+  const base = `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
+  const milliseconds = Date.parse(base);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString().slice(0,19) !== base.slice(0,19)) return;
+  const zh = zone === "Z" ? 0 : Number(zone.slice(1,3)), zm = zone === "Z" ? 0 : Number(zone.slice(4,6));
+  if (zh > 23 || zm > 59) return;
+  const offset = (zh * 60 + zm) * (zone[0] === "-" ? -1 : 1);
+  return {seconds: milliseconds / 1000 - offset * 60, fraction};
+}
+
 /** Counts apply only to exact-scope file observations: duplicates are extra
  * copies; conflicts are unique IDs excluded entirely; missingPaths counts
  * surviving unique receipts (dated or undated) with no observed path. */
@@ -70,16 +84,16 @@ export function buildEcosystem(input: readonly FirehoseEvent[], source: string, 
       if (prior.fingerprint !== fingerprint && !prior.conflict) { prior.conflict = true; model.conflicts++; }
     }
   }
-  const dated: {event: FirehoseEvent; time: number; paths: string[]}[] = [];
+  const dated: {event: FirehoseEvent; time: {seconds: number; fraction: string}; paths: string[]}[] = [];
   for (const item of unique.values()) {
     if (item.conflict) continue;
     const observed = paths(item.event);
     if (!observed.length) model.missingPaths++;
-    const time = Date.parse(item.event.time);
-    if (!Number.isFinite(time)) model.undated.push(item.event);
+    const time = clock(item.event.time);
+    if (!time) model.undated.push(item.event);
     else dated.push({event: item.event, time, paths: observed});
   }
-  dated.sort((a, b) => a.time - b.time || compare(a.event.id, b.event.id));
+  dated.sort((a, b) => a.time.seconds - b.time.seconds || compare(a.time.fraction.padEnd(Math.max(a.time.fraction.length, b.time.fraction.length), "0"), b.time.fraction.padEnd(Math.max(a.time.fraction.length, b.time.fraction.length), "0")) || compare(a.event.id, b.event.id));
   model.undated.sort((a, b) => compare(a.id, b.id));
   const beds = new Map<string, PatchBed>();
   for (const item of dated) {
