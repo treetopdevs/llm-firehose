@@ -39,7 +39,7 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
         if (!model || !focus)
             return;
         const neighborhood = loomNeighborhood(model, focus.id);
-        groupsRegion.append(el("h3", {}, "One-hop native neighborhood"), el("p", { class: "dim" }, `Map shows up to20 groups and20 references from the selected pages. ${neighborhood.groups.length} groups; ${neighborhood.parents.length} native references total. No recursive traversal or chronological layout.`));
+        groupsRegion.append(el("h3", {}, "One-hop native neighborhood"), el("p", { class: "dim" }, `Map shows up to 20 groups and 20 references from the selected pages. ${neighborhood.groups.length} groups; ${neighborhood.parents.length} native references total. No recursive traversal or chronological layout.`));
         groupsRegion.append(renderLoomMap(focus, neighborhood.groups.slice(groupPage * 20, groupPage * 20 + 20), neighborhood.parents.slice(parentPage * 20, parentPage * 20 + 20), selectGroup));
         if (!neighborhood.groups.length)
             groupsRegion.append(el("p", {}, "No supported identifiers for this observation. Its captured receipt is still inspectable."));

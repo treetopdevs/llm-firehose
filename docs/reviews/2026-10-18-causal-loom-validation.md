@@ -15,7 +15,7 @@ Base e007b2f; independent of open prototype PRs37–39. Browser exercised isolat
 
 # Causal Loom additive correlation view TDD
 
-Worktree: /Users/nicholas/.codex/worktrees/causal-loom-prototype/llm-firehose.
+Worktree: isolated codex/causal-loom-prototype worktree.
 Owned changes: capture/history.go + correlation_view_test.go; daemon/endpoints.go + correlation_view_test.go; docs/contracts.md; desktop api.ts/api.test.ts; ui/loom/fixture.opencode.json and README.fixture.md.
 
 1. Added capture CorrelationView tests before implementation. First focused run failed because CorrelationView was undefined. Log: /tmp/firehose-loom-go-red.log.
@@ -29,7 +29,7 @@ Contract documents unbounded existing session scan/response and absence of serve
 
 
 # Causal Loom model TDD
-Worktree: /Users/nicholas/.codex/worktrees/causal-loom-prototype/llm-firehose
+Worktree: isolated codex/causal-loom-prototype worktree
 Owned files: src/ui/loom/model.ts and model.test.ts only.
 
 1. Added 5 pure-model tests over existing real Score fixture.errsig.json (Codex captured call/turn receipts), including minimal identity mutations for scope collisions, namespace separation, duplicates/conflicting IDs, invalid clocks, and generic unsupported joins.
@@ -47,7 +47,7 @@ Counts: duplicates is extra copies after first (includes conflicting ID extras);
 
 # Causal Loom UI TDD
 
-Worktree /Users/nicholas/.codex/worktrees/causal-loom-prototype/llm-firehose.
+Worktree isolated codex/causal-loom-prototype worktree.
 
 First5 observable panel tests written before implementation (missing module red /tmp/firehose-loom-ui-red.log). Completed10 panel tests pass (/tmp/firehose-loom-ui-green.log), tsc --noEmit passes after parent model/map integration.
 
@@ -57,3 +57,5 @@ Panel createLoom returns root/refresh/deactivate. Metadata snapshots label exact
 
 
 Map tests failed on absent implementation, then2 tests passed for20-group bound, safe text, callbacks, memberships and clipped native references.
+
+Hosted review follow-up: corrected UI caption spacing, synchronized backlog rows, and replaced machine-specific worktree paths with branch descriptions. Text/documentation only; targeted Loom tests and typecheck passed.
