@@ -2,10 +2,10 @@
 
 Base e007b2f; independent of unmerged PR37–40.
 
-- Full frontend35 files /511 tests passed; TypeScript/Vite production build passed.
+- Full frontend35 files /512 tests passed; TypeScript/Vite production build passed.
 - Go format/vet/full suite/CLI build passed; sidecar built and Rust3 tests passed.
-- Argon4 High bounded plan review PASS; implementation review pending.
-- Actual daemon Engine+Handler isolated fixture spool:101 captured session events include20 file observations across4 beds. Browser verified exact load, stable beds at cursor1, distinct attempts/completions, explicit file chronology and receipt lookup, correct101-event Score scope. No user config/adapters/filesystem mutated; native packaged interaction untested.
+- Argon4 High bounded plan review PASS; implementation review blocked by Argon quota (147h41m reset) and Sonnet fallback quota (1h38m at16:23Z; approximately18:01Z). Gemini3.1 absent from agy models. These are unavailable attempts, not approvals.
+- Actual daemon Engine+Handler isolated fixture spool:101 captured session events include20 file observations across4 beds. Browser verified exact load, stable beds at cursor1, distinct attempts/completions, explicit file chronology and receipt lookup, correct101-event Score scope. Browser also verified automatic playback stops at20, file filtering, and return from Score closes shared detail. No user config/adapters/filesystem mutated; native packaged interaction untested.
 
 ## TDD
 
@@ -35,3 +35,7 @@ Data shapes use existing real Score file fixture; repeated/copied normalized rec
 
 
 Map red on missing module, green2 bounded/safe/selectable tests after implementation.
+
+## Independent reviews and repair
+
+Standards PASS onaa157ee. Spec P2: Play at initial end overwrote snapshot source/session/time and excluded-count status. Fixed test-first in957438a;10 UI tests and full512 tests/build pass. Spec re-review PASS. External final review remains pending quota; PR must remain draft until completed and findings fixed. Screenshot depicts validated replay beds before the text-only playback notice fix.
