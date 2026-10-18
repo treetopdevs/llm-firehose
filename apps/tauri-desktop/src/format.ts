@@ -93,3 +93,62 @@ export function formatValue(v: unknown): string {
     return String(v);
   }
 }
+
+/** Anything the daemon names a session with: /sessions summaries and /attention entries alike. */
+export type SessionLike = {
+  id: string;
+  source: string;
+  agent?: string;
+  repo?: string;
+  cwd?: string;
+  /** Additive: the source's own session title, else a first-prompt excerpt. Absent on older daemons. */
+  title?: string;
+  first_time?: string;
+};
+
+const DIGEST64 = /^[0-9a-f]{64}$/;
+
+/** First eight characters of a native session id, for a copyable detail; never a label. */
+export function shortId(id: string): string {
+  return id.slice(0, 8);
+}
+
+/**
+ * Where a session runs, as a person would say it: the checkout's basename,
+ * with the absolute path kept for a tooltip. A digested path (older history,
+ * minimal mode) reads as `#` plus eight digits, and nothing is invented.
+ */
+export function sessionWhere(s: SessionLike): { label: string; full?: string } {
+  // A readable checkout names the worktree, which the repo label cannot tell apart.
+  if (s.cwd && !DIGEST64.test(s.cwd)) {
+    const parts = s.cwd.split(/[/\\]/).filter(Boolean);
+    return { label: parts[parts.length - 1] ?? s.cwd, full: s.cwd };
+  }
+  if (s.repo) return { label: s.repo, full: undefined };
+  if (!s.cwd) return { label: "", full: undefined };
+  return { label: `#${s.cwd.slice(0, 8)}`, full: undefined };
+}
+
+/**
+ * The one name every altitude uses for a session: its captured title, else
+ * "agent in checkout", else the agent and a short id. The UUID is never the
+ * name; it stays available as a copyable detail next to it.
+ */
+export function sessionName(s: SessionLike): string {
+  if (s.title) return s.title;
+  const agent = s.agent || s.source;
+  const where = sessionWhere(s);
+  if (where.label && !where.label.startsWith("#")) return `${agent} in ${where.label}`;
+  return `${agent} · ${shortId(s.id)}`;
+}
+
+/**
+ * Two sessions can share one title. In a list of `[source\0id, label]` pairs,
+ * a label that occurs more than once carries its source and a short id so the
+ * sessions stay tellable apart; a unique label is returned unchanged.
+ */
+export function disambiguateSessionLabel(key: string, label: string, all: readonly (readonly [string, string])[]): string {
+  if (all.filter(([, l]) => l === label).length < 2) return label;
+  const [source, id] = key.split("\0");
+  return `${label} · ${source} ${shortId(id ?? "")}`;
+}

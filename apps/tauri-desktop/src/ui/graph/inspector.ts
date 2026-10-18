@@ -12,6 +12,8 @@ import { icon } from "./toolbar";
 export interface AgentRow {
   source: string;
   id: string;
+  /** The session's human name (title, or agent in checkout); never the id. */
+  name?: string;
   state: AgentState;
   /** `Working`, `Needs you`, `Idle`... */
   word: string;
@@ -332,23 +334,31 @@ export function createInspector(h: InspectorHandlers) {
       const agents = el("div", { class: "insp-agents" });
       for (const a of c.agents) {
         const row = el("div", { class: "agent-row", "data-session": `${a.source}\0${a.id}` });
-        const open = el("button", { type: "button", class: "agent-open", title: `${sourceName(a.source)} session ${a.id}`, "data-action": `session:${a.source}:${a.id}` });
+        const open = el("button", { type: "button", class: "agent-open", title: `Open ${sourceName(a.source)} session ${a.id}`, "data-action": `session:${a.source}:${a.id}` });
         open.append(
           el("span", { class: `agent-dot state-${a.state}` }),
-          el("span", { class: "agent-source" }, sourceName(a.source)),
-          el("span", { class: "agent-sep" }, "•"),
-          el("span", { class: "agent-word" }, a.word),
+          el("span", { class: "agent-name" }, a.name || `${sourceName(a.source)} session`),
         );
         open.onclick = () => h.openSession(a.id, a.source);
         const filter = el("button", { type: "button", class: "agent-filter", "data-action": `filter:${a.source}:${a.id}` }, "Filter Timeline");
         filter.onclick = () => h.filterTimeline(a.source, a.id);
-        row.append(open, el("span", { class: "agent-id dim" }, a.id.slice(0, 8)), filter);
+        const facts = el(
+          "div",
+          { class: "agent-facts" },
+          el("span", { class: "agent-source" }, sourceName(a.source)),
+          el("span", { class: "agent-sep" }, "•"),
+          el("span", { class: "agent-word" }, a.word),
+          el("span", { class: "agent-sep" }, "•"),
+          el("span", { class: "agent-id dim", title: a.id }, a.id.slice(0, 8)),
+          filter,
+        );
+        row.append(open, facts);
         if (a.uncertainty) row.append(el("div", { class: "dim agent-note" }, a.uncertainty));
         agents.append(row);
       }
       if (!c.agents.length)
         agents.append(el("span", { class: "dim" }, "No explicitly associated session. Missing telemetry does not imply completion."));
-      frag.append(field("Agent", agents));
+      frag.append(field("Sessions", agents));
     }
 
     if (n) frag.append(renderRevision(n));

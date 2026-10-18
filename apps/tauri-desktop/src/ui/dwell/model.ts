@@ -1,5 +1,5 @@
 import type { AttentionSession } from "../../api";
-import { workspaceLabel } from "../../format";
+import { sessionName, sessionWhere } from "../../format";
 import { evidenceTime, isFailure, needsLabel } from "../../needs";
 import { stateFresh } from "../../spark";
 
@@ -63,8 +63,8 @@ export function buildDwell(sessions: readonly AttentionSession[], nowMs: number)
       key: keyOf(s),
       id: s.id,
       source: s.source,
-      label: s.agent || s.source,
-      where: workspaceLabel(s.repo, s.cwd),
+      label: sessionName(s),
+      where: s.title ? [s.agent || s.source, sessionWhere(s).label].filter(Boolean).join(" · ") : sessionWhere(s).label,
       // Every pending row here passed the needs_input freshness rule above.
       status: needsLabel(s, nowMs),
       needs: !!s.pending,

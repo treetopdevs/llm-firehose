@@ -12,7 +12,8 @@ export type LanesPanel = {
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const LABEL_W = 180;
+const LABEL_W = 330;
+const LABEL_CHARS = 26; // SVG text has no ellipsis: the name is cut by hand, the full name stays in the title
 const AXIS_H = 20;
 const ROW_H = 24;
 const PAD = 8;
@@ -30,6 +31,11 @@ function svg<K extends keyof SVGElementTagNameMap>(
   for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
   for (const c of children) node.append(typeof c === "string" ? document.createTextNode(c) : c);
   return node;
+}
+
+function cut(s: string): string {
+  const chars = [...s];
+  return chars.length > LABEL_CHARS ? chars.slice(0, LABEL_CHARS - 1).join("") + "…" : s;
 }
 
 function windowLabel(ms: number): string {
@@ -105,8 +111,8 @@ export function createLanes(
       svg("title", {}, `${lane.label} · ${lane.state || "?"}${lane.reason ? ` · ${lane.reason}` : ""}`),
       svg("rect", { class: "lane-hit", x: 0, y, width, height: ROW_H }),
       svg("rect", { x: 0, y: y + 4, width: 3, height: ROW_H - 8, fill: `hsl(${sessionHue(lane.id)} 55% 55%)` }),
-      svg("text", { class: "lane-label", x: 10, y: mid + 4 }, lane.label),
-      svg("text", { class: `lane-state${needs ? " needs" : ""}`, x: 100, y: mid + 4 }, needs ? "NEEDS YOU" : lane.state),
+      svg("text", { class: "lane-label", x: 10, y: mid + 4 }, cut(lane.label)),
+      svg("text", { class: `lane-state${needs ? " needs" : ""}`, x: LABEL_W - 100, y: mid + 4 }, needs ? "NEEDS YOU" : lane.state),
       svg("line", { class: "lane-base", x1: LABEL_W, x2: width - PAD, y1: mid, y2: mid }),
     );
     for (const sp of lane.spans) {

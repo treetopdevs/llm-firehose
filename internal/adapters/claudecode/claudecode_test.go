@@ -423,3 +423,25 @@ func fixture(t *testing.T, name string) string {
 	}
 	return strings.TrimSpace(string(data))
 }
+
+// The session title is Claude Code's own human name for a session (it is
+// derived from the first prompt, not a prompt body). It is the one content
+// field allowed into the safe payload so every local view can name the
+// session; the prompt body itself still stays out.
+func TestUserPromptSubmitKeepsSessionTitleWithoutPromptBody(t *testing.T) {
+	ev := parse(t, fixture(t, "user_prompt_submit.json"))
+	if got := ev.Payload["session_title"]; got != "Fixture session title" {
+		t.Errorf("session_title = %v, want the hook's session_title", got)
+	}
+	if got := safeDetails(t, ev); strings.Contains(got, "SECRET-PROMPT-MARKER") {
+		t.Errorf("safe details leaked the prompt body: %s", got)
+	}
+	if _, ok := ev.Payload["session_title"]; !ok {
+		t.Fatal("session_title missing from payload")
+	}
+	// A hook without a title adds no empty key.
+	bare := parse(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hi"}`)
+	if _, ok := bare.Payload["session_title"]; ok {
+		t.Errorf("empty session_title should be omitted: %+v", bare.Payload)
+	}
+}

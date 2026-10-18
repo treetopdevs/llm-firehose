@@ -2,6 +2,7 @@
 // Pure derivation from the live buffer plus /sessions summaries; the engine's
 // attention state is read, never re-folded (internal/tui/derive.go mirrors this).
 
+import { sessionName } from "../../format";
 import type { FirehoseEvent, SessionSummary } from "../../api";
 import { isTransition, lastReported, stateFresh } from "../../spark";
 
@@ -105,7 +106,8 @@ export function buildLanes(
   const calls = collectCalls(events);
   for (const s of summaries) {
     if (!s.id) continue;
-    const l = laneFor(s.id, s.agent || s.source);
+    const l = laneFor(s.id, sessionName(s));
+    l.label = sessionName(s);
     if (typeof s.state === "string") l.state = s.state;
     l.reason = s.state_reason;
     l.since = Date.parse(s.state_since ?? "");

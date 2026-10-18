@@ -48,7 +48,7 @@ describe("dwell panel", () => {
 
     const rows = [...panel.root.querySelectorAll<HTMLElement>(".dwell-row")];
     expect(rows).toHaveLength(2);
-    expect(rows[0].querySelector(".agent")?.textContent).toBe("codex");
+    expect(rows[0].querySelector(".agent")?.textContent).toBe("codex in app");
     expect(rows[0].querySelector(".state")?.textContent).toBe("NEEDS YOU");
     expect(rows[0].querySelector(".state.needs")).not.toBeNull();
     expect(rows[0].querySelector<HTMLElement>(".dwell-bar")?.style.width).toBe("70%");
