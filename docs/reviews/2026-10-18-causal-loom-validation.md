@@ -5,11 +5,11 @@ Base e007b2f; independent of open prototype PRs37–39. Browser exercised isolat
 ## Local gates
 
 - gofmt empty, go vet ./..., go test ./..., CLI build passed.
-- Frontend35 files /514 tests passed serially after Rust compilation completed. Initial parallel and concurrent-Rust serial runs hit existing graph timeout and Score100k timing assertion; unchanged tests passed final full run. No thresholds weakened.
+- Frontend35 files /515 tests passed serially after Rust compilation completed. Initial parallel and concurrent-Rust serial runs hit existing graph timeout and Score100k timing assertion; unchanged tests passed final full run. No thresholds weakened.
 - Frontend TypeScript/Vite build passed.
 - Sidecar built; Rust3 tests passed.
 - Actual browser: explicit OpenCode scope load3 observations; tool call/message groups and native parent message reference;2 group members; explicit assistant full receipt; correct3-event Score drill-through; return preserved labelled snapshot and cleared receipt. Screenshot adjacent. Preview used normalized sanitized fixtures, not user history.
-- Argon plan review timed out at180s; not approval. Immutable final review pending.
+- Argon plan review timed out at180s; not approval. Immutable final review PASS on b43fd4d. Independent spec PASS; standards found P2 empty sidebar, fixed test-first in0702228 using renderDetail(null), re-review PASS. Final full515 tests/build passed. Argon4 High fix follow-up PASS on0702228; reviewer reran4 main tests. Browser repeated Score→Loom navigation and confirmed shared pane class closed; final screenshot replaced.
 
 ## Red/green seams
 
