@@ -2,14 +2,14 @@
 import {beforeEach, expect, test, vi} from "vitest";
 import type {FirehoseEvent} from "../../api";
 import fixture from "../score/fixture.errsig.json";
-const api=vi.hoisted(()=>({capturedEvent:vi.fn()})); vi.mock("../../api",()=>api);
+const api=vi.hoisted(()=>({capturedEvent:vi.fn(),sessions:vi.fn()})); vi.mock("../../api",()=>api);
 import {createCourt} from "./index";
 const event=(fixture as FirehoseEvent[]).find(e=>e.session_id)!;
 const settle=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
 const click=(root:HTMLElement,label:string)=>{const b=[...root.querySelectorAll("button")].find(b=>b.textContent===label);expect(b).toBeTruthy();b!.click();};
 const input=(root:HTMLElement,label:string,value:string)=>{const field=root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!;expect(field).toBeTruthy();field.value=value;field.dispatchEvent(new Event("input"));};
 function storage(){let value:string|null=null;return {getItem:vi.fn(()=>value),setItem:vi.fn((_k:string,v:string)=>{value=v;})};}
-beforeEach(()=>{vi.resetAllMocks();api.capturedEvent.mockResolvedValue(event);});
+beforeEach(()=>{vi.resetAllMocks();api.capturedEvent.mockResolvedValue(event);api.sessions.mockResolvedValue([]);});
 function setup(){const store=storage();const score=vi.fn();const panel=createCourt(score,store);input(panel.root,"New claim","Tests pass");click(panel.root,"Create claim");input(panel.root,"New requirement","Captured test result");click(panel.root,"Add requirement");return {panel,store,score};}
 test("creates gaps, explicitly looks up and attaches identity only, reopens evidence and removes receipt",async()=>{
  const {panel,store,score}=setup();expect(panel.root.textContent).toContain("Missing receipt");expect(api.capturedEvent).not.toHaveBeenCalled();
@@ -80,4 +80,12 @@ test("switching target rejects a pending old response and detached Attach action
 test("offered event retains unavailable notebook guidance",()=>{
  const store=storage();store.getItem.mockReturnValue('bad json');const panel=createCourt(undefined,store);panel.offerEvent(event.id);
  expect(panel.root.textContent).toContain('Notebook unavailable');expect(panel.root.textContent).not.toContain('Select a requirement, look up');expect(store.setItem).not.toHaveBeenCalled();
+});
+
+test("evidence names its session; the session id is a chip, not a label",async()=>{
+ api.sessions.mockResolvedValue([{id:event.session_id,source:event.source,agent:"codex",cwd:"/work/app",title:"Fix the flaky test",events:3,first_time:event.time,last_time:event.time,state:"done"}]);
+ const {panel}=setup();panel.offerEvent(event.id);click(panel.root,"Captured test result");click(panel.root,"Look up event");await settle();
+ const line=panel.root.querySelector(".court-session")!;expect(line.querySelector("strong")?.textContent).toBe("Fix the flaky test");expect(line.querySelector(".session-id")?.textContent).toBe(event.session_id);
+ api.sessions.mockRejectedValue(new Error("offline"));click(panel.root,"Attach receipt");click(panel.root,"Open receipt");await settle();
+ expect(panel.root.querySelector(".court-session strong")?.textContent).toBe(`${event.source} · ${event.session_id!.slice(0,8)}`);
 });

@@ -6,7 +6,8 @@ import type {
   FirehoseEvent,
 } from "../api";
 import { clear, el, keepFocus } from "../dom";
-import { workspaceLabel } from "../format";
+import { sessionName, workspaceLabel } from "../format";
+import { sessionIdChip } from "./session-chip";
 import { formatAge } from "../spark";
 
 import { createAttentionPreferences } from "./attention-preferences";
@@ -170,7 +171,8 @@ export function createAttention(options: AttentionOptions) {
     return el(
       "article",
       { class: "attention-row" },
-      el("h3", {}, `${s.agent || s.source} · ${s.source} · ${s.id}`),
+      el("h3", {}, sessionName(s)),
+      sessionIdChip(s.id),
       el(
         "p",
         {},

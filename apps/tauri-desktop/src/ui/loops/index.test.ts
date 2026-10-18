@@ -194,3 +194,35 @@ test('reselecting the active signature preserves sequence inspection and invalid
  (panel.root.querySelector('.loops-signatures button') as HTMLButtonElement).click();expect(panel.root.querySelector('.loops-sequence')).toBe(view);expect(panel.root.textContent).toContain('Run observations');
  const input=panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;input.value='1';click(panel.root,'Compare sequences');const feedback=panel.root.querySelector('.loops-comparison-feedback');expect(feedback?.textContent).toContain('Choose a different interval');expect(feedback?.previousElementSibling?.textContent).toBe('Compare sequences');
 });
+
+test("sessions are named in the picker and heading; the id is a chip, not the label", async () => {
+  const summary = { id: sid, source: "codex", agent: "codex", cwd: "/work/app", title: "Fix the flaky test", events: 3, first_time: events[0].time, last_time: events[0].time, state: "done" };
+  api.sessions.mockResolvedValue([summary, { ...summary, id: "other-session-0000", title: undefined }]);
+  const panel = createLoops(); document.body.append(panel.root);
+  await panel.refresh();
+  const options = [...panel.root.querySelectorAll<HTMLOptionElement>("option")].map(o => o.textContent);
+  expect(options).toContain("Fix the flaky test");
+  expect(options).toContain("codex in app");
+  expect(options.some(o => o?.includes(sid))).toBe(false);
+  await panel.open(sid);
+  const heading = panel.root.querySelector(".loops-heading")!;
+  expect(heading.querySelector("strong")?.textContent).toBe("Fix the flaky test");
+  expect(heading.querySelector(".session-id")?.textContent).toBe(sid);
+  expect(panel.root.textContent).not.toContain(`Session ${sid}`);
+});
+
+test("a session opened by id before the list loads fetches its summary for the name", async () => {
+  api.sessions.mockResolvedValue([{ id: sid, source: "codex", agent: "codex", cwd: "/work/app", title: "Fix the flaky test", events: 3, first_time: events[0].time, last_time: events[0].time, state: "done" }]);
+  const panel = createLoops(); document.body.append(panel.root);
+  await panel.open(sid); await settle();
+  expect(panel.root.querySelector(".loops-heading strong")?.textContent).toBe("Fix the flaky test");
+  expect([...panel.root.querySelectorAll<HTMLOptionElement>("option")].find(o => o.value === sid)?.textContent).toBe("Fix the flaky test");
+});
+
+test("with no summary the heading falls back to a short id, never the uuid as a label", async () => {
+  api.sessions.mockRejectedValue(new Error("offline"));
+  const panel = createLoops(); document.body.append(panel.root);
+  await panel.open(sid); await settle();
+  expect(panel.root.querySelector(".loops-heading strong")?.textContent).toBe(`session ${sid.slice(0, 8)}`);
+  expect(panel.root.querySelector(".loops-heading .session-id")?.textContent).toBe(sid);
+});

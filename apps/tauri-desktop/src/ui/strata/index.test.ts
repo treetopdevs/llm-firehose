@@ -2,7 +2,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import type { ErrorSignature, ErrorSignatureSessions, FirehoseEvent } from "../../api";
 import fixture from "../score/fixture.errsig.json";
-const api = vi.hoisted(() => ({ errorSignatures: vi.fn(), errorSignatureSessions: vi.fn(), capturedEvent: vi.fn() }));
+const api = vi.hoisted(() => ({ errorSignatures: vi.fn(), errorSignatureSessions: vi.fn(), capturedEvent: vi.fn(), sessions: vi.fn() }));
 vi.mock("../../api", () => api);
 import { createStrata } from "./index";
 const event = (fixture as FirehoseEvent[]).find(e => e.session_id)!;
@@ -10,7 +10,7 @@ const sig: ErrorSignature = {key: "codex|error|observed", source: event.source, 
 const page: ErrorSignatureSessions = {key: sig.key, total: 3, offset: 0, limit: 50, sessions: [{session_id: event.session_id!, source: event.source, count: 2, first_time: event.time, last_time: event.time, sample_event_id: event.id}]};
 const settle = async () => { for (let i=0;i<10;i++) await Promise.resolve(); };
 const click = (root: HTMLElement, text: string) => { const b = [...root.querySelectorAll("button")].find(b => b.textContent?.includes(text)); expect(b).toBeTruthy(); b!.click(); };
-beforeEach(() => { vi.resetAllMocks(); api.errorSignatures.mockResolvedValue([sig]); api.errorSignatureSessions.mockResolvedValue(page); api.capturedEvent.mockResolvedValue(event); });
+beforeEach(() => { vi.resetAllMocks(); api.errorSignatures.mockResolvedValue([sig]); api.errorSignatureSessions.mockResolvedValue(page); api.capturedEvent.mockResolvedValue(event); api.sessions.mockResolvedValue([]); });
 test("loads one selected signature page without history fanout and opens scoped evidence and navigation", async () => {
   const loops = vi.fn(), score = vi.fn(); const panel = createStrata(loops, score); await panel.refresh();
   expect(api.errorSignatureSessions).not.toHaveBeenCalled();
@@ -102,4 +102,21 @@ test("returning from another panel preserves the selected signature and session 
 test("404 explains both an older daemon and a signature missing from the current projection", async () => {
   const panel=createStrata(); await panel.refresh(); api.errorSignatureSessions.mockRejectedValueOnce(new Error("GET /errors/sessions: 404 not found"));
   click(panel.root,"Observed error"); await settle(); expect(panel.root.textContent).toContain("older daemon"); expect(panel.root.textContent).toContain("signature may no longer exist");
+});
+
+test("matching sessions are named from the sessions list; the id is a chip, not the heading", async () => {
+  api.sessions.mockResolvedValue([{ id: event.session_id, source: event.source, agent: "codex", cwd: "/work/app", title: "Fix the flaky test", events: 3, first_time: event.time, last_time: event.time, state: "done" }]);
+  const panel = createStrata(); await panel.refresh(); click(panel.root, "Observed error"); await settle();
+  const heading = panel.root.querySelector(".strata-row-heading")!;
+  expect(heading.querySelector("strong")?.textContent).toBe("Fix the flaky test");
+  expect(heading.querySelector(".session-id")?.textContent).toBe(event.session_id);
+});
+
+test("a session missing from the list, or an unavailable list, is named by source and short id", async () => {
+  api.sessions.mockRejectedValue(new Error("offline"));
+  const panel = createStrata(); await panel.refresh(); click(panel.root, "Observed error"); await settle();
+  const heading = panel.root.querySelector(".strata-row-heading")!;
+  expect(heading.querySelector("strong")?.textContent).toBe(`${event.source} · ${event.session_id!.slice(0, 8)}`);
+  expect(heading.querySelector(".session-id")?.textContent).toBe(event.session_id);
+  expect(heading.textContent?.split(event.session_id!).length).toBe(2);
 });

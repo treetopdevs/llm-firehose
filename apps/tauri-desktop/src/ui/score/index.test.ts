@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 const sessionEvents = vi.fn();
 const errorSignatures = vi.fn();
 const capturedEvent = vi.fn();
+const sessions = vi.fn();
 vi.mock("../../api", () => ({
+  sessions: () => sessions(),
   sessionEvents: (id: string, view?: string) => sessionEvents(id, view),
   capturedEvent: (id: string, signal?: AbortSignal) => capturedEvent(id, signal),
   errorSignatures: (id: string, signal?: AbortSignal) => errorSignatures(id, signal),
@@ -81,6 +83,8 @@ beforeEach(() => {
   // The lazy full-detail fetch is outside most tests' scope: it fails quietly unless a test opts in.
   capturedEvent.mockReset();
   capturedEvent.mockRejectedValue(new Error("GET /attention/event: 404"));
+  sessions.mockReset();
+  sessions.mockResolvedValue([]);
 });
 
 // A score is attached while it is the shown view, as main.ts does; detached tests remove it.
@@ -946,5 +950,37 @@ describe("session score timeline view", () => {
     await flush();
     expect(calls).toHaveLength(0);
     expect(capturedEvent).not.toHaveBeenCalled();
+  });
+
+  describe("session naming", () => {
+    test("the heading is the session's name; the id is a copyable chip, never the label", async () => {
+      sessions.mockResolvedValue([{ id: SID, source: "codex", agent: "codex", cwd: "/work/app", title: "Fix the flaky test", events: 3, first_time: session[0].time, last_time: session[0].time, state: "done" }]);
+      const panel = createScore(() => {});
+      await panel.open(SID);
+      const head = panel.root.querySelector(".score-head")!;
+      expect(head.querySelector(".score-name")?.textContent).toBe("Fix the flaky test");
+      expect(head.querySelector(".session-id")?.textContent).toBe(SID);
+      expect(head.textContent).not.toContain(`session ${SID}`);
+      expect(head.textContent).toContain(`${session.length} events`);
+    });
+
+    test("without a summary the name falls back to the agent and a short id, never the uuid", async () => {
+      sessions.mockRejectedValue(new Error("offline"));
+      const panel = createScore(() => {});
+      await panel.open(SID);
+      const head = panel.root.querySelector(".score-head")!;
+      expect(head.querySelector(".score-name")?.textContent).toBe(`${session[0].agent || session[0].source} · ${SID.slice(0, 8)}`);
+      expect(head.querySelector(".session-id")?.textContent).toBe(SID);
+      expect(head.textContent?.split(SID).length).toBe(2);
+    });
+
+    test("the empty state names the session rather than its id", async () => {
+      sessions.mockResolvedValue([{ id: SID, source: "codex", agent: "codex", cwd: "/work/app", title: "Fix the flaky test", events: 0, first_time: "", last_time: "", state: "done" }]);
+      sessionEvents.mockResolvedValue([]);
+      const panel = createScore(() => {});
+      await panel.open(SID);
+      expect(panel.root.textContent).toContain("no drawable events in Fix the flaky test");
+      expect(panel.root.querySelector(".score-chart")?.textContent ?? panel.root.textContent).not.toContain(`session ${SID}`);
+    });
   });
 });
