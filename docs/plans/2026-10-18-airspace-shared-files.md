@@ -1,0 +1,23 @@
+# Shared recorded files in Attention Airspace
+
+Status: plan, implementation pending. Fresh worktree from verified latest main e007b2f, then fast-forward explicit dependency PR #43 aef9ab4 (contains reviewed Airspace and scoped Files). Branch codex/airspace-shared-files. New PR targets codex/prototype-integration so its review diff contains only this slice; no main merge authorized.
+
+## User outcome
+
+Airspace gains a Shared recorded files region with file lanes and participant controls. Users can see which sessions in the filtered attention snapshot have recorded the same exact scoped path and inspect the recorded file receipt. This closes the previously deferred shared-file visualization seam. This is historical shared observation, never concurrent editing, physical-file identity, a collision prediction or write conflict.
+
+## Data and identity
+
+Explicit Load/Refresh shared files fetches GET /artifacts/file-sessions once, no per-session fanout and no background interval. Attention retains its existing independent activation/Refresh snapshot request. Disclose separate snapshot times and non-atomic fetches. Match FileSession rows to attention sessions by exact source/session AND exact workspace kind/value using worktree_id, then jj_workspace_id, then cwd, else unknown. Never use attention's repo display fallback for this join. Exclude unknown/empty workspace, empty source/session, and paths ending with the capture truncation ellipsis. Group by exact kind/value/path; deduplicate source/session participants; require two distinct participants after filtering. Include only sessions in the currently filtered attention snapshot (before its 20-session pagination). Its source/workspace/text filters determine eligible sessions; the recent-window selector only changes bands, not historical file eligibility. Disclose this. No implied temporal overlap from first/last observation ranges.
+
+## Interaction and scale
+
+Show grouped file lanes, complete wrapped path and scope, participant source/session, observation count and recorded range. Deterministic group order kind/value/path, participant source/session. Flatten participant rows for pagination at 40 per page; repeated lane headings and displayed/total participant and group counts explain partial lanes. All participants remain reachable; no hidden fixed cutoff. Native buttons and semantic headings/list provide keyboard access. Page changes focus a persistent heading. Grouping/filtering remains linear plus sorting over full loaded history; full API array and memory remain unbounded and are disclosed, no fabricated performance claim.
+
+Inspect verifies id/source/session, exact scope kind/value and path membership using the existing recorded-path extraction rules before showing captured JSON. Empty last_event_id disables inspection. Selection uses separate request token/abort and a region owned by shared files. Mode/filters/page/refresh/deactivation/disconnection invalidate selection and obsolete responses. Close restores opener focus if connected, else persistent heading. Errors provide explicit Retry. Failed shared-file refresh retains prior rows prominently marked stale; never present stale data as newly checked. Filters may regroup retained rows but must retain error/retry. Disconnect aborts pending requests and marks stale; reconnect alone does not refresh. Activation marks stale after leaving and requires explicit shared refresh. No new persistence, capture/backend/privacy changes, dependencies or external calls.
+
+## TDD and gates
+
+Failing-first pure model tests: same native IDs across sources, scope precedence and kind separation, unrelated/unknown/repo-only scopes, truncated paths, duplicate participants, filtered membership before pagination, deterministic order, complete row reachability. DOM tests: explicit one fetch; empty/loading/error/retry/stale states; late list/receipt response cancellation on filter/page/deactivation; identity/path mismatch; exact receipt and close focus; escaping and long paths; >40 participants. Existing Airspace tests remain intact. Use normalized projection rows for model tests; existing real captured file fixture for receipt mutation tests. No adapter fixtures invented.
+
+Sonnet 5.5 High fallback plan and implementation reviews (Argon/Gemini availability limits recorded in prior slice), fix all actionable findings, independent spec/standards reviews using code-review skill. Full frontend/build, Go format/vet/full tests/CLI, sidecar then Rust gates. Actual-daemon isolated browser validation of shared lanes/receipt flow. Commit HTML decisions and evidence, open stacked PR, fix hosted CI/comments. No installed release proof inferred.
