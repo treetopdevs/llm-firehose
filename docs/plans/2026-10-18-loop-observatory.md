@@ -1,6 +1,6 @@
 # Loop Observatory v1
 
-Status: planned, 2026-10-18. Base: origin/main a150daa16408e6578467ceb1d196cb07022751b2.
+Status: implemented and locally validated, PR #35, 2026-10-18. Base: origin/main a150daa16408e6578467ceb1d196cb07022751b2.
 
 ## Outcome
 
@@ -43,3 +43,7 @@ The first completed external review used Claude Sonnet 5.5 High after Argon 4 Hi
 - Late signature membership retains selection if its group and interval still exist; otherwise it resets invalid selection.
 - Interval evidence is paginated rather than permanently hiding observations after the first 40.
 - Session-history requests accept an optional AbortSignal so abandoned scans can be cancelled. This is a backward-compatible client helper change, not a local API contract change.
+
+## Implementation evidence
+
+Code commit `85444e9`; all 476 frontend tests and build pass, along with Go and Rust gates. Interactive browser fixture check and limits: `docs/reviews/2026-10-18-loop-observatory-validation.md`. Sonnet 5.5 High final adversarial review: PASS. Hosted CI/reviews and human merge are tracked by PR #35.
