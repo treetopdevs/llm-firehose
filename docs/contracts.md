@@ -507,3 +507,13 @@ scope/path/source/session tuples; the full response and snapshot derivation are
 unbounded by history size. Client paging uses one loaded snapshot for stability.
 The route uses the standard local API origin guard. Exact receipt inspection uses
 GET /attention/event?id= and can be unavailable for missing IDs or records.
+### Cancellation of session and trace reads
+
+Session and trace HTTP history reads use the request context during spool scans,
+matching other cancellation-aware read endpoints. An abandoned request stops at
+cooperative scanner checkpoints and does not emit partial history or an error
+response to the disconnected client. Healthy response shapes, ordering,
+deduplication, view allowlists, not-found 404 and genuine read-error 500 behavior
+are unchanged. Cancellation does not preempt blocked filesystem operations or
+bound complete-history memory; graceful daemon shutdown does not cancel these
+request contexts. Capture admission is independent.
