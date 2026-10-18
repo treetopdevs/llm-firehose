@@ -1,3 +1,7 @@
+## Scoped Files integration checkpoint — b0062bd
+
+720 frontend tests across 56 files, production build, empty gofmt output, go vet, full Go tests, CLI build, rebuilt sidecar and 3 Rust tests pass. Independent spec and standards integration reviews PASS; navigation lifecycle, prior tests, correlation metadata and Activity error contracts are preserved. Sonnet 5.5 High integration review PASS for code and shared surfaces. Its low documentation findings are resolved by adding endpoint index entries and committing this checkpoint. Report: 2026-10-18-file-session-integration-sonnet.md. Current Files implementation exactly matches the reviewed standalone slice; prior standalone browser evidence remains scoped to that slice.
+
 ## Hosted-review fix checkpoint — 94b4610
 
 708 frontend tests across 54 files and production build pass after merging CodeRabbit fixes. Go/sidecar/Rust results below remain applicable: no Go or native code changed. Three hosted threads resolved; Sonnet follow-up found no code regression, and its status-table ambiguity was corrected. New hosted checks remain pending.
