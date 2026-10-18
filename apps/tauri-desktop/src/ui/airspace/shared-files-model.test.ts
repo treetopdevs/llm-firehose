@@ -59,3 +59,8 @@ describe('shared recorded file lanes', () => {
     expect(JSON.stringify(files)).toBe(before);
   });
 });
+it('keeps an unfamiliar nonempty row kind distinct without interpreting it', () => {
+  const sessions = [session('a'), session('b')];
+  expect(sharedFileLanes([file('a', { workspace_kind: 'future-kind' }), file('b', { workspace_kind: 'future-kind' })], sessions)).toHaveLength(1);
+  expect(sharedFileLanes([file('a', { workspace_kind: 'future-kind' }), file('b')], sessions)).toEqual([]);
+});

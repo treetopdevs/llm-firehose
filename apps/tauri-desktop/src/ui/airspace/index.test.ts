@@ -155,3 +155,35 @@ test("shared files uses filtered sessions before attention pagination and aborts
     panel.deactivate(); finish([]); await settle();
     expect(signal.aborted).toBe(true);
 });
+test("session and shared-file receipts remain independent until global refresh", async () => {
+    const fileEvent: FirehoseEvent = { ...event, category: 'file', worktree_id: '/work', payload: { file_path: 'shared.ts' } };
+    // Normalized contract mutation; no new adapter payload shape claimed.
+    const sessions = [{ ...row, worktree_id: '/work' }, { ...row, id: 'second', worktree_id: '/work' }];
+    api.attention.mockResolvedValue({ sessions, warnings: [], gaps: [] });
+    api.fileSessions.mockResolvedValue(sessions.map(s => ({ workspace_kind: 'worktree_id', workspace: '/work', path: 'shared.ts', source: s.source, session_id: s.id, events: 1, first_time: event.time, last_time: event.time, last_event_id: event.id })));
+    const panel = createAirspace(undefined, undefined, now); await panel.activate();
+    click(panel.root, 'Load shared files'); await settle();
+    api.capturedEvent.mockResolvedValue(fileEvent);
+    click(panel.root, `Inspect latest file observation: ${row.source} / ${row.id}`); await settle();
+    expect(panel.root.querySelector('[aria-label="Shared file receipt"] pre')).not.toBeNull();
+    const marker = panel.root.querySelector<HTMLButtonElement>(`button[aria-label="Inspect Quiet / unknown: ${row.source} / ${row.id}"]`)
+      ?? panel.root.querySelector<HTMLButtonElement>(`button[aria-label="Inspect Recent activity: ${row.source} / ${row.id}"]`)!;
+    expect(marker).toBeTruthy(); marker.click(); click(panel.root, 'Inspect latest observation'); await settle();
+    expect(panel.root.querySelector('[aria-label="Captured receipt"] pre')).not.toBeNull();
+    expect(panel.root.querySelector('[aria-label="Shared file receipt"] pre')).not.toBeNull();
+    await panel.refresh();
+    expect(panel.root.querySelector('[aria-label="Captured receipt"] pre')).toBeNull();
+    expect(panel.root.querySelector('[aria-label="Shared file receipt"] pre')).toBeNull();
+});
+test("attention pagination and recent-window changes preserve pending shared-file loading", async () => {
+    const sessions = Array.from({ length: 25 }, (_, i) => ({ ...row, id: String(i) }));
+    api.attention.mockResolvedValue({ sessions, warnings: [], gaps: [] });
+    let done!: (v: unknown[]) => void; api.fileSessions.mockReturnValue(new Promise(r => done = r));
+    const panel = createAirspace(undefined, undefined, now); await panel.activate();
+    click(panel.root, 'Load shared files'); const signal = api.fileSessions.mock.calls[0][0];
+    click(panel.root, 'Next sessions');
+    const window = panel.root.querySelector<HTMLSelectElement>('[aria-label="Activity window"]')!;
+    window.value = '60'; window.dispatchEvent(new Event('change'));
+    expect(signal.aborted).toBe(false); done([]); await settle();
+    expect(panel.root.textContent).toContain('No shared recorded files');
+});

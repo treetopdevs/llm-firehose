@@ -1,0 +1,5 @@
+jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissions.allow in settings.json (e.g. command(<target>)). Alternatively, re-run with --dangerously-skip-permissions to auto-approve all tools.
+
+Inline review attempt:
+error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 145h56m57s.
+AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 145h56m57s.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true,"error_id":"00aae32e-32e6-4923-9e48-8da22d688f83-2"}

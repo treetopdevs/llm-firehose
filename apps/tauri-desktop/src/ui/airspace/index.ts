@@ -112,6 +112,7 @@ export function createAirspace(openScore: (id: string, source: string) => void =
         }
     }
     async function refresh() {
+        sharedFiles.cancelReceipt();
         const token = ++snapshotToken;
         snapshotAbort?.abort();
         cancelReceipt();
@@ -152,8 +153,9 @@ export function createAirspace(openScore: (id: string, source: string) => void =
             }
         }
     }
-    function localChange() { cancelReceipt(); page = 0; evaluatedAt = now(); draw(); }
-    for (const select of [windowSelect, sourceSelect, workspaceSelect])
+    function localChange() { sharedFiles.filtersChanged(); cancelReceipt(); page = 0; evaluatedAt = now(); draw(); }
+    windowSelect.addEventListener("change", () => { cancelReceipt(); page = 0; evaluatedAt = now(); draw(); });
+    for (const select of [sourceSelect, workspaceSelect])
         select.addEventListener("change", localChange);
     query.addEventListener("input", localChange);
     function deactivate() { sharedFiles.deactivate(); active = false; snapshotToken++; snapshotAbort?.abort(); loading = false; cancelReceipt(); }

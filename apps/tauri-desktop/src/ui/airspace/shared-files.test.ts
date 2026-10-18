@@ -22,7 +22,7 @@ test('loads only explicitly and shows complete paths, historical limits and veri
   expect(p.root.textContent).toContain('1 shared file');
   expect(p.root.textContent).toContain('src/main.ts');
   expect(p.root.textContent).toContain('not simultaneous');
-  const opener = button(p.root, `Inspect file observation: ${row.source} / ${row.session_id}`); opener.focus(); opener.click(); await settle();
+  const opener = button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id}`); opener.focus(); opener.click(); await settle();
   expect(p.root.querySelector('pre')?.textContent).toContain(event.id);
   button(p.root, 'Close file receipt').click(); expect(document.activeElement).toBe(opener);
 });
@@ -38,7 +38,7 @@ test('keeps stale rows and Retry after errors and filter updates', async () => {
 test('filter changes cancel pending receipts and omit no-longer-shared lanes', async () => {
   const p = mount(); button(p.root, 'Load shared files').click(); await settle();
   let done!: (e: FirehoseEvent) => void; api.capturedEvent.mockReturnValue(new Promise(r => done = r));
-  button(p.root, `Inspect file observation: ${row.source} / ${row.session_id}`).click();
+  button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id}`).click();
   const signal = api.capturedEvent.mock.calls[0][1];
   p.setSessions([session(row.session_id)], false); done(event); await settle();
   expect(signal.aborted).toBe(true); expect(p.root.querySelector('pre')).toBeNull(); expect(p.root.textContent).toContain('No shared recorded files');
@@ -53,7 +53,7 @@ test.each([
   { id: 'wrong' }, { source: 'wrong' }, { session_id: 'wrong' }, { worktree_id: '/wrong' }, { payload: { file_path: 'other' } },
 ])('rejects mismatched receipt %j', async mutation => {
   const p = mount(); button(p.root, 'Load shared files').click(); await settle(); api.capturedEvent.mockResolvedValue({ ...event, ...mutation });
-  button(p.root, `Inspect file observation: ${row.source} / ${row.session_id}`).click(); await settle();
+  button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id}`).click(); await settle();
   expect(p.root.querySelector('pre')).toBeNull(); expect(p.root.textContent).toContain('Receipt unavailable');
 });
 test('paginates all participants, disables missing receipts, and safely renders full paths', async () => {
@@ -61,7 +61,7 @@ test('paginates all participants, disables missing receipts, and safely renders 
   p.setSessions(many.map(r => session(r.session_id)), false); api.fileSessions.mockResolvedValue(many);
   button(p.root, 'Load shared files').click(); await settle();
   expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(40); expect(p.root.querySelector('script')).toBeNull(); expect(p.root.textContent).toContain(many[0].path);
-  expect(button(p.root, `Inspect file observation: ${row.source} / 000`).disabled).toBe(true);
+  expect(button(p.root, `Inspect latest file observation: ${row.source} / 000`).disabled).toBe(true);
   button(p.root, 'Next file participants').click(); expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(40);
   button(p.root, 'Next file participants').click(); expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(5);
   expect(document.activeElement?.textContent).toBe('Shared recorded files');
@@ -97,4 +97,41 @@ test('renders control-stripped identities but retains original bytes for receipt
   expect(p.root.querySelector('[data-file-participant] strong')?.textContent).not.toContain('\u202e');
   const inspect = p.root.querySelector<HTMLButtonElement>('[data-file-participant] button')!;
   inspect.click(); await settle(); expect(p.root.querySelector('pre')).not.toBeNull();
+});
+test('unchanged attention redraw preserves shared page and an in-flight receipt', async () => {
+  const p = mount(); const many = Array.from({ length: 45 }, (_, i) => ({ ...row, session_id: String(i).padStart(3, '0') }));
+  const members = many.map(r => session(r.session_id)); p.setSessions(members, false);
+  api.fileSessions.mockResolvedValue(many); button(p.root, 'Load shared files').click(); await settle();
+  button(p.root, 'Next file participants').click();
+  let done!: (r: FirehoseEvent) => void; api.capturedEvent.mockReturnValue(new Promise(r => done = r));
+  button(p.root, `Inspect latest file observation: ${row.source} / 040`).click(); const signal = api.capturedEvent.mock.calls[0][1];
+  p.setSessions([...members].reverse(), false);
+  expect(signal.aborted).toBe(false); expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(5);
+  done({ ...event, session_id: '040' }); await settle(); expect(p.root.querySelector('pre')).not.toBeNull();
+});
+test('attention arriving during a shared fetch does not cancel unfiltered file data', async () => {
+  const p = createSharedFiles(); let done!: (r: FileSession[]) => void;
+  api.fileSessions.mockReturnValue(new Promise(r => done = r)); button(p.root, 'Load shared files').click();
+  const signal = api.fileSessions.mock.calls[0][0]; p.setSessions([session(row.session_id), session('second')], false);
+  expect(signal.aborted).toBe(false); done(rows); await settle(); expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(2);
+});
+test('labels partial lanes, distinguishes accessible receipt names and prominently marks stale rows', async () => {
+  const p = mount(); const many = Array.from({ length: 45 }, (_, i) => ({ ...row, session_id: String(i).padStart(3, '0') }));
+  p.setSessions(many.map(r => session(r.session_id)), false); api.fileSessions.mockResolvedValue(many);
+  button(p.root, 'Load shared files').click(); await settle();
+  expect(p.root.textContent).toContain('participants 1–40 of 45');
+  button(p.root, 'Next file participants').click(); expect(p.root.textContent).toContain('participants 41–45 of 45');
+  const names = [...p.root.querySelectorAll('[data-file-participant] button')].map(b => b.getAttribute('aria-label'));
+  expect(new Set(names).size).toBe(5); expect(names[0]).toContain(row.path);
+  expect(p.root.querySelector('ol')?.getAttribute('aria-label')).toContain(row.path);
+  p.setSessions(many.map(r => session(r.session_id)), true);
+  expect(p.root.querySelectorAll('.airspace-notice.stale').length).toBeGreaterThan(0);
+  expect(p.root.textContent).toContain('Stale shared-file lanes');
+});
+test('explicit filters cancel a pending list without allowing late resurrection', async () => {
+  const p = mount(); let done!: (r: FileSession[]) => void;
+  api.fileSessions.mockReturnValue(new Promise(r => done = r)); button(p.root, 'Load shared files').click();
+  const signal = api.fileSessions.mock.calls[0][0]; p.filtersChanged(); done(rows); await settle();
+  expect(signal.aborted).toBe(true); expect(p.root.textContent).not.toContain('Loading shared files');
+  expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(0);
 });
