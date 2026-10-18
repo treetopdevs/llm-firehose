@@ -447,3 +447,26 @@ repository (and workspace) identity; only those UTC days overlapping
 `[from, to)` are read, so cost is bounded by the window, not spool size. Exact-ID
 duplicates keep their first record, as in Timeline. The scan stops promptly when
 the client abandons the request.
+
+#### File-linked Activity errors (additive)
+
+Activity responses additionally carry `error_paths` (empty array when none) and
+`omitted_error_paths`. These are independent of `paths`/Heat: an error-category
+observation with an explicit path can appear without contributing file Heat.
+Each entry is `{path, group, total, signatures, omitted_signatures}`. Signatures
+are `{key, total, counts}` where `key` is the existing canonical Error Signature
+and `counts` contains ascending `[bucket_index, count]` pairs in the same window.
+Only paths carried by the error event itself are attributed, including recognized
+apply-patch input/output paths; no temporal or cross-event inference occurs.
+Source/category/name/class identity uses the existing error qualification and
+normalization. Repository/workspace, half-open window and canonical-ID filters
+match Heat. `total` includes omitted signatures; each retained signature's counts
+are exact. Keep at most2000 error paths by descending total then group/path, and
+20 signatures per path by descending total then key. Omission fields count
+omitted paths/signatures in the full loaded window, not in a brushed subrange.
+The original Heat fields, ordering/caps, minimal-mode unavailable gate and scan
+day bounds are unchanged. Aggregation memory still scales with matching history.
+Older daemon responses omit these fields; clients must show overlay unavailable,
+not claim zero errors. Recurrence is at least2 observations of the same signature
+on the same resolved group/path in the selected buckets; it is not retries,
+root cause, or evidence that the file is defective.

@@ -80,6 +80,10 @@ export interface ActivityPath {
   total: number;
   heat: [number, number][];
 }
+export interface ActivityErrorPath {
+ path:string; group:string; total:number; omitted_signatures:number;
+ signatures:{key:string;total:number;counts:[number,number][]}[];
+}
 export interface ActivityGroup {
   id: string;
   label: string;
@@ -97,6 +101,8 @@ export interface ActivityResponse {
   available: boolean;
   unavailable_reason: string;
   paths: ActivityPath[];
+  error_paths?: ActivityErrorPath[];
+  omitted_error_paths?: number;
   groups: ActivityGroup[];
   file_events: number;
   unreadable_file_events: number;

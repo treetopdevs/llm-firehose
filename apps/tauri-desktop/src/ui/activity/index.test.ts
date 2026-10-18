@@ -92,9 +92,10 @@ describe("activity map view", () => {
       "Capture gaps reported; this map may be incomplete.",
       "Showing the 2,000 hottest paths; 1,234 Heat on other paths is not drawn.",
       "3 file events carried no readable path and add no Heat.",
+      "File-linked error overlay unavailable from this daemon.",
     ]);
     const empty = await open({ ...real, paths: [], groups: [], file_events: 0, unreadable_file_events: 0 });
-    expect(notices(empty.root)).toEqual(["No file activity captured in this window."]);
+    expect(notices(empty.root)).toEqual(["No file activity captured in this window.", "File-linked error overlay unavailable from this daemon."]);
     expect(empty.root.querySelector(".map-hot")!.textContent).toBe("No Heat in this range.");
   });
 
@@ -247,4 +248,13 @@ test("axis ticks are local-time aligned and at least ~90px apart", () => {
   expect(ticks.length).toBeLessThanOrEqual(10);
   for (const t of ticks) expect(new Date(t.at).getMinutes()).toBe(0);
   expect(axisTicks(from, from + 7 * 24 * 3600_000, 900).length).toBeLessThanOrEqual(10);
+});
+
+test("repeated file errors outline terrain without changing Heat and include error-only paths",async()=>{
+ const base=await open();const geometry=tileRects(base.root);const fills=tileFills(base.root);base.root.remove();
+ const p=real.paths[0];
+ const map=await open({...real,error_paths:[{path:p.path,group:p.group,total:2,omitted_signatures:0,signatures:[{key:"exact|error",total:2,counts:[[0,2]]}]},{path:"error-only.go",group:"",total:1,omitted_signatures:0,signatures:[{key:"other",total:1,counts:[[0,1]]}]}],omitted_error_paths:3});
+ expect(tileRects(map.root)).toEqual(geometry);expect(tileFills(map.root)).toEqual(fills);
+ expect(map.root.querySelectorAll('.map-storm').length).toBe(1);
+ expect(map.root.textContent).toContain('error-only.go');expect(map.root.textContent).toContain('3 error paths omitted');
 });

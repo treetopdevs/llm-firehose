@@ -880,3 +880,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .replay button { margin: 4px; }
 .replay-confirmation:not(:empty) { border: 1px solid var(--accent); padding: 12px; }
 .replay button:focus-visible, .replay input:focus-visible, .replay textarea:focus-visible, .replay select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Recurrence is an outline; Heat fill and geometry retain their meanings. */
+.map-storm > rect { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 2; vector-effect: non-scaling-stroke; }
+.map-errors { margin-top: 1rem; overflow-wrap: anywhere; }
+.map-errors li { margin-bottom: 0.8rem; }
