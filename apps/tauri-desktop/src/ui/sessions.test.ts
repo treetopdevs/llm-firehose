@@ -220,6 +220,22 @@ test("a title that arrives on a later refresh updates the open history's heading
   expect(panel.root.querySelector(".session-events-list")).not.toBeNull();
 });
 
+test("a source-qualified open is headed by that source's own title, not the aggregated row's", async () => {
+  sessions.mockResolvedValue([summary({ id: "same", source: "codex", agent: "codex", title: "Codex task", cwd: "/Users/me/dev/app" })]);
+  attentionSays([
+    inbox({ id: "same", source: "codex", title: "Codex task" }),
+    inbox({ id: "same", source: "opencode", title: "OpenCode task" }),
+  ]);
+  sessionEvents.mockResolvedValue([]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.refresh();
+  await panel.openSession("same", "opencode");
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("OpenCode task");
+  expect(panel.root.querySelector(".session-heading .session-sub")?.textContent).toContain("opencode");
+  await panel.openSession("same", "codex");
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("Codex task");
+});
+
 test("an unknown session id is headed by a short id, never the bare UUID", async () => {
   sessions.mockResolvedValue([]);
   attentionSays([]);

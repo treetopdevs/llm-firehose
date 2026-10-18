@@ -2,6 +2,7 @@ import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
 import { formatClock, sessionName, sessionWhere, shortId, workspaceKey } from "../format";
+import type { SessionLike } from "../format";
 import { evidenceTime, needsLabel, pendingNow } from "../needs";
 import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
@@ -58,6 +59,8 @@ export function createSessions(
   let historyVersion = 0;
   /** The last list drawn, so a session opened by id can be named. */
   let known = new Map<string, SessionSummary>();
+  /** /attention entries by `source\0id`: a source-qualified open is named by its own source, not the aggregated row's. */
+  let knownBySource = new Map<string, AttentionSession>();
   /** The session whose history is on screen, so a refreshed title updates its heading. */
   let shown: { id: string; source?: string; count: number } | null = null;
 
@@ -123,7 +126,15 @@ export function createSessions(
     return chip;
   }
 
-  function sessionHeading(id: string, s: SessionSummary | undefined, source: string | undefined, count: number): HTMLElement {
+  /** What names the history on screen: the matching source's attention entry when the open is source-qualified. */
+  function headingSubject(id: string, s: SessionSummary | undefined, source: string | undefined): SessionLike | undefined {
+    if (source && s && s.source !== source) return knownBySource.get(`${source}\0${id}`) ?? { id, source };
+    if (source && !s) return knownBySource.get(`${source}\0${id}`);
+    return s;
+  }
+
+  function sessionHeading(id: string, summary: SessionSummary | undefined, source: string | undefined, count: number): HTMLElement {
+    const s = headingSubject(id, summary, source);
     const name = s ? sessionName(s) : `session ${shortId(id)}`;
     const where = s ? sessionWhere(s) : { label: "", full: undefined };
     const facts = [source || s?.source, where.label, s?.first_time ? `started ${formatClock(s.first_time)}` : "", `${count} events`].filter(Boolean);
@@ -188,8 +199,10 @@ export function createSessions(
       if (list.status === "rejected") throw list.reason;
       const byId = new Map<string, AttentionSession[]>();
       if (inbox.status === "fulfilled") {
+        knownBySource = new Map();
         for (const a of inbox.value.sessions) {
           byId.set(a.id, [...(byId.get(a.id) ?? []), a]);
+          knownBySource.set(`${a.source}\0${a.id}`, a);
         }
       }
       known = new Map(list.value.map((s) => [s.id, s]));

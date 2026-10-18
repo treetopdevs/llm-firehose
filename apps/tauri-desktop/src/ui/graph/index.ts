@@ -1,4 +1,4 @@
-import { sessionName } from "../../format";
+import { disambiguateSessionLabel, sessionName } from "../../format";
 import {
   attention,
   getConfig,
@@ -768,7 +768,8 @@ export function createWorkspaceGraph(
             ]),
           )
             .filter((s) => !source || s.startsWith(source + "\0"))
-            .map((s) => [s, sessionLabel(s)] as [string, string]),
+            .map((s) => [s, sessionLabel(s)] as [string, string])
+            .map(([key, label], _i, all) => [key, disambiguateSessionLabel(key, label, all)] as [string, string]),
         ],
         session,
         (v) => {

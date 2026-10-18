@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
+import { disambiguateSessionLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
 import type { FirehoseEvent } from "./api";
 
 describe("formatClock", () => {
@@ -81,6 +81,9 @@ describe("session naming", () => {
   test("without a title: agent in the checkout, never the UUID", () => {
     expect(sessionName(base)).toBe("claude in redesign-027da0");
     expect(sessionName({ ...base, agent: undefined, cwd: undefined, repo: "myrepo" })).toBe("claude-code in myrepo");
+    // A readable checkout beats the repo label (it tells worktrees apart); a digested one falls back to the repo.
+    expect(sessionName({ ...base, repo: "myrepo" })).toBe("claude in redesign-027da0");
+    expect(sessionName({ ...base, repo: "myrepo", cwd: "69d41628" + "0".repeat(56) })).toBe("claude in myrepo");
   });
   test("a digested checkout falls back to the agent and a short id", () => {
     expect(sessionName({ ...base, cwd: "69d41628" + "0".repeat(56) })).toBe("claude · 2ed4f8a3");
@@ -90,6 +93,12 @@ describe("session naming", () => {
     expect(sessionWhere(base)).toEqual({ label: "redesign-027da0", full: "/Users/me/dev/app/.claude/worktrees/redesign-027da0" });
     expect(sessionWhere({ ...base, cwd: "69d41628" + "0".repeat(56) })).toEqual({ label: "#69d41628", full: undefined });
     expect(sessionWhere({ id: "x", source: "codex" })).toEqual({ label: "", full: undefined });
+  });
+  test("duplicate titles in a filter carry source and short id; unique ones do not", () => {
+    const all: [string, string][] = [["codex\0aaaaaaaa-1", "Fix login"], ["claude-code\0bbbbbbbb-2", "Fix login"], ["codex\0cccccccc-3", "Other"]];
+    expect(disambiguateSessionLabel(all[0][0], all[0][1], all)).toBe("Fix login · codex aaaaaaaa");
+    expect(disambiguateSessionLabel(all[1][0], all[1][1], all)).toBe("Fix login · claude-code bbbbbbbb");
+    expect(disambiguateSessionLabel(all[2][0], all[2][1], all)).toBe("Other");
   });
   test("shortId is the first eight characters", () => {
     expect(shortId(base.id)).toBe("2ed4f8a3");

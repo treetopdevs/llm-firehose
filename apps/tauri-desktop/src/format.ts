@@ -119,11 +119,14 @@ export function shortId(id: string): string {
  * minimal mode) reads as `#` plus eight digits, and nothing is invented.
  */
 export function sessionWhere(s: SessionLike): { label: string; full?: string } {
+  // A readable checkout names the worktree, which the repo label cannot tell apart.
+  if (s.cwd && !DIGEST64.test(s.cwd)) {
+    const parts = s.cwd.split(/[/\\]/).filter(Boolean);
+    return { label: parts[parts.length - 1] ?? s.cwd, full: s.cwd };
+  }
   if (s.repo) return { label: s.repo, full: undefined };
   if (!s.cwd) return { label: "", full: undefined };
-  if (DIGEST64.test(s.cwd)) return { label: `#${s.cwd.slice(0, 8)}`, full: undefined };
-  const parts = s.cwd.split(/[/\\]/).filter(Boolean);
-  return { label: parts[parts.length - 1] ?? s.cwd, full: s.cwd };
+  return { label: `#${s.cwd.slice(0, 8)}`, full: undefined };
 }
 
 /**
@@ -137,4 +140,15 @@ export function sessionName(s: SessionLike): string {
   const where = sessionWhere(s);
   if (where.label && !where.label.startsWith("#")) return `${agent} in ${where.label}`;
   return `${agent} · ${shortId(s.id)}`;
+}
+
+/**
+ * Two sessions can share one title. In a list of `[source\0id, label]` pairs,
+ * a label that occurs more than once carries its source and a short id so the
+ * sessions stay tellable apart; a unique label is returned unchanged.
+ */
+export function disambiguateSessionLabel(key: string, label: string, all: readonly (readonly [string, string])[]): string {
+  if (all.filter(([, l]) => l === label).length < 2) return label;
+  const [source, id] = key.split("\0");
+  return `${label} · ${source} ${shortId(id ?? "")}`;
 }
