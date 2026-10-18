@@ -72,3 +72,34 @@ Read-only review of03fa5ca; direct Claude CLI user-authorized fallback.
 **Good as written:** the ≤200 and ≤201×201 bounds, no automatic pairwise comparison, the three-occurrence notice, no new API, `textContent` for captured labels, and the 40-per-page cap.
 
 All fourteen points incorporated into the plan before implementation; follow-up pending.
+
+## Plan follow-up
+
+**PASS.** I found no concrete plan blockers in `03fa5ca..e8a2d8e`, and all fourteen findings are addressed. This was a static read of the plan, the review doc and `score/model.ts`. I ran no tests, made no edits and used no network or delegation.
+
+The revised plan is `docs/plans/2026-10-18-loop-sequence-comparison.md` (lines 12-18). I checked the plan against `TIMELINE_PAYLOAD_KEYS` and `TIMELINE_FIELDS` in `score/model.ts:400-402`. Both `tool_name` and `severity` survive the timeline projection, so the new token fields are available.
+
+| # | Status | Where the plan covers it |
+|---|---|---|
+| 1 | Addressed | The token now includes `payload.tool_name`, shown only when it is a string. Missing and opaque values are marked unavailable, never inferred. |
+| 2 | Addressed | The token includes severity. The closing recurrence is marked on the run that contains it, even when it merges with preceding events. |
+| 3 | Addressed | Identity is a JSON tuple, and there is a delimiter-collision test in the acceptance list. |
+| 4 | Addressed | Row types are match / only-A / only-B. The tie-break prefers a diagonal match, then consumes A before B, and an ambiguous-sequence test is pinned. The plan also states the 400-row, ten-page maximum. Counts are shown on unmatched rows instead of adding a "same name, different count" annotation. That was only a suggestion in the review, so I accept it. |
+| 5 | Addressed | B is chosen with a bounded 1-based numeric input and an explicit Compare button. Self-compare and out-of-range values are rejected. The default is the preceding interval, or the next one for interval 1. The existing evidence list and Next evidence behaviour are kept. |
+| 6 | Addressed | A single `resetComparison` helper owns comparison state. A/B identity is stored as endpoint ID pairs. On late membership the pair is kept only if both survive, with the numbering updated. Otherwise the comparison is cleared and the reason announced. |
+| 7 | Addressed | Comparand edits, comparison execution, run open/close and every pager cancel Loops-local detail. The `selectEvent` identity checks stay, and the shared pane is never touched. |
+| 8 | Addressed | Runs and alignment are derived only when a pair is selected, and the result is cached across draws. A 100k alternating-event test must take the unaligned O(n) path with no matrix. |
+| 9 | Addressed | After a redraw, focus goes to an enabled matching control or the region heading. A status line announces ranges. Pager labels are distinct. |
+| 10 | Addressed | Data-keys are namespaced by region, side and run or row index. |
+| 11 | Addressed | A semantic table has scoped headers and textual statuses, plus labelled lists as the fallback. Labels go through `textContent` and `stripControl` and are capped at 160 characters with a truncation disclosure. |
+| 12 | Addressed | Real fixtures give at most one interval, so multi-interval cases are explicitly labelled contract mutations. |
+| 13 | Addressed | Detail is Loops-local and never touches the shared pane. The word "receipt" is still not defined outright. |
+| 14 | Mostly addressed | Labels must say the runs are reduced timeline fields. See nit 1. |
+
+**Non-blocking nits** (fixable in the plan text or at the first red test):
+1. The disclosure copy requirement covers "reduced timeline fields" but not the other half of finding 14. The contract on line 11 states the interval boundaries (excludes the first recurrence, includes the next), but no requirement says the UI copy shows them. Adding that sentence to line 12 would close it.
+2. The acceptance list on line 22 has no named tests for several new behaviours. These are the last-page focus restore, the duplicate data-key check, self-compare and out-of-range rejection, late-membership retain-versus-clear, and truncation disclosure.
+3. Line 13 says selection resets on "load/refresh" but also says a late-membership rederive retains the pair. Say that "refresh" means a user-initiated reload and "late membership" means a rederive of the already-loaded session. Otherwise two implementers could read these differently.
+4. The plan does not say that a renumbered interval label is re-announced after late membership. It does say numbering is updated.
+
+Disposition: PASS. UI copy states both boundaries; refresh means explicit history reload, while late membership is a rederive of loaded history. DOM regressions cover focus, unique keys, invalid/self selection, retention/clearing and label truncation; numbering changes are announced.

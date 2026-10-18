@@ -149,3 +149,31 @@ test("all interval evidence is accessible by paging", async () => {
   expect(panel.root.textContent).toContain("81–86 of 86");
   expect(panel.root.querySelectorAll(".loops-evidence li")).toHaveLength(6);
 });
+test("compares two intervals explicitly and rejects self or invalid selections",async()=>{
+ // Normalized contract mutations of a captured error; no new raw adapter shape.
+ const history=Array.from({length:5},(_,i)=>({...events[0],id:`sequence-${i}`,time:new Date(Date.UTC(2026,9,18,0,0,i)).toISOString(),severity:i%2?'info':'error',payload:{...events[0].payload,tool_name:i===1?'Read':'Edit'}}));
+ api.sessionEvents.mockResolvedValue(history);const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');
+ let input=panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;expect(input).toBeTruthy();expect(input.value).toBe('2');expect(panel.root.querySelector('.loops-sequence')).toBeNull();
+ input.value='1';click(panel.root,'Compare sequences');expect(panel.root.textContent).toContain('Choose a different interval');
+ input=panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;input.value='99';click(panel.root,'Compare sequences');expect(panel.root.textContent).toContain('whole interval number');
+ input=panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;input.value='2';click(panel.root,'Compare sequences');expect(panel.root.querySelector('.loops-sequence')?.textContent).toContain('Recorded runs or counts differ');expect(api.capturedEvent).not.toHaveBeenCalled();
+ click(panel.root,'Browse A run');expect(panel.root.textContent).toContain('Run observations');
+ const source=panel.root.querySelector<HTMLSelectElement>('[aria-label="Loop source"]')!;source.value='';source.dispatchEvent(new Event('change'));expect(panel.root.querySelector('.loops-sequence')).toBeNull();
+});
+test("one-interval history explains why comparison needs another recurrence",async()=>{
+ const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');expect(panel.root.textContent).toContain('three occurrences');
+});
+test("late membership retains endpoint pairs and reannounces shifted interval numbers",async()=>{
+ const history=Array.from({length:7},(_,i)=>({...events[0],id:`late-${i}`,time:new Date(Date.UTC(2026,9,18,0,0,i)).toISOString(),severity:i%2?'info':'error',summary:i===0?'different error':events[0].summary}));
+ let finish!:(value:unknown)=>void;api.errorSignatures.mockReturnValue(new Promise(r=>finish=r));api.sessionEvents.mockResolvedValue(history);
+ const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');click(panel.root,'Compare sequences');expect(panel.root.textContent).toContain('Comparing interval 1 with interval 2.');
+ finish([{key:'codex|shell|PostToolUse|failed: mix test',source:'codex',members:history.filter((_,i)=>i%2===0).map(e=>e.id)}]);await settle();
+ expect(panel.root.textContent).toContain('Comparing interval 2 with interval 3.');expect(panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')?.value).toBe('3');
+});
+test("late membership removing a boundary clears comparison and stale detail is ignored",async()=>{
+ const history=Array.from({length:5},(_,i)=>({...events[0],id:`boundary-${i}`,time:new Date(Date.UTC(2026,9,18,0,0,i)).toISOString(),severity:i%2?'info':'error'}));
+ let membership!:(value:unknown)=>void,receipt!:(value:FirehoseEvent)=>void;api.errorSignatures.mockReturnValue(new Promise(r=>membership=r));api.sessionEvents.mockResolvedValue(history);api.capturedEvent.mockReturnValue(new Promise(r=>receipt=r));
+ const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');click(panel.root,'Compare sequences');click(panel.root,'Browse A run');click(panel.root,'Inspect observation');const signal=api.capturedEvent.mock.calls[0][1] as AbortSignal;
+ membership([{key:'different-signature',source:'codex',members:[history[2].id]}]);await settle();expect(panel.root.querySelector('.loops-sequence')).toBeNull();expect(panel.root.textContent).toContain('Comparison cleared');expect(signal.aborted).toBe(true);
+ receipt(history[1]);await settle();expect(panel.root.querySelector('.loops-detail')?.textContent).toBe('');
+});

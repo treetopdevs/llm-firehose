@@ -3,6 +3,8 @@ import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatDuration } from "../../format";
 import { eventLabel, stripControl } from "../score/model";
+import {sequenceRuns,compareSequences} from "./sequence";
+import {renderSequenceComparison} from "./sequence-view";
 import { buildLoops } from "./model";
 import type { Interval, LoopGroup } from "./model";
 
@@ -41,6 +43,15 @@ export function createLoops() {
   let evidencePage = 0;
   let interval: Interval | undefined;
 
+  let comparison: {a: [string,string]; b: [string,string]; view: HTMLElement; caption: string} | undefined;
+  let referenceDraft: string | undefined, comparisonNotice = "";
+  function resetComparison(message = "") { comparison = undefined; referenceDraft = undefined; comparisonNotice = message; cancelDetail(); }
+  function buildComparison(group: LoopGroup, a: Interval, b: Interval) {
+    cancelDetail();
+    const aIndex=group.intervals.indexOf(a)+1,bIndex=group.intervals.indexOf(b)+1;
+    comparison={a:[a.from.id,a.to.id],b:[b.from.id,b.to.id],caption:`A interval ${aIndex}: ${a.from.time} → ${a.to.time}; B interval ${bIndex}: ${b.from.time} → ${b.to.time}`,view:renderSequenceComparison(compareSequences(sequenceRuns(model.events,a.fromIndex,a.toIndex),sequenceRuns(model.events,b.fromIndex,b.toIndex)),event=>void selectEvent(event),cancelDetail)};
+    referenceDraft=String(bIndex);comparisonNotice=`Comparing interval ${aIndex} with interval ${bIndex}.`;
+  }
   function cancelDetail() { selection++; detailAbort?.abort(); detailAbort = undefined; clear(detail); }
   function button(text: string, handler: () => void, key = text) {
     const b = el("button", {"data-key": key}, text); b.addEventListener("click", handler); return b;
@@ -96,6 +107,7 @@ export function createLoops() {
       signatureStatus === "pending" ? " Signature lookup pending." : signatureStatus === "unavailable" ? " Signature lookup unavailable." : ""));
     if (model.excluded.invalidTime) body.append(el("p", {class: "loops-disclosure"}, `${model.excluded.invalidTime} observations excluded because their timestamps are invalid; recurrence counts may be understated.`));
     if (model.excluded.duplicate) body.append(el("p", {class: "dim"}, `${model.excluded.duplicate} duplicate event ids removed; counts reflect unique captured events.`));
+    if (comparisonNotice) body.append(el("p", {role:"status"}, comparisonNotice));
     if (!model.events.length) { body.append(el("p", {}, "No captured events in this session and source.")); restore(); return; }
     if (!model.groups.length) { body.append(el("p", {}, "No repeated Error Signatures in the loaded history.")); restore(); return; }
     const active = model.groups.find(g => g.key === activeKey) ?? model.groups[0];
@@ -103,7 +115,7 @@ export function createLoops() {
     body.append(el("h3", {}, `${model.groups.length} recurring Error Signatures`));
     const groups = el("div", {class: "loops-signatures"});
     for (const group of model.groups.slice(groupPage * PAGE_SIZE, (groupPage + 1) * PAGE_SIZE)) {
-      const b = button(`${eventLabel(group.occurrences[0])} · ${group.occurrences.length} occurrences`, () => { activeKey = group.key; occurrencePage = 0; interval = undefined; cancelDetail(); draw(); }, `signature:${group.key}`);
+      const b = button(`${eventLabel(group.occurrences[0])} · ${group.occurrences.length} occurrences`, () => { activeKey = group.key; occurrencePage = 0; evidencePage = 0; interval = undefined; resetComparison(); draw(); }, `signature:${group.key}`);
       b.setAttribute("aria-pressed", String(group.key === activeKey)); groups.append(b);
     }
     body.append(groups);
@@ -114,7 +126,7 @@ export function createLoops() {
       const i = occurrencePage * PAGE_SIZE + offset;
       const row = el("li", {class: "loop-occurrence"}, button(`View occurrence ${i + 1}`, () => void selectEvent(event)), el("time", {datetime: event.time}, event.time));
       if (i === 0) row.append(el("span", {class: "dim"}, "Baseline observation"));
-      else row.append(button(`Compare interval ${i} · ${formatDuration(active.intervals[i - 1].elapsedMs)}`, () => { interval = active.intervals[i - 1]; evidencePage = 0; cancelDetail(); draw(); }));
+      else row.append(button(`Compare interval ${i} · ${formatDuration(active.intervals[i - 1].elapsedMs)}`, () => { interval = active.intervals[i - 1]; evidencePage = 0; resetComparison(); draw(); }));
       list.append(row);
     });
     body.append(list);
@@ -123,6 +135,19 @@ export function createLoops() {
       body.append(el("h3", {}, "Captured activity between recurrences"), el("p", {}, `${interval.from.time} → ${interval.to.time} · ${formatDuration(interval.elapsedMs)}`),
         el("p", {class: "dim"}, "After the first observation through the next, ordered by time then event id. Synthetic state transitions excluded. Category counts describe captured events, not successful work."),
         el("p", {class: "loops-counts"}, Object.entries(interval.counts).map(([c, n]) => `${c}: ${n}`).join(" · ")));
+      if (active.intervals.length < 2) body.append(el("p", {}, "Sequence comparison needs at least three occurrences (two intervals) of this signature."));
+      else {
+        const current=active.intervals.indexOf(interval), reference=el("input", {type:"number",min:"1",max:String(active.intervals.length),step:"1","aria-label":"Reference interval B","data-key":"sequence:reference"});
+        reference.value=referenceDraft ?? String(current>0?current:2);
+        reference.oninput=()=>{const value=reference.value;resetComparison();referenceDraft=value;draw();};
+        body.append(el("label", {}, `Compare selected interval A (${current+1}) with interval B `,reference),button("Compare sequences",()=>{
+          const number=Number(reference.value);
+          if (!Number.isInteger(number)||number<1||number>active.intervals.length) {resetComparison(`Enter a whole interval number from 1 to ${active.intervals.length}.`);draw();return;}
+          if(number===current+1){resetComparison("Choose a different interval for B.");draw();return;}
+          buildComparison(active,interval!,active.intervals[number-1]);draw();
+        },"sequence:compare"));
+      }
+      if(comparison) body.append(el("p", {class:"loops-sequence-caption"}, comparison.caption),comparison.view);
       const n = interval.toIndex - interval.fromIndex;
       body.append(el("p", {class: "dim"}, `${n} captured events in interval. Browse every event below.`));
       const evidence = el("ul", {class: "loops-evidence"});
@@ -137,7 +162,7 @@ export function createLoops() {
     if (phase === "loading" || phase === "error") return;
     model = buildLoops(events, sessionId, source, signatures);
     const group = model.groups.find(g => g.key === activeKey);
-    if (activeKey && !group) { activeKey = undefined; interval = undefined; occurrencePage = 0; evidencePage = 0; cancelDetail(); }
+    if (activeKey && !group) { activeKey = undefined; interval = undefined; occurrencePage = 0; evidencePage = 0; resetComparison("Comparison cleared: selected signature membership changed."); }
     if (group) {
       occurrencePage = Math.min(occurrencePage, Math.floor((group.occurrences.length - 1) / PAGE_SIZE));
       if (interval) {
@@ -145,6 +170,13 @@ export function createLoops() {
         interval = group.intervals.find(i => i.from.id === prior.from.id && i.to.id === prior.to.id);
         if (!interval) { evidencePage = 0; cancelDetail(); }
       }
+    }
+    if (comparison && group) {
+      const prior=comparison;
+      const a=group.intervals.find(i=>i.from.id===prior.a[0]&&i.to.id===prior.a[1]);
+      const b=group.intervals.find(i=>i.from.id===prior.b[0]&&i.to.id===prior.b[1]);
+      if(a&&b)buildComparison(group,a,b);
+      else resetComparison("Comparison cleared: one or both interval boundaries changed with signature membership.");
     }
     groupPage = Math.min(groupPage, Math.max(0, Math.floor((model.groups.length - 1) / PAGE_SIZE)));
     draw();
@@ -156,7 +188,7 @@ export function createLoops() {
     sourceSelect.value = source || "";
   }
   async function open(id: string, selectedSource?: string) {
-    const current = ++version; cancelDetail();
+    const current = ++version; resetComparison();
     phase = "loading"; sourceSelect.disabled = true;
     historyAbort?.abort();
     const historyCtl = new AbortController(); historyAbort = historyCtl;
@@ -195,12 +227,12 @@ export function createLoops() {
   }
   sessionSelect.addEventListener("change", () => {
     if (sessionSelect.value) { void open(sessionSelect.value); return; }
-    version++; cancelDetail(); historyAbort?.abort(); signatureAbort?.abort(); clearTimeout(signatureTimer);
+    version++; resetComparison(); historyAbort?.abort(); signatureAbort?.abort(); clearTimeout(signatureTimer);
     phase = "idle"; sourceSelect.disabled = true;
     sessionId = ""; source = undefined; events = []; signatures = []; activeKey = undefined; interval = undefined;
     selectSources(); derive();
   });
-  sourceSelect.addEventListener("change", () => { if (phase !== "ready") return; source = sourceSelect.value || undefined; cancelDetail(); activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0; derive(); });
+  sourceSelect.addEventListener("change", () => { if (phase !== "ready") return; source = sourceSelect.value || undefined; resetComparison(); activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0; derive(); });
   refreshButton.addEventListener("click", () => { void refresh(); if (sessionId) void open(sessionId, source); });
   sourceSelect.disabled = true; selectSources(); draw();
   return {root, open, refresh};
