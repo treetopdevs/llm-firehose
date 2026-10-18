@@ -66,3 +66,35 @@ test('paginates all participants, disables missing receipts, and safely renders 
   button(p.root, 'Next file participants').click(); expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(5);
   expect(document.activeElement?.textContent).toBe('Shared recorded files');
 });
+test('retains files before attention exists and regroups when attention membership changes', async () => {
+  const p = createSharedFiles(); document.body.append(p.root);
+  button(p.root, 'Load shared files').click(); await settle();
+  expect(p.root.textContent).toContain('Waiting for an attention snapshot');
+  p.setSessions([session(row.session_id), session('second')], true, Date.parse(event.time));
+  expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(2);
+  expect(p.root.textContent).toContain('Attention stale');
+  p.setSessions([session('second')], false, Date.parse(event.time));
+  expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(0);
+  expect(api.fileSessions).toHaveBeenCalledTimes(1);
+  expect(p.root.textContent).toContain('No lane does not prove no shared file');
+});
+test('disconnect during first load ends idle, rejects a late response, and offers explicit Load on reconnect', async () => {
+  const p = mount(); let done!: (r: FileSession[]) => void;
+  api.fileSessions.mockReturnValue(new Promise(r => done = r));
+  button(p.root, 'Load shared files').click(); p.setConnected(false);
+  expect(p.root.textContent).not.toContain('Loading shared files');
+  done(rows); await settle(); p.setConnected(true);
+  expect(p.root.textContent).not.toContain('src/main.ts');
+  expect(button(p.root, 'Load shared files').disabled).toBe(false);
+  expect(api.fileSessions).toHaveBeenCalledTimes(1);
+});
+test('renders control-stripped identities but retains original bytes for receipt validation', async () => {
+  const id = 'a\u202eb\n';
+  const p = mount(); p.setSessions([session(id), session('second')], false);
+  api.fileSessions.mockResolvedValue([{ ...row, session_id: id }, rows[1]]);
+  api.capturedEvent.mockResolvedValue({ ...event, session_id: id });
+  button(p.root, 'Load shared files').click(); await settle();
+  expect(p.root.querySelector('[data-file-participant] strong')?.textContent).not.toContain('\u202e');
+  const inspect = p.root.querySelector<HTMLButtonElement>('[data-file-participant] button')!;
+  inspect.click(); await settle(); expect(p.root.querySelector('pre')).not.toBeNull();
+});

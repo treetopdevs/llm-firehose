@@ -31,7 +31,7 @@ describe('shared recorded file lanes', () => {
   });
   it('excludes unknown/empty scopes and truncated paths without normalizing relative paths', () => {
     const sessions = [session('a'), session('b')];
-    for (const extra of [{ workspace_kind: 'unknown' }, { workspace: '' }, { path: 'src/main.ts…' }])
+    for (const extra of [{ workspace_kind: 'unknown' }, { workspace_kind: '' }, { workspace: '' }, { path: 'src/main.ts…' }])
       expect(sharedFileLanes([file('a', extra), file('b', extra)], sessions)).toEqual([]);
     expect(sharedFileLanes([file('a'), file('b', { path: '/work/src/main.ts' })], sessions)).toEqual([]);
     expect(sharedFileLanes([file('a'), file('b')], sessions)).toHaveLength(1);

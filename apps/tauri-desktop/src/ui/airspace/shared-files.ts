@@ -1,7 +1,7 @@
 import { capturedEvent, fileSessions } from '../../api';
 import type { AttentionSession, FileSession } from '../../api';
 import { clear, el } from '../../dom';
-import { recordedFilePaths, recordedFileScope } from '../files';
+import { matchesFileReceipt } from '../files';
 import { stripControl } from '../score/model';
 import { sharedFileLanes } from './shared-files-model';
 
@@ -71,8 +71,7 @@ export function createSharedFiles(now: () => number = Date.now) {
     try {
       const event = await capturedEvent(row.last_event_id, ctl.signal);
       if (ctl.signal.aborted || token !== detailToken || !active || !connected) return;
-      const [kind, scope] = recordedFileScope(event);
-      if (event.id !== row.last_event_id || event.source !== row.source || event.session_id !== row.session_id || kind !== row.workspace_kind || scope !== row.workspace || !recordedFilePaths(event).includes(row.path)) throw Error('Recorded identity or path mismatch');
+      if (!matchesFileReceipt(row, event)) throw Error('Recorded identity or path mismatch');
       clear(receipt);
       receipt.append(el('h4', {}, 'Captured file observation'), el('pre', {}, JSON.stringify(event, null, 2)));
     } catch (cause) {

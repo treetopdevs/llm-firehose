@@ -26,10 +26,16 @@ export function recordedFileScope(event: FirehoseEvent): [string, string] {
     if (event[key]) return [key, event[key]!];
   return ["unknown", ""];
 }
+export function matchesFileReceipt(row: FileSession, event: FirehoseEvent): boolean {
+  const [kind, scope] = recordedFileScope(event);
+  return event.id === row.last_event_id && event.source === row.source &&
+    (event.session_id ?? "") === row.session_id && kind === row.workspace_kind &&
+    scope === row.workspace && recordedFilePaths(event).includes(row.path);
+}
 const groupKey = (r: FileSession) =>
   JSON.stringify([r.workspace_kind, r.workspace, r.path]);
 export const comparableFileScope = (r: FileSession) =>
-  r.workspace_kind !== "unknown" && !!r.workspace && !r.path.endsWith("…");
+  !!r.workspace_kind && r.workspace_kind !== "unknown" && !!r.workspace && !r.path.endsWith("…");
 const label = (s: string) => {
   const clean = stripControl(s);
   return clean.length > 160
@@ -254,15 +260,7 @@ export function createFiles() {
       const event = await capturedEvent(row.last_event_id, ctl.signal);
       if (token !== detailVersion || current !== version || ctl.signal.aborted)
         return;
-      const [kind, scope] = recordedFileScope(event);
-      if (
-        event.id !== row.last_event_id ||
-        event.source !== row.source ||
-        (event.session_id ?? "") !== row.session_id ||
-        kind !== row.workspace_kind ||
-        scope !== row.workspace ||
-        !recordedFilePaths(event).includes(row.path)
-      )
+      if (!matchesFileReceipt(row, event))
         throw new Error("mismatch");
       clear(detail);
       detail.append(
