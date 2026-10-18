@@ -80,6 +80,14 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   btn.click();
   expect(document.querySelector(".score")).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("open a session");
+  const close=vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("AudioContext",class {state="running";resume=vi.fn().mockResolvedValue(undefined);close=close;onstatechange=null;});
+  document.querySelector<HTMLButtonElement>('[aria-label="Enable replay sound"]')!.click();
+  await Promise.resolve();
+  expect(document.querySelector('[aria-label="Disable replay sound"]')).not.toBeNull();
+  [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b=>b.textContent==="live")!.click();
+  expect(close).toHaveBeenCalledOnce();
+  btn.click();expect(document.querySelector('[aria-label="Enable replay sound"]')).not.toBeNull();
 });
 
 test("the loops view is reachable from the sidebar and starts empty", async () => {
