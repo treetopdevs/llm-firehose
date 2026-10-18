@@ -19,3 +19,7 @@ Immutable range `a5df67f...620e9c3`; read-only, no tests run by reviewer. No doc
 ## Independent Spec review — PASS
 
 Same immutable range; read-only, no tests run by reviewer. No actionable spec deviations or unasked scope. Exact uncapped aggregates, copied paginated snapshots, global/local labels, evidence identity, race guards and navigation match the plan. Final external review and hosted checks remained pending at review time, not missing implementation requirements.
+
+## Hosted review limits
+
+PR #36: CodeRabbit skipped review because its included hourly limit was reached (offered paid review or next included window). No paid review or billing change requested. Autofix separately reported credits/billing required and reset its checkbox. Neither skipped status counts as review approval. Sonnet and independent reviews completed as recorded.
