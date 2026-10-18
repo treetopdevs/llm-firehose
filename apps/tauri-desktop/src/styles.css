@@ -794,3 +794,22 @@ span.agent-dot.big { width: 14px; height: 14px; }
   .strata-row-heading, .strata-times { flex-direction: column; align-items: flex-start; }
   .strata-row-heading strong { max-width: 100%; flex: none; }
 }
+
+.court { padding: 20px; max-width: 1100px; margin: auto; }
+.court h2 { margin-top: 0; }
+.court p, .court button, .court span { overflow-wrap: anywhere; }
+.court-controls, .court-editor { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.court-editor label { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 230px; }
+.court textarea { box-sizing: border-box; width: 100%; padding: 8px; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--border); font: inherit; }
+.court-claims { display: grid; gap: 6px; }
+.court-claims button, .court-requirements button { text-align: left; }
+.court button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.court-requirements { list-style: none; padding: 0; }
+.court-requirements li { display: flex; align-items: center; gap: 16px; margin: 8px 0; }
+.court-requirements li button { flex: 1; }
+.court-notice { border-left: 3px solid var(--accent); padding-left: 12px; }
+.court-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; }
+.court button:focus-visible, .court input:focus-visible, .court textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.court [aria-label="Notebook recovery"] pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; user-select: text; }
+.court-confirmation:not(:empty) { border: 1px solid var(--accent); padding: 12px; margin: 12px 0; }
+.court-confirmation button { margin-right: 10px; }

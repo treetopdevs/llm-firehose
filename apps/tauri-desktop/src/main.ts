@@ -11,6 +11,7 @@ import { clear, el } from "./dom";
 import { FeedState } from "./state";
 import { renderDetail } from "./ui/detail";
 import { createAttention } from "./ui/attention";
+import { createCourt } from "./ui/court";
 import { createDoctor } from "./ui/doctor";
 import { createDwell } from "./ui/dwell";
 import { createFeed } from "./ui/feed";
@@ -34,7 +35,7 @@ const detailPane = el("aside", { class: "detail" });
 const siblings = (ev: FirehoseEvent) =>
   ev.call_id ? feedState.events().filter((o) => o.source === ev.source && o.session_id === ev.session_id && o.call_id === ev.call_id) : [];
 const showDetail = (ev: FirehoseEvent) =>
-  renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings);
+  renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings, undefined, offerEvidence);
 
 // The score replays one finished session, so its detail pairs calls from
 // that session's history rather than the live buffer.
@@ -48,12 +49,20 @@ const scorePanel = createScore((ev, sessionSiblings, signature, dismiss) =>
     },
     sessionSiblings,
     signature,
+    offerEvidence,
   ),
 );
 
 function openScore(id: string, source?: string) {
   show("score");
   void scorePanel.open(id, source);
+}
+
+const courtPanel = createCourt(openScore);
+function offerEvidence(id: string) {
+  renderDetail(detailPane, null, () => {});
+  show("court");
+  courtPanel.offerEvent(id);
 }
 
 const loopsPanel = createLoops();
@@ -95,6 +104,7 @@ const panels = {
   score: scorePanel,
   loops: loopsPanel,
   strata: createStrata(openLoops, openScore),
+  court: courtPanel,
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
