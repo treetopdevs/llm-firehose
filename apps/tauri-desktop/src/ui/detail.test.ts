@@ -169,3 +169,16 @@ test('request response pairing never crosses providers with equal native session
  expect(pane.querySelector('.request')).toBeNull();
  expect(pane.textContent).not.toContain('wrong provider');
 });
+
+test("offers captured event to Evidence Court only on explicit action", () => {
+  const pane = document.createElement("aside");
+  const offered: string[] = [];
+  renderDetail(pane, ev({ id: "receipt-one" }), () => {}, undefined, undefined, id => offered.push(id));
+  expect(offered).toEqual([]);
+  const button = [...pane.querySelectorAll("button")].find(b => b.textContent === "Use in Evidence Court");
+  expect(button).toBeDefined();
+  button!.click();
+  expect(offered).toEqual(["receipt-one"]);
+  renderDetail(pane, null, () => {});
+  expect(pane.textContent).not.toContain("Use in Evidence Court");
+});
