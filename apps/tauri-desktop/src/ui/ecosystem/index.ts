@@ -63,7 +63,7 @@ export function createEcosystem(openScore: (id: string, source: string) => void 
         pause();
         return;
     } if (!model || cursor >= model.events.length) {
-        status.textContent = "At latest observation. Choose Beginning or an earlier cursor before playing.";
+        replayStatus.textContent = `${cursor} of ${model?.events.length ?? 0} dated file observations visible. At latest observation. Choose Beginning or an earlier cursor before playing.`;
         return;
     } play.textContent = "Pause"; timer = setInterval(() => { setCursor(cursor + 1, true); if (!model || cursor >= model.events.length)
         pause(); }, 250); }

@@ -82,3 +82,9 @@ test("bed members are bounded, reveal focused selection, and path labels are saf
 test("failed reload clears prior snapshot and manual fields remain usable after choices fail",async()=>{
  const panel=createEcosystem();api.attention.mockRejectedValueOnce(new Error("offline"));await panel.refresh();expect(panel.root.textContent).toContain("Manual exact scope");await load(panel);api.sessionEvents.mockRejectedValueOnce(new Error("missing"));click(panel.root,"Load file history");await settle();expect(panel.root.textContent).toContain("File history unavailable");expect(panel.root.querySelectorAll(".ecosystem-bed")).toHaveLength(0);
 });
+test("Play at the latest cursor preserves snapshot provenance and exclusion counts",async()=>{
+ const panel=createEcosystem();await load(panel);
+ const before=[...panel.root.querySelectorAll('[role="status"]')].find(n=>n.textContent?.startsWith("Snapshot "))!.textContent;
+ expect(before).toContain(event.session_id!);expect(before).toContain("loaded");expect(before).toContain("missing captured IDs omitted");
+ click(panel.root,"Play");expect(panel.root.textContent).toContain(before!);expect(panel.root.textContent).toContain("At latest observation");
+});
