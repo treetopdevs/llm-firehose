@@ -67,3 +67,24 @@ The validation doc's own caveat applies too: the screenshot predates the playbac
 ## Remediation
 
 All five findings addressed: neutral single stem, recorded tool labels, strict RFC3339 fractional ordering, nondestructive choice refresh, full filtered/page totals. Four regression tests failed first, then all 516 frontend tests and production build passed. Follow-up pending. The reviewer process note about fallback approval is superseded by the user's explicit fallback authorization.
+
+## Follow-up on c222755
+
+**PASS.** All five findings are addressed and I found no blocking regressions. This is a static read of `26ff2a0..HEAD`. I ran no tests and made no edits, so the "516 tests passed" claim in the review doc is unverified.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Single-observation stem was green | Fixed. `map.ts` now draws the one-observation stem in neutral `#a0a6b3`, and a map test covers it. |
+| 2 | Tool hidden, reads shown as patches | Fixed. Rows show `tool: event.name`, the bed `aria-label` lists recorded tools, and the legend adds "File observations may include reads." Claude Code and Antigravity set `Name` to `PostToolUse:<tool>`, so `event.name` does carry the tool. |
+| 3 | `Date.parse` lost sub-millisecond order | Fixed. `clock()` in `model.ts` is a strict RFC3339 parser that checks the calendar by round-trip and the zone range. Offset sign and seconds arithmetic are correct, and the fraction is zero-padded to equal length before comparing. Nothing else in the ecosystem code uses `Date.parse`. |
+| 4 | Nav re-click destroyed playback and receipt | Fixed. `refresh()` no longer calls `pause()` or `cancelReceipt()`. `deactivate()` and `clearScope()` still cancel both, so leaving the panel or changing scope still stops playback. |
+| 5 | Legend counted the page, not the filtered set | Fixed. The legend now reads "21–40 of 45 filtered / 45 total file beds". The empty case renders "0–0". |
+
+The new tests are sound. Fake timers are reset by the file's `afterEach`, and the 4 new tests match the "four regression tests" claim.
+
+Non-blocking nits:
+1. **P3:** The neutral stem colour `#a0a6b3` is the same as the "gray: unknown" leaf colour. A single completed observation now shows a gray stem under a green leaf. A distinct neutral would avoid any "unknown" reading.
+2. **P3:** `docs/reviews/2026-10-18-patch-ecosystem-validation.md:5` still says "512 tests". It also still lists the Sonnet review as quota-blocked and doesn't mention this remediation. The Argon final gate remains unmet, so the PR should stay draft.
+3. **P3:** The `clock()` tests don't cover a space separator, a lowercase `t`/`z`, or a zone offset out of range (like `+24:00`). The code rejects them, but nothing pins that behaviour.
+
+Final nits: distinct neutral stem and strict syntax boundary regression added. User-authorized Sonnet fallback satisfies requested external review; Argon quota is not an additional gate. Historical validation below is superseded by the latest validation addendum.

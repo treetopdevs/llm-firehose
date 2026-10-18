@@ -23,7 +23,7 @@ test("empty replay beds keep their position and disclose no visible activity",()
 test("single failed observation has neutral stem and exposes recorded tool",()=>{
  const e={id:'failed',name:'view_file',severity:'error',payload:{}} as FirehoseEvent;
  const root=renderEcosystemMap([{key:'f',path:'f',workspace:'w',eventIds:[e.id]}],[e],()=>{});
- expect(root.querySelector('line')?.getAttribute('stroke')).toBe('#a0a6b3');
+ expect(root.querySelector('line')?.getAttribute('stroke')).toBe('#75818d');
  expect(root.querySelector('ellipse')?.getAttribute('fill')).toBe('#e27d77');
  expect(root.querySelector('button')?.getAttribute('aria-label')).toContain('view_file');
  expect(root.textContent).toContain('may include reads');

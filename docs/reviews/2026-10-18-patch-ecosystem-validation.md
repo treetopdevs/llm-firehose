@@ -1,3 +1,7 @@
+## Current review status
+
+Sonnet 5.5 High initial and follow-up PASS after five fixes; explicitly authorized fallback. Independent spec/standards PASS. Latest full validation: 517 frontend tests and production build (including final neutral-stem and strict-clock regressions). Prior 512-test/quota notes below are historical checkpoints. Hosted CI must match final pushed head; no main merge authorized.
+
 # Patch Ecosystem validation
 
 Base e007b2f; independent of unmerged PR37–40.
