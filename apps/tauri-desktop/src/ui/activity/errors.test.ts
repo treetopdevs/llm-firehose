@@ -29,3 +29,9 @@ test("omission-only rows explicitly disclose unknown range and format group labe
  const root=renderErrorPaths(errorRange([{...paths[0],group:'unknown',omitted_signatures:2}],3,4));
  expect(root.textContent).toContain('No retained observations in range');expect(root.textContent).toContain('Outside known worktrees');
 });
+
+test("last page focuses heading and retains API row order",()=>{
+ const many=errorRange(Array.from({length:21},(_,i)=>({...paths[0],path:`p${20-i}`})),0,3);const root=renderErrorPaths(many);document.body.append(root);
+ expect([...root.querySelectorAll('li strong')].map(n=>n.textContent)).toEqual(many.slice(0,20).map(p=>p.path));
+ root.querySelectorAll<HTMLButtonElement>('button')[1].click();expect(document.activeElement?.tagName).toBe('H3');root.remove();
+});

@@ -457,3 +457,64 @@ func TestActivityReturnsAdditiveErrorPaths(t *testing.T) {
 		t.Fatalf("response: %s", w.Body)
 	}
 }
+
+func TestActivityIncludesUnresolvedErrorOnlyGroups(t *testing.T) {
+	root, _ := twoWorktrees(t)
+	s, engine := activityServer(t, "balanced")
+	claudeEdit(t, engine, "seed", root, filepath.Join(root, "seed.go"), activityBase.Add(time.Minute))
+	raw, err := os.ReadFile("../adapters/claudecode/testdata/pre_tool_use_edit.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := claudecode.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Explicit normalized category/path/identity mutations of a captured receipt.
+	ev.Category = event.CategoryError
+	ev.Severity = event.SeverityError
+	ev.CWD = root
+	ev.RepoID = ""
+	ev.WorktreeID = ""
+	ev.ID = "outside-error"
+	ev.Time = activityBase.Add(2 * time.Minute)
+	ev.Payload["file_path"] = "/outside/problem.go"
+	if _, err := engine.Admit(t.Context(), *ev); err != nil {
+		t.Fatal(err)
+	}
+	ev.ID = "unknown-error"
+	ev.CWD = ""
+	ev.RepoID = filepath.Join(root, ".git")
+	ev.WorktreeID = ""
+	ev.Time = activityBase.Add(3 * time.Minute)
+	if _, err := engine.Admit(t.Context(), *ev); err != nil {
+		t.Fatal(err)
+	}
+	_, _, w := getActivity(t, s, window(onlyRepo(t, s)))
+	var body struct {
+		ErrorPaths []capture.ActivityErrorPath `json:"error_paths"`
+		Groups     []activityGroup             `json:"groups"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.ErrorPaths) != 2 {
+		t.Fatalf("error groups missing: %s", w.Body)
+	}
+	unknown := false
+	for _, p := range body.ErrorPaths {
+		found := false
+		for _, g := range body.Groups {
+			if g.ID == p.Group && !g.Resolved && g.Label == activityOutsideLabel {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing group for %+v: %s", p, w.Body)
+		}
+		unknown = unknown || p.Group == "unknown"
+	}
+	if !unknown {
+		t.Fatalf("unknown group not exercised: %s", w.Body)
+	}
+}

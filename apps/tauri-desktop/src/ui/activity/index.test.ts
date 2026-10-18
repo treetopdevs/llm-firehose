@@ -263,3 +263,11 @@ test("nonempty older daemon map discloses unavailable errors",async()=>{
  const map=await open({...real,error_paths:undefined});
  expect(map.root.textContent).toContain('File-linked error overlay unavailable from this daemon.');
 });
+
+test("error pagination survives redraw with focus and resets on scope change",async()=>{
+ const response={...real,error_paths:Array.from({length:41},(_,i)=>({path:`p${i}`,group:'',total:1,omitted_signatures:0,signatures:[{key:'x',total:1,counts:[[0,1] as [number,number]]}]}))};
+ const map=await open(response);button(map.root,'Next error paths').click();button(map.root,'Next error paths').focus();
+ map.update('repo-1',WORKSPACES,'balanced');await flush();expect(document.activeElement?.textContent).toBe('Next error paths');
+ expect(map.root.querySelector('.map-errors')?.textContent).toContain('21–40');
+ map.update('repo-2',WORKSPACES,'balanced');await flush();expect(map.root.querySelector('.map-errors')?.textContent).toContain('1–20');
+});
