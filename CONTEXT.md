@@ -71,3 +71,7 @@ _Avoid_: Loop detector, retry count, proof of a fix
 **Session Stratigraphy**:
 A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
 _Avoid_: Session duration, effort score, causal history, proof of resolution
+
+**Evidence Court**:
+A manual host-private notebook linking user-written claims and evidence requirements to Captured Event receipts; an attached receipt is an association, not a verified claim.
+_Avoid_: Truth score, automatic verdict, proof of correctness

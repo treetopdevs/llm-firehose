@@ -44,7 +44,7 @@ function kvTable(title: string, payload: Record<string, unknown> | undefined, om
 // dump. Start and end are paired by call id, the duration is the difference,
 // and the start payload is the request, the end payload the response. The
 // full JSON stays behind a disclosure for when it is really wanted.
-export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature): void {
+export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature, offerEvidence?: (id: string) => void): void {
   clear(pane);
   if (!ev) {
     pane.classList.remove("open");
@@ -140,6 +140,12 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
 
   const close = el("button", { class: "detail-close", title: "close" }, "×");
   close.addEventListener("click", onClose);
+
+  if (offerEvidence && ev.id) {
+    const offer = el("button", {}, "Use in Evidence Court");
+    offer.addEventListener("click", () => offerEvidence(ev.id));
+    sections.push(offer);
+  }
 
   pane.append(
     close,
