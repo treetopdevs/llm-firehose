@@ -15,3 +15,9 @@ Browser validation used the isolated actual Capture Engine/daemon preview compil
 ![Combined preview](2026-10-18-prototype-integration-preview.jpg)
 
 Draft remains gated on requested external review and hosted CI. Full historical reads remain unbounded as disclosed in individual plans. Review acceptance of the individual slices is not acceptance of this combined diff.
+
+## Activity Map overlay integration
+
+Local merge8e38e86 adds exact PR44 code4ba6787 and its evidence. The previous combined heada12b529 passed all hosted platforms in run39145961446. Updated combined validation:677 frontend tests/52files, TypeScript/Vite build, Go format/vet/full tests/CLI, rebuilt sidecar and3 Rust tests passed. Spec and standards follow-up ofa12b529..8e38e86 found no code regressions; preserved all prior styles and correlation API while adding the overlay. Duplicate identical decision-log articles were removed after standards feedback. Earlier browser evidence remains per-slice; no new installed-desktop proof is claimed.
+
+The coverage audit is docs/plans/2026-10-18-prototype-coverage.html. Requested external review remains open; a direct installed-Claude Sonnet5.5 High attempt is running through the existing account, with no verdict yet. No requested-model pass is inferred from launch or independent review.
