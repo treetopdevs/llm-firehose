@@ -1,3 +1,7 @@
+## Hosted-review fix checkpoint — 94b4610
+
+708 frontend tests across 54 files and production build pass after merging CodeRabbit fixes. Go/sidecar/Rust results below remain applicable: no Go or native code changed. Three hosted threads resolved; Sonnet follow-up found no code regression, and its status-table ambiguity was corrected. New hosted checks remain pending.
+
 ## Sequence integration checkpoint — f3e7f0d
 
 Loop sequence comparison from PR #45 is integrated without changes to shared navigation or other prototype code. All 707 frontend tests across 54 files, production build, empty gofmt output, go vet, full Go tests, CLI build, rebuilt sidecar and 3 Rust tests pass. Independent standards review PASS; spec review found only a stale coverage entry, now corrected. Sonnet 5.5 High integration review PASS on f3e7f0d. Report: 2026-10-18-loop-integration-sonnet.md. Historical results below retain their original scope.
