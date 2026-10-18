@@ -46,3 +46,16 @@ test("stepping during playback stops the active voice without playing a seek cue
  expect(h.voices).toHaveLength(1);expect(h.voices[0].disconnect).not.toHaveBeenCalled();
  button(panel.root,"jump to next event").click();expect(h.voices[0].disconnect).toHaveBeenCalled();expect(h.voices).toHaveLength(1);panel.deactivate();
 });
+
+test("the sound disclosure keyboard action does not toggle playback",async()=>{
+ const panel=createScore(vi.fn());document.body.append(panel.root);await panel.open(real.session_id!,real.source);
+ const summary=panel.root.querySelector("summary")!;summary.dispatchEvent(new KeyboardEvent("keydown",{key:" ",bubbles:true}));
+ expect(button(panel.root,"play").getAttribute("aria-pressed")).toBe("false");panel.deactivate();
+});
+
+test("a dense window cues only its latest observation, not an earlier error",async()=>{
+ api.sessionEvents.mockResolvedValue([...rows,{...rows[2],id:"later-message",time:new Date(1800000002500).toISOString(),category:"message",severity:"info"}]);
+ const h=audioHost(),panel=createScore(vi.fn());document.body.append(panel.root);await panel.open(real.session_id!,real.source);
+ button(panel.root,"Enable replay sound").click();await Promise.resolve();button(panel.root,"play").click();panel.tick(2600);
+ expect(h.voices).toHaveLength(1);expect(h.voices[0].frequency.value).toBe(587);panel.deactivate();
+});

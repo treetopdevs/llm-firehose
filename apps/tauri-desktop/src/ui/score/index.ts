@@ -227,6 +227,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   root.addEventListener("keydown", (e) => {
     if (!loaded()) return;
     const target = e.target as HTMLElement | null;
+    if (target?.closest("summary")) return;
     const inControl = target?.tagName === "BUTTON" || target?.tagName === "SELECT";
     switch (e.key) {
       case "ArrowRight":
