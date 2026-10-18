@@ -220,3 +220,14 @@ func (e *Engine) ErrorSessions(key string, offset, limit int) (ErrorSessionsPage
 	}
 	return page, nil
 }
+
+// CorrelationView adds source-native identity and clock metadata to TimelineView.
+// Identifiers retain their own namespaces; this view does not infer relationships.
+func CorrelationView(ev event.Event) event.Event {
+	out := TimelineView(ev)
+	out.SourceTime, out.CaptureTime = ev.SourceTime, ev.CaptureTime
+	out.TraceID, out.PromptID, out.MessageID, out.ParentID = ev.TraceID, ev.PromptID, ev.MessageID, ev.ParentID
+	out.UpstreamEventID, out.RequestID, out.Sequence = ev.UpstreamEventID, ev.RequestID, ev.Sequence
+	out.Transport, out.SourceVersion = ev.Transport, ev.SourceVersion
+	return out
+}

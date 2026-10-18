@@ -71,3 +71,6 @@ _Avoid_: Loop detector, retry count, proof of a fix
 **Session Stratigraphy**:
 A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
 _Avoid_: Session duration, effort score, causal history, proof of resolution
+
+**Causal Loom**:
+An exact-source/session explorer of native identifier groups and supported parent-message references. Membership is association; parent references are source-reported, not inferred root cause. Full receipts load only on explicit inspection.

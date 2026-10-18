@@ -151,7 +151,7 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
 export const health = () => getJSON<Health>("/health");
 export const recent = (limit = 500) => getJSON<FirehoseEvent[]>(`/events?limit=${limit}`);
 export const sessions = () => getJSON<SessionSummary[]>("/sessions");
-export const sessionEvents = (id: string, view?: "timeline", signal?: AbortSignal) =>
+export const sessionEvents = (id: string, view?: "timeline" | "correlation", signal?: AbortSignal) =>
   getJSON<FirehoseEvent[]>(`/sessions/${encodeURIComponent(id)}${view ? `?view=${view}` : ""}`, signal);
 export const traceEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/traces/${encodeURIComponent(id)}`);
