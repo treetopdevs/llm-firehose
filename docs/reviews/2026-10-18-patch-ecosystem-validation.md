@@ -10,7 +10,7 @@ Base e007b2f; independent of unmerged PR37–40.
 ## TDD
 
 # Patch Ecosystem model TDD
-Worktree: /Users/nicholas/.codex/worktrees/patch-ecosystem-prototype/llm-firehose
+Worktree: isolated codex/patch-ecosystem-prototype worktree
 Owned files: apps/tauri-desktop/src/ui/ecosystem/model.ts and model.test.ts.
 
 1. Added six tests before implementation using the actual 101-event Score session and existing internal/capture/testdata/activity_real_shapes.ndjson receipts (README records capture provenance). Covered true file observations, exact scope/workspace separation, duplicate/conflicting IDs, undated exclusion, stable replay beds and actual Codex changes-map/patch-text behavior.
@@ -25,7 +25,7 @@ Counters apply only after exact source/session and file-category filtering, per 
 
 # Patch Ecosystem panel TDD
 
-Worktree /Users/nicholas/.codex/worktrees/patch-ecosystem-prototype/llm-firehose.
+Worktree isolated codex/patch-ecosystem-prototype worktree.
 
 First4 DOM/API tests written before implementation (missing module red /tmp/firehose-patch-ui-red.log). Parent map and model integrated; nine panel tests passing (/tmp/firehose-patch-ui-green.log), tsc --noEmit passes.
 
