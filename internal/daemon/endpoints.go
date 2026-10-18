@@ -39,8 +39,11 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("unknown view %q (want full or timeline)", view), http.StatusBadRequest)
 		return
 	}
-	evs, err := s.engine.Session(id)
+	evs, err := s.engine.SessionContext(r.Context(), id)
 	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
 		if errors.Is(err, capture.ErrNotFound) {
 			http.Error(w, fmt.Sprintf("no events for session %q", id), http.StatusNotFound)
 			return
@@ -58,8 +61,11 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTraceByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	evs, err := s.engine.Trace(id)
+	evs, err := s.engine.TraceContext(r.Context(), id)
 	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
 		if errors.Is(err, capture.ErrNotFound) {
 			http.Error(w, fmt.Sprintf("no events for trace %q", id), http.StatusNotFound)
 			return

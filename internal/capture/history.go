@@ -57,20 +57,44 @@ func (e *Engine) Files() []FileArtifact { return e.projection.Files() }
 
 // Session returns presentation-deduplicated events for one session.
 func (e *Engine) Session(id string) ([]event.Event, error) {
+	return e.SessionContext(context.Background(), id)
+}
+
+// SessionContext returns session history, stopping at cooperative scanner checkpoints
+// when ctx is canceled. Cancellation discards accumulated results.
+func (e *Engine) SessionContext(ctx context.Context, id string) ([]event.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	days := e.projection.SessionDays(id)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(days) == 0 {
 		return nil, fmt.Errorf("%w: session %q", ErrNotFound, id)
 	}
-	return e.history(days, id, func(ev event.Event) bool { return ev.SessionID == id }, "session")
+	return e.history(ctx, days, id, func(ev event.Event) bool { return ev.SessionID == id }, "session")
 }
 
 // Trace returns presentation-deduplicated events sharing one trace id.
 func (e *Engine) Trace(id string) ([]event.Event, error) {
+	return e.TraceContext(context.Background(), id)
+}
+
+// TraceContext is the cancellable counterpart of Trace. It never returns partial
+// history when cancellation is observed.
+func (e *Engine) TraceContext(ctx context.Context, id string) ([]event.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	days := e.projection.TraceDays(id)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(days) == 0 {
 		return nil, fmt.Errorf("%w: trace %q", ErrNotFound, id)
 	}
-	return e.history(days, id, func(ev event.Event) bool { return ev.TraceID == id }, "trace")
+	return e.history(ctx, days, id, func(ev event.Event) bool { return ev.TraceID == id }, "trace")
 }
 
 // history streams the named day files (oldest first, as the projection
@@ -81,7 +105,7 @@ func (e *Engine) Trace(id string) ([]event.Event, error) {
 // without a prefilter. Invalid records are skipped, matching the projection
 // that produced the day list: it never counted them, so they are not part of
 // the session or trace the caller was shown.
-func (e *Engine) history(days []string, id string, keep func(event.Event) bool, kind string) ([]event.Event, error) {
+func (e *Engine) history(ctx context.Context, days []string, id string, keep func(event.Event) bool, kind string) ([]event.Event, error) {
 	var filter spool.Prefilter
 	if needles, ok := spool.IdentityNeedles([]string{id}); ok {
 		filter = spool.Prefilter{needles}
@@ -89,7 +113,10 @@ func (e *Engine) history(days []string, id string, keep func(event.Event) bool, 
 	seen := make(map[string]bool)
 	var out []event.Event
 	for _, day := range days {
-		err := e.scanDay(context.Background(), e.spoolDir, day, filter, func() {}, func(ev event.Event) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		err := e.scanDay(ctx, e.spoolDir, day, filter, func() {}, func(ev event.Event) {
 			if !keep(ev) || ev.ID != "" && seen[ev.ID] {
 				return
 			}
@@ -98,9 +125,15 @@ func (e *Engine) history(days []string, id string, keep func(event.Event) bool, 
 			}
 			out = append(out, ev)
 		})
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("%w: %s %q", ErrNotFound, kind, id)
