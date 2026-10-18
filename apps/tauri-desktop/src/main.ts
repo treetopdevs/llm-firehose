@@ -17,6 +17,7 @@ import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
 import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
+import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -54,7 +55,13 @@ function openScore(id: string, source?: string) {
   void scorePanel.open(id, source);
 }
 
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore);
+const loopsPanel = createLoops();
+function openLoops(id: string, source?: string) {
+  show("loops");
+  void loopsPanel.open(id, source);
+}
+
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops);
 
 function openSession(id: string, source?:string) {
   sessionsPanel.setScope(null);
@@ -85,6 +92,7 @@ const panels = {
   lanes: lanesPanel,
   sessions: sessionsPanel,
   score: scorePanel,
+  loops: loopsPanel,
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),

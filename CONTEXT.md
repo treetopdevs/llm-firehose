@@ -63,3 +63,7 @@ _Avoid_: Agent Score, grade, rating
 **Error Signature**:
 A normalized identity under which recurring error observations are recognised as the same error; the basis for any claim that an error repeated or belongs to a file.
 _Avoid_: Error fingerprint, storm cell, motif
+
+**Loop Observatory**:
+A session-local view of recurring Error Signatures and the captured activity between consecutive observations; recurrence does not prove an independent retry or a repeated strategy.
+_Avoid_: Loop detector, retry count, proof of a fix
