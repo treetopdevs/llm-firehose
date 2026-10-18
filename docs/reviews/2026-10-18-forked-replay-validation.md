@@ -34,7 +34,7 @@ Initial4 interaction tests written before module implementation (/tmp/firehose-r
 
 Coverage: choices nohistoryfanout; exact timeline and captured receipt identity gating; identity-only manual annotation persistence; immediately-dirty new editor; dirty text survives source changes/navigation/refresh/conflicts; explicit discard restores saved or closes new; dirty replacement refused; failed save/delete retains fields; saved branch reopening no verification/history; explicit branch route missing-anchor status; different source with same captured ID never pairs alternative/anchor; bounded read-only token recovery (65536 chars withtotal/truncation, no reread/reset); pending receipt cancellation and mismatch;20branch/40route paging; local search and escaped titles; UUID failure and blank-step rejection.
 
-UI imports notebook/model seams independently, only verified current receipts enable New hypothetical branch. Immutable reference copied into unsaved editor; later scope changes preserve text but never map it against other scope. Notebook refresh refuses dirty overwrite; optimistic writes keep prior token/state on failure. No commits.
+UI imports notebook/model seams independently, only verified current receipts enable New hypothetical branch. Immutable reference copied into unsaved editor; later scope changes preserve text but never map it against other scope. Notebook refresh refuses dirty overwrite; optimistic writes keep prior token/state on failure. Initial test-first checkpoint (before implementation commits).
 
 Map red on absent module then2 tests green:20captured window centered onexactanchor,12hypothetical steps cap, safe text, missinganchor disclosure and callbacks.
 

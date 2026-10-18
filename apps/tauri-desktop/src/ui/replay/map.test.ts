@@ -12,5 +12,5 @@ test('captured lane centers bounded window on exact anchor; hypothetical lane ne
 });
 test('missing anchors remain explicit, user text safe and alternative count bounded',()=>{
  const root=renderReplayMap(events,'missing',Array.from({length:15},()=>'<script>unsafe</script>'),()=>{});
- expect(root.textContent).toContain('Anchor not in loaded snapshot');expect(root.querySelectorAll('[data-alternative]')).toHaveLength(12);expect(root.querySelector('script')).toBeNull();expect(root.textContent).toContain('12 of 15');
+ expect(root.textContent).toContain('Saved anchor not in loaded snapshot');expect(root.querySelectorAll('[data-alternative]')).toHaveLength(12);expect(root.querySelector('script')).toBeNull();expect(root.textContent).toContain('12 of 15');
 });
