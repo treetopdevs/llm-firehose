@@ -129,4 +129,47 @@ I did not write a plan file or call ExitPlanMode, since this was a read-only rep
 
 ## Second remediation
 
-Added daemon coverage for unresolved and unknown error-only groups, public Activity cap coverage, non-file patch extraction and ineligible duplicate regression, list-order and heading-focus tests. Main redraw preserves pager focus via stable keys and heading fallback, while scope changes reset the page. Page status survives local pagination redraws. Heat/list labels share one helper. Full Go gates and 496 frontend tests/build pass. Second follow-up pending.
+Added daemon coverage for unresolved and unknown error-only groups, public Activity cap coverage, non-file patch extraction and ineligible duplicate regression, list-order and heading-focus tests. Main redraw preserves pager focus via stable keys and heading fallback, while scope changes reset the page. Page status survives local pagination redraws. Heat/list labels share one helper. Full Go gates and 496 frontend tests/build pass. Second follow-up PASS on ec44891.
+
+## Second follow-up on ec44891
+
+**PASS.** I found no concrete bugs in `c4ad1fe..HEAD` (the single commit `ec44891`). This was a static read only: I ran no tests and made no edits, network calls or delegation. The test results quoted below come from the docs, not from me.
+
+## The seven items
+
+1. **Redraw keyboard focus: fixed.**
+   - The pager buttons and heading now have `data-key`s (`errors.ts`), so `keepFocus` can restore them on a main `render()`.
+   - The fallback at `index.ts:293` sends focus to the heading if the restored button is disabled or focus left the root. That also covers a focused `<summary>`.
+   - The status `<p>` now sits outside the cleared `body`, so local pagination no longer recreates it.
+   - Tests cover the h3 fallback, a redraw through `update()`, and row order matching the API.
+2. **Scope page reset: fixed.**
+   - `errorPage.page = 0` runs whenever `key !== fetchedKey` (`index.ts:168`).
+   - `update()` already clears `fetchedKey` on a repo, privacy or vanished-worktree change, and `scopeKey` covers worktree, preset and live/frozen. All of those reset the page.
+   - A live refresh and a brush change keep the page, and `renderErrorPaths` clamps it.
+   - The `const errorPage` declared at line 249 is only reached from handlers, so there is no temporal-dead-zone problem.
+3. **Same group labels: fixed.** `activityGroupLabel` is shared by `buildTree`, the hot list and the error list, and uses `OUTSIDE_LABEL` rather than a duplicated literal.
+4. **Daemon unresolved groups: covered.**
+   - `TestActivityIncludesUnresolvedErrorOnlyGroups` produces one group from the event's worktree identity and one `unknown` group (no worktree ID).
+   - It asserts both appear in `groups` with `!Resolved` and the outside label.
+   - `workspace_graph.go` is untouched since `c4ad1fe`, and the group-set logic matches the test.
+5. **Eligibility, caps and patch coverage: covered.**
+   - The ordering test needs `ordinary` and `patch` to share an ID in one day file. `ordinary` is ineligible and skipped before `seen`, so `patch` counts.
+   - The patch test follows the `activityPaths` apply-patch fallback and gets a path.
+   - The public cap test builds 2001 distinct paths, so it should return 2000 with `OmittedErrorPaths == 1` and `0000.go` first, given the tie-break by group then path.
+   - The new Go code is gofmt-clean and the identifiers it uses exist.
+6. **Current validation: consistent.**
+   - The "496 frontend tests" claim matches the repo: 491 → 494 → 496 (my grep counts of `test(` call sites in the test files).
+   - The claim that backend code is unchanged since `c4ad1fe` is true, because only `*_test.go` changed under `internal/`.
+   - The old 491-test note is explicitly marked superseded.
+7. **Contract text: matches behaviour.** `contracts.md` now says "in any category" and the memory-scaling caveat.
+
+## Nits, not blockers
+
+- The `unknown` group now shows as "Outside known worktrees" everywhere. In the hot list that reads "Outside known worktrees · outside known worktrees", and in the tree it nests under the same-named parent node.
+- The validation doc has a "Rust3" typo (missing space) and its new status block sits above the H1.
+- Both review docs still say "second follow-up pending". Update them when this result lands.
+- A same-ID error that follows a non-error record is counted by Activity, but the projection's canonical first record would not count it. Real replays are identical, so this only matters for corrupt data.
+
+No plan file or `ExitPlanMode` call, since this is a report only and `ExitPlanMode` isn't available here.
+
+Disposition: PASS. Repeated outside-group wording is accepted descriptive context, not a correctness issue. Same-day disagreeing duplicate envelopes are corrupt data; Activity eligibility and canonical-day behavior are explicitly covered, with no invented inference of content. User-authorized Sonnet fallback closes the external gate.

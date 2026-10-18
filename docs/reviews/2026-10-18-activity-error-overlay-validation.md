@@ -1,6 +1,6 @@
 ## Current remediation status
 
-Two Sonnet 5.5 High review rounds completed; all actionable findings and test gaps addressed. Second follow-up pending. Full gofmt/vet/Go tests/CLI build and 496 frontend tests/build pass after the latest changes. Sidecar/Rust3 passed on c4ad1fe (backend code unchanged since; added backend tests pass). Independent reviews passed the first remediation; final follow-up requested separately. Historical 491-test and unavailable-model notes below are superseded. Main merge not authorized.
+Two Sonnet 5.5 High review rounds completed; all actionable findings and test gaps addressed. Second follow-up PASS on ec44891. Full gofmt/vet/Go tests/CLI build and 496 frontend tests/build pass after the latest changes. Sidecar/Rust 3 passed on c4ad1fe (backend code unchanged since; added backend tests pass). Independent reviews passed the first remediation; final combined independent follow-ups PASS on 263c606, which contains ec44891 without code changes. Historical 491-test and unavailable-model notes below are superseded. Main merge not authorized.
 
 # Activity error overlay validation
 
