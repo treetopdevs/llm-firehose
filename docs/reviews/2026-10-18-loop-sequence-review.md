@@ -77,4 +77,39 @@ Real isolated daemon/projection and local frontend, with seven explicitly normal
 
 ## Final local gates
 
-503 frontend tests in 34 files; production build; empty gofmt output; go vet; full go test; CLI build; sidecar build and cargo test all passed. Sonnet follow-up pending.
+503 frontend tests in 34 files; production build; empty gofmt output; go vet; full go test; CLI build; sidecar build and cargo test all passed. Sonnet follow-up PASS on 3472958.
+
+## Sonnet 5.5 High follow-up
+
+**PASS.** I found no blocking or medium bugs in `e007b2f..3472958`. This was a static read only: I ran no tests, made no edits, used no network and delegated nothing. I did not run it in a browser.
+
+## Prior findings
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Run numbering | **Fixed.** `sequence-view.ts:28` maps each run object to its own index in `comparison.a` or `comparison.b`. Both `compareSequences` and the `rows` use the same run objects, so the map lookups resolve. Each run's `data-key` is now unique per side and ordinal. The new test covers an `only-B` row before a match. |
+| 2 | Unchanged `derive()` resetting the view | **Fixed.** `index.ts:179` rebuilds only when the A:B numbering changed. The retained view, open run and page state survive. Sequence content depends only on the endpoint-ID ranges of `model.events`, and those don't change with signature membership. |
+| 3 | False "Comparison cleared" notice | **Fixed.** `index.ts:166` shows the message only when a comparison existed. |
+| 4 | Opaque labels | **Fixed.** The labels are now `Missing tool metadata` and `Opaque recorded metadata` (`sequence.ts:17`). The view copy discloses that labels can be truncated or opaque and that the exact token decides a match. |
+| 5 | Input redraw | **Fixed.** `index.ts:143` no longer calls `draw()` on `input`. It removes the view and caption, resets the comparison and keeps the draft. An invalid value or a self-compare keeps the draft through the redraw. |
+| 6 | Status | **Mostly fixed.** The notice is one persistent `role=status` element (`index.ts:21`). |
+| 7 | Close focus | **Fixed.** Close returns focus to the opener and falls back to the heading if the opener is detached. The opener is resolved at click time. Paging comparison rows clears the open run, so the opener cannot go stale while a run is open. |
+
+## Remaining low limitations
+
+- **Validation notice placement.** The notice now sits after `body`, below the pager of up to 40 evidence rows. A sighted user who enters an invalid or self-compare B may see nothing near the Compare control unless they scroll. Screen readers are told. Rendering the notice next to the control would fix this.
+- **Repeated announcements.** `draw()` sets `notice.textContent` on every redraw, even to the same text. Some screen readers may re-announce it when the user pages.
+- **Typing in B clears event detail.** The `input` handler calls `resetComparison()`, which calls `cancelDetail()`. Typing in B therefore also clears an unrelated event detail the user had open from the evidence list, even when no comparison existed.
+- **Label collisions remain possible.**
+  - A real tool, name or severity with the same text as a placeholder looks identical.
+  - Different opaque values share one label.
+  - Truncation can make long labels look alike.
+  - Match status is still exact, and the copy discloses this.
+- **Focus loss on redraw.** `keepFocus` restores only elements that have a `data-key`. If a redraw happens while focus is on the run title or the comparison heading, focus is lost.
+- **Late-signature input reset.** A late signature `derive()` rebuilds the input and loses the caret or IME state. This only happens in the 4-second signature window.
+- **Comparison cleared by late signatures.** If authoritative signatures arrive after the user has already compared, the key changes and the comparison is cleared. This is deliberate, and the notice is now accurate.
+- **Test gaps.** I saw no test for the input handler's no-redraw behaviour, caret or focus, or for the notice's position and announcement. The browser behaviour is unverified.
+
+Plan mode was active and `ExitPlanMode` isn't among my tools, so I wrote no plan file and this is the full deliverable.
+
+Low limitations are recorded for later accessibility refinement; exact comparison correctness and bounded rendering pass. This slice does not expand into a general Loops focus redesign.
