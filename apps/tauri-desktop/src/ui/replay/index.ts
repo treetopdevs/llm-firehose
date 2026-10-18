@@ -59,13 +59,16 @@ export function createReplay(openScore: (id: string, source: string) => void = (
     catch (error) {
         bookStatus.textContent = `Could not create branch ID: ${error instanceof Error ? error.message : String(error)}.`;
         return;
-    } fill({ id, source: verified.source, sessionId: verified.session_id, eventId: verified.id, title: "", steps: [] }); dirty = true; bookStatus.textContent = "Unsaved hypothetical branch. Enter a title and1–12 steps; no outcome or timing predicted."; editorRegion.focus(); }
+    } fill({ id, source: verified.source, sessionId: verified.session_id, eventId: verified.id, title: "", steps: [] }); dirty = true; bookStatus.textContent = "Unsaved hypothetical branch. Enter a title and 1–12 steps; no outcome or timing predicted."; editorRegion.focus(); }
     function openBranch(branch: ReplayBranch) { if (dirty) {
         bookStatus.textContent = "Unsaved edits. Save or explicitly Discard edits before opening another branch.";
         return;
     } cancelReceipt(); fill(branch); bookStatus.textContent = "Stored branch opened; no captured receipt fetched or verified."; editorRegion.focus(); }
     function save() { if (!editor || !writable)
-        return; const candidate = { ...editor, title: title.value.trim(), steps: steps.value.split("\n").map(s => s.trim()) }; const next = { version: 1 as const, branches: book.branches.some(b => b.id === candidate.id) ? book.branches.map(b => b.id === candidate.id ? candidate : b) : [...book.branches, candidate] }; const result = saveReplayBook(storage, token, next); if (!result.ok) {
+        return;
+        const lines = steps.value.split("\n").map(s => s.trim());
+        while (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+        const candidate = { ...editor, title: title.value.trim(), steps: lines }; const next = { version: 1 as const, branches: book.branches.some(b => b.id === candidate.id) ? book.branches.map(b => b.id === candidate.id ? candidate : b) : [...book.branches, candidate] }; const result = saveReplayBook(storage, token, next); if (!result.ok) {
         bookStatus.textContent = `Save failed: ${result.error}. Edits retained. On conflict, copy edits or Discard edits, then Refresh notebook.`;
         return;
     } book = next; token = result.token ?? null; fill(candidate); bookStatus.textContent = "Saved hypothetical branch locally. Outcome and timing remain unknown."; drawBranches(); }

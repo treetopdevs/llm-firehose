@@ -107,3 +107,10 @@ test("invalid captured clock is labelled undated in selection and map",async()=>
  expect(panel.root.querySelector('[aria-label="Selected observation"]')?.textContent).toContain('Undated');
  expect(panel.root.querySelector('.replay-map button')?.textContent).toContain('Undated');
 });
+test.each(["one\ntwo\n", "one\ntwo\n\n", "one\ntwo\n  \n"])("trailing blank step lines save as two steps: %j", async value => {
+ const panel = createReplay(); await draft(panel);
+ input(panel.root, "Hypothetical steps", value); click(panel.root, "Save branch");
+ expect(raw).not.toBeNull();
+ expect(JSON.parse(raw!).branches[0].steps).toEqual(["one", "two"]);
+ expect(panel.root.textContent).toContain("Saved hypothetical branch locally");
+});
