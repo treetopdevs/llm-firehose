@@ -41,3 +41,8 @@ test('superseded list responses cannot replace the current filter snapshot',asyn
 test('matching captured receipt renders only after explicit inspection',async()=>{
  const full={...captured,worktree_id:row.workspace,payload:{file_path:row.path}};api.capturedEvent.mockResolvedValue(full);const panel=createFiles();click(panel.root,'Activity by session');await settle();expect(api.capturedEvent).not.toHaveBeenCalled();click(panel.root,'Inspect latest observation 1');await settle();expect(panel.root.querySelector('pre')?.textContent).toContain(captured.id);
 });
+test('summary paths retain their complete suffix and closing receipt restores its opener',async()=>{
+ const path='a'.repeat(170)+'-distinct-suffix';api.files.mockResolvedValue([{path,events:1,sources:['codex'],last_time:captured.time,first_time:captured.time}]);
+ const panel=createFiles();document.body.append(panel.root);await panel.refresh();expect(panel.root.textContent).toContain(path);
+ api.capturedEvent.mockResolvedValue({...captured,worktree_id:row.workspace,payload:{file_path:row.path}});click(panel.root,'Activity by session');await settle();const opener=[...panel.root.querySelectorAll('button')].find(b=>b.textContent==='Inspect latest observation 1')!;opener.click();await settle();const close=[...panel.root.querySelectorAll('button')].find(b=>b.textContent==='Close file observation')!;close.focus();close.click();expect(document.activeElement).toBe(opener);
+});

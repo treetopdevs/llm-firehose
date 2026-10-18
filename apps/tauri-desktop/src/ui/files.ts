@@ -41,7 +41,7 @@ export function createFiles() {
   if(mode==='summary'){
    if(!summary.length){body.append(el('p',{},'no file activity captured yet'));return;}
    const table=el('table',{class:'files-table'},el('tr',{},...['path','events','sources','last touched'].map(h=>el('th',{},h))));
-   for(const f of summary)table.append(el('tr',{},el('td',{},label(f.path)),el('td',{},String(f.events)),el('td',{},f.sources.join(', ')),el('td',{},new Date(f.last_time).toLocaleString())));
+   for(const f of summary)table.append(el('tr',{},el('td',{},stripControl(f.path)),el('td',{},String(f.events)),el('td',{},f.sources.join(', ')),el('td',{},new Date(f.last_time).toLocaleString())));
    body.append(table);return;
   }
   body.append(el('p',{},'All indexed history. Same recorded scope/path does not prove simultaneous activity, physical-file identity or a write conflict. Events include write-tool starts, ends and failures; they are not edit counts. Opaque IDs reflect captured privacy. Missing, cross-kind and truncated scopes/paths are not comparable; minimal capture may yield no readable paths.'));
@@ -54,25 +54,25 @@ export function createFiles() {
   for(let i=start;i<end;i++){
    const row=visible[i],count=groups.get(groupKey(row))?.size??0;
    const scope=row.workspace?( /^[a-f0-9]{64}$/.test(row.workspace)?'Opaque recorded scope ID: ':'Recorded scope: ')+label(row.workspace):'Unknown workspace';
-   const inspect=button(`Inspect latest observation ${i+1}`,()=>void inspectRow(row));inspect.disabled=!row.last_event_id;
+   const inspect=button(`Inspect latest observation ${i+1}`,()=>void inspectRow(row,inspect));inspect.disabled=!row.last_event_id;
    body.append(el('article',{},el('h3',{},label(row.path)),el('p',{},`${row.workspace_kind} · ${scope}`),el('p',{},`${label(row.source)} · ${label(row.session_id)||'Unknown session'} · ${row.events} events · ${row.first_time} → ${row.last_time}`),el('p',{},comparable(row)&&row.session_id?`${count} source/session scopes with this exact recorded path`:'Not comparable for shared-path grouping'),inspect));
   }
   if(visible.length>40){const prev=button('Previous file activity',()=>move(-1,'Previous file activity')),next=button('Next file activity',()=>move(1,'Next file activity'));prev.disabled=page===0;next.disabled=end===visible.length;body.append(prev,next);}
  }
  function move(delta:number,name:string){cancelDetail();page+=delta;draw();const target=[...body.querySelectorAll('button')].find(b=>b.textContent===name&&!b.disabled);(target??heading).focus();}
- async function inspectRow(row:FileSession){
+ async function inspectRow(row:FileSession,opener:HTMLElement){
   cancelDetail();if(!row.last_event_id)return;const token=detailVersion,current=version,ctl=new AbortController();detailAbort=ctl;
   detail.append(el('p',{role:'status'},'Loading captured observation…'));
   try{const event=await capturedEvent(row.last_event_id,ctl.signal);if(token!==detailVersion||current!==version||ctl.signal.aborted)return;
    const [kind,scope]=recordedFileScope(event);
    if(event.id!==row.last_event_id||event.source!==row.source||(event.session_id??'')!==row.session_id||kind!==row.workspace_kind||scope!==row.workspace||!recordedFilePaths(event).includes(row.path))throw new Error('mismatch');
-   clear(detail);detail.append(button('Close file observation',cancelDetail),el('pre',{},JSON.stringify(event,null,2)));
+   clear(detail);detail.append(button('Close file observation',()=>{cancelDetail();(opener.isConnected?opener:heading).focus();}),el('pre',{},JSON.stringify(event,null,2)));
   }catch{if(token!==detailVersion||current!==version||ctl.signal.aborted)return;clear(detail);detail.append(el('p',{role:'status'},'Captured observation unavailable or no longer matches this row.'));}
  }
  async function refresh(){
   deactivate();const current=version,ctl=new AbortController();listAbort=ctl;page=0;phase='loading';status.textContent='Loading files…';draw();
   try{const selectedMode=mode;const loaded=selectedMode==='summary'?await files(ctl.signal):await fileSessions(ctl.signal);if(current!==version||ctl.signal.aborted)return;if(selectedMode==='summary')summary=loaded as FileArtifact[];else rows=loaded as FileSession[];phase='ready';status.textContent='';draw();}
-  catch{if(current!==version||ctl.signal.aborted)return;phase='error';status.textContent=mode==='sessions'?'Scoped activity unavailable on this daemon. Retry or use Path summary.':'File history unavailable.';clear(body);body.append(button('Retry files',()=>void refresh()));}
+  catch{if(current!==version||ctl.signal.aborted)return;phase='error';status.textContent=mode==='sessions'?'Scoped activity unavailable on this daemon. Retry or use Path summary.':'File history unavailable.';clear(body);body.append(button('Retry files',()=>{heading.focus();void refresh();}));}
  }
  return {root,refresh,deactivate};
 }
