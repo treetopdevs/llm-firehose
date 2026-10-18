@@ -109,7 +109,7 @@ export function createSharedFiles(now: () => number = Date.now) {
     if (changed) { cancelReceipt(); page = 0; }
     membership = nextMembership; sessions = next; attentionStale = isStale; attentionTime = time; attentionAvailable = available; draw();
   }
-  function filtersChanged() { invalidateList(); cancelReceipt(); page = 0; draw(); }
+  function filtersChanged() { if (loading) error = "Shared-file load cancelled because filters changed. Load again when ready."; invalidateList(); cancelReceipt(); page = 0; draw(); }
   function deactivate() { active = false; stale = true; invalidateList(); cancelReceipt(); draw(); }
   function activate() { active = true; stale = true; draw(); }
   function setConnected(value: boolean) { if (value === connected) return; connected = value; stale = true; invalidateList(); cancelReceipt(); draw(); }

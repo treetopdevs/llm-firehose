@@ -75,3 +75,34 @@ Finished reading the diff, plan and code; writing up the findings now. Static re
 ## Remediation
 
 Two failing-first regressions reproduced redraw cancellation and attention arrival during pending file load. setSessions now compares membership and snapshot metadata; unfiltered file requests survive attention arrival and unrelated redraws. Parent source/workspace/search changes explicitly cancel; attention refresh clears receipts, recent-window changes only alter bands. Pagination and unchanged membership preserve shared selection/page. Per-lane participant ranges, unique path/scope/ordinal accessible names, prominent stale notices, latest-observation wording and receipt Retry added. Status text changes only when different. Added lifecycle, cross-region, kind and shared predicate regressions. Follow-up pending.
+
+## Final requested-model follow-up
+
+**PASS.** I found no blocking or should-fix issues in `1bb429d` against `6ce01f3`. I read the diff, the review doc, plan correction 12, and the shared-files, Airspace, model and Files code. I ran no tests, edits, network calls or delegation, so the passing claims below come from reading the code and the tests, not from running them.
+
+**Main focus**
+- **Attention completion and redraws:** `setSessions` (`shared-files.ts:105-111`) now compares sorted `[source,id]` membership and the availability flag. It returns early if nothing changed, and it never touches the list token or abort controller. An attention arrival during a pending Files fetch therefore leaves the fetch alone and regroups when the rows land. This covers the original blocking finding.
+- **Receipt and page on redraw:** The receipt and page are reset only when membership or availability changes. The receipt section lives outside `body`, so redraws don't wipe it. Attention paging goes through Airspace's own `cancelReceipt`, not the shared one, so shared page and receipt survive "Next sessions".
+- **Window changes:** `deriveAirspace` uses the window only to assign bands (`model.ts:62`), so membership doesn't change. The window handler now bypasses `filtersChanged`.
+- **Explicit filters:** Source, workspace and search all call `filtersChanged` (`index.ts:156-160`). That invalidates the list token and abort controller, clears the receipt and resets the page. A late response can't resurrect rows or a Loading state.
+- **Refresh and lifecycle:** Attention refresh start clears the shared receipt (`index.ts:115`) and leaves the list alone. Deactivate and disconnect still invalidate both.
+
+**Receipts**
+- `matchesFileReceipt` is shared with Files. It checks id, source, session (`?? ""`), scope kind and value, and path membership.
+- `comparableFileScope` now rejects empty kinds; Files and the shared model both use it. The new `files-paths.test.ts` case covers it.
+- Receipt errors now offer Retry plus Close. The text names the latest observation for one participant and says it doesn't prove sharing.
+- The opener falls back to the heading when it has been redrawn away.
+
+**Other earlier findings**
+- **Inspect names (#2):** names are unique via path, scope, lane and ordinal, and each `<ol>` has an `aria-label`.
+- **Per-lane ranges (#3):** the range is computed from the visible slice and `<ol start>`.
+- **Stale marking (#4):** stale lanes get a `.airspace-notice.stale` notice, and the CSS at `styles.css:836` is unscoped, so it applies.
+- **Announcements (#8):** status text is rewritten only when it changes.
+- **Tests (#7):** added for lifecycle, cross-region independence, unrecognized kinds and the shared predicate.
+
+**Residual, all low and non-blocking**
+1. **Index wiring tests:** none covers source, workspace or search changes cancelling a pending fetch, or attention completing during one. The shared-level tests exercise `filtersChanged` and `setSessions` directly, and the wiring is a one-liner. One cheap index test would pin it.
+2. **Typing in search silently aborts a pending Files load:** the notice just shows "stale", with no "cancelled by filter change" message. This follows plan correction 12, so it's a UX note only.
+3. **Late-response tests:** a late receipt response on shared page change still has no direct test; only filter and deactivate paths do.
+
+Residual low fixes: index-level pending-search cancellation regression (failed before new feedback), explicit cancellation feedback, and late receipt/page regression added. Full suite rerun recorded separately.

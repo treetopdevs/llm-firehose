@@ -135,3 +135,12 @@ test('explicit filters cancel a pending list without allowing late resurrection'
   expect(signal.aborted).toBe(true); expect(p.root.textContent).not.toContain('Loading shared files');
   expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(0);
 });
+test('shared pagination rejects a late receipt response', async () => {
+  const p = mount(); const many = Array.from({ length: 45 }, (_, i) => ({ ...row, session_id: String(i).padStart(3, '0') }));
+  p.setSessions(many.map(r => session(r.session_id)), false); api.fileSessions.mockResolvedValue(many);
+  button(p.root, 'Load shared files').click(); await settle();
+  let done!: (r: FirehoseEvent) => void; api.capturedEvent.mockReturnValue(new Promise(r => done = r));
+  button(p.root, `Inspect latest file observation: ${row.source} / 000`).click(); const signal = api.capturedEvent.mock.calls[0][1];
+  button(p.root, 'Next file participants').click(); done({ ...event, session_id: '000' }); await settle();
+  expect(signal.aborted).toBe(true); expect(p.root.querySelector('pre')).toBeNull();
+});

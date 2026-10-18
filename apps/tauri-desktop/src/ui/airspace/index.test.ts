@@ -187,3 +187,11 @@ test("attention pagination and recent-window changes preserve pending shared-fil
     expect(signal.aborted).toBe(false); done([]); await settle();
     expect(panel.root.textContent).toContain('No shared recorded files');
 });
+test("search wiring cancels pending shared load with feedback", async () => {
+    const panel = createAirspace(undefined, undefined, now); await panel.activate();
+    let done!: (v: unknown[]) => void; api.fileSessions.mockReturnValue(new Promise(r => done = r));
+    click(panel.root, 'Load shared files'); const signal = api.fileSessions.mock.calls[0][0];
+    const search = panel.root.querySelector<HTMLInputElement>('[aria-label="Search Airspace"]')!;
+    search.value = 'changed'; search.dispatchEvent(new Event('input')); done([]); await settle();
+    expect(signal.aborted).toBe(true); expect(panel.root.textContent).toContain('cancelled because filters changed');
+});
