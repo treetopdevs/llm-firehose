@@ -134,6 +134,8 @@ let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
+  if (active === "court" && name !== "court") courtPanel.refresh();
+  if (name === "court") renderDetail(detailPane, null, () => {});
   if (active === "handoffs" && name !== "handoffs") panels.handoffs.refresh();
   if (active === "airspace" && name !== "airspace") airspacePanel.deactivate();
   if (active === "loom" && name !== "loom") panels.loom.deactivate();
