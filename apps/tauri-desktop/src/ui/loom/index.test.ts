@@ -126,3 +126,23 @@ test("reference depth and direction redraw locally, retain focus, and cancel lat
  input(panel.root,"Source","another"); expect(depth!.value).toBe("1"); expect(direction.value).toBe("both");
  panel.root.remove();
 });
+
+test("changing traversal resets paged groups and references and clears selected members", async () => {
+ const native=(await import("./fixture.opencode.json")).default as FirehoseEvent[];
+ const root={...native[0],id:"root",message_id:"root"};
+ const children=Array.from({length:45},(_,i)=>({...native[1],id:`child-${i}`,message_id:`child-${i}`,parent_id:"root"}));
+ api.sessionEvents.mockResolvedValue([root,...children]);
+ const panel=createLoom(); input(panel.root,"Source","opencode"); input(panel.root,"Session ID","ses_fixture01");
+ click(panel.root,"Load relationships"); await settle();
+ panel.root.querySelector<HTMLButtonElement>('[aria-label="Focus observation opencode / ses_fixture01 / root"]')!.click();
+ click(panel.root,"Next groups"); click(panel.root,"Next references");
+ panel.root.querySelector<HTMLButtonElement>('.loom-groups button')!.click();
+ expect(panel.root.querySelector('[aria-label="Group members"]')!.textContent).not.toBe("");
+ const depth=panel.root.querySelector<HTMLSelectElement>('[aria-label="Reference depth"]')!;
+ depth.value="2"; depth.dispatchEvent(new Event("change"));
+ expect(panel.root.querySelector('[aria-label="Group members"]')!.textContent).toBe("");
+ for(const label of ["Previous groups","Previous references"]) expect([...panel.root.querySelectorAll("button")].find(b=>b.textContent===label)!.disabled).toBe(true);
+ expect(panel.root.querySelectorAll('.loom-groups li')).toHaveLength(20);
+ expect(panel.root.querySelectorAll('.loom-parents li')).toHaveLength(20);
+ expect(api.sessionEvents).toHaveBeenCalledOnce(); expect(api.capturedEvent).not.toHaveBeenCalled();
+});

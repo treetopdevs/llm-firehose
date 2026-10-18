@@ -78,11 +78,7 @@ export function buildLoom(input: readonly FirehoseEvent[], source: string, sessi
 
 /** One hop from the focus observation's own groups; never a recursive crawl. */
 export function loomNeighborhood(model: LoomModel, eventId: string): {groups: LoomGroup[]; parents: LoomParent[]} {
-  const direct = new Set(model.groups.filter(g => g.members.includes(eventId)).map(g => g.key));
-  const parents = model.parents.filter(p => direct.has(p.parentKey) || direct.has(p.childKey));
-  const visible = new Set(direct);
-  for (const parent of parents) { visible.add(parent.parentKey); visible.add(parent.childKey); }
-  return {groups: model.groups.filter(g => visible.has(g.key)), parents};
+  return loomTraversal(model, eventId, "both", 1);
 }
 
 export type LoomDirection = "upstream" | "downstream" | "both";

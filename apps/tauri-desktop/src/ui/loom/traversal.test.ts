@@ -38,3 +38,19 @@ test("conflicting references are terminal and foreign scopes cannot resolve miss
  expect(missing.parents[0].status).toBe("missing");
  expect(ids(missing)).toEqual(["a","x"]);
 });
+
+test("depth normalization and non-message groups preserve one-hop semantics", () => {
+ const m = model([row("a"),row("b","a"),row("c","b")]);
+ for(const depth of [0,-9,Infinity,-Infinity,NaN,1.9]) expect(ids(loomTraversal(m,"c","upstream",depth))).toEqual(["b","c"]);
+ expect(ids(loomTraversal(m,"c","upstream",2.5))).toEqual(["a","b","c"]);
+ const call = {...row("call"),message_id:undefined,call_id:"only-call"};
+ expect(ids(loomTraversal(model([call]),"call","both",4))).toEqual(["only-call"]);
+});
+
+test("10k fan-out remains complete and terminal conflicts do not expand downstream", () => {
+ const rows = [row("root"),...Array.from({length:10_000},(_,i)=>row(`child-${i}`,"root"))];
+ const result=loomTraversal(model(rows),"root","downstream",4);
+ expect(result.groups).toHaveLength(10_001); expect(result.parents).toHaveLength(10_000);
+ const conflict=model([row("a"),row("b","a"),{...row("b","x"),id:"b-again"},row("c","b")]);
+ expect(ids(loomTraversal(conflict,"a","downstream",4))).toEqual(["a","b"]);
+});
