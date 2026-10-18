@@ -2,7 +2,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import type { AttentionSnapshot, AttentionSession, FirehoseEvent } from "../../api";
 import fixture from "../score/fixture.errsig.json";
-const api = vi.hoisted(() => ({ attention: vi.fn(), capturedEvent: vi.fn() }));
+const api = vi.hoisted(() => ({ attention: vi.fn(), capturedEvent: vi.fn(), fileSessions: vi.fn() }));
 vi.mock("../../api", () => api);
 import { createAirspace } from "./index";
 const event = (fixture as FirehoseEvent[]).find(e => e.session_id)!;
@@ -134,4 +134,24 @@ test("paging retains the evaluated snapshot even when activity ages across the w
  clock+=2*60000;click(panel.root,"Next sessions");const second=[...panel.root.querySelectorAll(".airspace-row h3")].map(n=>n.textContent);
  expect(second).toEqual([`${row.source} / working-00`,`${row.source} / quiet`]);expect(second.every(id=>!first.includes(id))).toBe(true);expect(panel.root.querySelector(".airspace-notice")!.textContent).toBe(stamp);
  click(panel.root,"Previous sessions");expect([...panel.root.querySelectorAll(".airspace-row h3")].map(n=>n.textContent)).toEqual(first);
+});
+
+test("shared files uses filtered sessions before attention pagination and aborts on departure", async () => {
+    const sessions = Array.from({ length: 25 }, (_, i) => ({ ...row, id: String(i), worktree_id: "/work" }));
+    api.attention.mockResolvedValue({ sessions, warnings: [], gaps: [] });
+    api.fileSessions.mockResolvedValue(sessions.map(s => ({ workspace_kind: "worktree_id", workspace: "/work", path: "shared.ts", source: s.source, session_id: s.id, events: 1, first_time: event.time, last_time: event.time, last_event_id: event.id })));
+    const panel = createAirspace(undefined, undefined, now);
+    await panel.activate();
+    expect(api.fileSessions).not.toHaveBeenCalled();
+    click(panel.root, "Load shared files"); await settle();
+    expect(panel.root.querySelectorAll("[data-file-participant]")).toHaveLength(25);
+    const search = panel.root.querySelector<HTMLInputElement>('[aria-label="Search Airspace"]')!;
+    search.value = "no such session"; search.dispatchEvent(new Event("input"));
+    expect(panel.root.querySelectorAll("[data-file-participant]")).toHaveLength(0);
+    let finish!: (r: unknown[]) => void;
+    api.fileSessions.mockReturnValue(new Promise(r => finish = r));
+    click(panel.root, "Refresh shared files");
+    const signal = api.fileSessions.mock.calls.at(-1)![0];
+    panel.deactivate(); finish([]); await settle();
+    expect(signal.aborted).toBe(true);
 });

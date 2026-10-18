@@ -28,7 +28,7 @@ export function recordedFileScope(event: FirehoseEvent): [string, string] {
 }
 const groupKey = (r: FileSession) =>
   JSON.stringify([r.workspace_kind, r.workspace, r.path]);
-const comparable = (r: FileSession) =>
+export const comparableFileScope = (r: FileSession) =>
   r.workspace_kind !== "unknown" && !!r.workspace && !r.path.endsWith("…");
 const label = (s: string) => {
   const clean = stripControl(s);
@@ -156,7 +156,7 @@ export function createFiles() {
     if (groupedRows !== rows) {
       groups = new Map<string, Set<string>>();
       for (const row of rows)
-        if (comparable(row) && row.session_id && row.source) {
+        if (comparableFileScope(row) && row.session_id && row.source) {
           const key = groupKey(row),
             set = groups.get(key) ?? new Set<string>();
           set.add(JSON.stringify([row.source, row.session_id]));
@@ -168,7 +168,7 @@ export function createFiles() {
     const visible = rows.filter(
       (r) =>
         (!shared.checked ||
-          (comparable(r) && (groups.get(groupKey(r))?.size ?? 0) > 1)) &&
+          (comparableFileScope(r) && (groups.get(groupKey(r))?.size ?? 0) > 1)) &&
         [r.workspace_kind, r.workspace, r.path, r.source, r.session_id]
           .join(" ")
           .toLowerCase()
@@ -213,7 +213,7 @@ export function createFiles() {
           el(
             "p",
             {},
-            comparable(row) && row.session_id
+            comparableFileScope(row) && row.session_id
               ? `${count} source/session scopes with this exact recorded path`
               : "Not comparable for shared-path grouping",
           ),

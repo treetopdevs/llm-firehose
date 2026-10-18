@@ -4,14 +4,16 @@ import { clear, el } from "../../dom";
 import { BANDS, deriveAirspace } from "./model";
 import type { AirspaceRow } from "./model";
 import { renderAirspaceMap } from "./map";
+import { createSharedFiles } from "./shared-files";
 export function createAirspace(openScore: (id: string, source: string) => void = () => { }, openInbox: () => void = () => { }, now: () => number = Date.now) {
+    const sharedFiles = createSharedFiles(now);
     const windowSelect = el("select", { "aria-label": "Activity window" });
     for (const minutes of [5, 15, 60])
         windowSelect.append(el("option", { value: String(minutes) }, `${minutes} minutes`));
     windowSelect.value = "15";
     const sourceSelect = el("select", { "aria-label": "Airspace source" }), workspaceSelect = el("select", { "aria-label": "Airspace workspace" }), query = el("input", { type: "search", "aria-label": "Search Airspace", placeholder: "Search sessions" });
     const notice = el("p", { role: "status", class: "airspace-notice" }), board = el("section"), diagnostics = el("section"), selection = el("section", { "aria-label": "Selected session", tabindex: "-1" }), evidence = el("section", { "aria-label": "Captured receipt", class: "airspace-evidence", tabindex: "-1" });
-    const root = el("section", { class: "airspace" }, el("h2", {}, "Attention Airspace"), el("p", { class: "dim" }, "Captured observations, not process monitoring. Completion may mean a turn completed, not that a session ended. No observation in a window is not proof of idleness."), el("div", { class: "airspace-controls" }, el("label", {}, "Recent window ", windowSelect), el("label", {}, "Source ", sourceSelect), el("label", {}, "Workspace ", workspaceSelect), query, button("Refresh snapshot", () => void refresh()), button("Open Attention inbox", openInbox)), notice, selection, evidence, board, diagnostics);
+    const root = el("section", { class: "airspace" }, el("h2", {}, "Attention Airspace"), el("p", { class: "dim" }, "Captured observations, not process monitoring. Completion may mean a turn completed, not that a session ended. No observation in a window is not proof of idleness."), el("div", { class: "airspace-controls" }, el("label", {}, "Recent window ", windowSelect), el("label", {}, "Source ", sourceSelect), el("label", {}, "Workspace ", workspaceSelect), query, button("Refresh snapshot", () => void refresh()), button("Open Attention inbox", openInbox)), notice, selection, evidence, board, sharedFiles.root, diagnostics);
     let snapshot: AttentionSnapshot | undefined, fetchedAt: number | undefined, evaluatedAt = now(), page = 0, connected = true, active = true, loading = false, stale = true, error = "";
     let snapshotToken = 0, receiptToken = 0, snapshotAbort: AbortController | undefined, receiptAbort: AbortController | undefined;
     function button(text: string, action: () => void) { const b = el("button", {}, text); b.addEventListener("click", action); return b; }
@@ -28,10 +30,12 @@ export function createAirspace(openScore: (id: string, source: string) => void =
         clear(board);
         clear(diagnostics);
         if (!snapshot) {
+            sharedFiles.setSessions([], true, fetchedAt, false);
             board.append(el("p", {}, loading ? "Waiting for first snapshot…" : "No snapshot available. Refresh to retry."));
             return;
         }
         const derived = deriveAirspace(snapshot.sessions, { now: evaluatedAt, windowMs: Number(windowSelect.value) * 60000, source: value(sourceSelect), workspace: value(workspaceSelect), query: query.value });
+        sharedFiles.setSessions(derived.rows.map(row => row.session), stale || !connected, fetchedAt);
         page = Math.min(page, Math.max(0, Math.ceil(derived.rows.length / 20) - 1));
         const rows = derived.rows.slice(page * 20, page * 20 + 20);
         board.append(el("p", {}, `${derived.rows.length} filtered / ${snapshot.sessions.length} total sessions`), el("p", { class: "airspace-counts" }, BANDS.map(b => `${b.label}: ${derived.counts[b.id]}`).join(" · ")));
@@ -152,10 +156,10 @@ export function createAirspace(openScore: (id: string, source: string) => void =
     for (const select of [windowSelect, sourceSelect, workspaceSelect])
         select.addEventListener("change", localChange);
     query.addEventListener("input", localChange);
-    function deactivate() { active = false; snapshotToken++; snapshotAbort?.abort(); loading = false; cancelReceipt(); }
-    async function activate() { active = true; await refresh(); }
+    function deactivate() { sharedFiles.deactivate(); active = false; snapshotToken++; snapshotAbort?.abort(); loading = false; cancelReceipt(); }
+    async function activate() { sharedFiles.activate(); active = true; await refresh(); }
     function setConnected(value: boolean) { if (connected === value)
-        return; connected = value; stale = true; error = ""; snapshotToken++; snapshotAbort?.abort(); loading = false; cancelReceipt(); draw(); }
+        return; sharedFiles.setConnected(value); connected = value; stale = true; error = ""; snapshotToken++; snapshotAbort?.abort(); loading = false; cancelReceipt(); draw(); }
     options(sourceSelect, []);
     options(workspaceSelect, []);
     draw();
