@@ -1,6 +1,6 @@
 # Handoff Subway v1
 
-Status: planned. Base main `e007b2f26e61042a43f802c13844a761946e8e3a`. PR #37 (Evidence Court) remains open, green and awaiting human merge approval; this independent slice does not import its implementation.
+Status: implemented and locally validated; adversarial review pending (provider timeout/quota). Base main `e007b2f26e61042a43f802c13844a761946e8e3a`. PR #37 (Evidence Court) remains open, green and awaiting human merge approval; this independent slice does not import its implementation.
 
 ## Outcome
 
