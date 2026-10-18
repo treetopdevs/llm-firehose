@@ -1,6 +1,7 @@
 import { capturedEvent } from "../../api";
 import type { FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
+import { isTransition } from "../../spark";
 import { createHandoffBook, STORAGE_KEY } from "./model";
 import type { Endpoint, Handoff, HandoffBook } from "./model";
 import { renderHandoffMap } from "./map";
@@ -155,7 +156,7 @@ export function createHandoffs(openScore: (session: string, source: string) => v
     function pager(host: HTMLElement, current: number, total: number, size: number, name: string, change: (page: number) => void) { const previous = button(`Previous ${name}`, () => change(current - 1)), next = button(`Next ${name}`, () => change(current + 1)); previous.disabled = current === 0; next.disabled = (current + 1) * size >= total; host.append(el("div", { class: "handoff-controls" }, previous, el("span", {}, `${current * size + 1}–${Math.min((current + 1) * size, total)} of ${total}`), next)); }
     function browse() {
         try {
-            recentEvents = getRecent().filter(e => e.session_id && e.source).slice(-100).reverse();
+            recentEvents = getRecent().filter(e => e.session_id && e.source && !isTransition(e)).slice(-100).reverse();
             recentPage = 0;
             drawRecent();
         }

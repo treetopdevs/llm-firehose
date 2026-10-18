@@ -129,3 +129,26 @@ test("conflicting write and UUID failure preserve previews for retry", async () 
     expect(panel.root.textContent).toContain("another window");
     expect(panel.root.querySelectorAll(".handoff-endpoint pre")).toHaveLength(2);
 });
+test("recent picker excludes stream-only transitions before retaining the latest 100 receipts", () => {
+    // Captured envelopes from the real fixture, mixed with the engine's synthetic
+    // transition shape; transitions are live state, never durable receipts.
+    const mixed = Array.from({length: 110}, (_, i) => [
+        {...from, id: `receipt-${i}`, summary: `Captured receipt ${i}`},
+        {...from, id: `transition-${i}`, source: "firehose", name: "state.transition", summary: "Synthetic transition"},
+    ]).flat();
+    const panel = createHandoffs(undefined, () => mixed, storage());
+    click(panel.root, "Browse recent observations");
+    const seen: string[] = [];
+    for (let page = 0; page < 5; page++) {
+        const rows = [...panel.root.querySelectorAll<HTMLElement>(".handoff-recent-row")];
+        expect(rows).toHaveLength(20);
+        expect(rows.every(row => !row.textContent?.includes("Synthetic transition"))).toBe(true);
+        for (const row of rows) {
+            click(row, "Use as departure");
+            seen.push(panel.root.querySelector<HTMLInputElement>('[aria-label="Departure event ID"]')!.value);
+        }
+        if (page < 4) click(panel.root, "Next observations");
+    }
+    expect(seen).toEqual(Array.from({length: 100}, (_, i) => `receipt-${109-i}`));
+    expect(api.capturedEvent).not.toHaveBeenCalled();
+});
