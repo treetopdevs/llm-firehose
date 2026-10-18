@@ -43,3 +43,30 @@ Direct Claude CLI, exact model `claude-sonnet-5-5`, `--effort high`; static read
 ## Remediation
 
 Deletion warns about dirty text; read-only notebooks refuse new drafts; RFC3339 clocks preserve fractional ordering and invalid times are labelled Undated everywhere. Deactivation clears loading notice and missing-anchor notice appears once. Four new regressions failed first; all 516 frontend tests and build pass. Follow-up pending. User explicitly authorized this Sonnet fallback.
+
+## Follow-up on 342570e
+
+**PASS** for `5d2f3f6..HEAD` (one commit, `342570e`), with no blocking findings or regressions. This was a static read only. I ran no tests, made no edits, made no network calls and delegated nothing.
+
+**Sonnet advisories**
+
+- **Delete with unsaved edits** (`index.ts:76`): fixed. `confirmDelete` appends "Unsaved edits to this branch will also be lost." when `dirty && editor?.id === branch.id`. The field `input` listener (`index.ts:127`) clears the confirmation, so the wording can't go stale if the user edits after opening it.
+- **New branch when read-only** (`index.ts:51`): fixed. `newBranch` refuses with a message before the dirty check and opens no draft, so nothing blocks Refresh notebook.
+- **Raw invalid times** (`index.ts:33`, `map.ts:13`): fixed. The route list, selection panel and map all go through `replayTimeLabel`. The only remaining `Date.parse` in the replay sources is the guarded one in `model.ts:19`.
+- **Lenient `Date.parse`** (`model.ts:13-26`): fixed with a strict RFC3339 regex, a calendar round-trip check and offset bounds.
+  - The sign is applied correctly: `seconds = base − offset`.
+  - Sub-second digits are compared as zero-padded strings, so `.000001-04:00` sorts before `.000002Z`.
+  - The comparator is transitive: valid times sort first, invalid times sort last, and ties break on ID.
+  - Impossible dates and leap seconds become "Undated". Lowercase `t`/`z` and space-separated times now do too, which is intended and disclosed.
+- **`deactivate` stuck on "Loading…"** (`index.ts:136`): fixed. `main.ts:117` calls `deactivate`, and `main.ts:126` calls `refresh` on re-entry. An in-flight choices reply is still dropped by the `choiceVersion` check, so the "paused" notice can't be overwritten late.
+- **Duplicate missing-anchor message**: fixed. Only `map.ts` emits it now, under the same `matching` condition, so the message appears exactly once.
+- **"No commits" in the validation doc**: reworded to "Initial test-first checkpoint (before implementation commits)".
+
+**Non-blocking, no action needed**
+
+- The new tests cover read-only creation, the delete warning and undated labels in the selection panel and map. They also cover strict clock ordering, `invalidTimes === 2` and the `z, a, bad, loose` order. That is the four regressions the review doc claims.
+- Nothing tests the `deactivate` status text, and nothing tests the case where the missing-anchor message must appear only once. Both are trivial.
+- I couldn't check the claim in the review doc and backlog HTML that all 516 frontend tests and the build pass.
+- The validation doc and backlog HTML still say the Argon and Gemini gates were not met. Leave the PR as a draft until you decide whether the Sonnet 5.5 High fallback satisfies them.
+
+Disposition: PASS. User explicitly authorized Sonnet 5.5 High fallback, so unavailable Argon/Gemini are not additional gates. Local 516 tests/build independently verified by coordinator.
