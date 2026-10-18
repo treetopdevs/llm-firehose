@@ -19,6 +19,7 @@ import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
+import { createEcosystem } from "./ui/ecosystem";
 import { createStrata } from "./ui/strata";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -95,6 +96,7 @@ const panels = {
   score: scorePanel,
   loops: loopsPanel,
   strata: createStrata(openLoops, openScore),
+  ecosystem: createEcosystem(openScore),
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -112,6 +114,8 @@ let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
+  if (active === "ecosystem" && name !== "ecosystem") panels.ecosystem.deactivate();
+  if (name === "ecosystem") renderDetail(detailPane, null, () => {});
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);

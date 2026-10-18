@@ -71,3 +71,6 @@ _Avoid_: Loop detector, retry count, proof of a fix
 **Session Stratigraphy**:
 A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
 _Avoid_: Session duration, effort score, causal history, proof of resolution
+
+**Patch Ecosystem**:
+Replay of captured file observations grouped by exact stored path and workspace label within one source/session. Growth counts observations, not changed lines or quality; reported completion is not verified final file content.
