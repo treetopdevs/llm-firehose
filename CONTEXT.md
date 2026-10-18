@@ -71,3 +71,7 @@ _Avoid_: Loop detector, retry count, proof of a fix
 **Session Stratigraphy**:
 A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
 _Avoid_: Session duration, effort score, causal history, proof of resolution
+
+**Attention Airspace**:
+A source/session-scoped snapshot board grouping captured requests, failures, activity and completion evidence; quiet and stale observations never prove process status.
+_Avoid_: Running agents, session ended, time blocked, collision prediction

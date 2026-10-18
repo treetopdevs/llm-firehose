@@ -19,6 +19,7 @@ import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
+import { createAirspace } from "./ui/airspace";
 import { createStrata } from "./ui/strata";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -83,6 +84,8 @@ const lanesPanel = createLanes(() => feedState.events(), openSession);
 
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
 attentionPanel.setConnected(false);
+const airspacePanel = createAirspace(openScore, () => show("attention"));
+airspacePanel.setConnected(false);
 // Live is home; attention remains visible at every altitude.
 const panels = {
   live: createFeed(feedState, showDetail),
@@ -95,6 +98,7 @@ const panels = {
   score: scorePanel,
   loops: loopsPanel,
   strata: createStrata(openLoops, openScore),
+  airspace: airspacePanel,
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -112,13 +116,17 @@ let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
+  if (active === "airspace" && name !== "airspace") airspacePanel.deactivate();
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
   }
   clear(content);
   content.append(panels[name].root);
-  if (name === "strata") void panels.strata.activate();
+  if (name === "airspace") {
+    renderDetail(detailPane, null, () => {});
+    void airspacePanel.activate();
+  } else if (name === "strata") void panels.strata.activate();
   else panels[name].refresh();
 }
 
@@ -168,6 +176,7 @@ const connector = createConnector({
   onEvent,
   setStatus: ({ kind, text, compatReason }) => {
     attentionPanel.setConnected(kind === "ok");
+    airspacePanel.setConnected(kind === "ok");
     if (compatReason) {
       compatBanner.textContent = compatReason;
       compatBanner.classList.add("visible");
