@@ -116,7 +116,7 @@ export function createLoops() {
     body.append(el("h3", {}, `${model.groups.length} recurring Error Signatures`));
     const groups = el("div", {class: "loops-signatures"});
     for (const group of model.groups.slice(groupPage * PAGE_SIZE, (groupPage + 1) * PAGE_SIZE)) {
-      const b = button(`${eventLabel(group.occurrences[0])} · ${group.occurrences.length} occurrences`, () => { activeKey = group.key; occurrencePage = 0; evidencePage = 0; interval = undefined; resetComparison(); draw(); }, `signature:${group.key}`);
+      const b = button(`${eventLabel(group.occurrences[0])} · ${group.occurrences.length} occurrences`, () => { if (group.key === activeKey) return; activeKey = group.key; occurrencePage = 0; evidencePage = 0; interval = undefined; resetComparison(); draw(); }, `signature:${group.key}`);
       b.setAttribute("aria-pressed", String(group.key === activeKey)); groups.append(b);
     }
     body.append(groups);
@@ -140,13 +140,13 @@ export function createLoops() {
       else {
         const current=active.intervals.indexOf(interval), reference=el("input", {type:"number",min:"1",max:String(active.intervals.length),step:"1","aria-label":"Reference interval B","data-key":"sequence:reference"});
         reference.value=referenceDraft ?? String(current>0?current:2);
-        reference.oninput=()=>{const value=reference.value;comparison?.view.remove();body.querySelector(".loops-sequence-caption")?.remove();resetComparison();referenceDraft=value;notice.textContent="";};
+        reference.oninput=()=>{const value=reference.value;comparison?.view.remove();body.querySelector(".loops-sequence-caption")?.remove();resetComparison();referenceDraft=value;notice.textContent="";const feedback=body.querySelector(".loops-comparison-feedback");if(feedback)feedback.textContent="";};
         body.append(el("label", {}, `Compare selected interval A (${current+1}) with interval B `,reference),button("Compare sequences",()=>{
           const number=Number(reference.value);
           if (!Number.isInteger(number)||number<1||number>active.intervals.length) {resetComparison(`Enter a whole interval number from 1 to ${active.intervals.length}.`);referenceDraft=reference.value;draw();return;}
           if(number===current+1){resetComparison("Choose a different interval for B.");referenceDraft=reference.value;draw();return;}
           buildComparison(active,interval!,active.intervals[number-1]);draw();
-        },"sequence:compare"));
+        },"sequence:compare"),el("p", {class:"loops-comparison-feedback"},comparisonNotice));
       }
       if(comparison) body.append(el("p", {class:"loops-sequence-caption"}, comparison.caption),comparison.view);
       const n = interval.toIndex - interval.fromIndex;

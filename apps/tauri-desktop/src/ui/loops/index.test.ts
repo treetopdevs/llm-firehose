@@ -187,3 +187,10 @@ test('initial membership replacement never claims an unmade comparison was clear
  let finish!:(value:unknown)=>void;api.errorSignatures.mockReturnValue(new Promise(r=>finish=r));const panel=createLoops();await panel.open(sid);
  finish([{key:'authoritative',source:'codex',members:events.map(e=>e.id)}]);await settle();expect(panel.root.textContent).not.toContain('Comparison cleared');
 });
+test('reselecting the active signature preserves sequence inspection and invalid feedback stays beside controls',async()=>{
+ // Normalized mutations of captured events.
+ const history=Array.from({length:5},(_,i)=>({...events[0],id:`repeat-${i}`,time:new Date(Date.UTC(2026,9,18,0,0,i)).toISOString(),severity:i%2?'info':'error'}));api.sessionEvents.mockResolvedValue(history);
+ const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');click(panel.root,'Compare sequences');click(panel.root,'Browse A run');const view=panel.root.querySelector('.loops-sequence');
+ (panel.root.querySelector('.loops-signatures button') as HTMLButtonElement).click();expect(panel.root.querySelector('.loops-sequence')).toBe(view);expect(panel.root.textContent).toContain('Run observations');
+ const input=panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;input.value='1';click(panel.root,'Compare sequences');const feedback=panel.root.querySelector('.loops-comparison-feedback');expect(feedback?.textContent).toContain('Choose a different interval');expect(feedback?.previousElementSibling?.textContent).toBe('Compare sequences');
+});
