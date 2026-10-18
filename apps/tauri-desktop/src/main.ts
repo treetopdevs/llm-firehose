@@ -24,6 +24,7 @@ import { createHandoffs } from "./ui/handoffs";
 import { createAirspace } from "./ui/airspace";
 import { createLoom } from "./ui/loom";
 import { createEcosystem } from "./ui/ecosystem";
+import { createReplay } from "./ui/replay";
 import { createStrata } from "./ui/strata";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -115,6 +116,7 @@ const panels = {
   airspace: airspacePanel,
   loom: createLoom(openScore),
   ecosystem: createEcosystem(openScore),
+  replay: createReplay(openScore),
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -138,6 +140,8 @@ function show(name: PanelName) {
   if (name === "loom") renderDetail(detailPane, null, () => {});
   if (active === "ecosystem" && name !== "ecosystem") panels.ecosystem.deactivate();
   if (name === "ecosystem") renderDetail(detailPane, null, () => {});
+  if (active === "replay" && name !== "replay") panels.replay.deactivate();
+  if (name === "replay") renderDetail(detailPane, null, () => {});
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);

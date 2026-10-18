@@ -85,3 +85,5 @@ _Avoid_: Running agents, session ended, time blocked, collision prediction
 An exact-source/session explorer of native identifier groups and supported parent-message references. Membership is association; parent references are source-reported, not inferred root cause. Full receipts load only on explicit inspection.
 **Patch Ecosystem**:
 Replay of captured file observations grouped by exact stored path and workspace label within one source/session. Growth counts observations, not changed lines or quality; reported completion is not verified final file content.
+**Forked Replay Lab**:
+A local retrospective notebook that anchors hypothetical alternative steps to captured observations. Proposals have unknown outcomes and timings and never execute commands or become captured evidence.
