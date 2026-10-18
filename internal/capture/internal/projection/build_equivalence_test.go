@@ -82,6 +82,7 @@ func assertBuildEquivalent(t *testing.T, dir string) {
 		{"sessions", got.sessions, want.sessions},
 		{"traces", got.traces, want.traces},
 		{"files", got.files, want.files},
+		{"fileSessions", got.fileSessions, want.fileSessions},
 		{"errSigs", got.errSigs, want.errSigs},
 		{"seen", got.seen, want.seen},
 		{"inbox", got.inbox, want.inbox},

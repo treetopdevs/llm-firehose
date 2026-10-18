@@ -159,11 +159,12 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /attention` | source + native-session scoped attention snapshot `{sessions, warnings, gaps}`; pending captured evidence, uncertainty and last observations; see [attention semantics](attention.md) |
 | `GET /attention/event?id={id}` | exact captured envelope by stable ID, or 404; additive evidence lookup |
 | `GET /sessions` | session summaries (derived Projection), most recent first; additive attention fields `state`, `state_since`, `state_reason`, `has_error`, `last_summary`, `last_category` |
-| `GET /sessions/{id}[?view=timeline]` | all events for one session, oldest first. Additive optional `view` parameter: `full` (default, unchanged) or `timeline`, which returns the same events in the same order and after the same stable-id dedupe, each reduced to a strict subset of its envelope: `schema_version id time source agent session_id turn_id call_id category name severity summary` plus `payload` limited to `phase state tool_name error_class duration_ms status item_type` (values as stored, digests included; `payload` omitted when empty). Same JSON tags, so a timeline event decodes as an envelope; it adds nothing, changes no privacy meaning, is never spooled and is not a substitute envelope for re-emit or export. Any other `view` is 400 |
+| `GET /sessions/{id}[?view=timeline\|correlation]` | all events for one session, oldest first. Additive optional `view` parameter: `full` (default, unchanged) or `timeline`, which returns the same events in the same order and after the same stable-id dedupe, each reduced to a strict subset of its envelope: `schema_version id time source agent session_id turn_id call_id category name severity summary` plus `payload` limited to `phase state tool_name error_class duration_ms status item_type` (values as stored, digests included; `payload` omitted when empty). Same JSON tags, so a timeline event decodes as an envelope; it adds nothing, changes no privacy meaning, is never spooled and is not a substitute envelope for re-emit or export. Additive `view=correlation` starts with the timeline representation and also retains `source_time capture_time trace_id prompt_id message_id parent_id upstream_event_id request_id sequence transport source_version`. Identifiers remain in their native namespaces; no relationships are inferred. Arbitrary payload bodies, raw content and filesystem identity fields remain omitted; existing timeline payload values, including privacy digests, are unchanged. Both views retain full-view order and deduplication. The endpoint remains native-session-ID scoped, so clients must filter exact source/session before deriving relationships. Read cost and total response size remain unbounded per session; metadata reduction does not bound the history scan. Request cancellation cooperatively stops session scans at existing scanner checkpoints; it does not preempt blocked filesystem operations. Any other `view` is 400 |
 | `GET /errors[?session={id}]` | derived Error Signature summaries `[{key, source, category, name, class, sample, count, sessions, first_time, last_time, paths, members}]`, most recently seen first; `[]` when none. With `session`, only signatures that include that session are listed, but `count` and `sessions` stay global (not re-scoped), and each signature additionally carries `members`: that session's qualifying event ids in (time, id) order, capped at the 500 earliest (`len == 500` means truncated). Without `session`, `members` is omitted. Host-local derived state, never spooled; additive |
 | `GET /errors/sessions?key={key}[&offset=0&limit=50]` | additive session history for one exact Error Signature key: `{key,total,offset,limit,sessions:[{session_id,source,count,first_time,last_time,sample_event_id}]}`. Required nonempty `key`; nonnegative integer `offset` (default 0), `limit` 1–100 (default 50); pagination accepts ASCII decimal digits only (leading zeros allowed), with no signs; duplicate `key`/`offset`/`limit` parameters or malformed query encoding/values → 400, unknown key → 404 with a fixed error message. Exact deduplicated per-session counts and time bounds, independent of the 500-member sample cap; earliest `(time,id)` event is the sample. Nonempty session IDs only; `total` is distinct sessions before pagination. Sort `last_time` descending then `session_id` ascending; empty page `[]`. Each page is a fresh projection snapshot, so arrivals can move rows. Same local host/origin restrictions; host-local derived state only, never spooled. Existing `/errors` responses remain unchanged. |
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
+| `GET /artifacts/file-sessions` | exact recorded workspace/path/source/session summaries; see [GET /artifacts/file-sessions (additive)](#get-artifactsfile-sessions-additive) below |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
 | `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}` |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
@@ -447,3 +448,72 @@ repository (and workspace) identity; only those UTC days overlapping
 `[from, to)` are read, so cost is bounded by the window, not spool size. Exact-ID
 duplicates keep their first record, as in Timeline. The scan stops promptly when
 the client abandons the request.
+
+#### File-linked Activity errors (additive)
+
+Activity responses additionally carry `error_paths` (empty array when none) and
+`omitted_error_paths`. These are independent of `paths`/Heat: a qualifying error
+observation in any category with an explicit path can appear without contributing file Heat.
+Each entry is `{path, group, total, signatures, omitted_signatures}`. Signatures
+are `{key, total, counts}` where `key` is the existing canonical Error Signature
+and `counts` contains ascending `[bucket_index, count]` pairs in the same window.
+Only paths carried by the error event itself are attributed, including recognized
+apply-patch input/output paths; no temporal or cross-event inference occurs.
+Unlike Error Signature path summaries, the overlay reads these explicit fields
+for qualifying errors in any category, including tool and shell. A stored path
+may name a directory or attempted patch target; attribution is not proof of a
+file mutation or defect. Non-error, non-file observations are excluded before
+aggregation deduplication.
+Source/category/name/class identity uses the existing error qualification and
+normalization. Repository/workspace, half-open window and canonical-ID filters
+match Heat. `total` includes omitted signatures; each retained signature's counts
+are exact. Keep at most 2000 error paths by descending total then group/path, and
+20 signatures per path by descending total then key. Omission fields count
+omitted paths/signatures in the full loaded window, not in a brushed subrange.
+The original Heat fields, ordering/caps, minimal-mode unavailable gate and scan
+day bounds are unchanged. Aggregation memory still scales with matching history.
+Older daemon responses omit these fields; clients must show overlay unavailable,
+not claim zero errors. Recurrence is at least 2 observations of the same signature
+on the same resolved group/path in the selected buckets; it is not retries,
+root cause, or evidence that the file is defective.
+
+### GET /artifacts/file-sessions (additive)
+
+Returns an array of derived file-observation summaries, never null. Fields:
+`workspace_kind`, `workspace`, `path`, `source`, `session_id`, `events`,
+`first_time`, `last_time`, `last_event_id`. Workspace kind/value selects the first
+nonempty `worktree_id`, `jj_workspace_id`, or `cwd`; otherwise `unknown` and empty.
+Repository names and repository IDs never substitute for workspace scope.
+Rows group exact kind/value/path/source/session strings across all indexed history.
+They sort by latest event time descending then the full tuple ascending. Latest
+receipt ID uses time then ID; missing IDs remain empty. Existing projection ID
+deduplication applies; ID-less admissions each count.
+
+Only file-category observations contribute. Extraction selects the first nonempty
+string `file_path`, `path`, or `file`; otherwise it takes sorted keys of a `changes`
+object, excluding exact `{sha256,len}` privacy digests. It never resolves paths or
+reads disk. Supported write-tool starts, ends and failures all count as events,
+not edits. `/artifacts/files` retains its existing behavior and shape.
+
+Balanced privacy can yield opaque scope digests and ellipsis-truncated paths;
+minimal capture often has no readable paths. Empty results do not prove absence
+of activity. Equal recorded strings do not prove physical-file identity, conflict
+or simultaneous activity. The Files client excludes unknown scopes, missing
+sessions and ellipsis-ending paths from shared-path badges. Cross-kind and nested
+CWD scopes are not comparable. A session can appear in multiple scopes.
+
+This disposable projection is never spooled. Additional memory grows with unique
+scope/path/source/session tuples; the full response and snapshot derivation are
+unbounded by history size. Client paging uses one loaded snapshot for stability.
+The route uses the standard local API origin guard. Exact receipt inspection uses
+GET /attention/event?id= and can be unavailable for missing IDs or records.
+### Cancellation of session and trace reads
+
+Session and trace HTTP history reads use the request context during spool scans,
+matching other cancellation-aware read endpoints. An abandoned request stops at
+cooperative scanner checkpoints and does not emit partial history or an error
+response to the disconnected client. Healthy response shapes, ordering,
+deduplication, view allowlists, not-found 404 and genuine read-error 500 behavior
+are unchanged. Cancellation does not preempt blocked filesystem operations or
+bound complete-history memory; graceful daemon shutdown does not cancel these
+request contexts. Capture admission is independent.

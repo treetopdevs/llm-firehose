@@ -20,6 +20,11 @@ import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
+import { createHandoffs } from "./ui/handoffs";
+import { createAirspace } from "./ui/airspace";
+import { createLoom } from "./ui/loom";
+import { createEcosystem } from "./ui/ecosystem";
+import { createReplay } from "./ui/replay";
 import { createStrata } from "./ui/strata";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -92,6 +97,8 @@ const lanesPanel = createLanes(() => feedState.events(), openSession);
 
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
 attentionPanel.setConnected(false);
+const airspacePanel = createAirspace(openScore, () => show("attention"));
+airspacePanel.setConnected(false);
 // Live is home; attention remains visible at every altitude.
 const panels = {
   live: createFeed(feedState, showDetail),
@@ -105,6 +112,11 @@ const panels = {
   loops: loopsPanel,
   strata: createStrata(openLoops, openScore),
   court: courtPanel,
+  handoffs: createHandoffs(openScore, () => feedState.events()),
+  airspace: airspacePanel,
+  loom: createLoom(openScore),
+  ecosystem: createEcosystem(openScore),
+  replay: createReplay(openScore),
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -122,13 +134,29 @@ let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 function show(name: PanelName) {
+  if (active === "court" && name !== "court") courtPanel.refresh();
+  if (name === "court") renderDetail(detailPane, null, () => {});
+  if (active === "handoffs" && name !== "handoffs") panels.handoffs.refresh();
+  if (active === "airspace" && name !== "airspace") airspacePanel.deactivate();
+  if (active === "loom" && name !== "loom") panels.loom.deactivate();
+  if (name === "loom") renderDetail(detailPane, null, () => {});
+  if (active === "ecosystem" && name !== "ecosystem") panels.ecosystem.deactivate();
+  if (name === "ecosystem") renderDetail(detailPane, null, () => {});
+  if (active === "replay" && name !== "replay") panels.replay.deactivate();
+  if (name === "replay") renderDetail(detailPane, null, () => {});
+
+  if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
   }
   clear(content);
   content.append(panels[name].root);
-  if (name === "strata") void panels.strata.activate();
+  if (name === "handoffs") renderDetail(detailPane, null, () => {});
+  if (name === "airspace") {
+    renderDetail(detailPane, null, () => {});
+    void airspacePanel.activate();
+  } else if (name === "strata") void panels.strata.activate();
   else panels[name].refresh();
 }
 
@@ -178,6 +206,7 @@ const connector = createConnector({
   onEvent,
   setStatus: ({ kind, text, compatReason }) => {
     attentionPanel.setConnected(kind === "ok");
+    airspacePanel.setConnected(kind === "ok");
     if (compatReason) {
       compatBanner.textContent = compatReason;
       compatBanner.classList.add("visible");

@@ -393,22 +393,24 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := struct {
-		RepoID            string                 `json:"repo_id"`
-		WorkspaceID       string                 `json:"workspace_id"`
-		From              time.Time              `json:"from"`
-		To                time.Time              `json:"to"`
-		BucketSeconds     int                    `json:"bucket_seconds"`
-		Buckets           int                    `json:"buckets"`
-		Available         bool                   `json:"available"`
-		UnavailableReason string                 `json:"unavailable_reason"`
-		Paths             []capture.ActivityPath `json:"paths"`
-		Groups            []activityGroup        `json:"groups"`
-		FileEvents        int                    `json:"file_events"`
-		Unreadable        int                    `json:"unreadable_file_events"`
-		Truncated         bool                   `json:"truncated"`
-		TruncatedTotal    int                    `json:"truncated_total"`
-		CaptureGap        bool                   `json:"capture_gap"`
-	}{RepoID: repoID, WorkspaceID: workspaceID, From: floored, To: to, BucketSeconds: bucket, Buckets: buckets, Paths: []capture.ActivityPath{}, Groups: []activityGroup{}}
+		RepoID            string                      `json:"repo_id"`
+		WorkspaceID       string                      `json:"workspace_id"`
+		From              time.Time                   `json:"from"`
+		To                time.Time                   `json:"to"`
+		BucketSeconds     int                         `json:"bucket_seconds"`
+		Buckets           int                         `json:"buckets"`
+		Available         bool                        `json:"available"`
+		UnavailableReason string                      `json:"unavailable_reason"`
+		Paths             []capture.ActivityPath      `json:"paths"`
+		ErrorPaths        []capture.ActivityErrorPath `json:"error_paths"`
+		OmittedErrorPaths int                         `json:"omitted_error_paths"`
+		Groups            []activityGroup             `json:"groups"`
+		FileEvents        int                         `json:"file_events"`
+		Unreadable        int                         `json:"unreadable_file_events"`
+		Truncated         bool                        `json:"truncated"`
+		TruncatedTotal    int                         `json:"truncated_total"`
+		CaptureGap        bool                        `json:"capture_gap"`
+	}{RepoID: repoID, WorkspaceID: workspaceID, From: floored, To: to, BucketSeconds: bucket, Buckets: buckets, Paths: []capture.ActivityPath{}, ErrorPaths: []capture.ActivityErrorPath{}, Groups: []activityGroup{}}
 	s.mu.RLock()
 	minimal := s.cfg.PrivacyMode == string(privacy.ModeMinimal)
 	s.mu.RUnlock()
@@ -438,18 +440,27 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Available = true
+	resp.ErrorPaths, resp.OmittedErrorPaths = result.ErrorPaths, result.OmittedErrorPaths
 	resp.Paths, resp.FileEvents, resp.Unreadable = result.Paths, result.FileEvents, result.UnreadableFileEvents
 	resp.Truncated, resp.TruncatedTotal, resp.CaptureGap = result.Truncated, result.TruncatedTotal, result.CaptureGap
 	seen := map[string]bool{}
-	for _, p := range result.Paths { // already in group order: "" first
-		if seen[p.Group] {
+	groups := make([]string, 0, len(result.Paths)+len(result.ErrorPaths))
+	for _, p := range result.Paths {
+		groups = append(groups, p.Group)
+	}
+	for _, p := range result.ErrorPaths {
+		groups = append(groups, p.Group)
+	}
+	slices.Sort(groups)
+	for _, group := range groups { // resolved group first
+		if seen[group] {
 			continue
 		}
-		seen[p.Group] = true
-		if p.Group == "" {
+		seen[group] = true
+		if group == "" {
 			resp.Groups = append(resp.Groups, activityGroup{Resolved: true})
 		} else {
-			resp.Groups = append(resp.Groups, activityGroup{ID: p.Group, Label: activityOutsideLabel})
+			resp.Groups = append(resp.Groups, activityGroup{ID: group, Label: activityOutsideLabel})
 		}
 	}
 	writeJSON(w, resp)

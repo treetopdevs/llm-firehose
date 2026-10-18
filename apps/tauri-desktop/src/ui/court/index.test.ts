@@ -77,3 +77,7 @@ test("switching target rejects a pending old response and detached Attach action
  const oldButton=[...panel.root.querySelectorAll("button")].find(b=>b.textContent==="Attach receipt")!;click(panel.root,"Second requirement");oldButton.click();expect(JSON.parse(store.getItem()!).claims[0].requirements.every((r:{receipt?:unknown})=>!r.receipt)).toBe(true);
  let resolve!:(v:FirehoseEvent)=>void;api.capturedEvent.mockReturnValueOnce(new Promise(r=>resolve=r));click(panel.root,"Look up event");const signal=api.capturedEvent.mock.calls.at(-1)![1] as AbortSignal;click(panel.root,"Captured test result");resolve(event);await settle();expect(signal.aborted).toBe(true);expect(panel.root.querySelector("pre")).toBeNull();
 });
+test("offered event retains unavailable notebook guidance",()=>{
+ const store=storage();store.getItem.mockReturnValue('bad json');const panel=createCourt(undefined,store);panel.offerEvent(event.id);
+ expect(panel.root.textContent).toContain('Notebook unavailable');expect(panel.root.textContent).not.toContain('Select a requirement, look up');expect(store.setItem).not.toHaveBeenCalled();
+});
