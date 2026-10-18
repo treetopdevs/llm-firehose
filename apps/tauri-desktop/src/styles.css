@@ -794,3 +794,16 @@ span.agent-dot.big { width: 14px; height: 14px; }
   .strata-row-heading, .strata-times { flex-direction: column; align-items: flex-start; }
   .strata-row-heading strong { max-width: 100%; flex: none; }
 }
+
+.replay { padding: 20px; max-width: 1200px; margin: auto; }
+.replay h2 { margin-top: 0; }
+.replay p, .replay li, .replay h4 { overflow-wrap: anywhere; }
+.replay-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+.replay select { max-width: min(600px, 70vw); }
+.replay [aria-label="Hypothetical branch editor"] label { display: flex; flex-direction: column; margin: 10px 0; gap: 6px; }
+.replay textarea { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); font: inherit; border: 1px solid var(--border); padding: 8px; }
+.replay pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
+.replay-observation { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.replay button { margin: 4px; }
+.replay-confirmation:not(:empty) { border: 1px solid var(--accent); padding: 12px; }
+.replay button:focus-visible, .replay input:focus-visible, .replay textarea:focus-visible, .replay select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

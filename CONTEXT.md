@@ -71,3 +71,6 @@ _Avoid_: Loop detector, retry count, proof of a fix
 **Session Stratigraphy**:
 A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
 _Avoid_: Session duration, effort score, causal history, proof of resolution
+
+**Forked Replay Lab**:
+A local retrospective notebook that anchors hypothetical alternative steps to captured observations. Proposals have unknown outcomes and timings and never execute commands or become captured evidence.
