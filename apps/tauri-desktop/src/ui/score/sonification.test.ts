@@ -39,3 +39,10 @@ test("a tick observing a detached paused panel disables audio",async()=>{
  const h=audioHost(),panel=createScore(vi.fn());document.body.append(panel.root);await panel.open(real.session_id!,real.source);
  button(panel.root,"Enable replay sound").click();await Promise.resolve();panel.root.remove();panel.tick(0);expect(h.context.close).toHaveBeenCalledOnce();panel.deactivate();
 });
+
+test("stepping during playback stops the active voice without playing a seek cue",async()=>{
+ const h=audioHost(),panel=createScore(vi.fn());document.body.append(panel.root);await panel.open(real.session_id!,real.source);
+ button(panel.root,"Enable replay sound").click();await Promise.resolve();button(panel.root,"play").click();panel.tick(1100);
+ expect(h.voices).toHaveLength(1);expect(h.voices[0].disconnect).not.toHaveBeenCalled();
+ button(panel.root,"jump to next event").click();expect(h.voices[0].disconnect).toHaveBeenCalled();expect(h.voices).toHaveLength(1);panel.deactivate();
+});

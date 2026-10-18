@@ -85,6 +85,7 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   document.querySelector<HTMLButtonElement>('[aria-label="Enable replay sound"]')!.click();
   await Promise.resolve();
   expect(document.querySelector('[aria-label="Disable replay sound"]')).not.toBeNull();
+  expect(document.querySelector(".score")?.textContent).toContain("Replay sound on");
   [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b=>b.textContent==="live")!.click();
   expect(close).toHaveBeenCalledOnce();
   btn.click();expect(document.querySelector('[aria-label="Enable replay sound"]')).not.toBeNull();

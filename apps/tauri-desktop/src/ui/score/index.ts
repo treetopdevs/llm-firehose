@@ -104,7 +104,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     soundState = state;
     const label = state === "on" || state === "enabling" ? "Disable replay sound" : "Enable replay sound";
     soundButton.textContent = label; soundButton.setAttribute("aria-label", label);
-    soundButton.setAttribute("aria-pressed", String(state === "on"));
+    soundButton.setAttribute("aria-pressed", String(state === "on" || state === "enabling"));
     soundStatus.textContent = state === "unavailable" ? "Replay sound unavailable. Playback still works; you can retry." : `Replay sound ${state}`;
   });
   soundButton.addEventListener("click", () => { if (soundState === "on" || soundState === "enabling") sound.disable(); else void sound.enable(); });
@@ -281,6 +281,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   /** Puts the cursor on one specific event, even when several share its instant. */
   function select(target: ScoreEvent) {
+    sound.stop();
     at = target.at;
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
