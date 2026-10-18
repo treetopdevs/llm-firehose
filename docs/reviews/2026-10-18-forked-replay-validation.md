@@ -37,3 +37,5 @@ Coverage: choices nohistoryfanout; exact timeline and captured receipt identity 
 UI imports notebook/model seams independently, only verified current receipts enable New hypothetical branch. Immutable reference copied into unsaved editor; later scope changes preserve text but never map it against other scope. Notebook refresh refuses dirty overwrite; optimistic writes keep prior token/state on failure. No commits.
 
 Map red on absent module then2 tests green:20captured window centered onexactanchor,12hypothetical steps cap, safe text, missinganchor disclosure and callbacks.
+
+Independent spec and standards reviews PASS ondbbab7f with no findings. They do not substitute for requested external-model review; draft gate remains.
