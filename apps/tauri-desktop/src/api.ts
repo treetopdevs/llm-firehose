@@ -89,6 +89,23 @@ export interface ErrorSignature {
   members?: string[];
 }
 
+/** Exact per-session aggregates, independent of the membership sample cap. */
+export interface ErrorSignatureSession {
+  session_id: string;
+  source: string;
+  count: number;
+  first_time: string;
+  last_time: string;
+  sample_event_id: string;
+}
+export interface ErrorSignatureSessions {
+  key: string;
+  total: number;
+  offset: number;
+  limit: number;
+  sessions: ErrorSignatureSession[];
+}
+
 export interface DoctorCheck {
   name: string;
   ok: boolean;
@@ -140,6 +157,8 @@ export const traceEvents = (id: string) =>
   getJSON<FirehoseEvent[]>(`/traces/${encodeURIComponent(id)}`);
 export const errorSignatures = (session = "", signal?: AbortSignal) =>
   getJSON<ErrorSignature[]>(`/errors${session ? `?session=${encodeURIComponent(session)}` : ""}`, signal);
+export const errorSignatureSessions = (key: string, offset = 0, limit = 50, signal?: AbortSignal) =>
+  getJSON<ErrorSignatureSessions>(`/errors/sessions?key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}`, signal);
 export const files = () => getJSON<FileArtifact[]>("/artifacts/files");
 export const doctor = () => getJSON<DoctorCheck[]>("/doctor");
 export const getConfig = () => getJSON<EngineConfig>("/config");

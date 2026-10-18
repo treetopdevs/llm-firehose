@@ -1,0 +1,13 @@
+# Session Stratigraphy validation
+
+Base: `a5df67fc5cce0e66130f055e0d8a038f4ad42c17` (PR #35 merged with user authorization).
+
+- Go formatting empty, vet and full suite passed after query remediation; CLI build passed.
+- Frontend: 488 tests in 32 files, TypeScript/Vite production build passed after remediation.
+- Sidecar build and Rust tests passed (3 tests).
+- Interactive browser: real daemon Handler/Engine over 112 existing sanitized captured fixtures in an isolated temporary spool, no live source watchers/hooks/settings. Confirmed exact 2 vs 1 matching observations across two sessions; inspected earlier sample `c5089b7d2673ba045c26b47175717f12`; opened correct source/session in Loops and Score; returned to preserved selection/snapshot. Screenshot records resulting prototype.
+- Browser found two errors with identical summary labels. Real fixture regression now requires authoritative keys in labels; authentication_failed and rate_limit are distinct.
+- Sonnet initial medium finding (malformed query parsing) fixed test-first. Also reject signed/duplicate pagination, use fixed 404 messages, prove missing admission IDs are generated and replay-stable, preserve navigation snapshot, clarify missing-route/key notice and remove duplicate pager styles.
+- Existing key delimiter ambiguity remains unchanged and documented. A hidden panel can finish its bounded in-flight request, matching existing panel lifecycle conventions; scope changes abort superseded requests. Snapshots remain visibly timestamped.
+
+This is browser and build evidence, not an interactive packaged-native test or production release proof. Final exact-commit review and hosted CI are recorded separately.

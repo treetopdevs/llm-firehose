@@ -18,11 +18,13 @@ var ErrNotFound = errors.New("capture: not found")
 
 // Capture-owned query shapes retain the frozen local HTTP JSON representation.
 type (
-	InboxSnapshot  = projection.InboxSnapshot
-	Session        = projection.Session
-	TraceSummary   = projection.Trace
-	FileArtifact   = projection.FileArtifact
-	ErrorSignature = projection.ErrorSignature
+	InboxSnapshot     = projection.InboxSnapshot
+	Session           = projection.Session
+	TraceSummary      = projection.Trace
+	FileArtifact      = projection.FileArtifact
+	ErrorSignature    = projection.ErrorSignature
+	ErrorSession      = projection.ErrorSession
+	ErrorSessionsPage = projection.ErrorSessionsPage
 )
 
 func (e *Engine) applyProjection(ev event.Event) error {
@@ -201,4 +203,20 @@ func TimelineView(ev event.Event) event.Event {
 		}
 	}
 	return out
+}
+
+// ErrInvalidErrorSessionsQuery reports invalid signature or pagination input.
+var ErrInvalidErrorSessionsQuery = errors.New("capture: invalid error sessions query")
+
+// ErrorSessions returns exact per-session aggregates without reading the spool.
+// Pagination is a fresh snapshot for each query, not a stable history cursor.
+func (e *Engine) ErrorSessions(key string, offset, limit int) (ErrorSessionsPage, error) {
+	if key == "" || offset < 0 || limit < 1 || limit > 100 {
+		return ErrorSessionsPage{}, ErrInvalidErrorSessionsQuery
+	}
+	page, ok := e.projection.ErrorSessions(key, offset, limit)
+	if !ok {
+		return ErrorSessionsPage{}, fmt.Errorf("%w: error signature %q", ErrNotFound, key)
+	}
+	return page, nil
 }

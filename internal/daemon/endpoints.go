@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
@@ -160,4 +163,50 @@ func (s *Server) handleEventByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, ev)
+}
+
+func (s *Server) handleErrorSessions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		http.Error(w, "invalid query", http.StatusBadRequest)
+		return
+	}
+	for _, name := range []string{"key", "offset", "limit"} {
+		if len(q[name]) > 1 {
+			http.Error(w, "duplicate "+name, http.StatusBadRequest)
+			return
+		}
+	}
+	offset, limit := 0, 50
+	for _, param := range []struct {
+		name string
+		dst  *int
+	}{{"offset", &offset}, {"limit", &limit}} {
+		if q.Has(param.name) {
+			raw := q.Get(param.name)
+			if raw == "" || strings.IndexFunc(raw, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+				http.Error(w, "invalid "+param.name, http.StatusBadRequest)
+				return
+			}
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				http.Error(w, "invalid "+param.name, http.StatusBadRequest)
+				return
+			}
+			*param.dst = n
+		}
+	}
+	page, err := s.engine.ErrorSessions(q.Get("key"), offset, limit)
+	if err != nil {
+		status, message := http.StatusInternalServerError, "could not read error sessions"
+		if errors.Is(err, capture.ErrInvalidErrorSessionsQuery) {
+			status, message = http.StatusBadRequest, "invalid error sessions query"
+		} else if errors.Is(err, capture.ErrNotFound) {
+			status, message = http.StatusNotFound, "error signature not found"
+		}
+		http.Error(w, message, status)
+		return
+	}
+	writeJSON(w, page)
 }

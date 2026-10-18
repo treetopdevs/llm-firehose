@@ -67,3 +67,7 @@ _Avoid_: Error fingerprint, storm cell, motif
 **Loop Observatory**:
 A session-local view of recurring Error Signatures and the captured activity between consecutive observations; recurrence does not prove an independent retry or a repeated strategy.
 _Avoid_: Loop detector, retry count, proof of a fix
+
+**Session Stratigraphy**:
+A historical view of the sessions in which an Error Signature was observed, with exact per-session counts, first/last matching observations and a captured evidence sample.
+_Avoid_: Session duration, effort score, causal history, proof of resolution

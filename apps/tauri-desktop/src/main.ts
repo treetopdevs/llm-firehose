@@ -19,6 +19,7 @@ import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
+import { createStrata } from "./ui/strata";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspace } from "./ui/workspace";
@@ -93,6 +94,7 @@ const panels = {
   sessions: sessionsPanel,
   score: scorePanel,
   loops: loopsPanel,
+  strata: createStrata(openLoops, openScore),
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -116,7 +118,8 @@ function show(name: PanelName) {
   }
   clear(content);
   content.append(panels[name].root);
-  panels[name].refresh();
+  if (name === "strata") void panels.strata.activate();
+  else panels[name].refresh();
 }
 
 const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT", el("br"), "FIREHOSE"));

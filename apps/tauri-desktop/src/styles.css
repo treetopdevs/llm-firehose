@@ -770,3 +770,27 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .loops-detail:not(:empty) { border-top: 1px solid currentColor; margin-top: 24px; padding-top: 12px; }
 .loops-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; }
 .loops button:focus-visible, .loops select:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+
+/* Session Stratigraphy keeps each session equal-height; width encodes time only. */
+.strata { padding: 20px; max-width: 1200px; margin: auto; }
+.strata h2 { margin-top: 0; }
+.strata p, .strata h3 { overflow-wrap: anywhere; }
+.strata-controls, .strata-pager, .strata-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.strata-signatures { display: grid; gap: 6px; }
+.strata-signatures button { text-align: left; overflow-wrap: anywhere; }
+.strata-signatures button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.strata-sessions { list-style: none; padding: 0; }
+.strata-row { height: 150px; box-sizing: border-box; padding: 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; }
+.strata-row-heading { display: flex; gap: 12px; align-items: center; }
+.strata-row-heading strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strata-range { position: relative; height: 16px; margin: 10px 3px; background: var(--bg-hover); border-bottom: 1px solid var(--text-dim); }
+.strata-range span { position: absolute; top: 5px; min-width: 3px; height: 5px; background: var(--accent); border-radius: 2px; }
+.strata-times { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+.strata-detail:not(:empty) { border-top: 1px solid var(--border); padding-top: 12px; }
+.strata-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; }
+.strata button:focus-visible, .strata input:focus-visible, .strata select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .strata-row { height: 210px; }
+  .strata-row-heading, .strata-times { flex-direction: column; align-items: flex-start; }
+  .strata-row-heading strong { max-width: 100%; flex: none; }
+}
