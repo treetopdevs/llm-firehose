@@ -66,7 +66,8 @@ type errorSignatureEntry struct {
 	// sorted by (Time, ID) and capped at errorSignatureSessionMembers keeping
 	// the earliest, so the result does not depend on application order. The
 	// map keys double as the distinct-session set (Sessions).
-	members map[string][]memberObs
+	members  map[string][]memberObs
+	sessions map[string]ErrorSession
 	// sampleTime/sampleID identify the observation Sample came from. Sample is
 	// pinned to the earliest (Time, ID) observation with a non-empty summary,
 	// not the first applied, so a rebuild that reads the spool in a different
@@ -154,7 +155,8 @@ func (ix *Projection) foldErrorSignature(ev event.Event) {
 				FirstTime: ev.Time,
 				LastTime:  ev.Time,
 			},
-			members: map[string][]memberObs{},
+			members:  map[string][]memberObs{},
+			sessions: map[string]ErrorSession{},
 		}
 		ix.errSigs[key] = e
 	}
@@ -177,6 +179,18 @@ func (ix *Projection) foldErrorSignature(ev event.Event) {
 	// members. The caller has already passed the exact-ID dedupe, so an id can
 	// only fold once; the equality skip below is defensive.
 	if ev.SessionID != "" {
+		row, exists := e.sessions[ev.SessionID]
+		if !exists {
+			row = ErrorSession{SessionID: ev.SessionID, Source: ev.Source, FirstTime: ev.Time, LastTime: ev.Time, SampleEventID: ev.ID}
+		}
+		row.Count++
+		if ev.Time.Before(row.FirstTime) || (ev.Time.Equal(row.FirstTime) && ev.ID < row.SampleEventID) {
+			row.FirstTime, row.SampleEventID = ev.Time, ev.ID
+		}
+		if ev.Time.After(row.LastTime) {
+			row.LastTime = ev.Time
+		}
+		e.sessions[ev.SessionID] = row
 		ms := e.members[ev.SessionID]
 		i := sort.Search(len(ms), func(i int) bool {
 			if !ms[i].time.Equal(ev.Time) {
