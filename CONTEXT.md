@@ -83,3 +83,5 @@ A source/session-scoped snapshot board grouping captured requests, failures, act
 _Avoid_: Running agents, session ended, time blocked, collision prediction
 **Causal Loom**:
 An exact-source/session explorer of native identifier groups and supported parent-message references. Membership is association; parent references are source-reported, not inferred root cause. Full receipts load only on explicit inspection.
+**Patch Ecosystem**:
+Replay of captured file observations grouped by exact stored path and workspace label within one source/session. Growth counts observations, not changed lines or quality; reported completion is not verified final file content.
