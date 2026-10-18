@@ -24,7 +24,7 @@ test("navigation keeps drafts but cancels previews; handoff never automatically 
  panel.offerEvent("other");expect(signal.aborted).toBe(true);resolve(event);await settle();expect(panel.root.querySelector("pre")).toBeNull();expect(panel.root.textContent).toContain("Missing receipt");
 });
 test("mismatch and failed save keep the missing gap; reload recovers storage failures",async()=>{
- const {panel,store}=setup();panel.offerEvent(event.id);click(panel.root,"Captured test result");api.capturedEvent.mockResolvedValueOnce({...event,id:"wrong"});click(panel.root,"Look up event");await settle();expect(panel.root.textContent).toContain("Evidence identity mismatch");
+ const {panel,store}=setup();panel.offerEvent(event.id);click(panel.root,"Captured test result");api.capturedEvent.mockResolvedValueOnce({...event,id:"wrong"});click(panel.root,"Look up event");await settle();expect(panel.root.textContent).toContain("Evidence identity mismatch");expect(panel.root.textContent).toContain("Nothing attached.");expect(panel.root.textContent).not.toContain("inspect or remove");
  click(panel.root,"Look up event");await settle();store.setItem.mockImplementationOnce(()=>{throw Error("quota");});click(panel.root,"Attach receipt");expect(panel.root.textContent).toContain("Storage may be full or unavailable");expect(panel.root.textContent).toContain("Missing receipt");
  click(panel.root,"Reload notebook");expect(panel.root.querySelector("pre")).toBeNull();expect(panel.root.textContent).toContain("Missing receipt");
 });

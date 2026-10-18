@@ -23,3 +23,7 @@ Immutable range e007b2f...f3e46c0. Read-only reviewer found no documented violat
 Same immutable range. Read-only reviewer found no actionable deviations or scope creep. Explicit targets/removal, draft and failed-preview preservation, stale-response guards, identity verification, strict persistence validation and read-only recovery match the plan. Final external review and hosted CI were pending at review time.
 
 Temporary browser test claim was removed through the target-named confirmation; browser verified empty notebook. Preview tab and owned fixture servers stopped. Primary checkout files untouched.
+
+## Hosted review remediation
+
+CodeRabbit reviewed head 7396758, reporting one actionable mismatch-copy finding and one storage-key duplication nit. Verified both against current code. Regression first failed because a new mismatched lookup lacked “Nothing attached”; corrected text distinguishes new lookup from saved conflicting receipt. Reused exported STORAGE_KEY for recovery. All 42 notebook/panel tests and production build passed after changes. Autofix requested on PR #37 but service required credits/billing; direct remediation performed.

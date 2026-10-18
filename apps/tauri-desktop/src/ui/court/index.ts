@@ -1,7 +1,7 @@
 import { capturedEvent } from "../../api";
 import type { FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
-import { createNotebook } from "./notebook";
+import { createNotebook, STORAGE_KEY } from "./notebook";
 import type { Claim, Notebook, Receipt, Requirement } from "./notebook";
 
 type StorageAccess = Pick<Storage, "getItem" | "setItem">;
@@ -117,7 +117,7 @@ export function createCourt(openScore: (session: string, source: string) => void
       if (receipt.session_id) detail.append(button("Open Score", () => { cancelPreview(); openScore(receipt.session_id, receipt.source); }));
     } catch (error) {
       if (ctl.signal.aborted || token !== version) return;
-      clear(detail); detail.append(el("p", {role: "alert"}, error instanceof Error && /identity mismatch/.test(error.message) ? `${error.message}. Returned evidence conflicts with the requested or saved identity. This receipt must not be relied on; inspect or remove it.` : `Evidence unavailable: ${(error instanceof Error ? error.message : String(error))}. ${saved ? "The stored reference is retained for inspection, without evidence verification." : "Nothing attached."}`));
+      clear(detail); detail.append(el("p", {role: "alert"}, error instanceof Error && /identity mismatch/.test(error.message) ? `${error.message}. ${saved ? "Returned evidence conflicts with the saved identity. This receipt must not be relied on; inspect or remove it." : "Returned evidence does not match the requested event. Nothing attached."}` : `Evidence unavailable: ${(error instanceof Error ? error.message : String(error))}. ${saved ? "The stored reference is retained for inspection, without evidence verification." : "Nothing attached."}`));
     }
   }
   function reload() {
@@ -125,7 +125,7 @@ export function createCourt(openScore: (session: string, source: string) => void
     try { notebook = createNotebook(storage ?? localStorage); state = notebook.read(); claimID = state.claims[0]?.id ?? ""; requirementID = ""; notice.textContent = "Notebook loaded. Saved references are not verified."; }
     catch (error) { notebook = undefined; state = {version: 1, claims: []}; notice.textContent = `Notebook unavailable: ${(error instanceof Error ? error.message : String(error))}. Reload notebook to retry; existing storage has not been replaced.`; }
     if (!notebook) {
-      try { const raw = (storage ?? localStorage).getItem("firehose.evidence-court.v1"); if (raw !== null) recovery.append(el("h3", {}, "Stored notebook for manual recovery"), el("p", {}, "Copy this read-only text to preserve or inspect it. No reset or overwrite was performed."), el("pre", {}, raw)); }
+      try { const raw = (storage ?? localStorage).getItem(STORAGE_KEY); if (raw !== null) recovery.append(el("h3", {}, "Stored notebook for manual recovery"), el("p", {}, "Copy this read-only text to preserve or inspect it. No reset or overwrite was performed."), el("pre", {}, raw)); }
       catch { recovery.append(el("p", {}, "Storage cannot be read for recovery. Restore storage access and reload.")); }
     }
     draw();
