@@ -84,3 +84,30 @@ export function loomNeighborhood(model: LoomModel, eventId: string): {groups: Lo
   for (const parent of parents) { visible.add(parent.parentKey); visible.add(parent.childKey); }
   return {groups: model.groups.filter(g => visible.has(g.key)), parents};
 }
+
+export type LoomDirection = "upstream" | "downstream" | "both";
+/** Follow native references only. Unresolved edges remain visible terminal
+ * evidence; they never carry traversal into another group. */
+export function loomTraversal(model: LoomModel, eventId: string, direction: LoomDirection, depth: number): {groups: LoomGroup[]; parents: LoomParent[]} {
+  const limit = Number.isFinite(depth) ? Math.max(1, Math.min(4, Math.floor(depth))) : 1;
+  const direct = model.groups.filter(g => g.members.includes(eventId)).map(g => g.key);
+  const visible = new Set(direct), visited = new Set(direct), edges = new Set<string>();
+  let frontier = new Set(direct);
+  for (let hop = 0; hop < limit && frontier.size; hop++) {
+    const next = new Set<string>();
+    for (const reference of model.parents) {
+      const targets: string[] = [];
+      if (direction !== "downstream" && frontier.has(reference.childKey)) targets.push(reference.parentKey);
+      if (direction !== "upstream" && frontier.has(reference.parentKey)) targets.push(reference.childKey);
+      if (!targets.length) continue;
+      edges.add(reference.key);
+      for (const target of targets) {
+        visible.add(target);
+        if (reference.status === "resolved" && !visited.has(target)) next.add(target);
+      }
+    }
+    for (const key of next) visited.add(key);
+    frontier = next;
+  }
+  return {groups: model.groups.filter(g => visible.has(g.key)), parents: model.parents.filter(p => edges.has(p.key))};
+}

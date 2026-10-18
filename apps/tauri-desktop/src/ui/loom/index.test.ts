@@ -97,3 +97,32 @@ test("manual scope stays available when choices fail and newer choices beat stal
 test("large one-hop neighborhoods paginate all groups and native references",async()=>{
  const native=(await import("./fixture.opencode.json")).default as FirehoseEvent[];const parent=native[0],child=native.find(e=>e.parent_id)!;api.sessionEvents.mockResolvedValue([parent,...Array.from({length:45},(_,i)=>({...child,id:`child-${i}`,message_id:`msg-child-${i}`,parent_id:parent.message_id}))]);const panel=createLoom();input(panel.root,"Source",parent.source);input(panel.root,"Session ID",parent.session_id!);click(panel.root,"Load relationships");await settle();click(panel.root,"Focus observation");expect(panel.root.querySelectorAll(".loom-groups li")).toHaveLength(20);expect(panel.root.querySelectorAll(".loom-parents li")).toHaveLength(20);click(panel.root,"Next groups");click(panel.root,"Next groups");expect(panel.root.querySelectorAll(".loom-groups li")).toHaveLength(6);click(panel.root,"Next references");click(panel.root,"Next references");expect(panel.root.querySelectorAll(".loom-parents li")).toHaveLength(5);
 });
+
+test("reference depth and direction redraw locally, retain focus, and cancel late receipts", async () => {
+ const native = (await import("./fixture.opencode.json")).default as FirehoseEvent[];
+ const a = {...native[0],id:"a",message_id:"a"};
+ const b = {...native[1],id:"b",message_id:"b",parent_id:"a"};
+ const c = {...b,id:"c",message_id:"c",parent_id:"b"};
+ api.sessionEvents.mockResolvedValue([a,b,c]);
+ const panel = createLoom(); document.body.append(panel.root);
+ input(panel.root,"Source","opencode"); input(panel.root,"Session ID","ses_fixture01");
+ click(panel.root,"Load relationships"); await settle();
+ panel.root.querySelector<HTMLButtonElement>('[aria-label="Focus observation opencode / ses_fixture01 / c"]')!.click();
+ expect(panel.root.querySelector('[aria-label="Native group opencode / ses_fixture01 / message / a"]')).toBeNull();
+ let resolve!: (v: FirehoseEvent)=>void;
+ api.capturedEvent.mockReturnValueOnce(new Promise(r=>resolve=r));
+ click(panel.root,"Inspect captured receipt");
+ const signal = api.capturedEvent.mock.calls.at(-1)![1] as AbortSignal;
+ const depth = panel.root.querySelector<HTMLSelectElement>('[aria-label="Reference depth"]');
+ expect(depth).not.toBeNull(); depth!.focus(); depth!.value="2"; depth!.dispatchEvent(new Event("change"));
+ expect(document.activeElement).toBe(depth);
+ expect(signal.aborted).toBe(true);
+ expect(panel.root.querySelector('[aria-label="Native group opencode / ses_fixture01 / message / a"]')).not.toBeNull();
+ resolve(c); await settle(); expect(panel.root.querySelector(".loom-evidence pre")).toBeNull();
+ const direction=panel.root.querySelector<HTMLSelectElement>('[aria-label="Reference direction"]')!;
+ direction.value="downstream"; direction.dispatchEvent(new Event("change"));
+ expect(panel.root.querySelector('[aria-label="Native group opencode / ses_fixture01 / message / b"]')).toBeNull();
+ expect(api.sessionEvents).toHaveBeenCalledOnce(); expect(api.capturedEvent).toHaveBeenCalledOnce();
+ input(panel.root,"Source","another"); expect(depth!.value).toBe("1"); expect(direction.value).toBe("both");
+ panel.root.remove();
+});

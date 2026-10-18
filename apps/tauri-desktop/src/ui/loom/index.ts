@@ -1,20 +1,23 @@
 import { attention, sessionEvents, capturedEvent } from "../../api";
 import type { FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
-import { buildLoom, loomNeighborhood } from "./model";
-import type { LoomModel, LoomGroup } from "./model";
+import { buildLoom, loomTraversal } from "./model";
+import type { LoomModel, LoomGroup, LoomDirection } from "./model";
 import { renderLoomMap } from "./map";
 export function createLoom(openScore: (id: string, source: string) => void = () => { }) {
     const choices = el("select", { "aria-label": "Known session" }), source = el("input", { "aria-label": "Source", placeholder: "Exact source" }), session = el("input", { "aria-label": "Session ID", placeholder: "Exact session ID" }), search = el("input", { "aria-label": "Search observations", type: "search" }), errors = el("input", { "aria-label": "Errors only", type: "checkbox" });
+    const direction = el("select", {"aria-label": "Reference direction"}, ...["both", "upstream", "downstream"].map(value => el("option", {value}, value === "both" ? "Both directions" : value === "upstream" ? "Upstream (parents)" : "Downstream (children)")));
+    const depth = el("select", {"aria-label": "Reference depth"}, ...[1, 2, 3, 4].map(value => el("option", {value: String(value)}, String(value))));
+    const traversalControls = el("div", {class: "loom-controls"}, el("label", {}, "Reference direction ", direction), el("label", {}, "Reference depth ", depth));
     const choiceStatus = el("p", { role: "status" }), status = el("p", { role: "status", class: "loom-status" }), focusRegion = el("section", { "aria-label": "Focused observation", tabindex: "-1" }), evidence = el("section", { class: "loom-evidence", "aria-label": "Captured receipt" }), body = el("section"), groupsRegion = el("section"), membersRegion = el("section", { "aria-label": "Group members", tabindex: "-1" });
-    const root = el("section", { class: "loom" }, el("h2", {}, "Causal Loom"), el("p", { class: "dim" }, "Inspect native identifiers within one exact source/session. Group membership is association, not a causal arrow. Native parent message references do not establish root cause or successful resolution."), el("div", { class: "loom-controls" }, el("label", {}, "Known session ", choices), button("Refresh session choices", () => void refresh())), choiceStatus, el("div", { class: "loom-controls" }, el("label", {}, "Source ", source), el("label", {}, "Session ID ", session), button("Load relationships", () => void load())), status, focusRegion, evidence, el("div", { class: "loom-controls" }, el("label", {}, "Search ", search), el("label", {}, errors, " Errors only")), body, groupsRegion, membersRegion);
+    const root = el("section", { class: "loom" }, el("h2", {}, "Causal Loom"), el("p", { class: "dim" }, "Inspect native identifiers within one exact source/session. Group membership is association, not a causal arrow. Native parent message references do not establish root cause or successful resolution."), el("div", { class: "loom-controls" }, el("label", {}, "Known session ", choices), button("Refresh session choices", () => void refresh())), choiceStatus, el("div", { class: "loom-controls" }, el("label", {}, "Source ", source), el("label", {}, "Session ID ", session), button("Load relationships", () => void load())), status, focusRegion, evidence, traversalControls, el("div", { class: "loom-controls" }, el("label", {}, "Search ", search), el("label", {}, errors, " Errors only")), body, groupsRegion, membersRegion);
     let model: LoomModel | undefined, loadedSource = "", loadedSession = "", loadedAt = "", focus: FirehoseEvent | undefined, selectedGroup: LoomGroup | undefined;
     let observationPage = 0, groupPage = 0, parentPage = 0, memberPage = 0, choiceVersion = 0, loadVersion = 0, receiptVersion = 0;
     let choiceAbort: AbortController | undefined, loadAbort: AbortController | undefined, receiptAbort: AbortController | undefined;
     function button(text: string, action: () => void, accessible?: string) { const b = el("button", accessible ? { "aria-label": accessible } : {}, text); b.addEventListener("click", action); return b; }
     function cancelReceipt() { receiptVersion++; receiptAbort?.abort(); clear(evidence); }
     function clearFocus() { cancelReceipt(); focus = undefined; selectedGroup = undefined; groupPage = 0; parentPage = 0; memberPage = 0; clear(focusRegion); clear(groupsRegion); clear(membersRegion); }
-    function clearScope() { loadVersion++; loadAbort?.abort(); clearFocus(); model = undefined; loadedSource = ""; loadedSession = ""; loadedAt = ""; observationPage = 0; clear(body); status.textContent = "Scope changed. Load relationships explicitly."; }
+    function clearScope() { direction.value = "both"; depth.value = "1"; loadVersion++; loadAbort?.abort(); clearFocus(); model = undefined; loadedSource = ""; loadedSession = ""; loadedAt = ""; observationPage = 0; clear(body); status.textContent = "Scope changed. Load relationships explicitly."; }
     function pager(host: HTMLElement, page: number, total: number, size: number, name: string, change: (n: number) => void) { if (total <= size)
         return; const previous = button(`Previous ${name}`, () => change(page - 1)), next = button(`Next ${name}`, () => change(page + 1)); previous.disabled = page === 0; next.disabled = (page + 1) * size >= total; host.append(el("div", { class: "loom-controls" }, previous, el("span", {}, `${page * size + 1}–${Math.min((page + 1) * size, total)} of ${total}`), next)); }
     function drawObservations() {
@@ -38,8 +41,8 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
         clear(groupsRegion);
         if (!model || !focus)
             return;
-        const neighborhood = loomNeighborhood(model, focus.id);
-        groupsRegion.append(el("h3", {}, "One-hop native neighborhood"), el("p", { class: "dim" }, `Map shows up to 20 groups and 20 references from the selected pages. ${neighborhood.groups.length} groups; ${neighborhood.parents.length} native references total. No recursive traversal or chronological layout.`));
+        const neighborhood = loomTraversal(model, focus.id, direction.value as LoomDirection, Number(depth.value));
+        groupsRegion.append(el("h3", {}, "Native reference neighborhood"), el("p", { class: "dim" }, `Map shows up to 20 groups and 20 references from the selected pages. ${neighborhood.groups.length} groups; ${neighborhood.parents.length} native references total. Direction: ${direction.value}; maximum ${depth.value} reference hops. Missing/conflicting references are terminal; only resolved references expand the neighborhood. No inferred causality or chronological layout. Depth limits traversal, not loaded history or memory.`));
         groupsRegion.append(renderLoomMap(focus, neighborhood.groups.slice(groupPage * 20, groupPage * 20 + 20), neighborhood.parents.slice(parentPage * 20, parentPage * 20 + 20), selectGroup));
         if (!neighborhood.groups.length)
             groupsRegion.append(el("p", {}, "No supported identifiers for this observation. Its captured receipt is still inspectable."));
@@ -112,6 +115,9 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
             return;
         choiceStatus.textContent = `Session choices unavailable: ${error instanceof Error ? error.message : String(error)}. Manual exact scope remains available.`;
     } }
+    const changeTraversal = () => { cancelReceipt(); selectedGroup = undefined; groupPage = 0; parentPage = 0; memberPage = 0; clear(membersRegion); drawGroups(); };
+    direction.addEventListener("change", changeTraversal);
+    depth.addEventListener("change", changeTraversal);
     source.addEventListener("input", clearScope);
     session.addEventListener("input", clearScope);
     choices.addEventListener("change", () => { if (!choices.value)
