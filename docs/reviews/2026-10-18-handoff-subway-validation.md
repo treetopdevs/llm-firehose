@@ -34,3 +34,7 @@ Spec reviewer: P2 — recent picker included synthetic stream-only `state.transi
 ## Remediation e32cd52
 
 Excluded synthetic transitions before the latest100 window. Regression failed before fix, then10 panel tests and TypeScript passed; full frontend suite now529 tests across35 files and production build passed. Independent spec reviewer rechecked e32cd52: PASS, P2 resolved, no new issues. Standards review remains applicable to unchanged persistence/contracts.
+
+## Requested-model gate closed
+
+Bounded Argon4 High review completed PASS for e007b2f..048a803. Follow-up completed PASS for048a803..e32cd52, independently running529 frontend tests and production build. Reports are archived alongside this document. The earlier timeout and Sonnet quota failure are retained as execution history, not approval. PR38 can leave draft; hosted checks remain separately required. Autofix was requested on PR38 and service again required Carrot credits or Agent usage billing; no billing change was made. Direct repairs continue.
