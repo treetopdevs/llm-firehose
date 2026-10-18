@@ -17,3 +17,15 @@ test("error list pages paths, retains exact group identity and discloses omitted
  [...root.querySelectorAll('button')].find(b=>b.textContent==='Next error paths')!.click();
  expect(root.querySelectorAll('li').length).toBe(1);expect(root.textContent).toContain('workspace-20');
 });
+
+test("paging retains keyboard focus and announces range",()=>{
+ const state={page:0};const many=errorRange(Array.from({length:41},(_,i)=>({...paths[0],path:`p${i}`})),0,3);
+ const root=renderErrorPaths(many,new Map(),state);document.body.append(root);
+ const next=[...root.querySelectorAll('button')].find(b=>b.textContent==='Next error paths')!;next.focus();next.click();
+ expect(document.activeElement?.textContent).toBe('Next error paths');expect(root.querySelector('[role="status"]')?.textContent).toContain('21–40');
+ const refreshed=renderErrorPaths(many,new Map(),state);expect(refreshed.textContent).toContain('21–40');root.remove();
+});
+test("omission-only rows explicitly disclose unknown range and format group labels",()=>{
+ const root=renderErrorPaths(errorRange([{...paths[0],group:'unknown',omitted_signatures:2}],3,4));
+ expect(root.textContent).toContain('No retained observations in range');expect(root.textContent).toContain('Outside known worktrees');
+});

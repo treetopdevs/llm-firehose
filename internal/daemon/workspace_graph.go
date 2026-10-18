@@ -444,15 +444,23 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 	resp.Paths, resp.FileEvents, resp.Unreadable = result.Paths, result.FileEvents, result.UnreadableFileEvents
 	resp.Truncated, resp.TruncatedTotal, resp.CaptureGap = result.Truncated, result.TruncatedTotal, result.CaptureGap
 	seen := map[string]bool{}
-	for _, p := range result.Paths { // already in group order: "" first
-		if seen[p.Group] {
+	groups := make([]string, 0, len(result.Paths)+len(result.ErrorPaths))
+	for _, p := range result.Paths {
+		groups = append(groups, p.Group)
+	}
+	for _, p := range result.ErrorPaths {
+		groups = append(groups, p.Group)
+	}
+	slices.Sort(groups)
+	for _, group := range groups { // resolved group first
+		if seen[group] {
 			continue
 		}
-		seen[p.Group] = true
-		if p.Group == "" {
+		seen[group] = true
+		if group == "" {
 			resp.Groups = append(resp.Groups, activityGroup{Resolved: true})
 		} else {
-			resp.Groups = append(resp.Groups, activityGroup{ID: p.Group, Label: activityOutsideLabel})
+			resp.Groups = append(resp.Groups, activityGroup{ID: group, Label: activityOutsideLabel})
 		}
 	}
 	writeJSON(w, resp)
