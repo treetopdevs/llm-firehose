@@ -1,3 +1,9 @@
+## Shared Airspace integration checkpoint — ed9ca51
+
+Fast-forward from aef9ab4 to reviewed stacked PR #47 head ed9ca51. Exact source-tree equality with the slice verified; no merge conflict or additional application changes. The slice already contains the combined app and passed 750 frontend tests across58 files and production build. Go formatting/vet/full tests/CLI, rebuilt sidecar and Rust3 passed; no backend/native change in this slice. Independent spec/standards and Sonnet5.5 High follow-ups PASS; residual low notes fixed with regressions. Browser evidence retains its documented6ce01f3 scope. See 2026-10-18-airspace-shared-validation.md and implementation review.
+
+PR #43 aef9ab4 passed all hosted platforms in39152023967; PR #46 e06b32d passed in39151696930. New PR #47 ed9ca51 run39153212256 is pending behind cancellation of superseded39153093521. No updated-head hosted pass inferred. Integration docs-only changes after this checkpoint do not change the validated application tree.
+
 ## Scoped Files integration checkpoint — b0062bd
 
 720 frontend tests across 56 files, production build, empty gofmt output, go vet, full Go tests, CLI build, rebuilt sidecar and 3 Rust tests pass. Independent spec and standards integration reviews PASS; navigation lifecycle, prior tests, correlation metadata and Activity error contracts are preserved. Sonnet 5.5 High integration review PASS for code and shared surfaces. Its low documentation findings are resolved by adding endpoint index entries and committing this checkpoint. Report: 2026-10-18-file-session-integration-sonnet.md. Current Files implementation exactly matches the reviewed standalone slice; prior standalone browser evidence remains scoped to that slice.
