@@ -78,3 +78,6 @@ _Avoid_: Truth score, automatic verdict, proof of correctness
 **Handoff Subway**:
 A map of explicit user annotations linking Captured Event receipts across session/source pairs; annotated transfers are not source-confirmed handoffs or causal proof.
 _Avoid_: Inferred handoff, automatic causality, complete context transfer
+**Attention Airspace**:
+A source/session-scoped snapshot board grouping captured requests, failures, activity and completion evidence; quiet and stale observations never prove process status.
+_Avoid_: Running agents, session ended, time blocked, collision prediction
