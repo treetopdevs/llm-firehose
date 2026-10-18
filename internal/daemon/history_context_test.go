@@ -80,6 +80,13 @@ func TestHistoryHandlersUseRequestContext(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
+	for _, path := range []string{"/sessions/absent", "/traces/absent"} {
+		abandoned := httptest.NewRecorder()
+		handler.ServeHTTP(abandoned, httptest.NewRequest(http.MethodGet, path, nil).WithContext(canceled))
+		if abandoned.Code == http.StatusNotFound || abandoned.Code == http.StatusInternalServerError || abandoned.Body.Len() != 0 {
+			t.Fatalf("abandoned unknown query wrote a response: %d %s", abandoned.Code, abandoned.Body.String())
+		}
+	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sessions/history-context-session?view=invalid", nil).WithContext(canceled))
 	if rec.Code != http.StatusBadRequest {

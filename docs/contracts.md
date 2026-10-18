@@ -454,7 +454,7 @@ Session and trace HTTP history reads use the request context during spool scans,
 matching other cancellation-aware read endpoints. An abandoned request stops at
 cooperative scanner checkpoints and does not emit partial history or an error
 response to the disconnected client. Healthy response shapes, ordering,
-deduplication, view allowlists, not-found404 and genuine read-error500 behavior
+deduplication, view allowlists, not-found 404 and genuine read-error 500 behavior
 are unchanged. Cancellation does not preempt blocked filesystem operations or
 bound complete-history memory; graceful daemon shutdown does not cancel these
 request contexts. Capture admission is independent.
