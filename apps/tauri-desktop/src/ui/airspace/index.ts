@@ -46,7 +46,7 @@ export function createAirspace(openScore: (id: string, source: string) => void =
             }
             board.append(list);
             if (derived.rows.length > 20) {
-                const previous = button("Previous sessions", () => { cancelReceipt(); page--; evaluatedAt = now(); draw(); }), next = button("Next sessions", () => { cancelReceipt(); page++; evaluatedAt = now(); draw(); });
+                const previous = button("Previous sessions", () => { cancelReceipt(); page--; draw(); }), next = button("Next sessions", () => { cancelReceipt(); page++; draw(); });
                 previous.disabled = page === 0;
                 next.disabled = (page + 1) * 20 >= derived.rows.length;
                 board.append(el("div", { class: "airspace-controls" }, previous, el("span", {}, `${page * 20 + 1}–${Math.min((page + 1) * 20, derived.rows.length)} of ${derived.rows.length}`), next));

@@ -122,3 +122,16 @@ test.each(["success","failure"])("accepted refresh %s cancels evidence selected 
 test("selecting a session reveals its detail with keyboard focus",async()=>{
  const panel=createAirspace(undefined,undefined,now);document.body.append(panel.root);try{await panel.activate();click(panel.root,"Select session");const selected=panel.root.querySelector<HTMLElement>('[aria-label="Selected session"]')!;expect(document.activeElement).toBe(selected);expect(selected.getAttribute("tabindex")).toBe("-1");}finally{panel.root.remove();}
 });
+test("paging retains the evaluated snapshot even when activity ages across the window",async()=>{
+ let clock=Date.parse(event.time)+14*60000;
+ const sessions=Array.from({length:21},(_,i)=>({...row,id:`working-${String(i).padStart(2,"0")}`,last:{...row.last,time:new Date(Date.parse(event.time)+i*1000).toISOString()}}));
+ // A quiet row has a newer clock; re-evaluation would move it before aged
+ // working rows and repeat the last row of the prior page.
+ sessions.push({...row,id:"quiet",state:"unknown",last:{...row.last,time:new Date(clock).toISOString()}});
+ api.attention.mockResolvedValue({sessions,warnings:[]});const panel=createAirspace(undefined,undefined,()=>clock);await panel.activate();
+ const first=[...panel.root.querySelectorAll(".airspace-row h3")].map(n=>n.textContent);
+ const stamp=panel.root.querySelector(".airspace-notice")!.textContent;
+ clock+=2*60000;click(panel.root,"Next sessions");const second=[...panel.root.querySelectorAll(".airspace-row h3")].map(n=>n.textContent);
+ expect(second).toEqual([`${row.source} / working-00`,`${row.source} / quiet`]);expect(second.every(id=>!first.includes(id))).toBe(true);expect(panel.root.querySelector(".airspace-notice")!.textContent).toBe(stamp);
+ click(panel.root,"Previous sessions");expect([...panel.root.querySelectorAll(".airspace-row h3")].map(n=>n.textContent)).toEqual(first);
+});
