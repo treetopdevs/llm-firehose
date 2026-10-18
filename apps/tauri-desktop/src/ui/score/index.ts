@@ -622,7 +622,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     const first = events[0];
     // Only the agent is taken from the events: the timeline view carries no
     // workspace, so a name derived from one would differ between daemons.
-    return sessionName({ id: sessionId, source: first?.source ?? "", agent: first?.agent });
+    return sessionName({ id: sessionId, source: first?.source || "session", agent: first?.agent });
   }
 
   function drawHead() {

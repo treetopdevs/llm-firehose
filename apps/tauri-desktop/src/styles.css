@@ -728,6 +728,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .score-head { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 0.6rem; align-items: baseline; min-width: 0; }
 .score-head .score-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .score-head .score-facts { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+.score-head .session-id { flex: none; }
 .score-bar { display: flex; gap: 0.3rem; align-items: center; }
 .score-bar .score-gap { flex: 1; }
 .score-bar button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
