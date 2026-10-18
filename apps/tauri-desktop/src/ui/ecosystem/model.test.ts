@@ -143,3 +143,8 @@ test("RFC3339 clocks preserve fractional order and reject invalid calendar strin
  expect(model.events.map(e=>e.id)).toEqual(['z','a']);
  expect(model.undated.map(e=>e.id)).toEqual(['bad','loose']);
 });
+
+test("normalized clock syntax rejects loose separators and invalid offsets",()=>{
+ const times=['2026-10-18 12:00:00Z','2026-10-18t12:00:00z','2026-10-18T12:00:00+24:00','2026-10-18T12:00:00+00:60'];
+ const model=buildEcosystem(times.map((time,i)=>({...files[0],id:String(i),time})),source,session);expect(model.events).toEqual([]);expect(model.undated).toHaveLength(4);
+});
