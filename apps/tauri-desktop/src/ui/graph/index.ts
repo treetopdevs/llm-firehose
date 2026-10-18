@@ -1,3 +1,4 @@
+import { sessionName } from "../../format";
 import {
   attention,
   getConfig,
@@ -131,6 +132,34 @@ export function createWorkspaceGraph(
             : s.jj_workspace_id,
       }
     );
+  }
+  /**
+   * The human name for a `source\0id` key: the attention entry's name, else the
+   * agent seen on its events and a short id. Memoized per render (the cache is
+   * dropped in render()), so a live arrival costs one pass over the events, not one per row.
+   */
+  let labelCache = new Map<string, string>();
+  let eventIndex: Map<string, FirehoseEvent> | undefined;
+  function sessionLabel(key: string): string {
+    const cached = labelCache.get(key);
+    if (cached !== undefined) return cached;
+    const [src, id] = key.split("\0");
+    const known = sessions.find((s) => s.source === src && s.id === id);
+    let label: string;
+    if (known) label = sessionName(known);
+    else {
+      if (!eventIndex) {
+        eventIndex = new Map();
+        for (const e of timeline.all()) {
+          const k = `${e.source}\0${e.session_id}`;
+          if (e.session_id && !eventIndex.has(k)) eventIndex.set(k, e);
+        }
+      }
+      const seen = eventIndex.get(key);
+      label = sessionName({ id, source: src, agent: seen?.agent, repo: seen?.repo, cwd: seen?.cwd });
+    }
+    labelCache.set(key, label);
+    return label;
   }
   const scopedSessions = () =>
     sessions.filter(
@@ -519,6 +548,8 @@ export function createWorkspaceGraph(
     });
   }
   function render() {
+    labelCache = new Map();
+    eventIndex = undefined;
     const oldTimeline = body.querySelector<HTMLElement>(".graph-timeline");
     if (oldTimeline) timelineScrollTop = oldTimeline.scrollTop;
     const restore = keepFocus(root);
@@ -595,6 +626,7 @@ export function createWorkspaceGraph(
           .map((s) => ({
             source: s.source,
             id: s.id,
+            name: sessionName(s),
             state: sessionState(s, now),
             word: sessionStateWord(s, now),
             uncertainty: s.uncertainty,
@@ -736,7 +768,7 @@ export function createWorkspaceGraph(
             ]),
           )
             .filter((s) => !source || s.startsWith(source + "\0"))
-            .map((s) => [s, s.replace("\0", " · ")] as [string, string]),
+            .map((s) => [s, sessionLabel(s)] as [string, string]),
         ],
         session,
         (v) => {
@@ -805,7 +837,7 @@ export function createWorkspaceGraph(
           {},
           ...[
             "Time",
-            "Agent / session",
+            "Session",
             "Native hook / event",
             "Category",
             "Summary",
@@ -831,7 +863,7 @@ export function createWorkspaceGraph(
       });
       row.append(
         el("td", {}, new Date(e.time).toLocaleTimeString()),
-        el("td", {}, `${e.source} · ${e.session_id ?? "unassigned"}`),
+        el("td", { class: "timeline-session", title: e.session_id ? `${e.source} · ${e.session_id}` : "" }, e.session_id ? sessionLabel(`${e.source}\0${e.session_id}`) : `${e.source} · unassigned`),
         el("td", {}, e.name ?? "—"),
         el("td", {}, e.category),
         el("td", {}, e.summary ?? ""),

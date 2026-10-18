@@ -131,7 +131,7 @@ test("two agents display separately and equal session IDs from different sources
     ctx({
       agents: [
         { source: "codex", id: "same", state: "working", word: "Working" },
-        { source: "claude-code", id: "same", state: "attention", word: "Needs you", uncertainty: "stale evidence" },
+        { source: "claude-code", id: "same", name: "Fix login bug", state: "attention", word: "Needs you", uncertainty: "stale evidence" },
       ],
     }),
   );
@@ -142,6 +142,10 @@ test("two agents display separately and equal session IDs from different sources
   expect(rows[1].textContent).toContain("Claude Code");
   expect(rows[1].textContent).toContain("Needs you");
   expect(rows[1].textContent).toContain("stale evidence");
+  // The row leads with the session's name; the native id is an eight-character detail.
+  expect(rows[0].querySelector(".agent-name")?.textContent).toBe("Codex session");
+  expect(rows[0].querySelector(".agent-id")?.textContent).toBe("same");
+  expect(rows[1].querySelector(".agent-name")?.textContent).toBe("Fix login bug");
   expect(rows[0].getAttribute("data-session")).not.toBe(rows[1].getAttribute("data-session"));
   rows[1].querySelector<HTMLButtonElement>(".agent-open")!.click();
   expect(h.openSession).toHaveBeenCalledWith("same", "claude-code");

@@ -31,6 +31,10 @@ type Session struct {
 	HasError     bool         `json:"has_error,omitempty"`
 	LastSummary  string       `json:"last_summary,omitempty"`
 	LastCategory string       `json:"last_category,omitempty"`
+	// Title is the human name for the session: the source's own session title
+	// when it sends one (latest wins), otherwise an excerpt of the first prompt.
+	// Additive; empty when nothing captured names the session.
+	Title string `json:"title,omitempty"`
 }
 
 // Trace summarizes causally related events sharing one trace_id.
@@ -74,6 +78,7 @@ type Projection struct {
 
 type sessionEntry struct {
 	Session
+	title        titleState
 	days         map[string]bool
 	lastActivity time.Time
 	openTools    int // tool calls begun (PreToolUse) but not yet finished
@@ -233,6 +238,11 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 		}
 		if s.Source == "" {
 			s.Source = ev.Source
+		}
+		// /sessions aggregates every source under one native id and keeps the
+		// first source seen; only that source's evidence may name the row.
+		if ev.Source == s.Source && s.title.consider(ev) {
+			s.Title = s.title.title
 		}
 		if s.Agent == "" {
 			s.Agent = ev.Agent

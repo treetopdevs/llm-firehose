@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -705,5 +706,97 @@ func TestBuildSkipsCorruptLines(t *testing.T) {
 	sessions := ix.Sessions()
 	if len(sessions) != 1 || sessions[0].Events != 2 {
 		t.Errorf("corrupt-line handling wrong (want 2 distinct events): %+v", sessions)
+	}
+}
+
+func TestSessionTitleOrderIsChronologicalNotArrival(t *testing.T) {
+	base := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	title := func(id string, at time.Time, v string) event.Event {
+		return event.Event{ID: id, Time: at, Source: "claude-code", SessionID: "cc", Category: event.CategoryPrompt,
+			Summary: "user prompt submitted", Payload: map[string]any{"session_title": v}}
+	}
+	prompt := func(id string, at time.Time, v string) event.Event {
+		return event.Event{ID: id, Time: at, Source: "codex", SessionID: "cx", Category: event.CategoryPrompt,
+			Summary: "prompt: " + strconv.Quote(v)}
+	}
+	// Day-two title arrives first, then a delayed day-one title: the newer one stays.
+	ix := foldProjection([]event.Event{title("t2", base.Add(24*time.Hour), "Day two"), title("t1", base, "Day one")})
+	// Prompt excerpts: the earliest prompt names the session even when it arrives last.
+	ix.Apply(prompt("p2", base.Add(time.Hour), "second"))
+	ix.Apply(prompt("p1", base, "first\twith \"quotes\""))
+	want := map[string]string{"cc": "Day two", "cx": `first with "quotes"`}
+	for _, s := range ix.Sessions() {
+		if s.Title != want[s.ID] {
+			t.Errorf("live %s title = %q, want %q", s.ID, s.Title, want[s.ID])
+		}
+	}
+	// A chronological rebuild agrees with the live fold.
+	re := foldProjection([]event.Event{title("t1", base, "Day one"), prompt("p1", base, "first\twith \"quotes\""),
+		prompt("p2", base.Add(time.Hour), "second"), title("t2", base.Add(24*time.Hour), "Day two")})
+	for _, s := range re.Sessions() {
+		if s.Title != want[s.ID] {
+			t.Errorf("rebuilt %s title = %q, want %q", s.ID, s.Title, want[s.ID])
+		}
+	}
+	for _, s := range re.Inbox().Sessions {
+		if s.Title != want[s.ID] {
+			t.Errorf("inbox %s title = %q, want %q", s.ID, s.Title, want[s.ID])
+		}
+	}
+}
+
+func TestSessionTitleStaysWithTheRowsSource(t *testing.T) {
+	base := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	ix := foldProjection([]event.Event{
+		{ID: "x1", Time: base, Source: "codex", SessionID: "same", Category: event.CategoryPrompt, Payload: map[string]any{"message": "Codex task"}},
+		{ID: "c1", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "same", Category: event.CategoryPrompt, Payload: map[string]any{"session_title": "Claude task"}},
+	})
+	s := ix.Sessions()[0]
+	if s.Source != "codex" || s.Title != "Codex task" {
+		t.Errorf("aggregated row = %q titled %q, want the codex title on the codex row", s.Source, s.Title)
+	}
+	got := map[string]string{}
+	for _, e := range ix.Inbox().Sessions {
+		got[e.Source] = e.Title
+	}
+	if got["codex"] != "Codex task" || got["claude-code"] != "Claude task" {
+		t.Errorf("inbox titles per source = %v", got)
+	}
+}
+
+func TestSessionTitleFromSessionTitleThenPromptExcerpt(t *testing.T) {
+	base := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	ix := foldProjection([]event.Event{
+		// Codex: the first prompt excerpt names the session until something better arrives.
+		{ID: "c1", Time: base, Source: "codex", SessionID: "cx", Category: event.CategoryPrompt,
+			Summary: `prompt: "Review the   auth\nchange…"`, Payload: map[string]any{"message": "Review the   auth\nchange please, carefully, and report back with findings about every single file that was touched in the diff"}},
+		{ID: "c2", Time: base.Add(time.Minute), Source: "codex", SessionID: "cx", Category: event.CategoryPrompt,
+			Summary: `prompt: "second prompt"`, Payload: map[string]any{"message": "second prompt"}},
+		// Claude Code: the hook's session_title wins over any prompt, and the latest title wins.
+		{ID: "a1", Time: base, Source: "claude-code", SessionID: "cc", Category: event.CategoryPrompt,
+			Summary: "user prompt submitted", Payload: map[string]any{"session_title": "Fix login bug"}},
+		{ID: "a2", Time: base.Add(time.Minute), Source: "claude-code", SessionID: "cc", Category: event.CategoryPrompt,
+			Summary: "user prompt submitted", Payload: map[string]any{"session_title": "Fix login bug and add tests"}},
+		// Minimal mode digests payload values: no title is invented from a digest.
+		{ID: "m1", Time: base, Source: "claude-code", SessionID: "min", Category: event.CategoryPrompt,
+			Summary: "user prompt submitted", Payload: map[string]any{"session_title": map[string]any{"sha256": "ab", "len": 9}}},
+	})
+	want := map[string]string{
+		"cx":  "Review the auth change please, carefully, and report back with findings about every sing…",
+		"cc":  "Fix login bug and add tests",
+		"min": "",
+	}
+	for _, s := range ix.Sessions() {
+		if s.Title != want[s.ID] {
+			t.Errorf("session %s title = %q, want %q", s.ID, s.Title, want[s.ID])
+		}
+	}
+	inbox := ix.Inbox()
+	got := map[string]string{}
+	for _, s := range inbox.Sessions {
+		got[s.ID] = s.Title
+	}
+	if got["cx"] != want["cx"] || got["cc"] != want["cc"] || got["min"] != "" {
+		t.Errorf("inbox titles = %v, want %v", got, want)
 	}
 }

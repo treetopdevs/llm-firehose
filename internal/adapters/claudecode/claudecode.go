@@ -55,6 +55,11 @@ type hookPayload struct {
 	AgentID          string          `json:"agent_id"`
 	AgentType        string          `json:"agent_type"`
 	Effort           map[string]any  `json:"effort"`
+	// SessionTitle is Claude Code's own short name for the session (derived
+	// by the app from the first prompt). It is the one content-bearing field
+	// kept in the safe payload, so local views can name a session; the
+	// prompt body itself is never copied out of raw.
+	SessionTitle string `json:"session_title"`
 }
 
 var fileTools = map[string]bool{
@@ -201,6 +206,9 @@ func addCommonPayload(payload map[string]any, p hookPayload) {
 	}
 	if p.NotificationType != "" {
 		payload["notification_type"] = p.NotificationType
+	}
+	if p.SessionTitle != "" {
+		payload["session_title"] = p.SessionTitle
 	}
 }
 

@@ -88,8 +88,13 @@ describe("buildLanes", () => {
     ];
     const lanes = buildLanes(events, summaries, now, 5 * MIN);
     expect(lanes.map((l) => l.id)).toEqual(["s2", "s1", "s4"]);
-    expect(lanes[0]).toMatchObject({ state: "needs_input", reason: "approve", label: "claude" });
-    expect(lanes[2].label).toBe("opencode");
+    expect(lanes[0]).toMatchObject({ state: "needs_input", reason: "approve", label: "claude · s2" });
+    expect(lanes[2].label).toBe("opencode · s4");
+  });
+
+  test("a captured title names the lane", () => {
+    const lanes = buildLanes([ev("s2", 60_000)], [summary({ id: "s2", title: "Fix login bug", state: "working" })], now, 5 * MIN);
+    expect(lanes[0].label).toBe("Fix login bug");
   });
 
   test("an unmatched start ends at the last report once the session stops working", () => {

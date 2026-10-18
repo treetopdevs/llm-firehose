@@ -79,12 +79,14 @@ describe("sessions band", () => {
 
     const rows = [...panel.root.querySelectorAll(".band-row")];
     expect(rows).toHaveLength(2);
-    expect(rows[0].querySelector(".agent")?.textContent).toBe("codex");
+    const last = (row: Element) => row.closest(".session-item")!.querySelector(".session-last")?.textContent;
+    // No title captured and no checkout: the agent and a short id, never the UUID alone.
+    expect(rows[0].querySelector(".name")?.textContent).toBe("codex · s2");
     expect(rows[0].querySelector(".state")?.textContent).toBe("NEEDS YOU");
-    expect(rows[0].querySelector(".summary")?.textContent).toBe("approve Bash");
+    expect(last(rows[0])).toBe("approve Bash");
     expect(rows[0].querySelector(".age")?.textContent).toBe("1m");
     expect(rows[1].querySelector(".spark")?.textContent).toMatch(/[▁▂▃▄▅▆▇█]/);
-    expect(rows[1].querySelector(".summary")?.textContent).toBe("edit view.go");
+    expect(last(rows[1])).toBe("edit view.go");
     expect(panel.root.querySelector(".badge")).toBeNull();
   });
 
@@ -101,7 +103,7 @@ describe("sessions band", () => {
     await panel.refresh();
 
     const rows = [...panel.root.querySelectorAll(".band-row")];
-    expect(rows.map((r) => r.querySelector(".agent")?.textContent)).toEqual(["claude", "codex"]);
+    expect(rows.map((r) => r.querySelector(".name")?.textContent)).toEqual(["claude · fresh", "codex · ghost"]);
     expect(rows[1].querySelector(".state")?.textContent).toBe("needs_input");
     expect(rows[1].querySelector(".state.needs")).toBeNull();
   });
@@ -136,7 +138,28 @@ describe("sessions band", () => {
     await panel.refresh();
     const rows = [...panel.root.querySelectorAll(".band-row")];
     expect(rows[0].querySelector(".state")?.textContent).toBe("NEEDS YOU");
-    expect(rows[0].querySelector(".summary")?.textContent).toBe("approve edit");
+    expect(rows[0].closest(".session-item")!.querySelector(".session-last")?.textContent).toBe("approve edit");
+  });
+
+  test("a captured title is the row's name; the checkout, start time and id are the details", async () => {
+    sessions.mockResolvedValue([
+      summary({ id: "2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c", title: "Redesign the Workflow section", cwd: "/Users/me/dev/app/.claude/worktrees/redesign-027da0", events: 51 }),
+      summary({ id: "s2", cwd: "/Users/me/dev/app" }),
+    ]);
+    attentionSays([]);
+    sessionEvents.mockResolvedValue([]);
+    const panel = createSessions(() => {}, () => []);
+    await panel.refresh();
+    const items = [...panel.root.querySelectorAll<HTMLElement>(".session-item")];
+    expect(items[0].querySelector(".name")?.textContent).toBe("Redesign the Workflow section");
+    expect(items[0].querySelector(".session-facts")?.textContent).toMatch(/^claude · redesign-027da0 · started \d{2}:\d{2}:\d{2} · 51 events$/);
+    expect(items[0].querySelector(".session-facts")?.getAttribute("title")).toBe("/Users/me/dev/app/.claude/worktrees/redesign-027da0");
+    expect(items[0].querySelector(".session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
+    expect(items[1].querySelector(".name")?.textContent).toBe("claude in app");
+    items[0].click();
+    await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c"));
+    await vi.waitFor(() => expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("Redesign the Workflow section"));
+    expect(panel.root.querySelector(".session-heading .session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
   });
 
   test("a captured failure reads FAILED and leads", async () => {
@@ -170,6 +193,41 @@ describe("sessions band", () => {
     row.click();
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("s1"));
   });
+});
+
+test("a session opened from another panel before the list loaded is still headed by its name", async () => {
+  sessions.mockResolvedValue([summary({ id: "2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c", title: "Redesign the Workflow section", cwd: "/Users/me/dev/app" })]);
+  attentionSays([]);
+  sessionEvents.mockResolvedValue([]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.openSession("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("Redesign the Workflow section");
+  expect(panel.root.querySelector(".session-heading .session-sub")?.textContent).toContain("claude-code · app · started");
+});
+
+test("a title that arrives on a later refresh updates the open history's heading", async () => {
+  const id = "2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c";
+  sessions.mockResolvedValue([summary({ id, cwd: "/Users/me/dev/app" })]);
+  attentionSays([]);
+  sessionEvents.mockResolvedValue([]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.refresh();
+  await panel.openSession(id);
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("claude in app");
+  sessions.mockResolvedValue([summary({ id, cwd: "/Users/me/dev/app", title: "New title" })]);
+  await panel.refresh();
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("New title");
+  expect(panel.root.querySelector(".session-events-list")).not.toBeNull();
+});
+
+test("an unknown session id is headed by a short id, never the bare UUID", async () => {
+  sessions.mockResolvedValue([]);
+  attentionSays([]);
+  sessionEvents.mockResolvedValue([]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.openSession("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("session 2ed4f8a3");
+  expect(panel.root.querySelector(".session-heading .session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
 });
 
 describe("sessions scope", () => {
