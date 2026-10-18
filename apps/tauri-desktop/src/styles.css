@@ -794,3 +794,8 @@ span.agent-dot.big { width: 14px; height: 14px; }
   .strata-row-heading, .strata-times { flex-direction: column; align-items: flex-start; }
   .strata-row-heading strong { max-width: 100%; flex: none; }
 }
+
+/* Recurrence is an outline; Heat fill and geometry retain their meanings. */
+.map-storm > rect { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 2; vector-effect: non-scaling-stroke; }
+.map-errors { margin-top: 1rem; overflow-wrap: anywhere; }
+.map-errors li { margin-bottom: 0.8rem; }

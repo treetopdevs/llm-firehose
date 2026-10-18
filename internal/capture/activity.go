@@ -44,6 +44,8 @@ type ActivityResult struct {
 	UnreadableFileEvents int
 	Truncated            bool
 	TruncatedTotal       int
+	ErrorPaths           []ActivityErrorPath
+	OmittedErrorPaths    int
 	CaptureGap           bool
 }
 
@@ -102,6 +104,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 
 	type key struct{ group, path string }
 	heat := map[key]map[int]int{}
+	errorCounts := map[activityPathKey]map[string]map[int]int{}
 	seen := map[string]bool{}
 	onGap := func() { out.CaptureGap = true }
 	for _, day := range e.projection.TimelineDays(groups, "") {
@@ -112,7 +115,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 			return out, err
 		}
 		err := e.scanDay(ctx, e.spoolDir, day, filter, onGap, func(ev event.Event) {
-			if ev.Category != event.CategoryFile || !identityMatches(q.RepoID, q.RepoAliases, ev.RepoID, ev.JJRepoID) || !identityMatches(q.WorkspaceID, q.WorkspaceAliases, ev.WorktreeID, ev.JJWorkspaceID) {
+			if !identityMatches(q.RepoID, q.RepoAliases, ev.RepoID, ev.JJRepoID) || !identityMatches(q.WorkspaceID, q.WorkspaceAliases, ev.WorktreeID, ev.JJWorkspaceID) {
 				return
 			}
 			if ev.Time.Before(from) || !ev.Time.Before(out.To) {
@@ -126,13 +129,39 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 				}
 				seen[ev.ID] = true
 			}
-			out.FileEvents++
 			paths := activityPaths(ev)
+			bucket := int(ev.Time.Sub(from) / q.Bucket)
+			if signature, ok := projection.ErrorObservationKey(ev); ok {
+				// Read explicit path fields on this error only; keep its original
+				// category for signature identity and Heat eligibility.
+				pathEvent := ev
+				pathEvent.Category = event.CategoryFile
+				paths = activityPaths(pathEvent)
+				resolved := map[activityPathKey]bool{}
+				for _, p := range paths {
+					group, rel := resolve(ev, p)
+					k := activityPathKey{group, rel}
+					if resolved[k] {
+						continue
+					}
+					resolved[k] = true
+					if errorCounts[k] == nil {
+						errorCounts[k] = map[string]map[int]int{}
+					}
+					if errorCounts[k][signature] == nil {
+						errorCounts[k][signature] = map[int]int{}
+					}
+					errorCounts[k][signature][bucket]++
+				}
+			}
+			if ev.Category != event.CategoryFile {
+				return
+			}
+			out.FileEvents++
 			if len(paths) == 0 {
 				out.UnreadableFileEvents++
 				return
 			}
-			bucket := int(ev.Time.Sub(from) / q.Bucket)
 			for _, p := range paths {
 				group, rel := resolve(ev, p)
 				k := key{group, rel}
@@ -150,6 +179,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 		out.CaptureGap = true
 	}
 
+	out.ErrorPaths, out.OmittedErrorPaths = activityErrorPaths(errorCounts)
 	for k, counts := range heat {
 		p := ActivityPath{Path: k.path, Group: k.group, Heat: make([][2]int, 0, len(counts))}
 		for i, n := range counts {

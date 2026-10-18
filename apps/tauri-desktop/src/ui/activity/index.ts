@@ -8,6 +8,7 @@ import { clear, el, keepFocus } from "../../dom";
 import { graphAPI, type ActivityResponse } from "../graph/api";
 import { clampView, digestLabel, stripControl, type View } from "../score/model";
 import { buildTree, colour, findNode, histogram, hottest, layout, rangeTotals, trail, LABEL_H, PAD } from "./model";
+import {errorRange,errorPathKey,renderErrorPaths} from "./errors";
 import type { TreeNode } from "./model";
 
 export type MapWorkspace = { id: string; name: string };
@@ -251,6 +252,7 @@ export function createActivityMap(): ActivityMap {
     clear(crumbs);
     clear(chart);
     clear(scrub);
+    root.querySelector(".map-errors")?.remove();
     clear(list);
     summary.textContent = "";
     bodyEl.hidden = false;
@@ -279,6 +281,11 @@ export function createActivityMap(): ActivityMap {
     renderMap(a, b);
     renderScrub(r, a, b);
     renderList(r, a, b);
+    if (!r.error_paths) notice("File-linked error overlay unavailable from this daemon.");
+    else {
+      if (r.omitted_error_paths) notice(`${r.omitted_error_paths} error paths omitted from the loaded window; overlay and list are incomplete.`, "warn");
+      list.after(renderErrorPaths(errorRange(r.error_paths,a,b)));
+    }
     restore();
   }
 
@@ -304,6 +311,7 @@ export function createActivityMap(): ActivityMap {
     const width = Math.max(320, chart.clientWidth || FALLBACK_W);
     const rects = layout(view, width, MAP_H);
     const inRange = rangeTotals(tree!, a, b);
+    const errors = new Map(errorRange(resp?.error_paths ?? [],a,b).map(p=>[errorPathKey(p.group,p.path),p]));
     let max = 0;
     for (const x of rects) if (!x.node.children) max = Math.max(max, inRange.get(x.key) ?? 0);
     const map = svg("svg", { class: "map-svg", viewBox: `0 0 ${width} ${MAP_H}`, width, height: MAP_H, role: "group", "aria-label": "Activity Map" });
@@ -333,7 +341,9 @@ export function createActivityMap(): ActivityMap {
         });
         map.append(g);
       } else {
-        const g = svg("g", { class: heat > 0 ? "map-tile" : "map-tile cold", "data-key": x.key }, title);
+        const repeated = errors.get(errorPathKey(x.node.group,x.node.path))?.repeated ?? 0;
+        if (repeated) title.textContent += `\n${repeated} repeated Error Signatures in range (retained observations)`;
+        const g = svg("g", { class: (heat > 0 ? "map-tile" : "map-tile cold") + (repeated ? " map-storm" : ""), "data-key": x.key }, title);
         g.append(svg("rect", { x: x.x, y: x.y, width: Math.max(0, x.w - 1), height: Math.max(0, x.h - 1), fill: colour(heat, max) }));
         if (x.w >= FILE_LABEL_W && x.h >= FILE_LABEL_H) {
           const clip = `map-clip-${i}`;
