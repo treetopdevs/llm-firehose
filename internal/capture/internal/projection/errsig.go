@@ -135,6 +135,15 @@ func errorSignatureKey(ev event.Event, class string) string {
 	return ev.Source + "|" + string(ev.Category) + "|" + ev.Name + "|" + class
 }
 
+// ErrorObservationKey exposes the canonical qualification and identity for
+// scoped derived views. It does not mutate the projection or capture history.
+func ErrorObservationKey(ev event.Event) (string, bool) {
+	if !isErrorObservation(ev) {
+		return "", false
+	}
+	return errorSignatureKey(ev, errorClass(ev)), true
+}
+
 // foldErrorSignature adds one error observation. The caller holds ix.mu and
 // has already passed the exact-ID dedupe.
 func (ix *Projection) foldErrorSignature(ev event.Event) {

@@ -9,6 +9,7 @@ import type { ActivityPath, ActivityResponse } from "../graph/api";
 import { digestLabel } from "../score/model";
 
 export const OUTSIDE_LABEL = "Outside known worktrees";
+export const activityGroupLabel = (group:string,names:ReadonlyMap<string,string> = new Map()):string => names.get(group) || (group === "unknown" ? OUTSIDE_LABEL : digestLabel(group) || group);
 
 export type TreeNode = {
   /** Unique within one tree: group, NUL, then the directory or file path. */
@@ -115,7 +116,7 @@ export function buildTree(resp: ActivityResponse, names: ReadonlyMap<string, str
     }
     let g = groups.get(entry.group);
     if (!g) {
-      const name = names.get(entry.group) || digestLabel(entry.group) || entry.group;
+      const name = activityGroupLabel(entry.group,names);
       g = dirNode(`${entry.group}\0`, name, "", entry.group);
       groups.set(entry.group, g);
       outside.children!.push(g);

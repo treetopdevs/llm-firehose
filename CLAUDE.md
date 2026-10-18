@@ -76,7 +76,7 @@ sources ──adapters──▶ event.Event ──capture.Admit──▶ spool (
 - **`internal/store`** — ring buffer, filters, and burst coalescing (`×N` rows) for the TUI.
 - **`internal/daemon`** — the Capture Engine's local HTTP adapter (`net/http`
   `mux.HandleFunc`, Go 1.22+ routing). Routes: `/health`, `/config`, `/events`,
-  `/events/stream` (SSE), `/emit`, `/sessions[/{id}]`, `/traces/{id}`, `/artifacts/files`,
+  `/events/stream` (SSE), `/emit`, `/sessions[/{id}]`, `/traces/{id}`, `/artifacts/files`, `/artifacts/file-sessions`,
   `/doctor`, `/install/{adapter}`, `/export`.
 - **`internal/client`** — HTTP client the TUI/desktop use to consume the daemon.
 - **`internal/tui`** — Bubble Tea model (`tui.go`) + rendering (`view.go`).

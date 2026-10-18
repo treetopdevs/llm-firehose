@@ -35,12 +35,15 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// Validate the view before touching the spool so a typo never scans.
 	view := r.URL.Query().Get("view")
-	if view != "" && view != "full" && view != "timeline" {
-		http.Error(w, fmt.Sprintf("unknown view %q (want full or timeline)", view), http.StatusBadRequest)
+	if view != "" && view != "full" && view != "timeline" && view != "correlation" {
+		http.Error(w, fmt.Sprintf("unknown view %q (want full, timeline or correlation)", view), http.StatusBadRequest)
 		return
 	}
-	evs, err := s.engine.Session(id)
+	evs, err := s.engine.SessionContext(r.Context(), id)
 	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
 		if errors.Is(err, capture.ErrNotFound) {
 			http.Error(w, fmt.Sprintf("no events for session %q", id), http.StatusNotFound)
 			return
@@ -48,9 +51,13 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if view == "timeline" {
+	if view == "timeline" || view == "correlation" {
 		for i := range evs {
-			evs[i] = capture.TimelineView(evs[i])
+			if view == "correlation" {
+				evs[i] = capture.CorrelationView(evs[i])
+			} else {
+				evs[i] = capture.TimelineView(evs[i])
+			}
 		}
 	}
 	writeJSON(w, evs)
@@ -58,8 +65,11 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTraceByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	evs, err := s.engine.Trace(id)
+	evs, err := s.engine.TraceContext(r.Context(), id)
 	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
 		if errors.Is(err, capture.ErrNotFound) {
 			http.Error(w, fmt.Sprintf("no events for trace %q", id), http.StatusNotFound)
 			return
@@ -209,4 +219,8 @@ func (s *Server) handleErrorSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, page)
+}
+
+func (s *Server) handleFileSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.engine.FileSessions())
 }

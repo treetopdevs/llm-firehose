@@ -506,3 +506,14 @@ The design is implemented when:
 - existing adapter fixtures and frozen contract tests remain green;
 - full Go, race, desktop, Rust, and live daemonless/daemon acceptance pass;
 - the old orchestration paths are deleted rather than retained as alternatives.
+
+### Scoped file observation projection
+
+`GET /artifacts/file-sessions` exposes a disposable, never-spooled projection of
+exact recorded workspace/path/source/session tuples. It is folded only after the
+same duplicate admission as existing projections and rebuilds from canonical
+spool history. The legacy file summary is unchanged. Scope is worktree ID, JJ
+workspace ID, then CWD; no repository-name fallback. Privacy digests remain
+opaque and paths remain recorded strings. See `docs/contracts.md` for extraction,
+ordering, unknown identity and full-snapshot scaling semantics. The representative
+10,000-row allocation/JSON gate measures that size; it is not a runtime bound.

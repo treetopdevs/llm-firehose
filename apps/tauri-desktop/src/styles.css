@@ -64,6 +64,8 @@ input, select {
 
 /* sidebar */
 .sidebar {
+  overflow-y: auto;
+  min-height: 0;
   width: 130px;
   border-right: 1px solid var(--border);
   padding: 0.8rem 0.5rem;
@@ -829,3 +831,72 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .court [aria-label="Notebook recovery"] pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; user-select: text; }
 .court-confirmation:not(:empty) { border: 1px solid var(--accent); padding: 12px; margin: 12px 0; }
 .court-confirmation button { margin-right: 10px; }
+.handoffs { padding: 20px; max-width: 1150px; margin: auto; }
+.handoffs h2 { margin-top: 0; }
+.handoffs p, .handoffs h4 { overflow-wrap: anywhere; }
+.handoff-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+.handoffs label { display: inline-flex; gap: 8px; align-items: center; }
+.handoffs input { min-width: 200px; max-width: 60vw; }
+.handoffs pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.handoffs button { margin: 3px; }
+.handoff-links { padding-left: 24px; }
+.handoff-links li, .handoff-recent-row { border-bottom: 1px solid var(--border); padding: 10px 0; }
+.handoff-confirm:not(:empty) { border: 1px solid var(--accent); padding: 12px; margin: 12px 0; }
+.handoffs button:focus-visible, .handoffs input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.airspace { padding: 20px; max-width: 1200px; margin: auto; }
+.airspace h2 { margin-top: 0; }
+.airspace p, .airspace h3 { overflow-wrap: anywhere; }
+.airspace-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+.airspace-controls select { max-width: 270px; }
+.airspace-notice { padding: 10px; border-left: 3px solid var(--accent); }
+.airspace-notice.stale { border-color: var(--warn, #e7bc65); }
+.airspace-band { border: 1px solid var(--border); padding: 10px; border-radius: 5px; }
+.airspace-band-title { color: var(--text-dim); }
+.airspace-marker { overflow-wrap: anywhere; }
+.airspace-list { padding-left: 24px; }
+.airspace-row { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+.airspace-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 450px; overflow: auto; }
+.airspace button:focus-visible, .airspace input:focus-visible, .airspace select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.airspace-band[data-band="request"] { border-left: 3px solid #e7bc65; }
+.airspace-band[data-band="failure"] { border-left: 3px solid #df8d91; }
+.airspace-band[data-band="recent"] { border-left: 3px solid #78bdd4; }
+.airspace-band[data-band="quiet"] { border-left: 3px solid #929aa8; }
+.airspace-band[data-band="completion"] { border-left: 3px solid #91bca5; }
+.airspace-band-title { margin: 8px 0; font-weight: 500; }
+.loom { padding: 20px; max-width: 1200px; margin: auto; }
+.loom h2 { margin-top: 0; }
+.loom p, .loom h3, .loom li, .loom button { overflow-wrap: anywhere; }
+.loom-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.loom-controls select { max-width: min(600px, 70vw); }
+.loom-status { border-left: 3px solid var(--accent); padding-left: 10px; }
+.loom pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
+.loom-observation { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.loom-observation button { margin-left: 10px; }
+.loom button:focus-visible, .loom input:focus-visible, .loom select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ecosystem { padding: 20px; max-width: 1200px; margin: auto; }
+.ecosystem h2 { margin-top: 0; }
+.ecosystem p, .ecosystem h3, .ecosystem li { overflow-wrap: anywhere; }
+.ecosystem-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+.ecosystem select { max-width: min(600px, 70vw); }
+.ecosystem [type="range"] { min-width: 220px; flex: 1; }
+.ecosystem pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
+.ecosystem-bed { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.ecosystem li button { margin: 5px 10px; }
+.ecosystem button:focus-visible, .ecosystem input:focus-visible, .ecosystem select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.replay { padding: 20px; max-width: 1200px; margin: auto; }
+.replay h2 { margin-top: 0; }
+.replay p, .replay li, .replay h4 { overflow-wrap: anywhere; }
+.replay-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+.replay select { max-width: min(600px, 70vw); }
+.replay [aria-label="Hypothetical branch editor"] label { display: flex; flex-direction: column; margin: 10px 0; gap: 6px; }
+.replay textarea { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); font: inherit; border: 1px solid var(--border); padding: 8px; }
+.replay pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
+.replay-observation { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.replay button { margin: 4px; }
+.replay-confirmation:not(:empty) { border: 1px solid var(--accent); padding: 12px; }
+.replay button:focus-visible, .replay input:focus-visible, .replay textarea:focus-visible, .replay select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Recurrence is an outline; Heat fill and geometry retain their meanings. */
+.map-storm > rect { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 2; vector-effect: non-scaling-stroke; }
+.map-errors { margin-top: 1rem; overflow-wrap: anywhere; }
+.map-errors li { margin-bottom: 0.8rem; }
