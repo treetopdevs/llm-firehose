@@ -155,3 +155,40 @@ func TestActivityErrorReplayAcrossDaysKeepsCanonicalRecord(t *testing.T) {
 		t.Fatalf("replayed noncanonical day counted: %+v", later)
 	}
 }
+
+func TestActivityNonFilePatchErrorsAndIneligibleDuplicate(t *testing.T) {
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	patch := shapeAt(t, realShapes(t), "codex custom_tool_call:apply_patch", "patch-error", base)
+	patch.Category = event.CategoryTool
+	patch.Severity = event.SeverityError
+	ordinary := patch
+	ordinary.Severity = event.SeverityInfo
+	e, _ := activityEngine(t, []event.Event{ordinary, patch})
+	r, err := e.Activity(context.Background(), activityQuery(base, base.Add(time.Hour), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.FileEvents != 0 || len(r.ErrorPaths) == 0 {
+		t.Fatalf("explicit attempted patch paths missing or ineligible duplicate shadowed error: %+v", r)
+	}
+}
+
+func TestActivityPublicErrorPathCap(t *testing.T) {
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	original := shapeAt(t, realShapes(t), editPost, "seed", base)
+	original.Severity = event.SeverityError
+	records := make([]event.Event, ActivityPathCap+1)
+	for i := range records {
+		records[i] = original
+		records[i].ID = fmt.Sprint(i)
+		records[i].Payload = map[string]any{"file_path": fmt.Sprintf("/work/proj/%04d.go", i)}
+	}
+	e, _ := activityEngine(t, records)
+	r, err := e.Activity(context.Background(), activityQuery(base, base.Add(time.Hour), time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ErrorPaths) != ActivityPathCap || r.OmittedErrorPaths != 1 || r.ErrorPaths[0].Path != "0000.go" {
+		t.Fatalf("public cap contract: %d %d", len(r.ErrorPaths), r.OmittedErrorPaths)
+	}
+}

@@ -451,8 +451,8 @@ the client abandons the request.
 #### File-linked Activity errors (additive)
 
 Activity responses additionally carry `error_paths` (empty array when none) and
-`omitted_error_paths`. These are independent of `paths`/Heat: an error-category
-observation with an explicit path can appear without contributing file Heat.
+`omitted_error_paths`. These are independent of `paths`/Heat: a qualifying error
+observation in any category with an explicit path can appear without contributing file Heat.
 Each entry is `{path, group, total, signatures, omitted_signatures}`. Signatures
 are `{key, total, counts}` where `key` is the existing canonical Error Signature
 and `counts` contains ascending `[bucket_index, count]` pairs in the same window.

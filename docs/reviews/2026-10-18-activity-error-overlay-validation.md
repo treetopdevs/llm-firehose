@@ -1,3 +1,7 @@
+## Current remediation status
+
+Two Sonnet 5.5 High review rounds completed; all actionable findings and test gaps addressed. Second follow-up pending. Full gofmt/vet/Go tests/CLI build and 496 frontend tests/build pass after the latest changes. Sidecar/Rust3 passed on c4ad1fe (backend code unchanged since; added backend tests pass). Independent reviews passed the first remediation; final follow-up requested separately. Historical 491-test and unavailable-model notes below are superseded. Main merge not authorized.
+
 # Activity error overlay validation
 
 Base e007b2f; code4ba67871809bd040561de9649f62766ca47e5aad.

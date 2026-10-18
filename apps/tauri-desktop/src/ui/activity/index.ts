@@ -6,8 +6,8 @@
 
 import { clear, el, keepFocus } from "../../dom";
 import { graphAPI, type ActivityResponse } from "../graph/api";
-import { clampView, digestLabel, stripControl, type View } from "../score/model";
-import { buildTree, colour, findNode, histogram, hottest, layout, rangeTotals, trail, LABEL_H, PAD } from "./model";
+import { clampView, stripControl, type View } from "../score/model";
+import { activityGroupLabel, buildTree, colour, findNode, histogram, hottest, layout, rangeTotals, trail, LABEL_H, PAD } from "./model";
 import {errorRange,errorPathKey,renderErrorPaths} from "./errors";
 import type { TreeNode } from "./model";
 
@@ -166,6 +166,7 @@ export function createActivityMap(): ActivityMap {
     };
     if (worktree) params.workspace_id = worktree;
     if (key !== fetchedKey) {
+      errorPage.page = 0;
       resp = undefined;
       tree = undefined;
     }
@@ -247,6 +248,7 @@ export function createActivityMap(): ActivityMap {
 
   const errorPage = {page: 0};
   function render() {
+    const focusedErrorControl = root.querySelector(".map-errors")?.contains(document.activeElement);
     const restore = keepFocus(root);
     renderHead();
     clear(notices);
@@ -288,6 +290,7 @@ export function createActivityMap(): ActivityMap {
       list.after(renderErrorPaths(errorRange(r.error_paths,a,b),groupNames(),errorPage));
     }
     restore();
+    if (focusedErrorControl && (!root.contains(document.activeElement) || (document.activeElement instanceof HTMLButtonElement && document.activeElement.disabled))) root.querySelector<HTMLElement>('[data-key="error-path-heading"]')?.focus();
   }
 
   function renderCrumbs() {
@@ -460,7 +463,7 @@ export function createActivityMap(): ActivityMap {
       return;
     }
     for (const h of hot) {
-      const owner = groupNames().get(h.group) || digestLabel(h.group) || h.group;
+      const owner = activityGroupLabel(h.group,groupNames());
       const where = h.group ? `${stripControl(owner)} · outside known worktrees` : "";
       list.append(
         el(
