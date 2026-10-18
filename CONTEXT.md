@@ -81,3 +81,5 @@ _Avoid_: Inferred handoff, automatic causality, complete context transfer
 **Attention Airspace**:
 A source/session-scoped snapshot board grouping captured requests, failures, activity and completion evidence; quiet and stale observations never prove process status.
 _Avoid_: Running agents, session ended, time blocked, collision prediction
+**Causal Loom**:
+An exact-source/session explorer of native identifier groups and supported parent-message references. Membership is association; parent references are source-reported, not inferred root cause. Full receipts load only on explicit inspection.

@@ -22,6 +22,7 @@ import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
 import { createHandoffs } from "./ui/handoffs";
 import { createAirspace } from "./ui/airspace";
+import { createLoom } from "./ui/loom";
 import { createStrata } from "./ui/strata";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -111,6 +112,7 @@ const panels = {
   court: courtPanel,
   handoffs: createHandoffs(openScore, () => feedState.events()),
   airspace: airspacePanel,
+  loom: createLoom(openScore),
   files: createFiles(),
   doctor: createDoctor(),
   settings: createSettings(),
@@ -130,6 +132,8 @@ const navButtons = new Map<PanelName, HTMLButtonElement>();
 function show(name: PanelName) {
   if (active === "handoffs" && name !== "handoffs") panels.handoffs.refresh();
   if (active === "airspace" && name !== "airspace") airspacePanel.deactivate();
+  if (active === "loom" && name !== "loom") panels.loom.deactivate();
+  if (name === "loom") renderDetail(detailPane, null, () => {});
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);

@@ -40,3 +40,10 @@ test("errorSignatureSessions encodes keys and forwards page bounds and cancellat
   expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/errors/sessions?key=codex%7Cshell%7Ca%2Fb%20%26c&offset=50&limit=50`);
   expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
 });
+
+test("sessionEvents requests additive correlation metadata with cancellation", async () => {
+  const f = stubFetch(); const ctl = new AbortController();
+  await sessionEvents("a/b c", "correlation", ctl.signal);
+  expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/sessions/a%2Fb%20c?view=correlation`);
+  expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+});

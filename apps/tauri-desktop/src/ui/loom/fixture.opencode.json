@@ -1,0 +1,60 @@
+[
+  {
+    "schema_version": 1,
+    "id": "loom-user",
+    "time": "2026-08-08T01:16:49.122Z",
+    "source_time": "2026-08-08T01:16:49.122Z",
+    "capture_time": "2026-08-08T01:16:49.122Z",
+    "source": "opencode",
+    "agent": "opencode",
+    "session_id": "ses_fixture01",
+    "upstream_event_id": "evt_fixture08",
+    "message_id": "msg_fixture04",
+    "transport": "plugin",
+    "category": "prompt",
+    "name": "message.updated",
+    "severity": "info",
+    "summary": "user prompt"
+  },
+  {
+    "schema_version": 1,
+    "id": "loom-assistant",
+    "time": "2026-08-08T01:16:49.141Z",
+    "source_time": "2026-08-08T01:16:49.141Z",
+    "capture_time": "2026-08-08T01:16:49.141Z",
+    "source": "opencode",
+    "agent": "opencode",
+    "session_id": "ses_fixture01",
+    "upstream_event_id": "evt_fixture07",
+    "message_id": "msg_fixture01",
+    "parent_id": "msg_fixture04",
+    "transport": "plugin",
+    "category": "message",
+    "name": "message.updated",
+    "severity": "info",
+    "summary": "assistant message"
+  },
+  {
+    "schema_version": 1,
+    "id": "loom-tool",
+    "time": "2026-08-08T01:16:55.563Z",
+    "source_time": "2026-08-08T01:16:55.563Z",
+    "capture_time": "2026-08-08T01:16:55.563Z",
+    "source": "opencode",
+    "agent": "opencode",
+    "session_id": "ses_fixture01",
+    "call_id": "call_fixture03",
+    "upstream_event_id": "evt_fixture25",
+    "message_id": "msg_fixture01",
+    "transport": "plugin",
+    "category": "tool",
+    "name": "tool:glob",
+    "severity": "info",
+    "summary": "tool: glob",
+    "payload": {
+      "duration_ms": 66,
+      "status": "completed",
+      "tool_name": "glob"
+    }
+  }
+]

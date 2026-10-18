@@ -846,3 +846,13 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .airspace-band[data-band="quiet"] { border-left: 3px solid #929aa8; }
 .airspace-band[data-band="completion"] { border-left: 3px solid #91bca5; }
 .airspace-band-title { margin: 8px 0; font-weight: 500; }
+.loom { padding: 20px; max-width: 1200px; margin: auto; }
+.loom h2 { margin-top: 0; }
+.loom p, .loom h3, .loom li, .loom button { overflow-wrap: anywhere; }
+.loom-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.loom-controls select { max-width: min(600px, 70vw); }
+.loom-status { border-left: 3px solid var(--accent); padding-left: 10px; }
+.loom pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
+.loom-observation { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.loom-observation button { margin-left: 10px; }
+.loom button:focus-visible, .loom input:focus-visible, .loom select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

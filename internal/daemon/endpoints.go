@@ -35,8 +35,8 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// Validate the view before touching the spool so a typo never scans.
 	view := r.URL.Query().Get("view")
-	if view != "" && view != "full" && view != "timeline" {
-		http.Error(w, fmt.Sprintf("unknown view %q (want full or timeline)", view), http.StatusBadRequest)
+	if view != "" && view != "full" && view != "timeline" && view != "correlation" {
+		http.Error(w, fmt.Sprintf("unknown view %q (want full, timeline or correlation)", view), http.StatusBadRequest)
 		return
 	}
 	evs, err := s.engine.Session(id)
@@ -48,9 +48,13 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if view == "timeline" {
+	if view == "timeline" || view == "correlation" {
 		for i := range evs {
-			evs[i] = capture.TimelineView(evs[i])
+			if view == "correlation" {
+				evs[i] = capture.CorrelationView(evs[i])
+			} else {
+				evs[i] = capture.TimelineView(evs[i])
+			}
 		}
 	}
 	writeJSON(w, evs)
