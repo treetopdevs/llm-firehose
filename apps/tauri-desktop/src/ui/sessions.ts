@@ -49,6 +49,7 @@ export function createSessions(
   onSelect: (ev: FirehoseEvent) => void,
   recentEvents: () => readonly FirehoseEvent[],
   onOpenScore?: (id: string) => void,
+  onOpenLoops?: (id: string) => void,
 ): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
@@ -115,6 +116,11 @@ export function createSessions(
         onOpenScore(s.id);
       });
       subRow.append(score);
+    }
+    if (onOpenLoops) {
+      const loops = el("button", { class: "loops-open", "aria-label": `open loops for session ${s.id}` }, "loops");
+      loops.addEventListener("click", (e) => { e.stopPropagation(); onOpenLoops(s.id); });
+      subRow.append(loops);
     }
     const item = el(
       "div",

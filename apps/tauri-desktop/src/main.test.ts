@@ -81,3 +81,38 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   expect(document.querySelector(".score")).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("open a session");
 });
+
+test("the loops view is reachable from the sidebar and starts empty", async () => {
+  document.body.innerHTML = '<div id="app"></div>';
+  vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
+  vi.stubGlobal("setInterval", () => 0);
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      onopen = null;
+      onerror = null;
+      onmessage = null;
+      close() {}
+    },
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.endsWith("/health")
+              ? { status: "ok", version: "test", schema_version: 1 }
+              : url.endsWith("/attention")
+                ? { sessions: [], warnings: [] }
+                : [],
+          ),
+        ),
+    ),
+  );
+  await import("./main");
+  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "loops")!;
+  btn.click();
+  expect(document.querySelector(".loops")).not.toBeNull();
+  expect(document.querySelector(".loops")?.textContent).toContain("Choose a session");
+});

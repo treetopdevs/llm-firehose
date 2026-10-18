@@ -749,3 +749,24 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .score-tick-mini.error { stroke: var(--err); }
 .score-view { fill: var(--accent); opacity: 0.12; stroke: var(--accent); stroke-width: 1; }
 .score-view-playhead { stroke: var(--accent); stroke-width: 1; pointer-events: none; }
+
+/* Loop Observatory: bounded historical evidence, distinct from live attention. */
+.loops { padding: 20px; max-width: 1200px; margin: auto; }
+.loops h2 { margin-top: 0; }
+.loops-controls, .loops-pager { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.loops-controls select { max-width: min(440px, 75vw); }
+.loops-disclosure { border-left: 3px solid var(--muted); padding: 8px 12px; }
+.loops-signatures { display: flex; flex-wrap: wrap; gap: 8px; }
+.loops-signatures button[aria-pressed="true"] { outline: 2px solid currentColor; }
+.loops-overview { height: 64px; position: relative; margin: 20px 6px 0; border-bottom: 1px solid currentColor; background: rgba(128,128,128,.06); }
+.loops-mark { position: absolute; bottom: 8px; height: 40px; width: 3px; background: #ed927c; border-radius: 2px; }
+.loops-occurrences { padding-left: 28px; }
+.loop-occurrence { padding: 8px 0; }
+.loop-occurrence > * { margin: 0 12px 4px 0; }
+.loop-occurrence time { font-size: 12px; }
+.loops-evidence { padding-left: 18px; }
+.loops-evidence button { text-align: left; margin-bottom: 6px; overflow-wrap: anywhere; }
+.loops h3, .loops p { overflow-wrap: anywhere; }
+.loops-detail:not(:empty) { border-top: 1px solid currentColor; margin-top: 24px; padding-top: 12px; }
+.loops-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; }
+.loops button:focus-visible, .loops select:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

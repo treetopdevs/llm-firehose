@@ -26,3 +26,10 @@ describe("session timeline requests", () => {
     expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
   });
 });
+
+test("sessionEvents forwards cancellation for superseded history scans", async () => {
+  const f = stubFetch();
+  const ctl = new AbortController();
+  await sessionEvents("session", "timeline", ctl.signal);
+  expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+});
