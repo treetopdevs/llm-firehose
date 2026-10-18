@@ -18,11 +18,12 @@ export function createLoops() {
   const refreshButton = el("button", {}, "Refresh history");
   const sessionStatus = el("span", {class: "dim", role: "status"});
   const body = el("div", {class: "loops-body"});
+  const notice = el("p", {role:"status"});
   const detail = el("section", {class: "loops-detail", "aria-label": "Captured event detail"});
   const root = el("section", {class: "loops"},
     el("h2", {}, "Loop Observatory"),
     el("p", {class: "dim"}, "Recurring error observations in one session. Compare captured activity between recurrences; these are not proven attempts or evidence of a fix."),
-    el("div", {class: "loops-controls"}, el("label", {}, "Session ", sessionSelect), el("label", {}, "Source ", sourceSelect), refreshButton, sessionStatus), body, detail);
+    el("div", {class: "loops-controls"}, el("label", {}, "Session ", sessionSelect), el("label", {}, "Source ", sourceSelect), refreshButton, sessionStatus), body, notice, detail);
   let phase: "idle" | "loading" | "error" | "ready" = "idle";
   let sessionId = "";
   let source: string | undefined;
@@ -43,14 +44,14 @@ export function createLoops() {
   let evidencePage = 0;
   let interval: Interval | undefined;
 
-  let comparison: {a: [string,string]; b: [string,string]; view: HTMLElement; caption: string} | undefined;
+  let comparison: {a: [string,string]; b: [string,string]; view: HTMLElement; caption: string; numbering: string} | undefined;
   let referenceDraft: string | undefined, comparisonNotice = "";
-  function resetComparison(message = "") { comparison = undefined; referenceDraft = undefined; comparisonNotice = message; cancelDetail(); }
+  function resetComparison(message = "") { comparison = undefined; referenceDraft = undefined; comparisonNotice = message; notice.textContent=message; cancelDetail(); }
   function buildComparison(group: LoopGroup, a: Interval, b: Interval) {
     cancelDetail();
     const aIndex=group.intervals.indexOf(a)+1,bIndex=group.intervals.indexOf(b)+1;
-    comparison={a:[a.from.id,a.to.id],b:[b.from.id,b.to.id],caption:`A interval ${aIndex}: ${a.from.time} → ${a.to.time}; B interval ${bIndex}: ${b.from.time} → ${b.to.time}`,view:renderSequenceComparison(compareSequences(sequenceRuns(model.events,a.fromIndex,a.toIndex),sequenceRuns(model.events,b.fromIndex,b.toIndex)),event=>void selectEvent(event),cancelDetail)};
-    referenceDraft=String(bIndex);comparisonNotice=`Comparing interval ${aIndex} with interval ${bIndex}.`;
+    comparison={a:[a.from.id,a.to.id],b:[b.from.id,b.to.id],numbering:`${aIndex}:${bIndex}`,caption:`A interval ${aIndex}: ${a.from.time} → ${a.to.time}; B interval ${bIndex}: ${b.from.time} → ${b.to.time}`,view:renderSequenceComparison(compareSequences(sequenceRuns(model.events,a.fromIndex,a.toIndex),sequenceRuns(model.events,b.fromIndex,b.toIndex)),event=>void selectEvent(event),cancelDetail)};
+    referenceDraft=String(bIndex);notice.textContent=comparisonNotice=`Comparing interval ${aIndex} with interval ${bIndex}.`;
   }
   function cancelDetail() { selection++; detailAbort?.abort(); detailAbort = undefined; clear(detail); }
   function button(text: string, handler: () => void, key = text) {
@@ -107,7 +108,7 @@ export function createLoops() {
       signatureStatus === "pending" ? " Signature lookup pending." : signatureStatus === "unavailable" ? " Signature lookup unavailable." : ""));
     if (model.excluded.invalidTime) body.append(el("p", {class: "loops-disclosure"}, `${model.excluded.invalidTime} observations excluded because their timestamps are invalid; recurrence counts may be understated.`));
     if (model.excluded.duplicate) body.append(el("p", {class: "dim"}, `${model.excluded.duplicate} duplicate event ids removed; counts reflect unique captured events.`));
-    if (comparisonNotice) body.append(el("p", {role:"status"}, comparisonNotice));
+    notice.textContent=comparisonNotice;
     if (!model.events.length) { body.append(el("p", {}, "No captured events in this session and source.")); restore(); return; }
     if (!model.groups.length) { body.append(el("p", {}, "No repeated Error Signatures in the loaded history.")); restore(); return; }
     const active = model.groups.find(g => g.key === activeKey) ?? model.groups[0];
@@ -139,11 +140,11 @@ export function createLoops() {
       else {
         const current=active.intervals.indexOf(interval), reference=el("input", {type:"number",min:"1",max:String(active.intervals.length),step:"1","aria-label":"Reference interval B","data-key":"sequence:reference"});
         reference.value=referenceDraft ?? String(current>0?current:2);
-        reference.oninput=()=>{const value=reference.value;resetComparison();referenceDraft=value;draw();};
+        reference.oninput=()=>{const value=reference.value;comparison?.view.remove();body.querySelector(".loops-sequence-caption")?.remove();resetComparison();referenceDraft=value;notice.textContent="";};
         body.append(el("label", {}, `Compare selected interval A (${current+1}) with interval B `,reference),button("Compare sequences",()=>{
           const number=Number(reference.value);
-          if (!Number.isInteger(number)||number<1||number>active.intervals.length) {resetComparison(`Enter a whole interval number from 1 to ${active.intervals.length}.`);draw();return;}
-          if(number===current+1){resetComparison("Choose a different interval for B.");draw();return;}
+          if (!Number.isInteger(number)||number<1||number>active.intervals.length) {resetComparison(`Enter a whole interval number from 1 to ${active.intervals.length}.`);referenceDraft=reference.value;draw();return;}
+          if(number===current+1){resetComparison("Choose a different interval for B.");referenceDraft=reference.value;draw();return;}
           buildComparison(active,interval!,active.intervals[number-1]);draw();
         },"sequence:compare"));
       }
@@ -162,7 +163,7 @@ export function createLoops() {
     if (phase === "loading" || phase === "error") return;
     model = buildLoops(events, sessionId, source, signatures);
     const group = model.groups.find(g => g.key === activeKey);
-    if (activeKey && !group) { activeKey = undefined; interval = undefined; occurrencePage = 0; evidencePage = 0; resetComparison("Comparison cleared: selected signature membership changed."); }
+    if (activeKey && !group) { activeKey = undefined; interval = undefined; occurrencePage = 0; evidencePage = 0; resetComparison(comparison ? "Comparison cleared: selected signature membership changed." : ""); }
     if (group) {
       occurrencePage = Math.min(occurrencePage, Math.floor((group.occurrences.length - 1) / PAGE_SIZE));
       if (interval) {
@@ -175,7 +176,7 @@ export function createLoops() {
       const prior=comparison;
       const a=group.intervals.find(i=>i.from.id===prior.a[0]&&i.to.id===prior.a[1]);
       const b=group.intervals.find(i=>i.from.id===prior.b[0]&&i.to.id===prior.b[1]);
-      if(a&&b)buildComparison(group,a,b);
+      if(a&&b) { if(prior.numbering!==`${group.intervals.indexOf(a)+1}:${group.intervals.indexOf(b)+1}`) buildComparison(group,a,b); }
       else resetComparison("Comparison cleared: one or both interval boundaries changed with signature membership.");
     }
     groupPage = Math.min(groupPage, Math.max(0, Math.floor((model.groups.length - 1) / PAGE_SIZE)));

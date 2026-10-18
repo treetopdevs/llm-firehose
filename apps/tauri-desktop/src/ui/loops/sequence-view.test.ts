@@ -26,3 +26,7 @@ test("unaligned long sequences keep both sides browsable with unique keys and tr
  expect(root.textContent).toContain('[label truncated]');expect(root.textContent).toContain('201–201');
  const keys=[...root.querySelectorAll('[data-key]')].map(e=>e.getAttribute('data-key'));expect(new Set(keys).size).toBe(keys.length);
 });
+test("aligned insertions retain each side's actual run numbering",()=>{
+ const root=renderSequenceComparison(compareSequences(runs(['X']),runs(['Y','X'])),vi.fn(),vi.fn());
+ expect([...root.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['Browse B run 1','Browse A run 1','Browse B run 2']);
+});

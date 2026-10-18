@@ -177,3 +177,13 @@ test("late membership removing a boundary clears comparison and stale detail is 
  membership([{key:'different-signature',source:'codex',members:[history[2].id]}]);await settle();expect(panel.root.querySelector('.loops-sequence')).toBeNull();expect(panel.root.textContent).toContain('Comparison cleared');expect(signal.aborted).toBe(true);
  receipt(history[1]);await settle();expect(panel.root.querySelector('.loops-detail')?.textContent).toBe('');
 });
+test('unchanged membership retains comparison view and open observations',async()=>{
+ const history=Array.from({length:5},(_,i)=>({...events[0],id:`stable-${i}`,time:new Date(Date.UTC(2026,9,18,0,0,i)).toISOString(),severity:i%2?'info':'error'}));
+ let finish!:(value:unknown)=>void;api.errorSignatures.mockReturnValue(new Promise(r=>finish=r));api.sessionEvents.mockResolvedValue(history);
+ const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');click(panel.root,'Compare sequences');click(panel.root,'Browse A run');const view=panel.root.querySelector('.loops-sequence');
+ finish([]);await settle();expect(panel.root.querySelector('.loops-sequence')).toBe(view);expect(panel.root.textContent).toContain('Run observations');
+});
+test('initial membership replacement never claims an unmade comparison was cleared',async()=>{
+ let finish!:(value:unknown)=>void;api.errorSignatures.mockReturnValue(new Promise(r=>finish=r));const panel=createLoops();await panel.open(sid);
+ finish([{key:'authoritative',source:'codex',members:events.map(e=>e.id)}]);await settle();expect(panel.root.textContent).not.toContain('Comparison cleared');
+});

@@ -14,7 +14,7 @@ export function sequenceRuns(events:readonly FirehoseEvent[],fromIndex:number,to
   const key=JSON.stringify([event.source,event.category,event.name,event.severity,[tool===undefined?"missing":"recorded",canonical(tool)]]);
   const previous=runs.at(-1);
   if(previous?.key===key){previous.events.push(event);previous.closing=i===toIndex;}
-  else runs.push({key,source:event.source,category:event.category,name:event.name??"Not recorded",severity:event.severity??"Not recorded",tool:typeof tool==='string'?tool:'Unavailable',events:[event],closing:i===toIndex});
+  else runs.push({key,source:event.source,category:event.category,name:event.name??"Not recorded",severity:event.severity??"Not recorded",tool:typeof tool==='string'?tool:tool===undefined?'Missing tool metadata':'Opaque recorded metadata',events:[event],closing:i===toIndex});
  }
  return runs;
 }

@@ -29,5 +29,5 @@ test("complete equality and caps hold for200,201 and100000 alternating observati
 });
 test("opaque tool metadata is stable across object key order and remains unreadable",()=>{
  const e=real[0];const runs=sequenceRuns([e,{...e,payload:{tool_name:{sha256:'hash',len:4}}},{...e,payload:{tool_name:{len:4,sha256:'hash'}}}],0,2);
- expect(runs).toHaveLength(1);expect(runs[0].tool).toBe('Unavailable');expect(runs[0].events).toHaveLength(2);
+ expect(runs).toHaveLength(1);expect(runs[0].tool).toBe('Opaque recorded metadata');expect(runs[0].events).toHaveLength(2);
 });
