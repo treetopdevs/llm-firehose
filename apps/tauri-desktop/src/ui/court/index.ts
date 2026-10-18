@@ -131,7 +131,7 @@ export function createCourt(openScore: (session: string, source: string) => void
     draw();
   }
   function refresh() { cancelPreview(); }
-  function offerEvent(id: string) { cancelPreview(); requirementID = ""; clear(confirmation); eventID.value = id; draw(); notice.textContent = "Event ID carried here. Select a requirement, look up the event, then attach explicitly."; }
+  function offerEvent(id: string) { cancelPreview(); requirementID = ""; clear(confirmation); eventID.value = id; draw(); if (notebook) notice.textContent = "Event ID carried here. Select a requirement, look up the event, then attach explicitly."; }
   eventID.addEventListener("input", cancelPreview);
   reload();
   return {root, refresh, offerEvent};
