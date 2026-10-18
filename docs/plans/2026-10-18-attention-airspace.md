@@ -1,5 +1,7 @@
 # Attention Airspace v1
 
+Status: implemented and locally validated; Argon4 High and independent standards/spec reviews passed after fixes. Hosted checks tracked separately.
+
 Base main e007b2f; independent fresh worktree/branch codex/attention-airspace-prototype. PR37 Court and PR38 Subway remain unmerged pending human approval. This slice adds a useful observation board over existing attention projection, no capture/API/privacy/dependency changes.
 
 ## Outcome and evidence
