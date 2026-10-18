@@ -146,3 +146,16 @@ test("changing traversal resets paged groups and references and clears selected 
  expect(panel.root.querySelectorAll('.loom-parents li')).toHaveLength(20);
  expect(api.sessionEvents).toHaveBeenCalledOnce(); expect(api.capturedEvent).not.toHaveBeenCalled();
 });
+
+test("exploration options survive focus and filters but explicit reload resets them", async () => {
+ api.sessionEvents.mockResolvedValue(Array.from({length:45},(_,i)=>({...event,id:`e-${String(i).padStart(2,"0")}`})));
+ const panel=createLoom(); await load(panel);
+ const direction=panel.root.querySelector<HTMLSelectElement>('[aria-label="Reference direction"]')!;
+ const depth=panel.root.querySelector<HTMLSelectElement>('[aria-label="Reference depth"]')!;
+ direction.value="upstream"; direction.dispatchEvent(new Event("change")); depth.value="3"; depth.dispatchEvent(new Event("change"));
+ click(panel.root,"Focus observation"); click(panel.root,"Next observations"); click(panel.root,"Focus observation");
+ input(panel.root,"Search observations","e-40");
+ const errors=panel.root.querySelector<HTMLInputElement>('[aria-label="Errors only"]')!; errors.checked=true; errors.dispatchEvent(new Event("change"));
+ expect(direction.value).toBe("upstream"); expect(depth.value).toBe("3");
+ click(panel.root,"Load relationships"); await settle(); expect(direction.value).toBe("both"); expect(depth.value).toBe("1");
+});

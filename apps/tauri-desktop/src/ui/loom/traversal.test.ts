@@ -8,7 +8,7 @@ const row = (id: string, parent?: string): FirehoseEvent => ({...message, id, me
 const model = (rows: FirehoseEvent[]) => buildLoom(rows, "opencode", "ses_fixture01");
 const ids = (result: ReturnType<typeof loomTraversal>) => result.groups.map(g => g.id);
 
-test("follows the selected direction and reference depth without crossing sibling branches", () => {
+test("follows directed chains or undirected neighborhoods at the selected depth", () => {
  const m = model([row("a"), row("b","a"), row("c","b"), row("d","c"), row("sibling","b")]);
  expect(ids(loomTraversal(m,"c","upstream",1))).toEqual(["b","c"]);
  expect(ids(loomTraversal(m,"c","upstream",2))).toEqual(["a","b","c"]);
