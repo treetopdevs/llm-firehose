@@ -200,12 +200,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   function frame(now: number) {
-    if (!playing) return;
     if (!root.isConnected) {
       // Leaving the view pauses the replay rather than running it blind.
       deactivate();
       return;
     }
+    if (!playing) return;
     if (frameStamp) tick(now - frameStamp);
     frameStamp = now;
     if (playing) requestAnimationFrame(frame);
@@ -420,8 +420,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   function tick(elapsedMs: number) {
-    if (!playing || !loaded()) return;
     if (!root.isConnected) { deactivate(); return; }
+    if (!playing || !loaded()) return;
     const previous = at;
     const step = advance(score, at, elapsedMs, speed);
     setPlayhead(step.at, true);
