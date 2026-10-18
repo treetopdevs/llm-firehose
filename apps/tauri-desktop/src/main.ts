@@ -144,6 +144,8 @@ function show(name: PanelName) {
   if (name === "ecosystem") renderDetail(detailPane, null, () => {});
   if (active === "replay" && name !== "replay") panels.replay.deactivate();
   if (name === "replay") renderDetail(detailPane, null, () => {});
+
+  if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);

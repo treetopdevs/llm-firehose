@@ -22,6 +22,7 @@ type (
 	Session           = projection.Session
 	TraceSummary      = projection.Trace
 	FileArtifact      = projection.FileArtifact
+	FileSession       = projection.FileSession
 	ErrorSignature    = projection.ErrorSignature
 	ErrorSession      = projection.ErrorSession
 	ErrorSessionsPage = projection.ErrorSessionsPage
@@ -231,3 +232,6 @@ func CorrelationView(ev event.Event) event.Event {
 	out.Transport, out.SourceVersion = ev.Transport, ev.SourceVersion
 	return out
 }
+
+// FileSessions returns exact recorded workspace/path/source/session summaries.
+func (e *Engine) FileSessions() []FileSession { return e.projection.FileSessions() }

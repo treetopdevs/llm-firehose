@@ -214,3 +214,7 @@ func (s *Server) handleErrorSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, page)
 }
+
+func (s *Server) handleFileSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.engine.FileSessions())
+}

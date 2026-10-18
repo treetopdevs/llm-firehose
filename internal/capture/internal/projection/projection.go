@@ -52,15 +52,16 @@ type FileArtifact struct {
 
 // Projection is a thread-safe disposable view over Captured Events.
 type Projection struct {
-	mu       sync.RWMutex
-	sessions map[string]*sessionEntry
-	traces   map[string]*traceEntry
-	files    map[string]*fileEntry
-	errSigs  map[string]*errorSignatureEntry
-	seen     map[string]string
-	inbox    map[inboxKey]*InboxSession
-	warnings map[inboxKey]Evidence
-	gap      *CaptureGap
+	mu           sync.RWMutex
+	sessions     map[string]*sessionEntry
+	traces       map[string]*traceEntry
+	files        map[string]*fileEntry
+	fileSessions map[fileSessionKey]*FileSession
+	errSigs      map[string]*errorSignatureEntry
+	seen         map[string]string
+	inbox        map[inboxKey]*InboxSession
+	warnings     map[inboxKey]Evidence
+	gap          *CaptureGap
 
 	// identityDays maps each Git/JJ repository or workspace identity value seen
 	// on a Captured Event to the UTC day files that contain it. allDays is every
@@ -91,13 +92,14 @@ type fileEntry struct {
 
 func New() *Projection {
 	return &Projection{
-		sessions: map[string]*sessionEntry{},
-		traces:   map[string]*traceEntry{},
-		files:    map[string]*fileEntry{},
-		errSigs:  map[string]*errorSignatureEntry{},
-		seen:     map[string]string{},
-		inbox:    map[inboxKey]*InboxSession{},
-		warnings: map[inboxKey]Evidence{},
+		sessions:     map[string]*sessionEntry{},
+		traces:       map[string]*traceEntry{},
+		files:        map[string]*fileEntry{},
+		fileSessions: map[fileSessionKey]*FileSession{},
+		errSigs:      map[string]*errorSignatureEntry{},
+		seen:         map[string]string{},
+		inbox:        map[inboxKey]*InboxSession{},
+		warnings:     map[inboxKey]Evidence{},
 
 		identityDays: map[string]map[string]bool{},
 		allDays:      map[string]bool{},
@@ -330,6 +332,7 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 	}
 
 	for _, p := range EventFilePaths(ev) {
+		ix.foldFileSession(ev, p)
 		f, ok := ix.files[p]
 		if !ok {
 			f = &fileEntry{

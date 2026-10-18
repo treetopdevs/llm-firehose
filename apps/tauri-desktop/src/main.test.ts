@@ -138,4 +138,49 @@ test("entering Loom closes and empties the open shared detail pane", async () =>
   expect(pane.childElementCount).toBe(0);
   expect(document.querySelector(".loom")).not.toBeNull();
   expect(document.querySelector(".nav-btn.active")?.textContent).toBe("loom");
+
+});
+
+test("leaving Files aborts its pending history request", async () => {
+  document.body.innerHTML = '<div id="app"></div>';
+  vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
+  vi.stubGlobal("setInterval", () => 0);
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      onopen = null;
+      onerror = null;
+      onmessage = null;
+      close() {}
+    },
+  );
+  let fileSignal: AbortSignal | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/artifacts/files")) {
+        fileSignal = init?.signal as AbortSignal;
+        return new Promise<Response>(() => {});
+      }
+      return new Response(
+        JSON.stringify(
+          url.endsWith("/health")
+            ? { status: "ok", schema_version: 1 }
+            : url.endsWith("/attention")
+              ? { sessions: [], warnings: [] }
+              : [],
+        ),
+      );
+    }),
+  );
+  await import("./main");
+  const nav = (name: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(
+      (b) => b.textContent === name,
+    )!;
+  nav("files").click();
+  expect(fileSignal).toBeDefined();
+  expect(fileSignal?.aborted).toBe(false);
+  nav("live").click();
+  expect(fileSignal?.aborted).toBe(true);
 });

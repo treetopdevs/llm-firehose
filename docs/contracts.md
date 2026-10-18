@@ -475,3 +475,34 @@ Older daemon responses omit these fields; clients must show overlay unavailable,
 not claim zero errors. Recurrence is at least 2 observations of the same signature
 on the same resolved group/path in the selected buckets; it is not retries,
 root cause, or evidence that the file is defective.
+
+### GET /artifacts/file-sessions (additive)
+
+Returns an array of derived file-observation summaries, never null. Fields:
+`workspace_kind`, `workspace`, `path`, `source`, `session_id`, `events`,
+`first_time`, `last_time`, `last_event_id`. Workspace kind/value selects the first
+nonempty `worktree_id`, `jj_workspace_id`, or `cwd`; otherwise `unknown` and empty.
+Repository names and repository IDs never substitute for workspace scope.
+Rows group exact kind/value/path/source/session strings across all indexed history.
+They sort by latest event time descending then the full tuple ascending. Latest
+receipt ID uses time then ID; missing IDs remain empty. Existing projection ID
+deduplication applies; ID-less admissions each count.
+
+Only file-category observations contribute. Extraction selects the first nonempty
+string `file_path`, `path`, or `file`; otherwise it takes sorted keys of a `changes`
+object, excluding exact `{sha256,len}` privacy digests. It never resolves paths or
+reads disk. Supported write-tool starts, ends and failures all count as events,
+not edits. `/artifacts/files` retains its existing behavior and shape.
+
+Balanced privacy can yield opaque scope digests and ellipsis-truncated paths;
+minimal capture often has no readable paths. Empty results do not prove absence
+of activity. Equal recorded strings do not prove physical-file identity, conflict
+or simultaneous activity. The Files client excludes unknown scopes, missing
+sessions and ellipsis-ending paths from shared-path badges. Cross-kind and nested
+CWD scopes are not comparable. A session can appear in multiple scopes.
+
+This disposable projection is never spooled. Additional memory grows with unique
+scope/path/source/session tuples; the full response and snapshot derivation are
+unbounded by history size. Client paging uses one loaded snapshot for stability.
+The route uses the standard local API origin guard. Exact receipt inspection uses
+GET /attention/event?id= and can be unavailable for missing IDs or records.
