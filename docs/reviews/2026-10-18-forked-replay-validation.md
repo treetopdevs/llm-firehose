@@ -1,3 +1,7 @@
+## Current review status
+
+Sonnet 5.5 High initial/follow-up PASS on 342570e with all advisories addressed. Independent spec/standards PASS. 516 frontend tests and build pass. User explicitly authorized this fallback; historical quota notes below are superseded. Hosted CI remains a separate final-head gate.
+
 # Forked Replay Lab validation
 
 Fresh branch from e007b2f; independent of PR37–41. No capture/API/dependency changes.
