@@ -104,14 +104,23 @@ func TestFileSessionsRebuildMatchesIncremental(t *testing.T) {
 	real := realPatchApplyEnd(t)
 	dir := t.TempDir()
 	w := spool.NewWriter(dir)
-	if _, err := w.Append(real); err != nil {
-		t.Fatal(err)
+	late := real
+	late.ID = "late"
+	late.Time = real.Time.Add(time.Hour)
+	other := real
+	other.ID = "other"
+	other.WorktreeID = "/other"
+	events := []event.Event{late, other, real}
+	for _, ev := range events {
+		if _, err := w.Append(ev); err != nil {
+			t.Fatal(err)
+		}
 	}
 	rebuilt, err := Build(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(rebuilt.FileSessions(), foldProjection([]event.Event{real}).FileSessions()) {
+	if !reflect.DeepEqual(rebuilt.FileSessions(), foldProjection(events).FileSessions()) {
 		t.Fatal("spool rebuild differs from incremental aggregation")
 	}
 }
