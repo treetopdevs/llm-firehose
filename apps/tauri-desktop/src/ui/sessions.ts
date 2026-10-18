@@ -1,7 +1,7 @@
 import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
-import { workspaceKey, workspaceLabel } from "../format";
+import { formatClock, sessionName, sessionWhere, shortId, workspaceKey } from "../format";
 import { evidenceTime, needsLabel, pendingNow } from "../needs";
 import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
@@ -56,6 +56,10 @@ export function createSessions(
   const root = el("section", { class: "sessions" }, listBox, eventsBox);
   let scope: CellScope | null = null;
   let historyVersion = 0;
+  /** The last list drawn, so a session opened by id can be named. */
+  let known = new Map<string, SessionSummary>();
+  /** The session whose history is on screen, so a refreshed title updates its heading. */
+  let shown: { id: string; source?: string; count: number } | null = null;
 
   function setScope(next: CellScope | null) {
     scope = next;
@@ -77,13 +81,28 @@ export function createSessions(
   async function openSession(id: string, source?: string) {
     const version = ++historyVersion;
     clear(eventsBox);
-    eventsBox.append(el("p", { class: "dim" }, `loading ${id}…`));
+    eventsBox.append(el("p", { class: "dim" }, `loading ${known.has(id) ? sessionName(known.get(id)!) : `session ${shortId(id)}`}…`));
     try {
-      const evs = (await sessionEvents(id)).filter(ev => !source || ev.source === source);
+      // Arriving from the graph, dwell or lanes, the list may not have loaded yet:
+      // fetch the summary alongside the history so the heading is the name, not the id.
+      const [evsAll, s] = await Promise.all([
+        sessionEvents(id),
+        known.has(id)
+          ? Promise.resolve(known.get(id))
+          : Promise.resolve()
+              .then(() => sessions())
+              .then((list) => list?.find((x) => x.id === id))
+              .catch(() => undefined),
+      ]);
+      const evs = evsAll.filter(ev => !source || ev.source === source);
       if (version !== historyVersion) return;
       clear(eventsBox);
-      eventsBox.append(el("h3", {}, `session ${id} — ${evs.length} events`));
-      renderEventList(eventsBox, evs, onSelect);
+      shown = { id, source, count: evs.length };
+      // renderEventList owns (and clears) its container, so the heading gets its own.
+      // The list may have refreshed while the history loaded: prefer its summary.
+      const list = el("div", { class: "session-events-list" });
+      eventsBox.append(sessionHeading(id, known.get(id) ?? s, source, evs.length), list);
+      renderEventList(list, evs, onSelect);
     } catch (err) {
       if (version !== historyVersion) return;
       clear(eventsBox);
@@ -91,23 +110,48 @@ export function createSessions(
     }
   }
 
+  /** The full native id, demoted to a copyable detail. */
+  function idChip(id: string): HTMLElement {
+    const chip = el("button", { class: "session-id dim", title: `copy session id ${id}`, "aria-label": `copy session id ${id}` }, id);
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void navigator.clipboard?.writeText(id).then(
+        () => chip.classList.add("copied"),
+        () => {},
+      );
+    });
+    return chip;
+  }
+
+  function sessionHeading(id: string, s: SessionSummary | undefined, source: string | undefined, count: number): HTMLElement {
+    const name = s ? sessionName(s) : `session ${shortId(id)}`;
+    const where = s ? sessionWhere(s) : { label: "", full: undefined };
+    const facts = [source || s?.source, where.label, s?.first_time ? `started ${formatClock(s.first_time)}` : "", `${count} events`].filter(Boolean);
+    return el(
+      "div",
+      { class: "session-heading" },
+      el("h3", {}, name),
+      el("div", { class: "session-sub" }, el("span", { title: where.full ?? "" }, facts.join(" · ")), idChip(id)),
+    );
+  }
+
   function sessionItem(s: SessionSummary, status: Status, buckets: readonly number[], scale: number, now: number): HTMLElement {
     const needs = status.needs;
     const last = Date.parse(s.last_time);
     const age = Number.isNaN(last) ? "" : formatAge(now - last);
     const summary = (needs && status.text) || (s.last_summary ?? "");
+    const where = sessionWhere(s);
     const row = el(
       "div",
       { class: "band-row", style: `--hue:${sessionHue(s.id)}` },
-      el("span", { class: "cell agent" }, s.agent || s.source),
+      el("span", { class: "cell name", title: s.title ? sessionName(s) : "" }, sessionName(s)),
       el("span", { class: "cell spark", "aria-hidden": "true" }, sparkline(buckets, scale)),
       el("span", { class: "cell age" }, age),
       el("span", { class: `cell state${needs ? " needs" : ""}` }, status.label),
       el("span", { class: "cell err", title: s.has_error ? "an error was captured in this session" : "" }, s.has_error ? "!" : ""),
-      el("span", { class: "cell summary" }, summary),
     );
-    const sub = [workspaceLabel(s.repo, s.cwd), `${s.events} events`].filter(Boolean).join(" · ");
-    const subRow = el("div", { class: "session-sub" }, el("span", {}, sub));
+    const facts = [s.agent || s.source, where.label, s.first_time ? `started ${formatClock(s.first_time)}` : "", `${s.events} events`].filter(Boolean);
+    const subRow = el("div", { class: "session-sub" }, el("span", { class: "session-facts", title: where.full ?? "" }, facts.join(" · ")));
     if (onOpenScore) {
       // The score replays this one session; the row itself still opens the list.
       const score = el("button", { class: "score-open", "aria-label": `open score for session ${s.id}`, title: "replay this session as a score" }, "score");
@@ -124,10 +168,11 @@ export function createSessions(
     }
     const item = el(
       "div",
-      { class: "session-item", tabindex: "0" },
+      { class: "session-item", tabindex: "0", "data-id": s.id },
       row,
+      el("div", { class: "session-last", title: summary }, summary),
       subRow,
-      el("div", { class: "session-id dim" }, s.id),
+      idChip(s.id),
     );
     item.addEventListener("click", () => openSession(s.id));
     return item;
@@ -147,6 +192,10 @@ export function createSessions(
           byId.set(a.id, [...(byId.get(a.id) ?? []), a]);
         }
       }
+      known = new Map(list.value.map((s) => [s.id, s]));
+      // A title that arrived since the history was opened moves into its heading.
+      const heading = eventsBox.querySelector(".session-heading");
+      if (shown && heading) heading.replaceWith(sessionHeading(shown.id, known.get(shown.id), shown.source, shown.count));
       const all = list.value
         .filter(inScope)
         .map((s) => ({ s, status: statusOf(byId.get(s.id) ?? [], now) }))

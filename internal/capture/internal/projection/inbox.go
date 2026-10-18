@@ -28,6 +28,7 @@ type InboxSession struct {
 	signal         Evidence
 	uncertain      Evidence
 	identity       [7]Evidence
+	title          titleState
 	LastObservedAt time.Time `json:"last_observed_at"`
 	ID             string    `json:"id"`
 	Source         string    `json:"source"`
@@ -43,6 +44,8 @@ type InboxSession struct {
 	Last           Evidence  `json:"last"`
 	Pending        *Evidence `json:"pending,omitempty"`
 	Uncertainty    string    `json:"uncertainty,omitempty"`
+	// Title mirrors Session.Title so every altitude names a session the same way.
+	Title string `json:"title,omitempty"`
 }
 
 // CaptureGap describes an unreadable record, with no invented captured ID.
@@ -96,6 +99,9 @@ func (ix *Projection) applyInbox(ev event.Event) {
 		ix.inbox[key] = s
 	}
 	s.Events++
+	if s.title.consider(ev) {
+		s.Title = s.title.title
+	}
 	observed := capturedEvidence(ev, "activity")
 	if observed.ObservedAt.After(s.LastObservedAt) {
 		s.LastObservedAt = observed.ObservedAt

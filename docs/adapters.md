@@ -75,11 +75,13 @@ watch list is configured.
 
 The safe payload is an explicit metadata allowlist: native
 prompt/turn/message/tool/agent IDs, permission mode, effort, tool
-name/phase/status/duration/interruption, notification type, and file path for
-file tools. `StopFailure` retains only Anthropic's documented bounded API
-error class, mapping future unknown values to `unknown`. Prompt text,
-assistant text, tool arguments/results, notification bodies, transcript
-paths, titles, detailed error text, and elicitation values remain only in
+name/phase/status/duration/interruption, notification type, file path for
+file tools, and the hook's `session_title` (Claude Code's own short name for
+the session, so local views can name it; never a prompt body). `StopFailure`
+retains only Anthropic's documented bounded API error class, mapping future
+unknown values to `unknown`. Prompt text, assistant text, tool
+arguments/results, notification bodies, transcript paths, detailed error
+text, and elicitation values remain only in
 `raw`, so balanced/minimal persistence drops them. `Bash` tools map to
 `shell`; file tools map to `file`; a single failing tool is `warn` severity,
 while `StopFailure` maps to the `error` category as a session-level failure.
