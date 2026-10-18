@@ -49,3 +49,27 @@ I did a static read of `e007b2f..724a378`. I made no edits, ran no tests, made n
 ## Dispositions
 
 Current validation and coverage updated at263c606; historical checkpoints explicitly separated. Browser record conservatively states six new and twelve of thirteen existing destinations (one not individually recorded). Activity fixes integrated at263c606 with independent PASS and external follow-up pending. Court offered-event guidance now preserves unavailable-notebook notice; regression failed before fix. Follow-up pending.
+
+## Final follow-up — 724a378..0360ec0
+
+**PASS.** I found no concrete actionable bugs in `724a378..0360ec0`. This was a static read only. I made no edits and ran no tests, made no network calls and delegated nothing.
+
+**Review dispositions**
+- **Current evidence:** The validation doc now has a "Current combined remediation checkpoint — 263c606" header. It labels the older Argon and quota notes as historical, so the stale-evidence finding is addressed. The prototype-coverage page now says code `263c606`. Its open gates list only the Activity and combined-integration follow-ups, CI and merge approval. Patch and Replay are recorded as Sonnet 5.5 High PASS, which matches their review docs.
+- **Browser count:** The doc now says six new and twelve of thirteen existing destinations. `main.ts:103-123` has exactly 13 existing panels (live through settings) and 6 new ones (court, handoffs, airspace, loom, ecosystem, replay), so the count is correct.
+- **Court `offerEvent`:** `court/index.ts:134` only sets the "Select a requirement…" notice when `notebook` exists, so the "Notebook unavailable" notice survives. The new test checks that notice, checks the guidance text is absent, and checks `setItem` was never called. `reload()` resets `notebook` on every load, so there is no path where a stale notice persists.
+- **Activity fixes:**
+  - `errorPage.page = 0` is reset when `scopeKey` changes. `load()` only runs from `update` and the handlers, never during construction, so `errorPage` is declared before use.
+  - The pager and heading now carry `data-key`, so `keepFocus` can restore them across redraws. The fallback focuses the heading when the focused button is gone or disabled.
+  - The status paragraph now lives outside the redrawn body, which keeps the live region stable. `activityGroupLabel` is shared, so the group label logic is not duplicated.
+  - `errorRange` preserves API order, so the new "last page" test is consistent with it.
+  - The two new Go tests exercise the non-file patch error, the ineligible duplicate, the path cap and error-only groups in unresolved and unknown worktrees.
+  - The `contracts.md` wording ("any category") matches `activity.go:124-138`, where any file-category event or any error observation is admitted.
+
+**Non-blocking doc nits**
+- The checkpoint and coverage page are stamped `263c606` and quote 691 frontend tests. `0360ec0` adds one Court test and a code change after that, so the count would be about 692 and the Court change sits outside the "independent reviews PASS on 263c606" claim. Each doc marks the Court change as follow-up pending, so this does not mislead.
+- `error-path-heading` is the only focus fallback. The "Signature counts" `<details>` open state and summary focus are lost on a live refresh. That behavior was already there and is not a regression.
+
+I did not re-run the 691/496 test counts or the Go checks. Those claims rest on the docs.
+
+Disposition: PASS. Current checkpoint updated to0360ec0 / 692 tests; independent Court follow-ups PASS on263c606..db82b69. No additional code changes after reviewed0360ec0. Existing details expansion is transient presentation state, not persisted evidence. Hosted checks remain separate.

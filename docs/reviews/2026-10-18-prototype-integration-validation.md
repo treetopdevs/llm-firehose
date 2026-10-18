@@ -1,6 +1,6 @@
-## Current combined remediation checkpoint — 263c606
+## Current combined remediation checkpoint — 0360ec0
 
-All seven feature slices coexist with requested-model review fixes. 691 frontend tests (52 files), production build and full Go tests pass. gofmt/vet, CLI build, sidecar and Rust3 passed on 724a378; subsequent changes are frontend/accessibility and added backend tests only. Independent spec and standards reviews PASS on 735d8e7..263c606; no merge loss found. Patch and Replay Sonnet 5.5 High follow-ups PASS. Activity second follow-up and combined external review pending. Prior model quota notes below are historical; direct Claude CLI supplies the user-authorized fallback.
+All seven feature slices coexist with requested-model review fixes. 692 frontend tests (52 files), production build and full Go tests pass. gofmt/vet, CLI build, sidecar and Rust3 passed on 724a378; subsequent changes are frontend/accessibility and added backend tests only. Independent spec and standards reviews PASS on 735d8e7..263c606 and 263c606..db82b69; no merge loss found. Patch and Replay Sonnet 5.5 High follow-ups PASS. Activity second follow-up PASS on ec44891. Combined initial external review completed with findings fixed; final Sonnet 5.5 High follow-up PASS on724a378..0360ec0. CodeRabbit is rate-limited; no approval inferred from its green status. Prior model quota notes below are historical; direct Claude CLI supplies the user-authorized fallback.
 
 # Combined prototype validation
 
