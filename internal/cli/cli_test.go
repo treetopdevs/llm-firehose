@@ -899,6 +899,46 @@ func TestInstallClaudeOTelForwardWithNothingToForwardIsRefused(t *testing.T) {
 	}
 }
 
+func TestInstallClaudeOTelReplaceClearsAForwardingRecord(t *testing.T) {
+	home := t.TempDir()
+	writeClaudeSettings(t, home, axctlEnv)
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Settings now hold only Firehose's block, so replace has nothing to swap;
+	// it must still end the relay the user is choosing to give up.
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Replace: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(OTelForwardPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("replace left the forwarding record behind: %v", err)
+	}
+	if err := UninstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if strings.Contains(string(data), "1738") {
+		t.Fatalf("uninstall resurrected the collector the user replaced: %s", data)
+	}
+
+	// Pointing Claude at a new collector after a forward install, then replacing.
+	home = t.TempDir()
+	writeClaudeSettings(t, home, axctlEnv)
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true}); err != nil {
+		t.Fatal(err)
+	}
+	writeClaudeSettings(t, home, `{"env":{"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"http://127.0.0.1:9999/v1/logs"}}`)
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Replace: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(OTelForwardPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("replace over a new collector left the old forwarding record: %v", err)
+	}
+	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatal("replace did not install the Firehose block")
+	}
+}
+
 func TestInstallClaudeOTelForwardAndReplaceAreExclusive(t *testing.T) {
 	home := t.TempDir()
 	writeClaudeSettings(t, home, axctlEnv)

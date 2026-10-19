@@ -171,6 +171,9 @@ func InstallClaudeOTelWith(home, daemonAddr string, environ []string, opts Claud
 		}
 	}
 	if !changed {
+		if opts.Replace {
+			return "", clearOTelForward(home)
+		}
 		return "", nil
 	}
 	settings["env"] = env
@@ -212,6 +215,14 @@ func InstallClaudeOTelWith(home, daemonAddr string, environ []string, opts Claud
 	}
 	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o600); err != nil {
 		return "", err
+	}
+	// Replace abandons any collector a prior --forward was relaying to. Clear
+	// the record only after the settings write, so a failed write cannot leave
+	// Claude pointed at Firehose with nowhere to forward.
+	if opts.Replace {
+		if err := clearOTelForward(home); err != nil {
+			return "", err
+		}
 	}
 	return backup, nil
 }

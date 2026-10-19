@@ -182,6 +182,14 @@ func redactURL(raw string) string {
 	return u.Scheme + "://" + u.Host + u.Path
 }
 
+// clearOTelForward deletes the forwarding record; a missing record is already clear.
+func clearOTelForward(home string) error {
+	if err := os.Remove(OTelForwardPath(home)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // UninstallClaudeOTel removes Firehose's telemetry block from Claude settings.
 // When the install forwarded to an existing collector, that collector's
 // original settings are restored (without overwriting keys the user has set
