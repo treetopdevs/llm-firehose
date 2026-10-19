@@ -5,6 +5,8 @@
 // full event list that highlights the event under it and drives the detail
 // pane. Gaps are real time at every speed.
 
+import { createReplaySound, REPLAY_PITCHES } from "./sound";
+import type { SoundState } from "./sound";
 import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
@@ -42,6 +44,7 @@ export type ScorePanel = {
   /** Advances playback by elapsed wall-clock milliseconds; what the frame loop calls. */
   tick(elapsedMs: number): void;
   playhead(): number;
+  deactivate(): void;
 };
 
 /** How long the optional GET /errors fetch may take before it is aborted; the score then renders without daemon signatures. */
@@ -94,7 +97,20 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   const bar = el("div", { class: "score-bar" });
   const overview = el("div", { class: "score-overview" });
   const chart = el("div", { class: "score-chart" });
-  const root = el("section", { class: "score", tabindex: "0" }, head, bar, overview, chart);
+  const soundButton = el("button", {"aria-label": "Enable replay sound", "aria-pressed": "false"}, "Enable replay sound");
+  const soundStatus = el("span", {role: "status"}, "Replay sound off");
+  let soundState: SoundState = "off";
+  const sound = createReplaySound(state => {
+    soundState = state;
+    const label = state === "on" || state === "enabling" ? "Disable replay sound" : "Enable replay sound";
+    soundButton.textContent = label; soundButton.setAttribute("aria-label", label);
+    soundButton.setAttribute("aria-pressed", String(state === "on" || state === "enabling"));
+    soundStatus.textContent = state === "unavailable" ? "Replay sound unavailable. Playback still works; you can retry." : `Replay sound ${state}`;
+  });
+  soundButton.addEventListener("click", () => { if (soundState === "on" || soundState === "enabling") sound.disable(); else void sound.enable(); });
+  const soundControls = el("details", {}, el("summary", {}, "Optional replay sound"), soundButton, soundStatus,
+    el("p", {}, `Quiet local tones during playback only; off by default. ${Object.entries(REPLAY_PITCHES).map(([category, hz]) => `${category} ${hz} Hz`).join(", ")}; other 196 Hz. At most one latest crossed observation every 150 ms; dense events and first/final observations may be silent. This is not an error detector. Tones describe captured categories, not success. Leaving Score, hiding the page, or opening another session switches sound off.`));
+  const root = el("section", { class: "score", tabindex: "0" }, head, bar, soundControls, overview, chart);
   const clipId = `score-clip-${++clipSeq}`;
 
   let sessionId = "";
@@ -162,6 +178,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   function setPlaying(on: boolean) {
     const wasPlaying = playing;
     playing = on && loaded();
+    if (!playing) sound.stop();
     playBtn.setAttribute("aria-pressed", String(playing));
     playBtn.textContent = playing ? "❚❚" : "▶";
     if (playing) {
@@ -183,12 +200,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   function frame(now: number) {
-    if (!playing) return;
     if (!root.isConnected) {
       // Leaving the view pauses the replay rather than running it blind.
-      setPlaying(false);
+      deactivate();
       return;
     }
+    if (!playing) return;
     if (frameStamp) tick(now - frameStamp);
     frameStamp = now;
     if (playing) requestAnimationFrame(frame);
@@ -210,6 +227,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   root.addEventListener("keydown", (e) => {
     if (!loaded()) return;
     const target = e.target as HTMLElement | null;
+    if (target?.closest("summary")) return;
     const inControl = target?.tagName === "BUTTON" || target?.tagName === "SELECT";
     switch (e.key) {
       case "ArrowRight":
@@ -246,6 +264,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
    * Playback's moves only mark the event when the pane was closed.
    */
   function setPlayhead(next: number, fromPlayback = false) {
+    if (!fromPlayback) sound.stop();
     at = next;
     // Follow the cursor when it leaves the window; this redraws once per window width.
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
@@ -263,6 +282,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   /** Puts the cursor on one specific event, even when several share its instant. */
   function select(target: ScoreEvent) {
+    sound.stop();
     at = target.at;
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
     updatePlayhead();
@@ -402,9 +422,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   function tick(elapsedMs: number) {
+    if (!root.isConnected) { deactivate(); return; }
     if (!playing || !loaded()) return;
+    const previous = at;
     const step = advance(score, at, elapsedMs, speed);
     setPlayhead(step.at, true);
+    const crossed = eventAt(score, step.at);
+    if (crossed && crossed.at > previous && !step.done) sound.cue(crossed.event.severity === "error" ? "error" : crossed.event.category);
     if (step.done) setPlaying(false);
   }
 
@@ -629,6 +653,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   // --- data -----------------------------------------------------------------------
 
   async function open(id: string, source?: string) {
+    sound.disable();
     const v = ++version;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.
@@ -709,5 +734,9 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     draw();
   }
 
-  return { root, refresh, open, tick, playhead: () => at };
+  function deactivate() {
+    playing = false; playBtn.setAttribute("aria-pressed", "false"); playBtn.textContent = "▶";
+    sound.disable(); cancelDetail();
+  }
+  return { root, refresh, open, tick, playhead: () => at, deactivate };
 }
