@@ -138,6 +138,18 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/** A non-2xx daemon response; `message` keeps the historical `POST path: status body` shape. */
+export class ApiError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(`POST ${path}: ${status} ${body}`);
+    this.name = "ApiError";
+  }
+}
+
 async function postJSON<T>(path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`${DAEMON_URL}${path}`, {
     method: "POST",
@@ -145,7 +157,7 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!resp.ok) {
-    throw new Error(`POST ${path}: ${resp.status} ${await resp.text()}`);
+    throw new ApiError(path, resp.status, await resp.text());
   }
   return resp.json() as Promise<T>;
 }
@@ -178,8 +190,8 @@ export const doctor = () => getJSON<DoctorCheck[]>("/doctor");
 export const getConfig = () => getJSON<EngineConfig>("/config");
 export const setConfig = (patch: EngineConfig) =>
   postJSON<ConfigUpdateResult>("/config", patch);
-export const install = (adapter: string) =>
-  postJSON<{ ok: boolean; detail: string }>(`/install/${encodeURIComponent(adapter)}`);
+export const install = (adapter: string, opts?: { replace?: boolean; forward?: boolean }) =>
+  postJSON<{ ok: boolean; detail: string }>(`/install/${encodeURIComponent(adapter)}`, opts);
 
 /** Streams live events over SSE. Returns a stop function. */
 export function stream(onEvent: (ev: FirehoseEvent) => void, onStateChange?: (open: boolean) => void): () => void {

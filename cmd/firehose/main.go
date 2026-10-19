@@ -37,7 +37,8 @@ Usage:
   firehose ingest              stream NDJSON events from stdin into the spool
   firehose export [-o FILE]    dump captured events as NDJSON (default stdout)
   firehose hook-forward        fail-silent adapter hook capture
-  firehose install AGENT       wire an adapter (claude-code | claude-otel | codex | opencode | antigravity)
+  firehose install AGENT       wire an adapter (claude-code | claude-otel [--forward|--replace] | codex | opencode | antigravity)
+  firehose uninstall claude-otel  remove the OTLP block (restores a forwarded collector)
   firehose doctor              validate adapter wiring
   firehose version             print version
 `
@@ -103,8 +104,12 @@ func main() {
 		fatalIf(err)
 		fmt.Fprintf(os.Stderr, "exported %d events\n", n)
 	case "install":
-		if len(args) != 1 {
-			fatal(fmt.Errorf("usage: firehose install <claude-code|claude-otel|codex|opencode|antigravity>"))
+		var replace, forward bool
+		if len(args) == 2 && args[0] == "claude-otel" {
+			replace, forward = args[1] == "--replace", args[1] == "--forward"
+		}
+		if len(args) != 1 && !replace && !forward {
+			fatal(fmt.Errorf("usage: firehose install <claude-code|claude-otel [--forward|--replace]|codex|opencode|antigravity>"))
 		}
 		bin, err := os.Executable()
 		if err != nil {
@@ -120,8 +125,15 @@ func main() {
 			if addr == "" {
 				addr = cli.DefaultDaemonAddr
 			}
-			fatalIf(cli.InstallClaudeOTel(home, addr, os.Environ()))
+			backup, err := cli.InstallClaudeOTelWith(home, addr, os.Environ(), cli.ClaudeOTelOptions{Replace: replace, Forward: forward})
+			fatalIf(err)
 			fmt.Println("✓ supplemental Claude OTLP/HTTP JSON enabled for the local daemon")
+			if kept, err := cli.LoadOTelForward(home); forward && err == nil && (kept.Logs != "" || kept.Metrics != "") {
+				fmt.Println("  your existing collector keeps receiving telemetry through Firehose (undo: firehose uninstall claude-otel)")
+			}
+			if backup != "" {
+				fmt.Printf("  previous settings backed up to %s\n", backup)
+			}
 			fmt.Println("  restart running Claude Code sessions to pick it up")
 		case "opencode":
 			path, err := cli.InstallOpenCode(home, bin)
@@ -139,6 +151,17 @@ func main() {
 		default:
 			fatal(fmt.Errorf("unknown adapter %q (want claude-code, claude-otel, codex, opencode, or antigravity)", args[0]))
 		}
+	case "uninstall":
+		if len(args) != 1 || args[0] != "claude-otel" {
+			fatal(fmt.Errorf("usage: firehose uninstall claude-otel"))
+		}
+		addr := cfg.DaemonAddr
+		if addr == "" {
+			addr = cli.DefaultDaemonAddr
+		}
+		fatalIf(cli.UninstallClaudeOTel(home, addr))
+		fmt.Println("✓ Firehose's Claude OTLP settings removed (any forwarded collector restored)")
+		fmt.Println("  restart running Claude Code sessions to pick it up")
 	case "doctor":
 		bad := 0
 		for _, c := range cli.Doctor(cfg, home) {

@@ -42,7 +42,7 @@ Then wire up the agents you use:
 
 ```sh
 firehose install claude-code   # merges hooks into ~/.claude/settings.json (backs it up first)
-firehose install claude-otel   # optional local-only Claude usage/diagnostic stream
+firehose install claude-otel   # optional local-only Claude usage/diagnostic stream (--forward keeps an existing collector)
 firehose install codex         # adds lifecycle/tool hooks; review trust in Codex /hooks
 firehose install opencode      # writes a plugin into ~/.config/opencode/plugin/
 firehose doctor                # verify everything is wired

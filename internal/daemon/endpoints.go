@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -109,7 +111,20 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		if addr == "" {
 			addr = cli.DefaultDaemonAddr
 		}
-		if err := cli.InstallClaudeOTel(s.home, addr, s.Environ); err != nil {
+		var opts struct {
+			Replace bool `json:"replace"`
+			Forward bool `json:"forward"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&opts); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid install options: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if opts.Replace && opts.Forward {
+			http.Error(w, "replace and forward are mutually exclusive", http.StatusBadRequest)
+			return
+		}
+		backup, err := cli.InstallClaudeOTelWith(s.home, addr, s.Environ, cli.ClaudeOTelOptions{Replace: opts.Replace, Forward: opts.Forward})
+		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, cli.ErrClaudeOTelConflict) {
 				status = http.StatusConflict
@@ -118,6 +133,12 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail = "supplemental Claude OTLP/HTTP JSON enabled for the local daemon; restart running Claude Code sessions"
+		if kept, err := cli.LoadOTelForward(s.home); opts.Forward && err == nil && (kept.Logs != "" || kept.Metrics != "") {
+			detail += "; your existing collector keeps receiving telemetry through Firehose"
+		}
+		if backup != "" {
+			detail += " (backup: " + backup + ")"
+		}
 	case "opencode":
 		path, err := cli.InstallOpenCode(s.home, bin)
 		if err != nil {
