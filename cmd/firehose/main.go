@@ -23,7 +23,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags "-X main.version=...".
-var version = "0.3.0"
+var version = "0.4.0"
 
 const usage = `Agent Firehose %s — a live timeline of AI coding-agent activity.
 
