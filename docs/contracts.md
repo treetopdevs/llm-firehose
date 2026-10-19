@@ -164,7 +164,7 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
-| `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}` |
+| `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}`; `claude-otel` also accepts an optional `{"replace": true}` or `{"forward": true}` body (mutually exclusive; 409 names the conflicting endpoints) |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
 
 Session, trace, and file queries are served from an in-memory Projection derived

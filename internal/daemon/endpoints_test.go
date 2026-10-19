@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -405,7 +406,7 @@ func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
 	cfg := testConfig(t)
 	home := t.TempDir()
 	srv := New(testEngine(t, cfg), cfg, home, "test-version")
-	srv.Environ = []string{"PATH=/usr/bin", "CLAUDE_CODE_ENABLE_TELEMETRY=1"}
+	srv.Environ = []string{"PATH=/usr/bin", "OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example"}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
@@ -419,6 +420,49 @@ func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
 	}
 	if cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
 		t.Fatal("refused install still configured the local receiver")
+	}
+}
+
+func TestInstallEndpointClaudeOTelReplaceBody(t *testing.T) {
+	cfg := testConfig(t)
+	home := t.TempDir()
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"env":{"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"http://127.0.0.1:1738/v1/logs"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(testEngine(t, cfg), cfg, home, "test-version")
+	srv.Environ = []string{"PATH=/usr/bin"}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	plain, err := http.Post(ts.URL+"/install/claude-otel", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(plain.Body)
+	plain.Body.Close()
+	if plain.StatusCode != http.StatusConflict || !strings.Contains(string(body), "127.0.0.1:1738") {
+		t.Fatalf("plain install = %d %q, want 409 naming the existing destination", plain.StatusCode, body)
+	}
+
+	resp, err := http.Post(ts.URL+"/install/claude-otel", "application/json", strings.NewReader(`{"replace":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !out.OK || !strings.Contains(out.Detail, "backup") {
+		t.Fatalf("replace install = %d %+v, want 200 mentioning the backup", resp.StatusCode, out)
+	}
+	if !cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+		t.Fatal("replace did not configure the local receiver")
 	}
 }
 

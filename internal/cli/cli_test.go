@@ -3,9 +3,11 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -627,7 +629,7 @@ func TestInstallClaudeOTelRefusesConflictsAndManagedSettings(t *testing.T) {
 
 	t.Run("process environment telemetry", func(t *testing.T) {
 		for _, entry := range []string{
-			"CLAUDE_CODE_ENABLE_TELEMETRY=1",
+			"CLAUDE_CODE_ENABLE_TELEMETRY=0",
 			"OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example",
 		} {
 			home := t.TempDir()
@@ -640,6 +642,346 @@ func TestInstallClaudeOTelRefusesConflictsAndManagedSettings(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestInstallClaudeOTelConflictNamesTheExistingDestination(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"http://127.0.0.1:1738/v1/logs","OTEL_LOGS_EXPORTER":"otlp"}}`)
+	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := InstallClaudeOTel(home, "127.0.0.1:4517", nil)
+	if !errors.Is(err, ErrClaudeOTelConflict) {
+		t.Fatalf("err = %v, want ErrClaudeOTelConflict", err)
+	}
+	for _, want := range []string{"http://127.0.0.1:1738/v1/logs", "http://127.0.0.1:1738", "replace"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("conflict message %q does not mention %q", err, want)
+		}
+	}
+	if after, _ := os.ReadFile(settingsPath); string(after) != string(original) {
+		t.Fatalf("refused install changed settings: %s", after)
+	}
+}
+
+func TestInstallClaudeOTelConflictOmitsSecretValues(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer s3cret","OTEL_LOGS_EXPORTER":"console"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := InstallClaudeOTel(home, "127.0.0.1:4517", nil)
+	if err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("conflict error must not echo header values: %v", err)
+	}
+}
+
+func TestInstallClaudeOTelCompletesPartialIdenticalBlock(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_LOGS_EXPORTER":"otlp"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err != nil {
+		t.Fatalf("a partial block holding only Firehose's own values should be completed: %v", err)
+	}
+	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatal("partial block was not completed")
+	}
+}
+
+func TestInstallClaudeOTelIgnoresMatchingProcessEnvironment(t *testing.T) {
+	home := t.TempDir()
+	environ := []string{"PATH=/usr/bin", "CLAUDE_CODE_ENABLE_TELEMETRY=1"}
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517", environ); err != nil {
+		t.Fatalf("process env that already matches Firehose's value must not conflict: %v", err)
+	}
+	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatal("install did not configure the receiver")
+	}
+}
+
+func TestInstallClaudeOTelReplaceBacksUpAndSwapsDestination(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"model":"opus","hooks":{"Stop":[]},"env":{"KEEP_ME":"yes","CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_EXPORTER_OTLP_PROTOCOL":"http/json","OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"http://127.0.0.1:1738/v1/logs","OTEL_LOGS_EXPORTER":"otlp"}}`)
+	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-existing .bak (e.g. from `install claude-code`) must not stop the
+	// config being destroyed from being backed up.
+	if err := os.WriteFile(settingsPath+".bak", []byte(`{"old":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup == "" {
+		t.Fatal("replace returned no backup path")
+	}
+	if saved, _ := os.ReadFile(backup); string(saved) != string(original) {
+		t.Fatalf("backup %s = %s, want the pre-replace settings", backup, saved)
+	}
+	if bak, _ := os.ReadFile(settingsPath + ".bak"); string(bak) != `{"old":true}` {
+		t.Fatalf("existing .bak was clobbered: %s", bak)
+	}
+	var settings map[string]any
+	data, _ := os.ReadFile(settingsPath)
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env := settings["env"].(map[string]any)
+	if env["KEEP_ME"] != "yes" || settings["model"] != "opus" || settings["hooks"] == nil {
+		t.Fatalf("unrelated settings changed: %+v", settings)
+	}
+	if _, stale := env["OTEL_EXPORTER_OTLP_ENDPOINT"]; stale {
+		t.Fatal("generic foreign endpoint left behind in a half-configured state")
+	}
+	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatal("replace did not install the Firehose block")
+	}
+
+	again, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != "" {
+		t.Fatalf("idempotent replace wrote another backup %q", again)
+	}
+}
+
+func TestInstallClaudeOTelReplaceNeverOverridesManagedSettings(t *testing.T) {
+	home := t.TempDir()
+	managed := filepath.Join(home, ".claude", "managed-settings.json")
+	if err := os.MkdirAll(filepath.Dir(managed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, []byte(`{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://managed.example"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Replace: true})
+	if !errors.Is(err, ErrClaudeOTelConflict) {
+		t.Fatalf("replace must still refuse managed settings, got %v", err)
+	}
+}
+
+const axctlEnv = `{"model":"opus","hooks":{"Stop":[]},"env":{"KEEP_ME":"yes","CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_EXPORTER_OTLP_PROTOCOL":"http/json","OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"http://127.0.0.1:1738/v1/logs","OTEL_EXPORTER_OTLP_LOGS_PROTOCOL":"http/json","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"otlp"}}`
+
+func writeClaudeSettings(t *testing.T, home, body string) string {
+	t.Helper()
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestInstallClaudeOTelForwardKeepsTheExistingCollector(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := writeClaudeSettings(t, home, axctlEnv)
+	backup, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := os.ReadFile(backup); string(saved) != axctlEnv {
+		t.Fatalf("backup %q does not hold the original settings", backup)
+	}
+	if !ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatal("Claude is not pointed at Firehose")
+	}
+	var settings map[string]any
+	data, _ := os.ReadFile(settingsPath)
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["model"] != "opus" || settings["env"].(map[string]any)["KEEP_ME"] != "yes" {
+		t.Fatalf("unrelated settings changed: %s", data)
+	}
+	targets, err := LoadOTelForward(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targets.Logs != "http://127.0.0.1:1738/v1/logs" || targets.Metrics != "http://127.0.0.1:1738/v1/metrics" {
+		t.Fatalf("forward targets = %+v", targets)
+	}
+	info, err := os.Stat(filepath.Join(home, ".agentfirehose", "otel-forward.json"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("forward file missing or not private: %v %v", info, err)
+	}
+
+	again, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true})
+	if err != nil || again != "" {
+		t.Fatalf("repeat forward install = %q, %v; want a no-op", again, err)
+	}
+	if kept, _ := LoadOTelForward(home); kept.Logs != targets.Logs || len(kept.OriginalEnv) == 0 {
+		t.Fatalf("repeat install lost the saved originals: %+v", kept)
+	}
+}
+
+func TestInstallClaudeOTelForwardRefusesWhatItCannotPreserve(t *testing.T) {
+	cases := map[string]string{
+		"headers":     `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_EXPORTER_OTLP_PROTOCOL":"http/json","OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer s3cret","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"otlp"}}`,
+		"protobuf":    `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_EXPORTER_OTLP_PROTOCOL":"http/protobuf","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"otlp"}}`,
+		"no protocol": `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"otlp"}}`,
+		"remote":      `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example","OTEL_EXPORTER_OTLP_PROTOCOL":"http/json","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"otlp"}}`,
+		"console":     `{"env":{"OTEL_LOGS_EXPORTER":"console","OTEL_METRICS_EXPORTER":"otlp","OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:1738","OTEL_EXPORTER_OTLP_PROTOCOL":"http/json"}}`,
+		"loops to us": `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:4517","OTEL_EXPORTER_OTLP_PROTOCOL":"http/json","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"otlp"}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			settingsPath := writeClaudeSettings(t, home, body)
+			_, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true})
+			if !errors.Is(err, ErrClaudeOTelConflict) {
+				t.Fatalf("err = %v, want ErrClaudeOTelConflict", err)
+			}
+			if strings.Contains(err.Error(), "s3cret") {
+				t.Fatalf("error leaked a header value: %v", err)
+			}
+			if after, _ := os.ReadFile(settingsPath); string(after) != body {
+				t.Fatalf("refused forward changed settings: %s", after)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".agentfirehose", "otel-forward.json")); !os.IsNotExist(err) {
+				t.Fatalf("refused forward left a forward file: %v", err)
+			}
+		})
+	}
+}
+
+func TestInstallClaudeOTelForwardWithNothingToForwardIsRefused(t *testing.T) {
+	for name, body := range map[string]string{
+		"clean settings": `{"env":{"KEEP_ME":"yes"}}`,
+		"no settings":    "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, ".claude", "settings.json")
+			if body != "" {
+				writeClaudeSettings(t, home, body)
+			}
+			_, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true})
+			if !errors.Is(err, ErrClaudeOTelConflict) || !strings.Contains(err.Error(), "nothing to forward") {
+				t.Fatalf("err = %v, want a nothing-to-forward conflict", err)
+			}
+			if after, _ := os.ReadFile(path); string(after) != body {
+				t.Fatalf("refused forward changed settings: %s", after)
+			}
+			if ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+				t.Fatal("refused forward still installed the block")
+			}
+		})
+	}
+
+	// After a plain install there is likewise no collector to forward to.
+	home := t.TempDir()
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true}); !errors.Is(err, ErrClaudeOTelConflict) {
+		t.Fatalf("forward after plain install = %v, want conflict", err)
+	}
+}
+
+func TestInstallClaudeOTelForwardAndReplaceAreExclusive(t *testing.T) {
+	home := t.TempDir()
+	writeClaudeSettings(t, home, axctlEnv)
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true, Replace: true}); err == nil {
+		t.Fatal("forward and replace together should be rejected")
+	}
+}
+
+func TestUninstallClaudeOTelRestoresForwardedCollector(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := writeClaudeSettings(t, home, axctlEnv)
+	if _, err := InstallClaudeOTelWith(home, "127.0.0.1:4517", nil, ClaudeOTelOptions{Forward: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := UninstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatal(err)
+	}
+	var want, got map[string]any
+	if err := json.Unmarshal([]byte(axctlEnv), &want); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(settingsPath)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("uninstall did not restore the original settings:\n got %s\nwant %s", data, axctlEnv)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agentfirehose", "otel-forward.json")); !os.IsNotExist(err) {
+		t.Fatalf("forward file survived uninstall: %v", err)
+	}
+	if err := UninstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatalf("second uninstall should be a no-op: %v", err)
+	}
+}
+
+func TestUninstallClaudeOTelWithoutForwardingRemovesOnlyFirehoseKeys(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := writeClaudeSettings(t, home, `{"env":{"KEEP_ME":"yes"}}`)
+	if err := InstallClaudeOTel(home, "127.0.0.1:4517", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := UninstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	data, _ := os.ReadFile(settingsPath)
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env := settings["env"].(map[string]any)
+	if len(env) != 1 || env["KEEP_ME"] != "yes" || ClaudeOTelConfigured(home, "127.0.0.1:4517") {
+		t.Fatalf("uninstall left %v", env)
+	}
+
+	// Values the user changed since install are theirs, not Firehose's.
+	writeClaudeSettings(t, home, `{"env":{"OTEL_LOGS_EXPORTER":"console"}}`)
+	if err := UninstallClaudeOTel(home, "127.0.0.1:4517"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(settingsPath)
+	if !strings.Contains(string(data), "console") {
+		t.Fatalf("uninstall removed a key Firehose does not own: %s", data)
+	}
+}
+
+func TestDoctorReportsForwardedCollector(t *testing.T) {
+	home := t.TempDir()
+	cfg := testConfig(t)
+	cfg.DaemonAddr = "127.0.0.1:4517"
+	writeClaudeSettings(t, home, axctlEnv)
+	if _, err := InstallClaudeOTelWith(home, cfg.DaemonAddr, nil, ClaudeOTelOptions{Forward: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range Doctor(cfg, home) {
+		if check.Name == "claude-code otel" {
+			if !check.OK || !strings.Contains(check.Detail, "forwarding to http://127.0.0.1:1738/v1/logs") {
+				t.Fatalf("doctor detail = %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("no claude-code otel check")
 }
 
 func TestDoctorReportsClaudeOTelAsSupplementalTransport(t *testing.T) {

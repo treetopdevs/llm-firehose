@@ -14,16 +14,17 @@ import (
 const maxOTLPBodyBytes = 1 << 20
 
 func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
-	s.handleOTLP(w, r, claudeotel.ParseLogs)
+	s.handleOTLP(w, r, "logs", claudeotel.ParseLogs)
 }
 
 func (s *Server) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {
-	s.handleOTLP(w, r, claudeotel.ParseMetrics)
+	s.handleOTLP(w, r, "metrics", claudeotel.ParseMetrics)
 }
 
 func (s *Server) handleOTLP(
 	w http.ResponseWriter,
 	r *http.Request,
+	signal string,
 	parse func([]byte, time.Time) []event.Event,
 ) {
 	// Claude's exporter is a non-browser loopback client. Even an allowlisted
@@ -43,6 +44,10 @@ func (s *Server) handleOTLP(
 		http.Error(w, "OTLP request exceeds the local receiver limit", http.StatusRequestEntityTooLarge)
 		return
 	}
+
+	// Tee the untouched batch to the user's existing collector, if any. It is
+	// queued, never awaited, and independent of local admission below.
+	s.forwarder.forward(signal, raw, r.Header)
 
 	captured := time.Now().UTC()
 	admitCtx := context.WithoutCancel(r.Context())

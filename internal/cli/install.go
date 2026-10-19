@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+	"time"
 
 	"agentfirehose/internal/adapters/opencode"
 )
@@ -36,25 +39,53 @@ func ClaudeOTelEnvironment(daemonAddr string) map[string]string {
 // to 409 and everything else to 500.
 var ErrClaudeOTelConflict = errors.New("existing telemetry configuration conflict")
 
+// ClaudeOTelOptions tunes InstallClaudeOTelWith.
+type ClaudeOTelOptions struct {
+	// Replace discards telemetry settings already present in the user's
+	// ~/.claude/settings.json (and ignores the caller's process environment)
+	// after writing a fresh backup. Managed settings are never overridden.
+	Replace bool
+	// Forward keeps the user's existing loopback http/json OTLP collector
+	// working: its endpoints are recorded for the daemon to tee to, its
+	// settings are backed up and saved for uninstall, and Claude is pointed at
+	// Firehose. Mutually exclusive with Replace.
+	Forward bool
+}
+
 // InstallClaudeOTel opts Claude Code into the daemon's supplemental local
-// OTLP/HTTP JSON receiver. Existing user, process, or managed telemetry
-// settings are a hard conflict and are never overwritten. The caller supplies
-// its process environment as environ (normally os.Environ()) so tests can
-// inject a hermetic one; any telemetry key present there refuses the install.
+// OTLP/HTTP JSON receiver without replacing anything. See InstallClaudeOTelWith.
 func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
+	_, err := InstallClaudeOTelWith(home, daemonAddr, environ, ClaudeOTelOptions{})
+	return err
+}
+
+// InstallClaudeOTelWith opts Claude Code into the daemon's supplemental local
+// OTLP/HTTP JSON receiver. By default existing user, process, or managed
+// telemetry settings that differ from Firehose's own block are a hard conflict
+// and are never overwritten; the error names the destinations already in use.
+// With opts.Replace the user's own telemetry settings are replaced after a
+// backup, whose path is returned ("" when nothing needed backing up). The
+// caller supplies its process environment as environ (normally os.Environ())
+// so tests can inject a hermetic one.
+func InstallClaudeOTelWith(home, daemonAddr string, environ []string, opts ClaudeOTelOptions) (string, error) {
 	if err := validateClaudeOTelAddr(daemonAddr); err != nil {
-		return err
+		return "", err
+	}
+	if opts.Forward && opts.Replace {
+		return "", errors.New("forward and replace are mutually exclusive")
 	}
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	settings := map[string]any{}
 	original := []byte("{}")
+	existed := false
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		original = data
+		existed = true
 		if err := json.Unmarshal(data, &settings); err != nil {
-			return fmt.Errorf("existing %s is not valid JSON, refusing to modify (%w): %w", settingsPath, ErrClaudeOTelConflict, err)
+			return "", fmt.Errorf("existing %s is not valid JSON, refusing to modify (%w): %w", settingsPath, ErrClaudeOTelConflict, err)
 		}
 	} else if !os.IsNotExist(err) {
-		return err
+		return "", err
 	}
 
 	for _, managedPath := range []string{
@@ -64,19 +95,28 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 		if data, err := os.ReadFile(managedPath); err == nil {
 			var managed any
 			if err := json.Unmarshal(data, &managed); err != nil {
-				return fmt.Errorf("managed Claude settings at %s are invalid; refusing to modify user telemetry (%w): %w", managedPath, ErrClaudeOTelConflict, err)
+				return "", fmt.Errorf("managed Claude settings at %s are invalid; refusing to modify user telemetry (%w): %w", managedPath, ErrClaudeOTelConflict, err)
 			}
 			if containsTelemetrySetting(managed) {
-				return fmt.Errorf("managed Claude telemetry settings exist at %s; refusing to override: %w", managedPath, ErrClaudeOTelConflict)
+				return "", fmt.Errorf("managed Claude telemetry settings exist at %s and cannot be replaced from user settings: %w", managedPath, ErrClaudeOTelConflict)
 			}
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("inspect managed Claude settings: %w", err)
+			return "", fmt.Errorf("inspect managed Claude settings: %w", err)
 		}
 	}
-	for _, entry := range environ {
-		key, _, _ := strings.Cut(entry, "=")
-		if isClaudeTelemetryKey(key) {
-			return fmt.Errorf("process environment already configures %s; refusing to override: %w", key, ErrClaudeOTelConflict)
+
+	target := ClaudeOTelEnvironment(daemonAddr)
+	if !opts.Replace {
+		for _, entry := range environ {
+			key, value, _ := strings.Cut(entry, "=")
+			if !isClaudeTelemetryKey(key) {
+				continue
+			}
+			// A process value identical to Firehose's own changes nothing.
+			if want, ok := target[key]; ok && want == value {
+				continue
+			}
+			return "", fmt.Errorf("process environment already configures %s; refusing to override (unset it, or install from a shell without it): %w", key, ErrClaudeOTelConflict)
 		}
 	}
 
@@ -85,58 +125,135 @@ func InstallClaudeOTel(home, daemonAddr string, environ []string) error {
 		var valid bool
 		env, valid = existing.(map[string]any)
 		if !valid {
-			return fmt.Errorf("existing %s env value is not an object, refusing to modify: %w", settingsPath, ErrClaudeOTelConflict)
+			return "", fmt.Errorf("existing %s env value is not an object, refusing to modify: %w", settingsPath, ErrClaudeOTelConflict)
 		}
 	} else {
 		env = map[string]any{}
 	}
-	target := ClaudeOTelEnvironment(daemonAddr)
-	telemetryEntries := 0
-	exact := true
+
+	var foreign []string
 	for key, value := range env {
 		if !isClaudeTelemetryKey(key) {
 			continue
 		}
-		telemetryEntries++
-		want, targeted := target[key]
-		if !targeted || value != want {
-			exact = false
+		if want, ok := target[key]; ok && value == want {
+			continue
+		}
+		foreign = append(foreign, key)
+	}
+	sort.Strings(foreign)
+	if len(foreign) > 0 && !opts.Replace && !opts.Forward {
+		return "", fmt.Errorf("existing Claude telemetry settings conflict: %s already routes telemetry to %s (conflicting keys: %s); refusing to overwrite. Re-run with forward (firehose install claude-otel --forward) to keep that collector receiving telemetry through Firehose, or replace (--replace) to back up your settings and switch to Firehose: %w",
+			settingsPath, describeTelemetryDestinations(env, foreign), strings.Join(foreign, ", "), ErrClaudeOTelConflict)
+	}
+	if opts.Forward && len(foreign) == 0 {
+		// An explicit --forward must not claim a relay that does not exist.
+		if kept, err := LoadOTelForward(home); err != nil || (kept.Logs == "" && kept.Metrics == "") {
+			return "", fmt.Errorf("nothing to forward to: %s has no existing telemetry export; install without --forward, or point Claude at your collector first: %w", settingsPath, ErrClaudeOTelConflict)
 		}
 	}
-	if telemetryEntries > 0 {
-		if exact && telemetryEntries == len(target) {
-			for key, value := range target {
-				if env[key] != value {
-					exact = false
-					break
-				}
-			}
+	var plan OTelForwardTargets
+	if opts.Forward && len(foreign) > 0 {
+		var err error
+		if plan, err = planOTelForward(env, foreign, daemonAddr); err != nil {
+			return "", err
 		}
-		if exact && telemetryEntries == len(target) {
-			return nil
-		}
-		return fmt.Errorf("existing Claude telemetry settings conflict; refusing to overwrite: %w", ErrClaudeOTelConflict)
+	}
+
+	changed := len(foreign) > 0
+	for _, key := range foreign {
+		delete(env, key)
 	}
 	for key, value := range target {
-		env[key] = value
+		if env[key] != value {
+			env[key] = value
+			changed = true
+		}
+	}
+	if !changed {
+		return "", nil
 	}
 	settings["env"] = env
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
-		return err
+		return "", err
 	}
-	if _, err := os.Stat(settingsPath + ".bak"); os.IsNotExist(err) {
-		if err := os.WriteFile(settingsPath+".bak", original, 0o600); err != nil {
-			return fmt.Errorf("backup: %w", err)
+	var backup string
+	if (opts.Replace || opts.Forward) && existed && len(foreign) > 0 {
+		// The conventional .bak may already hold an older snapshot; never let
+		// it stand in for the configuration being discarded here.
+		path, err := uniqueBackupPath(settingsPath)
+		if err != nil {
+			return "", fmt.Errorf("backup: %w", err)
 		}
+		if err := os.WriteFile(path, original, 0o600); err != nil {
+			return "", fmt.Errorf("backup: %w", err)
+		}
+		backup = path
+	} else if _, err := os.Stat(settingsPath + ".bak"); os.IsNotExist(err) {
+		if err := os.WriteFile(settingsPath+".bak", original, 0o600); err != nil {
+			return "", fmt.Errorf("backup: %w", err)
+		}
+		backup = settingsPath + ".bak"
 	} else if err != nil {
-		return fmt.Errorf("backup: %w", err)
+		return "", fmt.Errorf("backup: %w", err)
 	}
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
+	// The forwarding record goes first: if the settings write then fails,
+	// Claude still talks to the original collector; the reverse order could
+	// send telemetry to Firehose with nowhere to forward it.
+	if plan.Logs != "" || plan.Metrics != "" {
+		if err := saveOTelForward(home, plan); err != nil {
+			return "", fmt.Errorf("save forwarding record: %w", err)
+		}
+	}
+	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o600); err != nil {
+		return "", err
+	}
+	return backup, nil
+}
+
+// uniqueBackupPath returns a not-yet-existing timestamped sibling of path.
+func uniqueBackupPath(path string) (string, error) {
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	for i := 0; i < 100; i++ {
+		candidate := fmt.Sprintf("%s.pre-otel-%s.bak", path, stamp)
+		if i > 0 {
+			candidate = fmt.Sprintf("%s.pre-otel-%s-%d.bak", path, stamp, i)
+		}
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no free backup name next to %s", path)
+}
+
+// describeTelemetryDestinations lists the endpoint URLs among keys, with
+// credentials and queries stripped; values of other keys (headers, tokens)
+// are never echoed.
+func describeTelemetryDestinations(env map[string]any, keys []string) string {
+	var urls []string
+	for _, key := range keys {
+		if !strings.HasSuffix(key, "_ENDPOINT") {
+			continue
+		}
+		raw, _ := env[key].(string)
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			urls = append(urls, "an unrecognised endpoint ("+key+")")
+			continue
+		}
+		urls = append(urls, u.Scheme+"://"+u.Host+u.Path)
+	}
+	if len(urls) == 0 {
+		return "a different exporter"
+	}
+	return strings.Join(urls, ", ")
 }
 
 // ClaudeOTelConfigured reports whether the exact local, content-disabled

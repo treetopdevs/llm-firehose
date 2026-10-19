@@ -2,8 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"agentfirehose/internal/adapters/antigravity"
 	"agentfirehose/internal/adapters/claudecode"
@@ -66,7 +69,7 @@ func Doctor(cfg Config, home string) []Check {
 	checks = append(checks, Check{
 		Name:            "claude-code otel",
 		OK:              otelOK,
-		Detail:          pick(otelOK, "supplemental local OTLP/HTTP JSON enabled", "optional: firehose install claude-otel"),
+		Detail:          pick(otelOK, "supplemental local OTLP/HTTP JSON enabled"+forwardDetail(home), "optional: firehose install claude-otel"),
 		Transport:       claudeotel.Transport,
 		Fidelity:        string(claudeotel.Manifest.Fidelity),
 		SupportedEvents: len(claudeotel.Manifest.Mapped),
@@ -144,4 +147,32 @@ func pick(ok bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+// forwardDetail describes a configured collector relay and whether it answers.
+func forwardDetail(home string) string {
+	targets, err := LoadOTelForward(home)
+	if err != nil || (targets.Logs == "" && targets.Metrics == "") {
+		return ""
+	}
+	target := targets.Logs
+	if target == "" {
+		target = targets.Metrics
+	}
+	state := "reachable"
+	if u, err := url.Parse(target); err != nil || u.Host == "" {
+		state = "invalid target"
+	} else {
+		host := u.Host
+		if u.Port() == "" {
+			host = net.JoinHostPort(u.Hostname(), "80")
+		}
+		conn, err := net.DialTimeout("tcp", host, 300*time.Millisecond)
+		if err != nil {
+			state = "NOT reachable"
+		} else {
+			conn.Close()
+		}
+	}
+	return "; forwarding to " + redactURL(target) + " (" + state + ")"
 }

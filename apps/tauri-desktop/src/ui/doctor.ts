@@ -1,24 +1,12 @@
-import { doctor, install } from "../api";
+import { doctor } from "../api";
 import { clear, el } from "../dom";
+import { runAdapterInstall } from "./install";
 
 const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigravity"];
 
 // Adapter wiring status from /doctor, with one-click install per adapter.
 export function createDoctor(): { root: HTMLElement; refresh(): void } {
   const root = el("section", { class: "doctor" });
-
-  async function runInstall(adapter: string, status: HTMLElement) {
-    status.classList.remove("error");
-    status.textContent = `installing ${adapter}…`;
-    try {
-      const res = await install(adapter);
-      status.textContent = res.detail;
-      await refresh();
-    } catch (err) {
-      status.textContent = String(err);
-      status.classList.add("error");
-    }
-  }
 
   async function refresh() {
     clear(root);
@@ -45,7 +33,7 @@ export function createDoctor(): { root: HTMLElement; refresh(): void } {
       const buttons = el("div", { class: "doctor-actions" });
       for (const adapter of INSTALLABLE) {
         const btn = el("button", {}, `install ${adapter}`);
-        btn.addEventListener("click", () => runInstall(adapter, status));
+        btn.addEventListener("click", () => runAdapterInstall(adapter, status, { onDone: refresh }));
         buttons.append(btn);
       }
       root.append(el("h3", {}, "adapters"), buttons, status);

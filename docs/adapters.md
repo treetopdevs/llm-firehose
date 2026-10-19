@@ -90,8 +90,31 @@ while `StopFailure` maps to the `error` category as a session-level failure.
 for OTLP `http/json` logs and metrics at the daemon's loopback
 `POST /v1/logs` and `POST /v1/metrics` endpoints. It refuses to overwrite any
 existing user, process, or managed exporter, endpoint, protocol, header,
-certificate, or other OTel setting. It never edits shell profiles and does not
-enable content-bearing telemetry options.
+certificate, or other OTel setting (values identical to Firehose's own block
+are not conflicts, and a partial identical block is completed). The refusal
+names the endpoints already in use. To switch deliberately, run
+`firehose install claude-otel --replace` (or `POST /install/claude-otel` with
+`{"replace": true}`, which the desktop app offers on a conflict): the user's
+`~/.claude/settings.json` is first copied to a timestamped
+`settings.json.pre-otel-*.bak`, then every telemetry key is replaced by the
+Firehose block. Managed settings are never overridden. It never edits shell
+profiles and does not enable content-bearing telemetry options.
+
+To keep an existing collector instead of replacing it, run
+`firehose install claude-otel --forward` (API: `{"forward": true}`). Claude can
+export logs and metrics to only one endpoint each, so Firehose becomes that
+endpoint and tees the untouched request bodies to the collector. Only
+loopback `http/json` OTLP destinations are forwarded; settings that cannot be
+preserved (headers, certificates, protobuf/grpc, non-`otlp` exporters, remote
+hosts, Firehose's own address) are refused with the offending key named, and
+`--replace` remains the explicit alternative. The user's settings are backed up,
+their original telemetry keys are saved in the host-private
+`~/.agentfirehose/otel-forward.json` (mode 0600, re-read live by the daemon),
+and `firehose uninstall claude-otel` restores them. Forwarding is
+best-effort and at-most-once: it never delays the exporter, a bounded
+per-signal queue drops the oldest batch when the collector stalls, and the
+first failure of an outage surfaces as a `meta`/`warn` `otel_forward_error`
+event. While the daemon is down, forwarded telemetry is not delivered.
 
 The receiver limits request size, record count, attribute count, and retained
 string size. Malformed individual records return exporter success and create a

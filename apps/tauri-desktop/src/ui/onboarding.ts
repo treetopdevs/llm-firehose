@@ -1,5 +1,6 @@
-import { doctor, install, setConfig } from "../api";
+import { doctor, setConfig } from "../api";
 import { clear, el } from "../dom";
+import { runAdapterInstall } from "./install";
 
 const ONBOARDED_KEY = "firehose-onboarded";
 
@@ -55,16 +56,7 @@ export function createOnboarding(onDone: () => void): HTMLElement {
     const status = el("p", { class: "dim" }, "");
     for (const adapter of ["claude-code", "claude-otel", "codex", "opencode", "antigravity"]) {
       const btn = el("button", {}, `install ${adapter}`);
-      btn.addEventListener("click", async () => {
-        status.textContent = `installing ${adapter}…`;
-        try {
-          const res = await install(adapter);
-          status.textContent = res.detail;
-        } catch (err) {
-          status.textContent = String(err);
-          status.classList.add("error");
-        }
-      });
+      btn.addEventListener("click", () => runAdapterInstall(adapter, status));
       card.append(btn);
     }
     const next = el("button", { class: "primary" }, "next");

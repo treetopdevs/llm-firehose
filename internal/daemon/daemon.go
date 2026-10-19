@@ -40,6 +40,7 @@ type Server struct {
 	home            string
 	version         string
 	engine          *capture.Engine
+	forwarder       *otelForwarder
 	setPolicy       func(privacy.Mode)
 	shutdown        chan struct{}
 	shutdownOnce    sync.Once
@@ -64,6 +65,12 @@ func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
 		shutdown:  make(chan struct{}),
 		Environ:   os.Environ(),
 	}
+	server.forwarder = newOTelForwarder(home, func() string {
+		if addr := server.config().DaemonAddr; addr != "" {
+			return addr
+		}
+		return cli.DefaultDaemonAddr
+	}, server.shutdown, server.warnForwardFailure)
 	server.loadGraphRoots()
 	return server
 }
