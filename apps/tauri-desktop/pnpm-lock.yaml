@@ -19,8 +19,8 @@ importers:
         specifier: ^2
         version: 2.11.4
       happy-dom:
-        specifier: ^20.12.0
-        version: 20.12.0
+        specifier: ^21.0.4
+        version: 21.0.4
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -29,7 +29,7 @@ importers:
         version: 6.4.3(@types/node@26.4.0)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.4.0)(happy-dom@20.12.0)(vite@6.4.3(@types/node@26.4.0))
+        version: 4.1.11(@types/node@26.4.0)(happy-dom@21.0.4)(vite@6.4.3(@types/node@26.4.0))
 
 packages:
 
@@ -492,8 +492,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  happy-dom@20.12.0:
-    resolution: {integrity: sha512-7uMYJu2SEwwL8vVcKp0C0lnt6d2LSGGe+T+oY79PiCJNNSgFpbxW8n5KuzpDQvrU4mt+fYiK1+Jy7Z2v39YR6g==}
+  happy-dom@21.0.4:
+    resolution: {integrity: sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==}
     engines: {node: '>=20.0.0'}
 
   magic-string@0.30.21:
@@ -993,7 +993,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  happy-dom@20.12.0:
+  happy-dom@21.0.4:
     dependencies:
       '@types/node': 26.4.0
       '@types/whatwg-mimetype': 3.0.2
@@ -1092,7 +1092,7 @@ snapshots:
       '@types/node': 26.4.0
       fsevents: 2.3.3
 
-  vitest@4.1.11(@types/node@26.4.0)(happy-dom@20.12.0)(vite@6.4.3(@types/node@26.4.0)):
+  vitest@4.1.11(@types/node@26.4.0)(happy-dom@21.0.4)(vite@6.4.3(@types/node@26.4.0)):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(vite@6.4.3(@types/node@26.4.0))
@@ -1116,7 +1116,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.4.0
-      happy-dom: 20.12.0
+      happy-dom: 21.0.4
     transitivePeerDependencies:
       - msw
 
