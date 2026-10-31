@@ -3,12 +3,20 @@
 // causality or handoffs; commit-to-session attribution is a labelled time join.
 import type { WorktreeCommit, WorktreeLifetimeView, WorktreeMark, WorktreeOutcome, WorktreeState } from "../../api";
 import type { ScopeWindow } from "../../scope";
-import { shortId } from "../../format";
+import { idLabel } from "../../format";
 
 export const LIVE_SPAN_MS = 7 * 24 * 3_600_000;
 export const IDLE_AFTER_MS = 4 * 3_600_000;
 export const MIN_BEAD_PX = 6;
 export const MIN_BRUSH_PX = 4;
+export const LABEL_X = 8;
+/** Clear space between the label column and the chart origin. */
+export const LABEL_PAD = 8;
+const LABEL_CHAR_PX = 6.5;
+/** Widest a lane label may render: from LABEL_X up to LABEL_PAD short of x0. */
+export const labelMaxWidth = (x0: number): number => Math.max(0, x0 - LABEL_X - LABEL_PAD);
+/** Longest lane label, in characters, that fits labelMaxWidth. */
+export const labelMaxChars = (x0: number): number => Math.max(2, Math.floor(labelMaxWidth(x0) / LABEL_CHAR_PX));
 
 export interface TimeRange { from: number; to: number }
 export type LaneEnd = "rejoin" | "open" | "gone" | "flat" | "hatched";
@@ -188,7 +196,7 @@ export function layoutLanes(
     const extentT = mergeT === undefined ? lastT : Math.max(lastT, mergeT);
     if (forkT > range.to) continue;
     if (!open && extentT < range.from) continue;
-    const label = r.label ?? shortId(r.worktree_id);
+    const label = r.label ?? idLabel(r.worktree_id);
     const beads: LaneBead[] = [];
     for (const s of r.sessions) {
       const t0 = time(s.first_time);

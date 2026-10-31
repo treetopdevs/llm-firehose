@@ -3,7 +3,7 @@ import type { WorktreeCommit } from "../../api";
 import { FIXTURE_ROWS, NOW, ROW_ORDER_A, iso, row } from "./model.fixtures";
 import {
   IDLE_AFTER_MS, LIVE_SPAN_MS, MIN_BEAD_PX, MIN_BRUSH_PX, axisTicks, brushWindow, isIdleWorker,
-  layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, timeToX, viewX, xToTime,
+  LABEL_PAD, LABEL_X, labelMaxChars, labelMaxWidth, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, timeToX, viewX, xToTime,
 } from "./model";
 import type { TimeRange } from "./model";
 
@@ -193,6 +193,22 @@ describe("layoutLanes", () => {
     expect(l.tooltip).toContain("1 commit without time");
     const lm = lane("wt-landed", live, { "wt-landed": [{ commit_id: "c9", time: iso(NOW - 4.5 * D), attribution: "time_join" }] });
     expect(lm.ticks.map((t) => t.kind).sort()).toEqual(["commit", "commit_mark"]);
+  });
+
+  test("path-id lane without a label reads as its tail", () => {
+    const id = "/Users/nicholas/develop/browser-life/.claude/worktrees/foo";
+    const g = layoutLanes([row({ worktree_id: id, first_time: iso(NOW - D) })], [id], live, X0, X1, NOW)[0];
+    expect(g.label).toBe("worktrees/foo");
+    expect(g.ariaLabel).toBe("worktrees/foo, open");
+    expect(g.tooltip.split("\n")[0]).toBe("worktrees/foo");
+  });
+
+  test("label column leaves a gutter before x0", () => {
+    expect(LABEL_PAD).toBeGreaterThanOrEqual(8);
+    for (const x0 of [100, 170, 300]) {
+      expect(LABEL_X + labelMaxWidth(x0) + LABEL_PAD).toBeLessThanOrEqual(x0);
+      expect(labelMaxChars(x0)).toBeGreaterThan(1);
+    }
   });
 
   test("labels", () => {

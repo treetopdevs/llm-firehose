@@ -5,10 +5,10 @@
 import { ApiError, worktree as fetchWorktree, worktrees as fetchWorktrees } from "../../api";
 import type { WorktreeCommit, WorktreeDetail, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
-import { shortId } from "../../format";
+import { idLabel } from "../../format";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
-import { MIN_BRUSH_PX, axisTicks, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
+import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
 import type { LaneGeom, TimeRange } from "./model";
 
 export interface ProjectApi {
@@ -58,7 +58,8 @@ const isAbort = (e: unknown): boolean => e instanceof Error && e.name === "Abort
 const day = (t: number): string => new Date(t).toISOString().slice(0, 16).replace("T", " ");
 const outcomeText = (o: string | undefined): string =>
   o === "landed" ? "landed" : o === "abandoned" ? "abandoned" : o === "never_diverged" ? "never diverged" : o === "unknown" ? "outcome unknown" : "removed";
-const shortLabel = (s: string): string => (s.length > 24 ? `…${s.slice(-23)}` : s);
+const MAX_LABEL_CHARS = labelMaxChars(X0);
+const shortLabel = (s: string): string => (s.length > MAX_LABEL_CHARS ? `…${s.slice(1 - MAX_LABEL_CHARS)}` : s);
 
 function glyphPath(kind: string, x: number, y: number): string {
   if (kind === "push") return `M ${x} ${y - 6} L ${x + 5} ${y + 4} L ${x - 5} ${y + 4} Z`;
@@ -194,7 +195,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (repo !== undefined) select.value = repo;
   }
 
-  function renderStatus(laneCount: number, repoRows: number): void {
+  function renderStatus(laneCount: number, repoRows: number, pending = 0): void {
     clear(statusBox);
     if (status === "unsupported") {
       statusBox.append(
@@ -221,6 +222,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (status !== "ready") return;
     if (rows.length === 0) statusBox.append(el("div", { class: "project-empty" }, "No worktrees captured yet."));
     else if (laneCount === 0 && repoRows > 0) statusBox.append(el("div", { class: "project-empty" }, "No worktree activity in this window."));
+    if (pending > 0) statusBox.append(el("div", { class: "project-pending" }, `States pending: ${pending} of ${repoRows} lanes not classified yet (graph_unavailable)`));
   }
 
   function laneNode(l: LaneGeom, y: number, selected: boolean, repoId: string): SVGElement {
@@ -231,7 +233,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (l.idle) cls.push("idle");
     const g = svg("g", { class: cls.join(" "), "data-key": l.id, tabindex: 0, role: "button", "aria-label": l.ariaLabel }, svg("title", {}, l.tooltip));
     g.append(svg("rect", { class: "project-hit", x: 0, y: y - ROW_H / 2, width: VIEW_W, height: ROW_H, fill: "transparent" }));
-    g.append(svg("text", { class: "project-label", x: 8, y: y + 4, "font-size": 11, fill: "currentColor" }, shortLabel(l.label)));
+    g.append(svg("text", { class: "project-label", x: LABEL_X, y: y + 4, "font-size": 11, fill: "currentColor" }, shortLabel(l.label)));
     const stroke = { stroke: "currentColor", fill: "none" };
     if (l.end === "hatched") {
       g.append(svg("rect", { class: "project-run", x: l.forkX, y: y - 4, width: Math.max(4, l.endX - l.forkX), height: 8, fill: "url(#project-hatch)", stroke: "currentColor" }));
@@ -306,14 +308,14 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       baseLabel = repoRows.find((r) => r.default_target_ref)?.default_target_ref ?? baseLabel;
     }
     laneIds = lanes.map((l) => l.id);
-    renderStatus(lanes.length, repoRows.length);
+    renderStatus(lanes.length, repoRows.length, repoRows.filter((r) => r.state === "unknown" && r.state_reason === "graph_unavailable").length);
 
     const restore = keepFocus(chart);
     clear(chart);
     if (repo === undefined) return restore();
     const height = BASE_Y + (lanes.length + 1) * ROW_H + 8;
     const sel = selection();
-    const s = svg("svg", { class: "project-svg", viewBox: `0 0 ${VIEW_W} ${height}`, role: "group", "aria-label": `Worktree lanes for ${shortId(repo)}`, width: "100%" });
+    const s = svg("svg", { class: "project-svg", viewBox: `0 0 ${VIEW_W} ${height}`, role: "group", "aria-label": `Worktree lanes for ${idLabel(repo)}`, width: "100%" });
     s.append(svg("defs", {}, svg("pattern", { id: "project-hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse" }, svg("path", { d: "M 0 6 L 6 0", stroke: "currentColor", "stroke-width": 1 }))));
     for (const t of axisTicks(range, X0, X1, 6)) {
       s.append(svg("g", { class: "project-axis-tick" }, svg("line", { x1: t.x, x2: t.x, y1: AXIS_H - 4, y2: height - 4, stroke: "currentColor", "stroke-opacity": 0.12 }), svg("text", { x: t.x, y: AXIS_H - 8, "text-anchor": "middle", "font-size": 10, fill: "currentColor" }, t.label)));

@@ -2,7 +2,7 @@
 // Labels come from the scope resolver (graph-space); unresolved segments fall
 // back to a short id. No network: event-space ids cannot be joined honestly to
 // graph ids, so this module never fetches.
-import { shortId } from './format';
+import { idLabel } from './format';
 import type { Scope, ScopeStore } from './scope';
 
 const SEP = ' › ';
@@ -21,7 +21,7 @@ export function createBreadcrumb(store: ScopeStore): { root: HTMLElement; destro
     if (label) seg.textContent = label;
     else {
       seg.className = 'unresolved';
-      seg.textContent = shortId(full);
+      seg.textContent = idLabel(full);
     }
     return seg;
   };

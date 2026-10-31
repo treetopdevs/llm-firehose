@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { disambiguateSessionLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
+import { disambiguateSessionLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, idLabel, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
 import type { FirehoseEvent } from "./api";
 
 describe("formatClock", () => {
@@ -100,6 +100,16 @@ describe("session naming", () => {
     expect(disambiguateSessionLabel(all[1][0], all[1][1], all)).toBe("Fix login · claude-code bbbbbbbb");
     expect(disambiguateSessionLabel(all[2][0], all[2][1], all)).toBe("Other");
   });
+  test("idLabel: path ids read as their tail, digests as eight characters", () => {
+    const digest = "2ed4f8a3" + "0".repeat(56);
+    expect(idLabel(digest)).toBe("2ed4f8a3");
+    expect(idLabel("/Users/nicholas/develop/browser-life/.claude/worktrees/foo")).toBe("worktrees/foo");
+    expect(idLabel("/Users/nicholas/develop/browser-life/.git")).toBe("browser-life/.git");
+    expect(idLabel("C:\\work\\repo\\wt")).toBe("repo/wt");
+    expect(idLabel("/solo")).toBe("solo");
+    expect(idLabel("/")).toBe("/");
+  });
+
   test("shortId is the first eight characters", () => {
     expect(shortId(base.id)).toBe("2ed4f8a3");
     expect(shortId("abc")).toBe("abc");

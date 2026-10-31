@@ -115,6 +115,25 @@ describe("render", () => {
     expect(lane.getAttribute("aria-label")).toContain(shortId(id));
   });
 
+  test("states pending hint while graph scans run, clearing on refresh", async () => {
+    const pend = (id: string, reason: string) => row({ worktree_id: id, state: "unknown", state_reason: reason });
+    worktreesMock.mockResolvedValue([pend("p1", "graph_unavailable"), pend("p2", "graph_unavailable"), pend("p3", "repository not registered"), row({ worktree_id: "ok" })]);
+    const { panel, q } = setup();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    await panel.activate();
+    expect(q(".project-status")[0]!.textContent).toContain("States pending: 2 of 4 lanes not classified yet (graph_unavailable)");
+    worktreesMock.mockResolvedValue([row({ worktree_id: "ok" })]);
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(q(".project-status")[0]!.textContent).not.toContain("States pending");
+  });
+
+  test("repository_unregistered alone gets no pending hint", async () => {
+    worktreesMock.mockResolvedValue([row({ worktree_id: "u", state: "unknown", state_reason: "repo_unregistered" })]);
+    const { panel, q } = setup();
+    await panel.activate();
+    expect(q(".project-status")[0]!.textContent).not.toContain("States pending");
+  });
+
   test("titles equal the model tooltip and never leak cost elsewhere", async () => {
     const { store, panel, q } = setup();
     store.narrow({ project: "repoA" });

@@ -37,6 +37,14 @@ test('unresolved vs resolved rendering', () => {
   expect(b.root.textContent).toBe('firehose › sess-012');
 });
 
+test('path ids fall back to a readable tail, not an 8-char prefix', () => {
+  const s = createScope();
+  const b = createBreadcrumb(s);
+  s.narrow({ project: '/Users/nicholas/develop/browser-life/.git', worktree: '/Users/nicholas/develop/browser-life/.claude/worktrees/foo' });
+  expect(b.root.textContent).toBe('browser-life/.git › worktrees/foo');
+  expect(b.root.querySelector('span')!.getAttribute('title')).toBe('/Users/nicholas/develop/browser-life/.git');
+});
+
 test('F8: resolver arriving with the same scope refreshes labels', () => {
   const s = createScope();
   const b = createBreadcrumb(s);
