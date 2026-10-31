@@ -7,6 +7,8 @@ import { evidenceTime, needsLabel, pendingNow } from "../needs";
 import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
 import type { CellScope } from "./workspace/model";
+import { createScope, membership, sameSession } from "../scope";
+import type { ScopeStore, SessionRef } from "../scope";
 
 export type SessionsPanel = {
   root: HTMLElement;
@@ -51,11 +53,11 @@ export function createSessions(
   recentEvents: () => readonly FirehoseEvent[],
   onOpenScore?: (id: string) => void,
   onOpenLoops?: (id: string) => void,
+  store: ScopeStore = createScope(),
 ): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
   const root = el("section", { class: "sessions" }, listBox, eventsBox);
-  let scope: CellScope | null = null;
   let historyVersion = 0;
   /** The last list drawn, so a session opened by id can be named. */
   let known = new Map<string, SessionSummary>();
@@ -64,18 +66,38 @@ export function createSessions(
   /** The session whose history is on screen, so a refreshed title updates its heading. */
   let shown: { id: string; source?: string; count: number } | null = null;
 
+  /** The session whose history is on screen or loading; null when no history is open. */
+  let historyRef: SessionRef | null = null;
+
   function setScope(next: CellScope | null) {
-    scope = next;
+    store.narrow({ cell: next ?? undefined });
   }
 
-  function inScope(s: SessionSummary): boolean {
-    return !scope || (workspaceKey(s.repo, s.cwd) === scope.where && (s.agent || s.source) === scope.agent);
+  function inCell(s: SessionSummary, cell: CellScope | undefined): boolean {
+    return !cell || (workspaceKey(s.repo, s.cwd) === cell.where && (s.agent || s.source) === cell.agent);
   }
+
+  /** Invalidates any load in flight and empties the history area. */
+  function dropHistory() {
+    ++historyVersion;
+    historyRef = null;
+    shown = null;
+    clear(eventsBox);
+  }
+
+  // Never narrows the store, only reconciles the history with it.
+  store.subscribe((next, prev) => {
+    if (!historyRef) return;
+    const cellOpened = next.cell !== undefined && (next.cell.where !== prev.cell?.where || next.cell.agent !== prev.cell?.agent);
+    const contextMoved = next.project !== prev.project || next.worktree !== prev.worktree || !sameSession(next.session, prev.session);
+    const departed = contextMoved && (!next.session || !sameSession(next.session, historyRef));
+    if (cellOpened || departed) dropHistory();
+  });
 
   function scopeChip(active: CellScope): HTMLElement {
     const clearBtn = el("button", { title: "show every session" }, "×");
     clearBtn.addEventListener("click", () => {
-      scope = null;
+      store.narrow({ cell: undefined });
       void refresh();
     });
     return el("div", { class: "sessions-scope" }, el("span", {}, active.label), clearBtn);
@@ -83,6 +105,7 @@ export function createSessions(
 
   async function openSession(id: string, source?: string) {
     const version = ++historyVersion;
+    historyRef = source === undefined ? { id } : { id, source };
     clear(eventsBox);
     eventsBox.append(el("p", { class: "dim" }, `loading ${known.has(id) ? sessionName(known.get(id)!) : `session ${shortId(id)}`}…`));
     try {
@@ -108,6 +131,7 @@ export function createSessions(
       renderEventList(list, evs, onSelect);
     } catch (err) {
       if (version !== historyVersion) return;
+      historyRef = null;
       clear(eventsBox);
       eventsBox.append(el("p", { class: "error" }, String(err)));
     }
@@ -195,7 +219,8 @@ export function createSessions(
     }
     try {
       const now = Date.now();
-      const [list, inbox] = await Promise.allSettled([sessions(), attention()]);
+      const scoped = !!(store.get().worktree || store.get().project);
+      const [list, inbox] = await Promise.allSettled([sessions(), attention(), scoped ? store.resolver()?.refresh?.() : undefined]);
       if (list.status === "rejected") throw list.reason;
       const byId = new Map<string, AttentionSession[]>();
       if (inbox.status === "fulfilled") {
@@ -205,12 +230,16 @@ export function createSessions(
           knownBySource.set(`${a.source}\0${a.id}`, a);
         }
       }
+      // The scope may have moved while the requests were in flight: read it now.
+      const sc = store.get();
+      const scope = sc.cell ?? null;
+      const members = sc.worktree || sc.project ? membership(store, sc) : undefined;
       known = new Map(list.value.map((s) => [s.id, s]));
       // A title that arrived since the history was opened moves into its heading.
       const heading = eventsBox.querySelector(".session-heading");
       if (shown && heading) heading.replaceWith(sessionHeading(shown.id, known.get(shown.id), shown.source, shown.count));
       const all = list.value
-        .filter(inScope)
+        .filter((s) => inCell(s, sc.cell) && (!members || members({ id: s.id, source: s.source })))
         .map((s) => ({ s, status: statusOf(byId.get(s.id) ?? [], now) }))
         .sort((a, b) => {
           if (a.status.needs !== b.status.needs) return a.status.needs ? -1 : 1;
@@ -224,9 +253,10 @@ export function createSessions(
         listBox.append(scopeChip(scope));
       }
       if (all.length === 0) {
-        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this cell" : "no sessions captured yet"));
+        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this cell" : members ? "no sessions in this scope" : "no sessions captured yet"));
         return;
       }
+      if (members) listBox.append(el("p", { class: "dim sessions-scope-note" }, "active sessions in this scope"));
       const counts = bucketCountsBySession(recentEvents(), now);
       let scale = 0;
       for (const c of counts.values()) {

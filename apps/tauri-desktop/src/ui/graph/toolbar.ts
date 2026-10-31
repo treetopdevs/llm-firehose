@@ -3,6 +3,7 @@
 // updated in place, so typing in search is never interrupted by a refresh.
 
 import { clear, el } from "../../dom";
+import { claimEscape, isEscapeClaimed } from "../../escape";
 import { stateDescription, type AgentState } from "./names";
 
 const svgNS = "http://www.w3.org/2000/svg";
@@ -189,6 +190,9 @@ export function createToolbar(h: ToolbarHandlers) {
         choose(r);
       }
     } else if (e.key === "Escape") {
+      if (e.isComposing || isEscapeClaimed(e)) return;
+      claimEscape(e);
+      e.preventDefault();
       e.stopPropagation();
       if (input.value) {
         input.value = "";
@@ -244,8 +248,18 @@ export function createToolbar(h: ToolbarHandlers) {
   const closeOnOutside = (e: Event) => {
     if (!more.contains(e.target as Node)) closeMenu();
   };
+  // An open menu owns Escape wherever focus is; closes it before anything else reacts.
+  const closeOnEscape = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || menu.hidden || e.isComposing || isEscapeClaimed(e)) return;
+    claimEscape(e);
+    e.preventDefault();
+    const hadFocus = more.contains(document.activeElement);
+    closeMenu();
+    if (hadFocus) moreBtn.focus();
+  };
   function openMenu() {
     menu.hidden = false;
+    document.addEventListener("keydown", closeOnEscape, true);
     moreBtn.setAttribute("aria-expanded", "true");
     document.addEventListener("pointerdown", closeOnOutside, true);
   }
@@ -254,10 +268,14 @@ export function createToolbar(h: ToolbarHandlers) {
     form.hidden = true;
     moreBtn.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", closeOnOutside, true);
+    document.removeEventListener("keydown", closeOnEscape, true);
   }
   moreBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
-  menu.onkeydown = (e) => {
-    if (e.key === "Escape") {
+  more.onkeydown = (e) => {
+    if (e.key === "Escape" && !menu.hidden) {
+      if (e.isComposing || isEscapeClaimed(e)) return;
+      claimEscape(e);
+      e.preventDefault();
       closeMenu();
       moreBtn.focus();
     }

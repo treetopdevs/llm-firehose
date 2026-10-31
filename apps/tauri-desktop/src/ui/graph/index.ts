@@ -44,6 +44,8 @@ import {
 } from "./names";
 import { createToolbar, type SearchResult, type WorkspaceTab } from "./toolbar";
 import { createActivityMap } from "../activity";
+import { createScope, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
+import { claimEscape, isEscapeEligible } from "../../escape";
 
 /** Workspaces beyond this many on one revision collapse into a counted cluster. */
 const MAX_STACK = 3;
@@ -74,6 +76,7 @@ function select(
 
 export function createWorkspaceGraph(
   onOpenSession: (id: string, source?: string) => void,
+  store: ScopeStore = createScope(),
 ) {
   const root = el("section", { class: "workspace-graph" });
   const status = el("div", { class: "graph-status", role: "status" });
@@ -97,6 +100,10 @@ export function createWorkspaceGraph(
   let hasMore = false;
   let historyError = "";
   let topologyEpoch = 0;
+  /** True while the graph applies a store change (or remaps it): nothing is published back. */
+  let applying = false;
+  /** Repository ids this panel has seen, so a vanished one is told apart from one it never tracked. */
+  const knownRepos = new Set<string>();
   /** The one history request in flight, if any. Starting another aborts it. */
   let historyRequest: AbortController | undefined;
   let busy = false;
@@ -295,7 +302,7 @@ export function createWorkspaceGraph(
 
   const canvas = createGraphCanvas({
     fit: () => canvas.fit(activeIds()),
-    selectWorkspace: (id) => setScope(id),
+    selectWorkspace: (id) => selectWorkspace(id),
     selectRevision: (key) => selectRevision(key),
     toggleCluster: (rev) => {
       if (expandedClusters.has(rev)) expandedClusters.delete(rev);
@@ -338,6 +345,7 @@ export function createWorkspaceGraph(
     selectRepo: (id) => {
       repo = id;
       resetForRepo();
+      publish();
       void refresh();
     },
     setTab: (name) => {
@@ -355,6 +363,7 @@ export function createWorkspaceGraph(
         repo = r.id;
         repos = await graphAPI.repos();
         resetForRepo();
+        publish();
         await refresh();
       } catch {
         throw new Error(
@@ -402,7 +411,17 @@ export function createWorkspaceGraph(
     });
   }
 
-  function setScope(id: string) {
+  /** Publish the user's explicit choice (never a default pick or a store-driven change). */
+  function publish() {
+    if (applying) return;
+    applying = true; // our own publication is not echoed back into the view
+    try {
+      store.narrow({ project: repo || undefined, worktree: workspace || undefined, cell: undefined });
+    } finally {
+      applying = false;
+    }
+  }
+  function applyWorkspace(id: string) {
     workspace = id;
     revision = selectedWorkspace()?.revision ?? "";
     revealWorkspace(selectedWorkspace());
@@ -411,6 +430,10 @@ export function createWorkspaceGraph(
     void loadHistory();
     render();
   }
+  function selectWorkspace(id: string) {
+    applyWorkspace(id);
+    publish();
+  }
   function selectRevision(key: string, center = false) {
     revision = key;
     workspace = "";
@@ -418,17 +441,141 @@ export function createWorkspaceGraph(
     cursor = "";
     void loadHistory(); // no workspace selected any more: nothing to load, and anything in flight is dropped
     render();
+    publish();
     if (center) canvas.centerOnRevision(key, canvas.view().scale);
   }
-  function clearSelection() {
-    if (!workspace && !revision) return;
+  function clearLocal(): boolean {
+    if (!workspace && !revision) return false;
     workspace = "";
     revision = "";
     session = "";
     cursor = "";
     void loadHistory();
     render();
+    return true;
   }
+  /** Clear the selection on the user's behalf. True when there was one to clear. */
+  function clearSelection(): boolean {
+    if (!clearLocal()) return false;
+    publish();
+    return true;
+  }
+  /** A store-driven repository change: the previous repository's in-flight work is discarded. */
+  function switchRepo(id: string) {
+    repo = id;
+    ++topologyEpoch;
+    busy = false;
+    resetForRepo();
+    void refresh();
+  }
+  store.subscribe((next: Scope, prev: Scope) => {
+    if (applying) return;
+    applying = true;
+    try {
+      if (
+        next.project !== prev.project &&
+        next.project &&
+        next.project !== repo &&
+        repos.some((r) => r.id === next.project)
+      ) {
+        switchRepo(next.project); // a worktree in the same patch is selected once the snapshot lands
+        return;
+      }
+      if (next.worktree !== prev.worktree) {
+        if (!next.worktree) clearLocal();
+        else if (
+          snapshot &&
+          workspace !== next.worktree &&
+          snapshot.workspaces.some((w) => w.id === next.worktree)
+        )
+          applyWorkspace(next.worktree);
+      }
+    } finally {
+      applying = false;
+    }
+  });
+  /**
+   * After a snapshot lands: the scope may name ids the graph no longer knows (a
+   * privacy-mode change replaces them, a repository or workspace vanished). Remap
+   * with one atomic narrow so the scope never holds them.
+   */
+  function reconcileScope(privacyChanged: boolean) {
+    const sc = store.get();
+    let patch: ScopePatch | undefined;
+    if (
+      sc.project &&
+      sc.project !== repo &&
+      !repos.some((r) => r.id === sc.project) &&
+      (knownRepos.has(sc.project) || privacyChanged)
+    )
+      patch = { project: repo || undefined, worktree: undefined };
+    else if (
+      sc.worktree &&
+      snapshot &&
+      (!sc.project || sc.project === repo) &&
+      !snapshot.workspaces.some((w) => w.id === sc.worktree)
+    )
+      patch = { worktree: undefined };
+    if (!patch) return;
+    // The local selection goes with the scope entry, before consumers hear of it.
+    if (workspace && sc.worktree === workspace && "worktree" in patch && patch.worktree === undefined) clearLocal();
+    applying = true;
+    try {
+      store.narrow(patch);
+    } finally {
+      applying = false;
+    }
+  }
+  function sessionIdsFor(sc: Scope): Set<string> | undefined {
+    const keys = memberKeys(sc);
+    if (!keys) return undefined;
+    return new Set([...keys].map((k) => k.slice(k.indexOf("\0") + 1)));
+  }
+  function memberKeys(sc: Scope): Set<string> | undefined {
+    if (!sc.project && !sc.worktree) return undefined;
+    if ((sc.project ?? repo) !== repo || !repo) return undefined;
+    const known = snapshot ? new Set(snapshot.workspaces.map((w) => w.id)) : undefined;
+    const out = new Set<string>();
+    for (const s of sessions) {
+      const a = sessionAssociation(s);
+      if (a.repo_id !== repo) continue;
+      if (sc.worktree) {
+        if (a.workspace_id !== sc.worktree) continue;
+        if (known && !known.has(a.workspace_id)) continue;
+      }
+      out.add(`${s.source}\0${s.id}`);
+    }
+    return out;
+  }
+  store.setResolver({
+    sessions: sessionIdsFor,
+    matcher(sc) {
+      const keys = memberKeys(sc);
+      if (!keys) return undefined;
+      const ids = new Set([...keys].map((k) => k.slice(k.indexOf("\0") + 1)));
+      return (ref) => (ref.source !== undefined ? keys.has(`${ref.source}\0${ref.id}`) : ids.has(ref.id));
+    },
+    async refresh() {
+      try {
+        sessions = (await attention()).sessions ?? sessions;
+      } catch {
+        /* keep the last membership */
+      }
+    },
+    labels(sc) {
+      const out: { project?: string; worktree?: string } = {};
+      if (sc.project) {
+        const r = repos.find((x) => x.id === sc.project);
+        if (r) out.project = r.label;
+      }
+      if (sc.worktree) {
+        const w = snapshot?.workspaces.find((x) => x.id === sc.worktree);
+        if (w) out.worktree = displayName(w);
+      }
+      return out;
+    },
+  });
+  store.touchResolver();
 
   // Search: workspaces (every one is listed when the query is empty), then revisions.
   /**
@@ -506,7 +653,7 @@ export function createWorkspaceGraph(
       tab = "graph";
     }
     if (r.kind === "workspace") {
-      setScope(r.id);
+      selectWorkspace(r.id);
       canvas.centerOnWorkspace(r.id, Math.max(canvas.view().scale, 0.8));
       canvas.focusWorkspace(r.id);
     } else {
@@ -727,6 +874,7 @@ export function createWorkspaceGraph(
           revision = selectedWorkspace()?.revision ?? "";
           session = "";
           changed();
+          publish();
         },
       ),
       select(
@@ -963,6 +1111,7 @@ export function createWorkspaceGraph(
     render();
     canvas.centerOnWorkspace(w.id, 1);
     void loadHistory();
+    publish();
   }
   /** Which history the current view shows: the Timeline tab's page, or a workspace's recent activity. */
   function historyKind(): "timeline" | "activity" | undefined {
@@ -1050,21 +1199,29 @@ export function createWorkspaceGraph(
         graphAPI.repos(),
       ]);
       if (epoch !== topologyEpoch) return;
+      let privacyChanged = false;
       if (privacyMode !== undefined && privacyMode !== config.privacy_mode) {
+        privacyChanged = true;
         discardTopology();
         render();
       }
       privacyMode = config.privacy_mode;
       repos = available;
+      for (const r of repos) knownRepos.add(r.id);
       if (repo && !repos.some((r) => r.id === repo)) {
         repo = "";
         discardTopology();
         render();
       }
-      if (!repo) repo = repos[0]?.id ?? "";
+      if (!repo) {
+        const wanted = store.get().project;
+        repo = repos.some((r) => r.id === wanted) ? wanted! : (repos[0]?.id ?? "");
+      }
       if (!repo) {
         done();
         render();
+        reconcileScope(privacyChanged);
+        store.touchResolver();
         return;
       }
       // The first view frames the active tips, so know who is active before drawing:
@@ -1084,11 +1241,29 @@ export function createWorkspaceGraph(
         initialFitPending = !arrived;
       }
       if (epoch !== topologyEpoch) return;
+      if (next.repository?.id !== repo) return; // another repository's answer never lands on this one
       snapshot = {
         ...next,
         nodes: next.nodes ?? [],
         workspaces: next.workspaces ?? [],
       };
+      reconcileScope(privacyChanged);
+      const want = store.get();
+      if (
+        want.worktree &&
+        workspace !== want.worktree &&
+        (!want.project || want.project === repo)
+      ) {
+        const w = snapshot.workspaces.find((x) => x.id === want.worktree);
+        if (w) {
+          workspace = w.id;
+          revision = w.revision;
+          revealWorkspace(w);
+          session = "";
+          cursor = "";
+        }
+      }
+      store.touchResolver();
       if (workspace && selectedWorkspace())
         revision = selectedWorkspace()!.revision;
       if (workspace && !selectedWorkspace())
@@ -1178,9 +1353,12 @@ export function createWorkspaceGraph(
       if (!root.isConnected || !snapshot) return;
       if (e.key === "Escape") {
         // Clear the selection from anywhere in the graph (a button in the header, the
-        // inspector...), but leave fields, selects and the More menu their own Escape.
-        const inMenu = (e.target as Element | null)?.closest?.(".graph-menu");
-        if (tab === "graph" && !typing(e.target) && !inMenu && (workspace || revision)) clearSelection();
+        // inspector...), but leave fields, selects, dialogs and the More menu their own Escape.
+        if (tab !== "graph" || !isEscapeEligible(e)) return;
+        if (clearSelection()) {
+          claimEscape(e);
+          e.preventDefault();
+        }
         return;
       }
       const k = e.key.toLowerCase();

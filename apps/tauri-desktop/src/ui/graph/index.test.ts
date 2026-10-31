@@ -4,6 +4,8 @@ import { createWorkspaceGraph } from "./index";
 import { graphAPI, type Snapshot, type Workspace } from "./api";
 import { perfBudget } from "./layout.fixtures";
 import { attention, getConfig, type AttentionSession } from "../../api";
+import { createScope, type ScopeStore } from "../../scope";
+import { claimEscape, isEscapeClaimed } from "../../escape";
 vi.mock("../../api", () => ({
   DAEMON_URL: "http://127.0.0.1:4517",
   attention: vi.fn(async () => ({ sessions: [] })),
@@ -1206,4 +1208,379 @@ test("⌘K from the Map returns to the Graph and focuses search", async () => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
   expect(root.querySelector(".graph-canvas")).toBeTruthy();
   expect(document.activeElement).toBe(q(root, 'input[aria-label="Search graph"]'));
+});
+
+// ---- shared scope ---------------------------------------------------------
+const repoRow = (id: string, label = id) => ({ id, vcs: "git" as const, label, status: "ok", observed_at: "" });
+const wsRow = (id: string, repo_id: string, revision = "a"): Workspace => ({
+  id,
+  repo_id,
+  label: `ws ${id}`,
+  revision,
+  refs: [],
+  dirty: false,
+  conflicted: false,
+  availability: "available",
+  unborn: false,
+});
+const snapFor = (repoId: string, wsIds: string[], extra: Partial<Snapshot> = {}): Snapshot => ({
+  repository: repoRow(repoId),
+  generation: "1",
+  nodes: [{ key: "a", commit_id: "a", parents: [], description: "root", timestamp: "" }],
+  workspaces: wsIds.map((id) => wsRow(id, repoId)),
+  boundaries: [],
+  warnings: [],
+  stale: false,
+  ...extra,
+});
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+async function scoped(
+  store: ScopeStore,
+  init?: (s: ScopeStore) => void,
+  snaps: Record<string, Snapshot | Promise<Snapshot>> = {
+    r1: snapFor("r1", ["w1", "w2"]),
+    r2: snapFor("r2", ["x1"]),
+  },
+) {
+  vi.stubGlobal("setInterval", () => 0);
+  vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1"), repoRow("r2")]);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async (id: string) => snaps[id]);
+  vi.mocked(graphAPI.timeline).mockResolvedValue({ events: [], has_more: false, order: "newest_first" } as never);
+  vi.mocked(graphAPI.activity).mockResolvedValue({ buckets: [] } as never);
+  init?.(store);
+  const panel = createWorkspaceGraph(() => {}, store);
+  document.body.append(panel.root);
+  await panel.refresh();
+  await flush();
+  return panel;
+}
+const selectedIds = (root: HTMLElement) =>
+  [...root.querySelectorAll(".workspace-label.selected, .workspace.selected")].length;
+const esc = (target: EventTarget = document.body, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(e);
+  return e;
+};
+
+test("scope: opening with an empty scope does not publish and fetches once each", async () => {
+  const store = createScope();
+  const seen: unknown[] = [];
+  store.subscribe((n) => seen.push(n));
+  const panel = await scoped(store);
+  expect(seen).toHaveLength(0);
+  expect(store.get().project).toBeUndefined();
+  expect(graphAPI.repos).toHaveBeenCalledTimes(1);
+  expect(graphAPI.snapshot).toHaveBeenCalledTimes(1);
+  expect(panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!.value).toBe("r1");
+});
+
+test("scope: picker publishes project and clears worktree; workspace pick publishes both; revision select removes worktree", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const pick = panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!;
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  pick.value = "r2";
+  pick.onchange!(new Event("change"));
+  await flush();
+  expect(store.get().project).toBe("r2");
+  expect(store.get().worktree).toBeUndefined();
+  pick.value = "r1";
+  pick.onchange!(new Event("change"));
+  await flush();
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().project).toBe("r1");
+  expect(store.get().worktree).toBe("w1");
+  panel.root.querySelector<SVGGElement>('[data-key="revision:a"]')!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+  expect(store.get().project).toBe("r1");
+});
+
+test("scope: Workspace filter select publishes worktree and project", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  click(panel.root, "Timeline");
+  await flush();
+  const sel = panel.root.querySelector<HTMLSelectElement>('[aria-label="Workspace"]')!;
+  sel.value = "w2";
+  sel.onchange!(new Event("change"));
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w2" });
+});
+
+test("scope: a project set before open loads that repository; an unknown one is ignored", async () => {
+  const store = createScope();
+  await scoped(store, (s) => s.narrow({ project: "r2" }));
+  expect(graphAPI.snapshot).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(graphAPI.snapshot).mock.calls[0][0]).toBe("r2");
+  document.body.replaceChildren();
+  vi.clearAllMocks();
+  const store2 = createScope();
+  const panel = await scoped(store2, (s) => s.narrow({ project: "nope" }));
+  expect(vi.mocked(graphAPI.snapshot).mock.calls[0][0]).toBe("r1");
+  store2.narrow({ project: "alsonope" });
+  await flush();
+  expect(graphAPI.snapshot).toHaveBeenCalledTimes(1);
+  expect(panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!.value).toBe("r1");
+});
+
+test("scope: reconciles both ways under the applying guard without echoing", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const changes: unknown[] = [];
+  store.subscribe((n) => changes.push(n));
+  store.narrow({ project: "r1", worktree: "w2" });
+  await flush();
+  expect(selectedIds(panel.root)).toBe(1);
+  expect(panel.root.querySelector(".workspace.selected, .workspace-label.selected")).not.toBeNull();
+  expect(changes).toHaveLength(1); // only our own narrow: nothing echoed back
+  store.ascend();
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+  expect(store.get().project).toBe("r1");
+  expect(selectedIds(panel.root)).toBe(0);
+  store.narrow({ project: "r1", worktree: "w1" });
+  store.narrow({ worktree: undefined });
+  await flush();
+  expect(selectedIds(panel.root)).toBe(0);
+  expect(changes).toHaveLength(4);
+});
+
+test("scope F1: a store-driven switch discards the late snapshot of the old repository and fetches the new one at once", async () => {
+  const store = createScope();
+  const slow = deferred<Snapshot>();
+  const panel = await scoped(store, undefined, { r1: snapFor("r1", ["w1"]), r2: snapFor("r2", ["x1"]) });
+  vi.mocked(graphAPI.snapshot).mockImplementation(async (id: string) =>
+    id === "r1" ? slow.promise : snapFor("r2", ["x1"]),
+  );
+  void panel.refresh();
+  await flush();
+  store.narrow({ project: "r2" });
+  await flush();
+  expect(vi.mocked(graphAPI.snapshot).mock.calls.at(-1)![0]).toBe("r2");
+  slow.resolve(snapFor("r1", ["w1"]));
+  await flush();
+  expect(panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!.value).toBe("r2");
+  expect(panel.root.textContent).not.toContain("ws w1");
+});
+
+test("scope: a snapshot whose repository id is not the current repository is not committed", async () => {
+  const store = createScope();
+  const panel = await scoped(store, undefined, { r1: snapFor("rX", ["wX"]), r2: snapFor("r2", []) });
+  expect(panel.root.textContent).not.toContain("ws wX");
+});
+
+test("scope F7: privacy remap narrows atomically to a valid pair or clears", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ project: "r1", worktree: "w1" });
+  await flush();
+  const seen: unknown[] = [];
+  store.subscribe((n) => seen.push(n));
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "minimal" } as never);
+  vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1p")]);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1p", ["w1p"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1p" });
+  expect(store.get().worktree).toBeUndefined();
+  expect(seen).toHaveLength(1);
+  // nothing valid at all
+  store.narrow({ project: "r1p", worktree: "w1p" });
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "full" } as never);
+  vi.mocked(graphAPI.repos).mockResolvedValue([]);
+  await panel.refresh();
+  await flush();
+  expect(store.get().project).toBeUndefined();
+  expect(store.get().worktree).toBeUndefined();
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "balanced" } as never);
+});
+
+test("scope: no remap while ids are still valid; a vanished worktree is cleared", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ project: "r1", worktree: "w1" });
+  await flush();
+  const seen: unknown[] = [];
+  store.subscribe((n) => seen.push(n));
+  await panel.refresh();
+  await flush();
+  expect(seen).toHaveLength(0);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w2"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1" });
+  expect(store.get().worktree).toBeUndefined();
+});
+
+test("scope: resolver answers sessions and labels, touched after each snapshot", async () => {
+  const store = createScope();
+  const touch = vi.spyOn(store, "touchResolver");
+  const mk = (id: string, ws: string): AttentionSession =>
+    ({ id, source: "codex", repo_id: "r1", worktree_id: ws, state: "idle", last: undefined }) as unknown as AttentionSession;
+  vi.mocked(attention).mockResolvedValue({
+    sessions: [mk("s1", "w1"), mk("s2", "w2"), { ...mk("s3", "w1"), repo_id: "r2" }],
+  } as never);
+  await scoped(store);
+  const r = store.resolver()!;
+  expect(r).not.toBeNull();
+  expect(touch).toHaveBeenCalled();
+  const n = touch.mock.calls.length;
+  expect(r.sessions({ window: "live" })).toBeUndefined();
+  expect([...r.sessions({ project: "r1", window: "live" })!].sort()).toEqual(["s1", "s2"]);
+  expect([...r.sessions({ project: "r1", worktree: "w1", window: "live" })!]).toEqual(["s1"]);
+  const labels = r.labels({ project: "r1", worktree: "w1", window: "live" });
+  expect(labels.project).toBe("r1");
+  expect(labels.worktree).toBeTruthy();
+  expect(r.labels({ window: "live" })).toEqual({});
+  expect(n).toBeGreaterThan(0);
+});
+
+test("scope F9: document Escape respects eligibility, clears only a real selection, and claims", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const pick = () => panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  pick();
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  const input = document.createElement("input");
+  document.body.append(input);
+  esc(input);
+  expect(store.get().worktree).toBe("w1");
+  const overlay = document.createElement("div");
+  overlay.className = "onboarding-overlay";
+  document.body.append(overlay);
+  esc();
+  expect(store.get().worktree).toBe("w1");
+  overlay.remove();
+  const dlg = document.createElement("div");
+  dlg.setAttribute("role", "dialog");
+  document.body.append(dlg);
+  esc();
+  expect(store.get().worktree).toBe("w1");
+  dlg.remove();
+  esc(document.body, { isComposing: true });
+  expect(store.get().worktree).toBe("w1");
+  const pre = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  claimEscape(pre);
+  document.body.dispatchEvent(pre);
+  expect(store.get().worktree).toBe("w1");
+  const ok = esc();
+  expect(ok.defaultPrevented).toBe(true);
+  expect(store.get().worktree).toBeUndefined();
+  expect(store.get().project).toBe("r1");
+  const none = esc();
+  expect(none.defaultPrevented).toBe(false);
+});
+
+test("scope F9: More-menu Escape closes it and is claimed; the Timeline tab leaves Escape alone", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+  const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+  moreBtn.click();
+  expect(menu.hidden).toBe(false);
+  const e = esc(menu);
+  expect(menu.hidden).toBe(true);
+  expect(e.defaultPrevented).toBe(true);
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  click(panel.root, "Timeline");
+  await flush();
+  const t = esc();
+  expect(t.defaultPrevented).toBe(false);
+  expect(store.get().worktree).toBe("w1");
+});
+
+test("scope review: a graph selection clears an incompatible matrix cell", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ cell: { where: "/alpha", agent: "claude", label: "Alpha" } });
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  expect(store.get().cell).toBeUndefined();
+});
+
+test("scope review: resolver refresh re-reads membership while the panel is hidden", async () => {
+  const store = createScope();
+  const mk = (id: string, source: string, ws: string): AttentionSession =>
+    ({ id, source, repo_id: "r1", worktree_id: ws, state: "idle", last: undefined }) as unknown as AttentionSession;
+  vi.mocked(attention).mockResolvedValue({ sessions: [mk("s1", "codex", "w1")] } as never);
+  const panel = await scoped(store);
+  panel.root.remove();
+  vi.mocked(attention).mockResolvedValue({ sessions: [mk("s1", "codex", "w1"), mk("s9", "codex", "w1")] } as never);
+  const sc = { project: "r1", worktree: "w1", window: "live" as const };
+  expect(store.resolver()!.sessions(sc)!.has("s9")).toBe(false);
+  await store.resolver()!.refresh!();
+  expect(store.resolver()!.sessions(sc)!.has("s9")).toBe(true);
+});
+
+test("scope review: matcher is source-qualified", async () => {
+  const store = createScope();
+  const mk = (id: string, source: string, ws: string): AttentionSession =>
+    ({ id, source, repo_id: "r1", worktree_id: ws, state: "idle", last: undefined }) as unknown as AttentionSession;
+  vi.mocked(attention).mockResolvedValue({ sessions: [mk("dup", "codex", "w1"), mk("dup", "claude-code", "w2")] } as never);
+  await scoped(store);
+  const m = store.resolver()!.matcher!({ project: "r1", worktree: "w1", window: "live" })!;
+  expect(m({ id: "dup", source: "codex" })).toBe(true);
+  expect(m({ id: "dup", source: "claude-code" })).toBe(false);
+});
+
+test("scope review: a vanished selected worktree clears the local selection with the scope", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  vi.mocked(graphAPI.timeline).mockClear();
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w2"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+  expect(selectedIds(panel.root)).toBe(0);
+  for (const c of vi.mocked(graphAPI.timeline).mock.calls) expect(JSON.stringify(c)).not.toContain("w1");
+});
+
+test("scope review: Escape on the focused More trigger closes an open menu and is claimed", async () => {
+  const store = createScope();
+  store.narrow({ project: "r1" });
+  const panel = await scoped(store);
+  const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+  const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+  moreBtn.click();
+  const e = esc(moreBtn);
+  expect(menu.hidden).toBe(true);
+  expect(e.defaultPrevented).toBe(true);
+});
+
+test("scope review: Escape with the More menu open closes only the menu, wherever focus is", async () => {
+  for (const where of ["more", "item", "body"] as const) {
+    const store = createScope();
+    store.narrow({ project: "r1" });
+    const panel = await scoped(store);
+    panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+    await flush();
+    expect(store.get().worktree).toBe("w1");
+    const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+    const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+    moreBtn.focus();
+    moreBtn.click();
+    expect(menu.hidden).toBe(false);
+    const target = where === "more" ? moreBtn : where === "item" ? menu.querySelector("button")! : document.body;
+    const e = esc(target);
+    expect(menu.hidden, where).toBe(true);
+    expect(e.defaultPrevented, where).toBe(true);
+    expect(isEscapeClaimed(e), where).toBe(true);
+    expect(store.get().worktree, where).toBe("w1");
+    expect(selectedIds(panel.root), where).toBeGreaterThan(0);
+    panel.root.remove();
+  }
 });

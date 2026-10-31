@@ -2,6 +2,8 @@ import { capturedEvent, errorSignatures, sessionEvents, sessions } from "../../a
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatDuration } from "../../format";
+import { createScope, selectSession } from "../../scope";
+import type { ScopeStore } from "../../scope";
 import { eventLabel, stripControl } from "../score/model";
 import {sequenceRuns,compareSequences} from "./sequence";
 import {renderSequenceComparison} from "./sequence-view";
@@ -12,7 +14,7 @@ export const PAGE_SIZE = 40;
 export const SIGNATURE_TIMEOUT_MS = 4000;
 
 /** A historical snapshot. Its own detail region never writes the shared pane. */
-export function createLoops() {
+export function createLoops(store: ScopeStore = createScope()) {
   const sessionSelect = el("select", {"aria-label": "Loop session"});
   const sourceSelect = el("select", {"aria-label": "Loop source"});
   const refreshButton = el("button", {}, "Refresh history");
@@ -217,6 +219,9 @@ export function createLoops() {
     }
   }
   async function refresh() {
+    // Reconcile on every show, as Score.activate does.
+    const want = store.get().session;
+    if (want && (want.id !== sessionId || want.source !== source)) void open(want.id, want.source);
     const token = ++listingVersion; sessionStatus.textContent = "Loading session list…";
     try {
       const list = await sessions(); if (token !== listingVersion) return;
@@ -227,13 +232,14 @@ export function createLoops() {
     } catch { if (token === listingVersion) sessionStatus.textContent = "Session list unavailable. Refresh to retry."; }
   }
   sessionSelect.addEventListener("change", () => {
-    if (sessionSelect.value) { void open(sessionSelect.value); return; }
+    if (sessionSelect.value) { void open(sessionSelect.value); selectSession(store, {id: sessionSelect.value}); return; }
+    store.narrow({session: undefined});
     version++; resetComparison(); historyAbort?.abort(); signatureAbort?.abort(); clearTimeout(signatureTimer);
     phase = "idle"; sourceSelect.disabled = true;
     sessionId = ""; source = undefined; events = []; signatures = []; activeKey = undefined; interval = undefined;
     selectSources(); derive();
   });
-  sourceSelect.addEventListener("change", () => { if (phase !== "ready") return; source = sourceSelect.value || undefined; resetComparison(); activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0; derive(); });
+  sourceSelect.addEventListener("change", () => { if (phase !== "ready") return; source = sourceSelect.value || undefined; selectSession(store, source ? {id: sessionId, source} : {id: sessionId}); resetComparison(); activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0; derive(); });
   refreshButton.addEventListener("click", () => { void refresh(); if (sessionId) void open(sessionId, source); });
   sourceSelect.disabled = true; selectSources(); draw();
   return {root, open, refresh};
