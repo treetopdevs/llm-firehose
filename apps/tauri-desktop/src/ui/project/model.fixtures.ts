@@ -65,6 +65,8 @@ export const FIXTURE_ROWS: WorktreeLifetimeView[] = [
   row({
     worktree_id: "wt-gone", label: "/w/alpha-gone", state: "gone", outcome: "abandoned",
     first_time: iso(NOW - 4 * D), last_time: iso(NOW - 2 * D),
+    // The daemon sets last_observed on gone rows; Fleet ages a removal from it, not from last_time.
+    last_observed: iso(NOW - 2 * D),
   }),
   row({
     worktree_id: "wt-never", label: "/w/alpha-never", state: "never_diverged", outcome: "never_diverged", ahead: 0,

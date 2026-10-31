@@ -857,6 +857,22 @@ test("Fleet descents carry the window; row, fork and need open project, sessions
   expect(b.scope.get().session).toEqual({ id: "s-n1", source: "codex" });
 });
 
+test("Escape from Sessions reached by a Fleet fork returns to Project, then Fleet (not stuck on Sessions)", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
+  document.querySelector<HTMLElement>(".fleet-fork")!.click();
+  expect(b.active()).toBe("sessions");
+  expect(b.scope.get().worktree).toBeDefined();
+  expect(esc().defaultPrevented).toBe(true);
+  expect(b.active()).toBe("project");
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().project).toBeDefined();
+  expect(esc().defaultPrevented).toBe(true);
+  expect(b.active()).toBe("fleet");
+  expect(b.scope.get().project).toBeUndefined();
+});
+
 test("Fleet is inert off-screen: keys, stream reconnects and events cause no requests or scope writes", async () => {
   const b = await boot({ worktrees: twoRepos() });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));

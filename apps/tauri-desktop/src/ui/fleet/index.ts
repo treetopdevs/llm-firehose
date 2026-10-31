@@ -59,6 +59,9 @@ const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Dwell", m
 const FALLBACK_W = 800;
 const TOAST_MS = 2500;
 const NO_NEEDS = "no sessions need you";
+/** Dwell admits what Map and the queue count: a stale pending request is drawn and labelled, not dropped. */
+const DWELL_ADMIT = { includeStalePending: true } as const;
+const NO_WORKTREE_DATA = "no worktree data";
 
 const setText = (n: Element, v: string): void => { if (n.textContent !== v) n.textContent = v; };
 const setAttr = (n: Element, k: string, v: string | null): void => {
@@ -343,7 +346,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setAttr(node, "aria-label", `${n.label}, waiting ${age}`);
   }
 
-  function rowNode(row: FleetRow, sc: Scope, seen: Set<string>, now: number) {
+  const forkSig = (f: { state: string; idle: boolean; needs: number }): string => `${f.state}|${f.idle}|${f.needs}`;
+
+  function rowNode(row: FleetRow, sc: Scope, seen: Set<string>, sigSeen: Set<string>, now: number) {
     const { node, fresh } = keyed("row:" + row.id, () => el("article", { class: "fleet-row" }), seen);
     let refs = rowRefs.get(node);
     if (fresh || !refs) {
@@ -379,7 +384,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setText(refs.label, row.label);
     setText(refs.needs, row.needsCount > 0 ? `${row.needsCount}?` : "");
     setText(refs.counts, row.known ? `${row.openForks}● ${row.idleForks}${IDLE_MARK}` : "");
-    setAttr(refs.counts, "title", "open forks, idle forks (ahead of main, quiet for hours)");
+    setAttr(refs.counts, "title", "open forks, idle forks (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
@@ -403,9 +408,16 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setText(fr.glyph, f.glyph + (f.idle ? IDLE_MARK : ""));
       setText(fr.label, f.state === "open" ? f.short : "");
       setText(fr.needs, f.needs > 0 ? `${f.needs}?` : "");
-      track("fork:" + row.id + "|" + f.id, `${f.state}|${f.idle}|${f.needs}`, k.node);
+      track("fork:" + row.id + "|" + f.id, forkSig(f), k.node);
       return k.node;
     });
+    // Signatures are kept for every fork, drawn or not, so revealing or hiding forks
+    // behind +N is never mistaken for a state change.
+    for (const f of row.forks) {
+      const sk = "fork:" + row.id + "|" + f.id;
+      sigSeen.add(sk);
+      if (!seen.has(sk)) prevStates.set(sk, forkSig(f));
+    }
     if (strip.more > 0 || (open && stripOf(row.forks, false).more > 0)) {
       const m = keyed("more:" + row.id, () => el("button", { class: "fleet-more", type: "button" }), seen);
       if (m.fresh) {
@@ -449,20 +461,22 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function renderMap(now: number): void {
     const sc = store.get();
     const seen = new Set<string>();
+    const sigSeen = new Set<string>();
     mapEntries = [];
     let list = body.querySelector<HTMLElement>(":scope > .fleet-map");
     if (!list) { clear(body); list = el("div", { class: "fleet-map" }); body.append(list); }
-    const rows = result.rows.map((r) => rowNode(r, sc, seen, now));
+    const rows = result.rows.map((r) => rowNode(r, sc, seen, sigSeen, now));
     reconcile(list, rows);
     for (const k of [...nodes.keys()]) {
-      if (!seen.has(k) && !k.startsWith("dwell:")) { nodes.delete(k); prevStates.delete(k); }
+      if (!seen.has(k) && !k.startsWith("dwell:")) nodes.delete(k);
     }
+    for (const k of [...prevStates.keys()]) if (!seen.has(k) && !sigSeen.has(k)) prevStates.delete(k);
     for (const k of [...nodes.keys()]) if (k.startsWith("dwell:")) nodes.delete(k);
   }
 
   function renderDwell(now: number): void {
     const seen = new Set<string>();
-    const { rows, more } = buildDwell(att ?? [], now);
+    const { rows, more } = buildDwell(att ?? [], now, DWELL_ADMIT);
     let list = body.querySelector<HTMLElement>(":scope > .fleet-dwell-list");
     if (!list) { clear(body); nodes.clear(); list = el("div", { class: "fleet-dwell-list" }); body.append(list); }
     const wanted = rows.map((r: DwellRow) => {
@@ -480,10 +494,11 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       }
       setClass(n, "needs", r.needs);
       setClass(n, "selected", selNeed === r.key);
-      setAttr(n, "title", `${r.source} · ${r.id}`);
+      setClass(n, "stale", !!r.stale);
+      setAttr(n, "title", r.stale ? `${r.source} · ${r.id}\nstale: no recent activity captured, request still pending` : `${r.source} · ${r.id}`);
       setText(parts.label, r.label);
       setText(parts.where, r.where);
-      setText(parts.status, r.status);
+      setText(parts.status, r.stale ? `${r.status} (stale)` : r.status);
       setAttr(parts.bar, "style", `width:${Math.round(r.fraction * 1000) / 10}%`);
       setText(parts.age, formatAge(r.dwellMs));
       setText(parts.text, r.hasError ? `! ${r.text}` : r.text);
@@ -508,7 +523,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     table.append(el("thead", {}, el("tr", {}, ...["repository", "open", "idle", "needs you", "gone (7d)", "last activity"].map((h) => el("th", {}, h)))));
     const tbody = el("tbody");
     for (const r of result.rows) {
-      const head = el("th", { scope: "row" }, r.label);
+      const head = el("th", { scope: "row", "data-key": "matrix:" + r.id + "|head" }, r.label);
       if (r.known && !r.noRepo) {
         head.setAttribute("role", "button");
         head.setAttribute("tabindex", "0");
@@ -518,6 +533,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setClass(head, "unregistered", r.digest);
       if (r.digest) head.setAttribute("title", "unregistered: only a digest was recorded");
       const count = (n: number): HTMLElement => el("td", { class: n === 0 ? "zero" : "" }, String(n));
+      // Fork counts come from /worktrees only; without a row there they are unknown, not zero.
+      const forkCount = (n: number, title?: string): HTMLElement => {
+        if (!r.known || r.noRepo) return el("td", { class: "zero unknown", title: NO_WORKTREE_DATA }, "–");
+        const c = count(n);
+        if (title) c.setAttribute("title", title);
+        return c;
+      };
+      const goneTitle = r.goneUnknown > 0 ? `${r.goneUnknown} gone (age unknown): no last observation recorded, not counted in 7d` : undefined;
       const needs = count(r.needsCount);
       if (r.needsCount > 0) {
         setClass(needs, "needs", true);
@@ -528,7 +551,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         needs.setAttribute("aria-label", `${r.label}, ${r.needsCount} need you, open the longest-waiting`);
         onActivate(needs, () => { const cur = result.rows.find((x) => x.id === r.id)?.needs[0]; if (cur) openNeed(cur); });
       }
-      tbody.append(el("tr", { "data-key": "matrix:" + r.id }, head, count(r.openForks), count(r.idleForks), needs, count(r.goneRecent), el("td", { class: "dim" }, lastText(r, now))));
+      tbody.append(el("tr", { "data-key": "matrix:" + r.id }, head, forkCount(r.openForks), forkCount(r.idleForks), needs, forkCount(r.goneRecent, goneTitle), el("td", { class: "dim" }, lastText(r, now))));
     }
     table.append(tbody);
     body.append(table);
@@ -697,7 +720,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   /** Needs the active encoding actually draws; Dwell caps its list. */
   function visibleNeeds(now: number): FleetNeed[] {
     if (encoding !== "dwell") return result.needs;
-    const shown = new Set(buildDwell(att ?? [], now).rows.map((r) => r.key));
+    const shown = new Set(buildDwell(att ?? [], now, DWELL_ADMIT).rows.map((r) => r.key));
     return result.needs.filter((n) => shown.has(n.key));
   }
   const needNodeKey = (k: string): string => (encoding === "dwell" ? "dwell:" : "need:") + k;

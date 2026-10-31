@@ -472,9 +472,10 @@ describe("encodings", () => {
     // repoA: wt-open + wt-idle open (wt-idle idle), 1 need, wt-gone gone 2 days ago.
     expect(cells("repoA").slice(0, 4)).toEqual(["2", "1", "1", "1"]);
     expect(cells("repoB").slice(0, 4)).toEqual(["1", "0", "0", "0"]);
-    // Fog and no-repo rows have no forks: zero counts, and the no-repo row keeps its need.
-    expect(cells("repoZ").slice(0, 4)).toEqual(["0", "0", "0", "0"]);
-    expect(cells("__no_repo__").slice(0, 4)).toEqual(["0", "0", "1", "0"]);
+    // Changed (review round 2): fog and no-repo rows have no /worktrees data, so fork counts are unknown ("–"),
+    // not zero; the observed needs count stays.
+    expect(cells("repoZ").slice(0, 4)).toEqual(["–", "–", "0", "–"]);
+    expect(cells("__no_repo__").slice(0, 4)).toEqual(["–", "–", "1", "–"]);
   });
 
   test("matrix needs cells open Score for the longest-waiting need; other cells are inert", async () => {
@@ -830,7 +831,7 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
 
   test("gone forks older than seven days are behind the overflow; clicking it expands only that row and survives refresh", async () => {
     const { panel, data, byKey, q } = setup();
-    data.wt = [...big(14), ...FIXTURE_ROWS.filter((w) => w.repo_id === "repoB"), row({ repo_id: "repoB", worktree_id: "old-gone", label: "/x/old-gone", state: "gone", last_time: iso(NOW - 9 * D) })];
+    data.wt = [...big(14), ...FIXTURE_ROWS.filter((w) => w.repo_id === "repoB"), row({ repo_id: "repoB", worktree_id: "old-gone", label: "/x/old-gone", state: "gone", last_time: iso(NOW - 9 * D), last_observed: iso(NOW - 9 * D) })];
     data.sessions = [];
     await panel.activate();
     expect(byKey(key("row", "repoB")).querySelectorAll(".fleet-fork")).toHaveLength(1);
@@ -963,5 +964,102 @@ describe("empty needs queue feedback (item 7)", () => {
     await panel.activate();
     press(" ", {}, q(".fleet-row-head")[0]!);
     expect(statusText(panel)).toBe("");
+  });
+});
+
+describe("adversarial review round 2", () => {
+  const D = 24 * 60 * MIN;
+
+  test("Dwell draws a stale pending request, labelled, and n and Space agree with it", async () => {
+    const { panel, data, q, go } = setup();
+    data.sessions = [att({ id: "old", repo_id: "repoA", waitMs: 3 * D, lastAgoMs: 3 * D })];
+    panel.encoding = "dwell";
+    await panel.activate();
+    expect(q(".fleet-dwell-row")).toHaveLength(1);
+    expect(q(".fleet-dwell-row.stale")).toHaveLength(1);
+    expect(q(".fleet-dwell-row")[0]!.getAttribute("title")).toContain("stale");
+    press("n");
+    expect(panel.root.querySelector(".fleet-toast")!.textContent).toBe("");
+    expect(q(".fleet-dwell-row.selected")).toHaveLength(1);
+    press(" ");
+    expect(go.mock.calls.at(-1)![0]).toBe("score");
+  });
+
+  test("Dwell keeps its display cap when stale requests are admitted", async () => {
+    const { panel, data, q } = setup();
+    data.sessions = Array.from({ length: 30 }, (_, i) => att({ id: `o${String(i).padStart(2, "0")}`, repo_id: "repoA", waitMs: (3 + i) * D, lastAgoMs: (3 + i) * D }));
+    panel.encoding = "dwell";
+    await panel.activate();
+    expect(q(".fleet-dwell-row")).toHaveLength(24);
+    expect(panel.root.querySelector(".fleet-dwell-more")!.textContent).toBe("+6 more");
+  });
+
+  test("a Matrix repository header keeps keyboard focus across a refresh", async () => {
+    const { panel, data, q } = setup();
+    panel.encoding = "matrix";
+    await panel.activate();
+    const head = q("th[role=button]")[0]!;
+    head.focus();
+    const k = head.getAttribute("data-key");
+    expect(k).toBeTruthy();
+    data.sessions = [...baseSessions(), att({ id: "extra", repo_id: "repoQ", repo: "q" })];
+    await panel.refresh();
+    expect((document.activeElement as HTMLElement | null)?.getAttribute("data-key")).toBe(k);
+  });
+
+  test("Matrix shows unknown fork counts as a dash with a title, keeping the observed needs count", async () => {
+    const { panel, q } = setup();
+    panel.encoding = "matrix";
+    await panel.activate();
+    const cells = (id: string) => [...panel.root.querySelectorAll<HTMLElement>(`tr[data-key="matrix:${id}"] td`)];
+    for (const id of ["repoZ", "__no_repo__"]) {
+      const c = cells(id);
+      for (const i of [0, 1, 3]) {
+        expect(c[i]!.textContent).toBe("–");
+        expect(c[i]!.getAttribute("title")).toBe("no worktree data");
+      }
+    }
+    expect(cells("__no_repo__")[2]!.textContent).toBe("1");
+    expect(cells("repoA")[0]!.textContent).toBe("2");
+    expect(q('tr[data-key="matrix:repoZ"] td[title="no worktree data"]')).toHaveLength(3);
+  });
+
+  test("with /worktrees unsupported every Matrix fork count is a dash", async () => {
+    const { panel, api } = setup();
+    api.worktrees.mockRejectedValue(new ApiError("/worktrees", 404, "", "GET"));
+    panel.encoding = "matrix";
+    await panel.activate();
+    const first = panel.root.querySelectorAll<HTMLElement>("tbody tr")[0]!.querySelectorAll("td");
+    expect([first[0]!.textContent, first[1]!.textContent, first[3]!.textContent]).toEqual(["–", "–", "–"]);
+  });
+
+  test("Matrix gone cell tooltip tallies gone forks of unknown age separately", async () => {
+    const { panel, data } = setup();
+    data.wt = [
+      row({ repo_id: "g", worktree_id: "g1", state: "gone", last_observed: iso(NOW - D) }),
+      row({ repo_id: "g", worktree_id: "g2", state: "gone" }),
+    ];
+    data.sessions = [];
+    panel.encoding = "matrix";
+    await panel.activate();
+    const gone = panel.root.querySelectorAll<HTMLElement>('tr[data-key="matrix:g"] td')[3]!;
+    expect(gone.textContent).toBe("1");
+    expect(gone.getAttribute("title")).toContain("1 gone (age unknown)");
+  });
+
+  test("expanding a static +N row adds no transition class and collapsing then expanding repeats nothing", async () => {
+    const { panel, data, byKey } = setup();
+    const id = "/Users/n/b/.git";
+    data.wt = Array.from({ length: 20 }, (_, i) => row({ repo_id: id, worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${String(i).padStart(2, "0")}`, state: "open", last_time: iso(NOW - MIN) }));
+    data.sessions = [];
+    await panel.activate();
+    const r = () => byKey(key("row", id));
+    expect(r().querySelectorAll(".fleet-fork")).toHaveLength(12);
+    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    expect(r().querySelectorAll(".fleet-fork")).toHaveLength(20);
+    expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
+    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
   });
 });

@@ -5,7 +5,7 @@
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
 import { idLabel, sessionName } from "../../format";
-import { evidenceTime, isFailure } from "../../needs";
+import { isFailure } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
 import { IDLE_AFTER_MS, isIdleWorker, orderLanes } from "../project/model";
 
@@ -34,8 +34,10 @@ export interface FleetFork {
   state: WorktreeState;
   glyph: string;
   idle: boolean;
-  /** Gone for more than seven days: hidden behind the overflow by default. */
+  /** Known to have gone more than seven days ago (by last_observed): hidden behind the overflow by default. */
   old: boolean;
+  /** Gone, but the daemon gave no last_observed: the removal age is unknown, so it is never hidden by age. */
+  ageUnknown: boolean;
   ariaLabel: string;
   tooltip: string;
   /** Needs-you sessions attributed to this fork by worktree_id. */
@@ -73,6 +75,8 @@ export interface FleetRow {
   openForks: number;
   idleForks: number;
   goneRecent: number;
+  /** Gone forks whose removal age is unknown (no last_observed); counted apart from goneRecent. */
+  goneUnknown: number;
   needs: FleetNeed[];
   needsCount: number;
   longestDwellMs: number;
@@ -128,6 +132,10 @@ function tooltipOf(r: WorktreeLifetimeView, label: string): string {
 
 export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
   const label = r.label ?? idLabel(r.worktree_id);
+  // A gone worktree's age is when the daemon last saw it, not when it last produced a signal:
+  // one quiet for ten days and removed today is recent. No observation time means unknown.
+  const removedAt = r.state === "gone" ? time(r.last_observed) : NaN;
+  const goneKnown = Number.isFinite(removedAt);
   const spans = r.sessions
     .map((s) => ({ first: time(s.first_time), last: time(s.last_time) }))
     .filter((s) => Number.isFinite(s.first) && Number.isFinite(s.last))
@@ -139,7 +147,8 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
     state: r.state,
     glyph: FORK_GLYPH[r.state] ?? FORK_GLYPH.unknown,
     idle: isIdleWorker(r, now),
-    old: r.state === "gone" && !(now - finiteOr(time(r.last_time), 0) <= GONE_RECENT_MS),
+    old: goneKnown && !(now - removedAt <= GONE_RECENT_MS),
+    ageUnknown: r.state === "gone" && !goneKnown,
     ariaLabel: `${label}, ${r.state}`,
     tooltip: tooltipOf(r, label),
     needs: 0,
@@ -187,7 +196,10 @@ function needOrder(a: FleetNeed, b: FleetNeed): number {
 
 export function buildFleet(input: FleetInput): FleetResult {
   const { worktrees, sessions, now } = input;
-  const live = liveSessions(sessions, now);
+  // A pending request is counted whether or not it is still fresh, as the attention
+  // strip counts it: stale ones are flagged, never dropped. Other sessions need to be live.
+  // Dwell admits the same set (buildDwell with includeStalePending).
+  const seen = liveSessions(sessions, now, { includeStalePending: true });
 
   const byRepo = new Map<string, WorktreeLifetimeView[]>();
   for (const w of worktrees ?? []) {
@@ -204,19 +216,7 @@ export function buildFleet(input: FleetInput): FleetResult {
     return a;
   };
   const unattributed: AttentionSession[] = [];
-  // A pending request is counted whether or not it is still fresh, as the attention
-  // strip counts it: stale ones are flagged, never dropped. Other sessions need to be live.
-  const liveKeys = new Set(live.map((l) => sessionKey(l.s)));
-  const seen = [...live];
-  for (const s of sessions) {
-    if (!s.pending || !s.id || liveKeys.has(sessionKey(s))) continue;
-    const since = evidenceTime(s.pending);
-    if (!Number.isFinite(since)) continue;
-    const l = evidenceTime(s.last);
-    seen.push({ s, since, last: Number.isFinite(l) ? l : since });
-  }
-  const freshKeys = new Set(live.filter((l) => l.s.pending).map((l) => sessionKey(l.s)));
-  for (const { s, since, last } of seen) {
+  for (const { s, since, last, stale } of seen) {
     const pending = !!s.pending;
     const rowId = s.repo_id || (pending ? NOREPO_KEY : undefined);
     if (rowId === undefined) { unattributed.push(s); continue; }
@@ -228,7 +228,7 @@ export function buildFleet(input: FleetInput): FleetResult {
         key: sessionKey(s), id: s.id, source: s.source, repoId: rowId,
         ...(s.worktree_id ? { worktreeId: s.worktree_id } : {}),
         label: sessionName(s), dwellMs: Math.max(0, now - since), failed: isFailure(s), summary: s.pending?.summary ?? "",
-        stale: !freshKeys.has(sessionKey(s)),
+        stale: !!stale,
       });
     } else if (s.state === "working") a.working++;
     else a.idle++;
@@ -265,7 +265,8 @@ export function buildFleet(input: FleetInput): FleetResult {
       id, label, known: byRepo.has(id), ...(noRepo ? { noRepo: true } : {}), digest, forks, needs,
       openForks: forks.filter((f) => f.state === "open").length,
       idleForks: forks.filter((f) => f.idle).length,
-      goneRecent: forks.filter((f) => f.state === "gone" && !f.old).length,
+      goneRecent: forks.filter((f) => f.state === "gone" && !f.old && !f.ageUnknown).length,
+      goneUnknown: forks.filter((f) => f.ageUnknown).length,
       needsCount: needs.length,
       longestDwellMs: needs.reduce((m, n) => Math.max(m, n.dwellMs), 0),
       failed: needs.some((n) => n.failed),
@@ -312,8 +313,8 @@ export function longestWaiting(needs: readonly FleetNeed[]): FleetNeed | undefin
 /** A string equal for equal derived state: every rendered field except time-varying dwell and sparklines, which are refreshed in place. */
 export function signature(r: FleetResult): string {
   return JSON.stringify([
-    r.rows.map((x) => [x.id, x.label, x.known, !!x.noRepo, x.digest, x.openForks, x.idleForks, x.goneRecent, x.needs.map((n) => [n.key, n.failed, n.stale, n.worktreeId ?? "", n.label, n.summary]), x.failed, x.working, x.idle,
-      x.forks.map((f) => [f.id, f.label, f.state, f.idle, f.old, f.needs, f.glyph, f.ariaLabel, f.tooltip])]),
+    r.rows.map((x) => [x.id, x.label, x.known, !!x.noRepo, x.digest, x.openForks, x.idleForks, x.goneRecent, x.goneUnknown, x.needs.map((n) => [n.key, n.failed, n.stale, n.worktreeId ?? "", n.label, n.summary]), x.failed, x.working, x.idle,
+      x.forks.map((f) => [f.id, f.label, f.state, f.idle, f.old, f.ageUnknown, f.needs, f.glyph, f.ariaLabel, f.tooltip])]),
     r.unattributed.map(sessionKey),
   ]);
 }

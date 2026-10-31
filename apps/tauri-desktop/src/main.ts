@@ -129,10 +129,14 @@ const projectPanel = createProject({
   projectLabel: (id) => fleetLabels[id],
 });
 projectPanel.setConnected(false);
+// Sessions reached by clicking a Fleet fork: Escape retraces Project then Fleet
+// instead of widening scope while the panel stays on Sessions.
+let sessionsViaFleet = false;
 const fleetPanel = createFleet({
   store: scope,
   go: (name, patch): void => {
     go(name, patch);
+    sessionsViaFleet = name === "sessions";
   },
   events: () => feedState.events(),
   onLabels: (labels) => {
@@ -188,6 +192,7 @@ function go(name: PanelName, patch?: ScopePatch, replace = false) {
 function show(name: PanelName) {
   // Any navigation other than the boot landing decides the landing rule.
   if (name !== "project") landingPending = false;
+  if (!["fleet", "project", "sessions", "score", "loops"].includes(name)) sessionsViaFleet = false;
   if (active === "project" && name !== "project") projectPanel.deactivate();
   if (active === "fleet" && name !== "fleet") fleetPanel.deactivate();
   if (name === "project" || name === "fleet") renderDetail(detailPane, null, () => {});
@@ -228,8 +233,15 @@ document.addEventListener(
     scopePanels: SCOPE_PANELS,
     afterAscend: (alt, from) => {
       if ((from === "score" || from === "loops") && alt !== "session") show("sessions");
-      else if (from === "sessions") void sessionsPanel.refresh();
-      else if (from === "project" && alt === "fleet") show(repoCount > 1 ? "fleet" : "live");
+      else if (from === "sessions" && sessionsViaFleet && alt === "project") show("project");
+      else if (from === "sessions" && sessionsViaFleet && alt === "fleet") {
+        sessionsViaFleet = false;
+        show(repoCount > 1 ? "fleet" : "live");
+      } else if (from === "sessions") void sessionsPanel.refresh();
+      else if (from === "project" && alt === "fleet") {
+        sessionsViaFleet = false;
+        show(repoCount > 1 ? "fleet" : "live");
+      }
     },
   }),
 );
@@ -246,7 +258,10 @@ for (const [heading, names] of NAV_GROUPS) {
   nav.append(el("div", { class: "nav-heading" }, heading));
   for (const name of names) {
     const btn = el("button", { class: "nav-btn" }, name);
-    btn.addEventListener("click", () => show(name));
+    btn.addEventListener("click", () => {
+      sessionsViaFleet = false;
+      show(name);
+    });
     navButtons.set(name, btn);
     nav.append(btn);
   }

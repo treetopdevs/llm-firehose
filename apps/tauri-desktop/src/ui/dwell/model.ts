@@ -24,9 +24,20 @@ export type DwellRow = {
   fraction: number;
   text: string;
   hasError: boolean;
+  /** Only with includeStalePending: a pending request the freshness rule no longer calls live. */
+  stale?: boolean;
 };
 
-export type LiveSession = { s: AttentionSession; since: number; last: number };
+export type LiveSession = { s: AttentionSession; since: number; last: number; stale?: boolean };
+
+export interface LiveOptions {
+  /**
+   * Also admit a pending request that is no longer fresh, flagged `stale`, so a days-old
+   * request is drawn and labelled rather than dropped (Fleet counts it as the attention
+   * strip does). Default false: Dwell's own panel keeps the strict freshness rule.
+   */
+  includeStalePending?: boolean;
+}
 
 /**
  * Sessions still worth showing: the freshness rule behind every live view. A
@@ -34,7 +45,7 @@ export type LiveSession = { s: AttentionSession; since: number; last: number };
  * plausible as long as a waiting session does; any other session needs recent
  * evidence for its reported state. Input order is preserved.
  */
-export function liveSessions(sessions: readonly AttentionSession[], nowMs: number): LiveSession[] {
+export function liveSessions(sessions: readonly AttentionSession[], nowMs: number, opts: LiveOptions = {}): LiveSession[] {
   const live: LiveSession[] = [];
   for (const s of sessions) {
     if (!s.id) continue;
@@ -43,8 +54,12 @@ export function liveSessions(sessions: readonly AttentionSession[], nowMs: numbe
     if (!Number.isFinite(since)) continue;
     // A pending episode stays plausible as long as a waiting session does.
     const freshness = s.pending ? "needs_input" : s.state;
-    if (!stateFresh(freshness, Math.max(since, Number.isFinite(last) ? last : since), nowMs)) continue;
-    live.push({ s, since, last: Number.isFinite(last) ? last : since });
+    const lastOrSince = Number.isFinite(last) ? last : since;
+    if (!stateFresh(freshness, Math.max(since, lastOrSince), nowMs)) {
+      if (opts.includeStalePending && s.pending) live.push({ s, since, last: lastOrSince, stale: true });
+      continue;
+    }
+    live.push({ s, since, last: lastOrSince });
   }
   return live;
 }
@@ -55,8 +70,8 @@ export function liveSessions(sessions: readonly AttentionSession[], nowMs: numbe
  * failure leads, measured from when it was captured; any other session is
  * measured from its last activity. Only captured evidence moves a bar.
  */
-export function buildDwell(sessions: readonly AttentionSession[], nowMs: number): { rows: DwellRow[]; more: number } {
-  const live = liveSessions(sessions, nowMs);
+export function buildDwell(sessions: readonly AttentionSession[], nowMs: number, opts: LiveOptions = {}): { rows: DwellRow[]; more: number } {
+  const live = liveSessions(sessions, nowMs, opts);
   live.sort((a, b) => {
     const an = !!a.s.pending;
     const bn = !!b.s.pending;
@@ -67,7 +82,7 @@ export function buildDwell(sessions: readonly AttentionSession[], nowMs: number)
     const bk = sessionKey(b.s);
     return ak < bk ? -1 : ak > bk ? 1 : 0;
   });
-  const rows = live.slice(0, DWELL_CAP).map(({ s, since }): DwellRow => {
+  const rows = live.slice(0, DWELL_CAP).map(({ s, since, stale }): DwellRow => {
     const dwellMs = Math.max(0, nowMs - since);
     const failed = isFailure(s);
     return {
@@ -83,6 +98,7 @@ export function buildDwell(sessions: readonly AttentionSession[], nowMs: number)
       fraction: Math.min(1, dwellMs / DWELL_MAX_MS),
       text: s.pending?.summary || s.uncertainty || s.last.summary || "",
       hasError: failed,
+      ...(stale ? { stale: true } : {}),
     };
   });
   return { rows, more: live.length - rows.length };

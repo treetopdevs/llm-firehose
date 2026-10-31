@@ -299,8 +299,8 @@ describe("fork counts (item 2)", () => {
   test("gone counts only forks that went away in the last seven days", () => {
     const D = 24 * 60 * MIN;
     const wts = [
-      row({ repo_id: "g", worktree_id: "g1", state: "gone", last_time: iso(NOW - 2 * D) }),
-      row({ repo_id: "g", worktree_id: "g2", state: "gone", last_time: iso(NOW - 9 * D) }),
+      row({ repo_id: "g", worktree_id: "g1", state: "gone", last_time: iso(NOW - 2 * D), last_observed: iso(NOW - 2 * D) }),
+      row({ repo_id: "g", worktree_id: "g2", state: "gone", last_time: iso(NOW - 9 * D), last_observed: iso(NOW - 9 * D) }),
     ];
     const g = buildFleet(input({ worktrees: wts })).rows[0]!;
     expect(g.goneRecent).toBe(1);
@@ -314,8 +314,8 @@ describe("glyph strip (item 1)", () => {
   const mk = (id: string, state: WorktreeLifetimeView["state"], extra: Partial<WorktreeLifetimeView> = {}) =>
     row({ repo_id: "r", worktree_id: id, label: `/Users/x/proj/.claude/worktrees/${id}`, state, last_time: iso(NOW - MIN), ...extra });
   const wts = [
-    mk("gone-recent", "gone", { last_time: iso(NOW - D) }),
-    mk("gone-old", "gone", { last_time: iso(NOW - 8 * D) }),
+    mk("gone-recent", "gone", { last_time: iso(NOW - D), last_observed: iso(NOW - D) }),
+    mk("gone-old", "gone", { last_time: iso(NOW - 8 * D), last_observed: iso(NOW - 8 * D) }),
     mk("unk", "unknown"),
     mk("never", "never_diverged"),
     mk("open", "open"),
@@ -411,5 +411,33 @@ describe("needs-you never silently dropped (item 6)", () => {
     ];
     const r = buildFleet(input({ sessions }));
     expect(r.rows.reduce((n, x) => n + x.needsCount, 0)).toBe(sessions.filter((s) => s.pending).length);
+  });
+});
+
+describe("gone age basis (review round 2)", () => {
+  const D = 24 * 60 * MIN;
+  const g = (id: string, extra: Partial<WorktreeLifetimeView>) => row({ repo_id: "g", worktree_id: id, state: "gone", ...extra });
+
+  test("a worktree quiet for ten days but removed yesterday is recent: last_observed is the basis", () => {
+    const r = buildFleet(input({ worktrees: [g("a", { last_time: iso(NOW - 10 * D), last_observed: iso(NOW - D) })] })).rows[0]!;
+    expect(r.forks[0]!.old).toBe(false);
+    expect(r.goneRecent).toBe(1);
+    expect(stripOf(r.forks, false).hidden).toHaveLength(0);
+  });
+
+  test("a worktree removed nine days ago is old even if it was active a day before", () => {
+    const r = buildFleet(input({ worktrees: [g("a", { last_time: iso(NOW - 9 * D - 1000), last_observed: iso(NOW - 9 * D) })] })).rows[0]!;
+    expect(r.forks[0]!.old).toBe(true);
+    expect(r.goneRecent).toBe(0);
+  });
+
+  test("without last_observed the age is unknown: not hidden by age, not in gone (7d), tallied apart", () => {
+    const r = buildFleet(input({ worktrees: [g("a", { last_time: iso(NOW - 30 * D) }), g("b", { last_observed: iso(NOW - D) })] })).rows[0]!;
+    const a = r.forks.find((f) => f.id === "a")!;
+    expect(a.old).toBe(false);
+    expect(a.ageUnknown).toBe(true);
+    expect(r.goneRecent).toBe(1);
+    expect(r.goneUnknown).toBe(1);
+    expect(stripOf(r.forks, false).hidden).toHaveLength(0);
   });
 });
