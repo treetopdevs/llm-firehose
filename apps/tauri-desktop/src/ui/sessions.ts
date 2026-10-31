@@ -51,8 +51,8 @@ function statusOf(entries: readonly AttentionSession[], nowMs: number): Status {
 export function createSessions(
   onSelect: (ev: FirehoseEvent) => void,
   recentEvents: () => readonly FirehoseEvent[],
-  onOpenScore?: (id: string) => void,
-  onOpenLoops?: (id: string) => void,
+  onOpenScore?: (id: string, source?: string) => void,
+  onOpenLoops?: (id: string, source?: string) => void,
   store: ScopeStore = createScope(),
 ): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
@@ -192,18 +192,18 @@ export function createSessions(
       const score = el("button", { class: "score-open", "aria-label": `open score for session ${s.id}`, title: "replay this session as a score" }, "score");
       score.addEventListener("click", (e) => {
         e.stopPropagation();
-        onOpenScore(s.id);
+        onOpenScore(s.id, s.source);
       });
       subRow.append(score);
     }
     if (onOpenLoops) {
       const loops = el("button", { class: "loops-open", "aria-label": `open loops for session ${s.id}` }, "loops");
-      loops.addEventListener("click", (e) => { e.stopPropagation(); onOpenLoops(s.id); });
+      loops.addEventListener("click", (e) => { e.stopPropagation(); onOpenLoops(s.id, s.source); });
       subRow.append(loops);
     }
     const item = el(
       "div",
-      { class: "session-item", tabindex: "0", "data-id": s.id },
+      { class: "session-item", tabindex: "0", "data-id": s.id, ...(s.source ? { "data-source": s.source } : {}) },
       row,
       el("div", { class: "session-last", title: summary }, summary),
       subRow,
@@ -256,7 +256,11 @@ export function createSessions(
         listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this cell" : members ? "no sessions in this scope" : "no sessions captured yet"));
         return;
       }
-      if (members) listBox.append(el("p", { class: "dim sessions-scope-note" }, "active sessions in this scope"));
+      if (members) {
+        const part = store.resolver()?.partial?.(sc);
+        const note = part ? `active sessions in this scope (partial: ${part.known} of ${part.total} sessions known)` : "active sessions in this scope";
+        listBox.append(el("p", { class: "dim sessions-scope-note" }, note));
+      }
       const counts = bucketCountsBySession(recentEvents(), now);
       let scale = 0;
       for (const c of counts.values()) {

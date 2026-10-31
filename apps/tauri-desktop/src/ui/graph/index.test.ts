@@ -1420,6 +1420,24 @@ test("scope: no remap while ids are still valid; a vanished worktree is cleared"
   expect(store.get().worktree).toBeUndefined();
 });
 
+test("scope: a worktree another resolver knows (Project history) survives a snapshot that lacks it", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.setFallbackResolver({ sessions: (sc) => (sc.worktree === "w-gone" ? new Set(["g1"]) : undefined), labels: () => ({}), knows: (sc) => sc.worktree === "w-gone" });
+  store.narrow({ project: "r1", worktree: "w-gone" });
+  await flush();
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w2"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w-gone" });
+  // The graph snapshot lacks it, so the real graph resolver defers rather than answering an empty set.
+  expect([...store.resolver()!.sessions(store.get())!]).toEqual(["g1"]);
+  store.narrow({ worktree: "w-other" });
+  await panel.refresh();
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+});
+
 test("scope: resolver answers sessions and labels, touched after each snapshot", async () => {
   const store = createScope();
   const touch = vi.spyOn(store, "touchResolver");

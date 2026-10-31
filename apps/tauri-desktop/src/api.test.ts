@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ApiError, DAEMON_URL, capturedEvent, sessionEvents, errorSignatureSessions, worktrees, worktree } from "./api";
+import { ApiError, DAEMON_URL, capturedEvent, sessionEvents, errorSignatureSessions, sessions, worktrees, worktree } from "./api";
 import type { WorktreeDetail, WorktreeLifetimeView, WorktreeState } from "./api";
 
 function stubFetch() {
@@ -74,6 +74,22 @@ describe("worktree requests", () => {
     const err = await worktree("nope").catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(404);
+  });
+
+  test("worktrees 404 rejects with ApiError", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+    const err = await worktrees().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).path).toBe("/worktrees");
+    expect((err as ApiError).message).toBe("GET /worktrees: 404 nope");
+  });
+
+  test("GET 500 keeps its message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+    const err = await sessions().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as Error).message).toBe("GET /sessions: 500 boom");
   });
 
   test("type-level literals compile", () => {

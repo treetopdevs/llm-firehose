@@ -513,7 +513,10 @@ export function createWorkspaceGraph(
       sc.worktree &&
       snapshot &&
       (!sc.project || sc.project === repo) &&
-      !snapshot.workspaces.some((w) => w.id === sc.worktree)
+      !snapshot.workspaces.some((w) => w.id === sc.worktree) &&
+      // A worktree another resolver still knows (Project's lifetime view, including
+      // removed worktrees) is a valid historical identity, not a stale graph id.
+      !store.resolver()?.knows?.(sc)
     )
       patch = { worktree: undefined };
     if (!patch) return;
@@ -555,6 +558,7 @@ export function createWorkspaceGraph(
       const ids = new Set([...keys].map((k) => k.slice(k.indexOf("\0") + 1)));
       return (ref) => (ref.source !== undefined ? keys.has(`${ref.source}\0${ref.id}`) : ids.has(ref.id));
     },
+    knows: (sc) => !sc.worktree || ((sc.project ?? repo) === repo && !!snapshot?.workspaces.some((w) => w.id === sc.worktree)),
     async refresh() {
       try {
         sessions = (await attention()).sessions ?? sessions;

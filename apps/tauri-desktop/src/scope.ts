@@ -41,6 +41,14 @@ export interface ScopeResolver {
   matcher?(scope: Scope): ((ref: SessionRef) => boolean) | undefined;
   /** Re-reads membership data independently of whether the owning panel is visible. */
   refresh?(): Promise<void>;
+  /**
+   * Whether this resolver can authoritatively answer for the scope's project/worktree.
+   * Absent means it can. A composed primary that does not know a worktree defers to a
+   * fallback that does, so one source's snapshot never erases another's history.
+   */
+  knows?(scope: Scope): boolean;
+  /** Set when membership is a capped sample: `known` of `total` sessions are listed. */
+  partial?(scope: Scope): { known: number; total: number } | undefined;
   labels(scope: Scope): { project?: string; worktree?: string };
 }
 
@@ -55,6 +63,8 @@ export interface ScopeStore {
   subscribe(fn: (next: Scope, prev: Scope) => void): () => void;
   reset(): void;
   setResolver(r: ScopeResolver | null): void;
+  /** Lower-priority resolver consulted where the primary answers undefined. setResolver(null) leaves it in place. */
+  setFallbackResolver(r: ScopeResolver | null): void;
   resolver(): ScopeResolver | null;
   touchResolver(): void;
   onResolver(fn: () => void): () => void;
@@ -104,6 +114,8 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
   const subs = new Set<(next: Scope, prev: Scope) => void>();
   const resolverSubs = new Set<() => void>();
   let resolverRef: ScopeResolver | null = null;
+  let fallbackRef: ScopeResolver | null = null;
+  let composed: { p: ScopeResolver; f: ScopeResolver; r: ScopeResolver } | null = null;
   const queue: Array<[Scope, Scope]> = [];
   let delivering = false;
 
@@ -194,7 +206,20 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
       resolverRef = r;
       for (const fn of [...resolverSubs]) fn();
     },
-    resolver: () => resolverRef,
+    setFallbackResolver(r) {
+      fallbackRef = r;
+      for (const fn of [...resolverSubs]) fn();
+    },
+    resolver() {
+      if (!fallbackRef) return resolverRef;
+      if (!resolverRef) return fallbackRef;
+      const p = resolverRef;
+      const f = fallbackRef;
+      if (composed && composed.p === p && composed.f === f) return composed.r;
+      const r = composeResolvers(p, f);
+      composed = { p, f, r };
+      return r;
+    },
     touchResolver() {
       for (const fn of [...resolverSubs]) fn();
     },
@@ -204,6 +229,42 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
     },
   };
   return store;
+}
+
+const matcherOf = (r: ScopeResolver, sc: Scope): ((ref: SessionRef) => boolean) | undefined => {
+  if (r.matcher) return r.matcher(sc);
+  const ids = r.sessions(sc);
+  return ids ? (ref) => ids.has(ref.id) : undefined;
+};
+
+/** Primary answers win when defined and it knows the scope; otherwise a fallback that knows goes first. */
+function composeResolvers(p: ScopeResolver, f: ScopeResolver): ScopeResolver {
+  const order = (sc: Scope): [ScopeResolver, ScopeResolver] =>
+    p.knows && !p.knows(sc) && f.knows?.(sc) ? [f, p] : [p, f];
+  return {
+    sessions(sc) {
+      const [a, b] = order(sc);
+      return a.sessions(sc) ?? b.sessions(sc);
+    },
+    matcher(sc) {
+      const [a, b] = order(sc);
+      return matcherOf(a, sc) ?? matcherOf(b, sc);
+    },
+    partial(sc) {
+      const [a, b] = order(sc);
+      if (matcherOf(a, sc)) return a.partial?.(sc);
+      return matcherOf(b, sc) ? b.partial?.(sc) : undefined;
+    },
+    knows: (sc) => (p.knows?.(sc) ?? true) || (f.knows?.(sc) ?? false),
+    refresh: () => Promise.all([p.refresh?.(), f.refresh?.()]).then(() => undefined),
+    labels(sc) {
+      const out: { project?: string; worktree?: string } = { ...f.labels(sc) };
+      for (const [k, v] of Object.entries(p.labels(sc)) as Array<['project' | 'worktree', string | undefined]>) {
+        if (v !== undefined) out[k] = v;
+      }
+      return out;
+    },
+  };
 }
 
 export const scope: ScopeStore = createScope();
