@@ -557,7 +557,7 @@ Marks use the kinds `worktree_add`, `worktree_remove`, `commit`, `push`,
 `git push` and `gh pr create|merge` shell commands. A mark attaches to the
 worktree that issued the command, not to the one it names. Commands that carry
 `--dry-run`, `--help`, `-h` or (for push) `-n`, and commands directly followed
-by `||`, produce no mark; a mark records that the command ran, not that it
+or directly preceded by `||`, produce no mark; a mark records that the command ran, not that it
 succeeded. Commands whose execution static analysis cannot establish (an
 `if`/`for`/`while` body, a `case` arm, a function body, a quoted `$( )` region,
 or a command joined by `&&`/`||` to an earlier one in a list that is not the
