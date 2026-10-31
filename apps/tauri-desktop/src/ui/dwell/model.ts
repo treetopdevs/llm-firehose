@@ -26,16 +26,16 @@ export type DwellRow = {
   hasError: boolean;
 };
 
-type Live = { s: AttentionSession; since: number; last: number };
+export type LiveSession = { s: AttentionSession; since: number; last: number };
 
 /**
- * One bar per live session, read from the same /attention snapshot as the
- * strip and inbox so every view agrees on who needs you. A pending request or
- * failure leads, measured from when it was captured; any other session is
- * measured from its last activity. Only captured evidence moves a bar.
+ * Sessions still worth showing: the freshness rule behind every live view. A
+ * pending request or failure is measured from when it was captured and stays
+ * plausible as long as a waiting session does; any other session needs recent
+ * evidence for its reported state. Input order is preserved.
  */
-export function buildDwell(sessions: readonly AttentionSession[], nowMs: number): { rows: DwellRow[]; more: number } {
-  const live: Live[] = [];
+export function liveSessions(sessions: readonly AttentionSession[], nowMs: number): LiveSession[] {
+  const live: LiveSession[] = [];
   for (const s of sessions) {
     if (!s.id) continue;
     const last = evidenceTime(s.last);
@@ -46,21 +46,32 @@ export function buildDwell(sessions: readonly AttentionSession[], nowMs: number)
     if (!stateFresh(freshness, Math.max(since, Number.isFinite(last) ? last : since), nowMs)) continue;
     live.push({ s, since, last: Number.isFinite(last) ? last : since });
   }
+  return live;
+}
+
+/**
+ * One bar per live session, read from the same /attention snapshot as the
+ * strip and inbox so every view agrees on who needs you. A pending request or
+ * failure leads, measured from when it was captured; any other session is
+ * measured from its last activity. Only captured evidence moves a bar.
+ */
+export function buildDwell(sessions: readonly AttentionSession[], nowMs: number): { rows: DwellRow[]; more: number } {
+  const live = liveSessions(sessions, nowMs);
   live.sort((a, b) => {
     const an = !!a.s.pending;
     const bn = !!b.s.pending;
     if (an !== bn) return an ? -1 : 1;
     const d = an ? a.since - b.since : b.last - a.last;
     if (d !== 0) return d;
-    const ak = keyOf(a.s);
-    const bk = keyOf(b.s);
+    const ak = sessionKey(a.s);
+    const bk = sessionKey(b.s);
     return ak < bk ? -1 : ak > bk ? 1 : 0;
   });
   const rows = live.slice(0, DWELL_CAP).map(({ s, since }): DwellRow => {
     const dwellMs = Math.max(0, nowMs - since);
     const failed = isFailure(s);
     return {
-      key: keyOf(s),
+      key: sessionKey(s),
       id: s.id,
       source: s.source,
       label: sessionName(s),
@@ -77,6 +88,7 @@ export function buildDwell(sessions: readonly AttentionSession[], nowMs: number)
   return { rows, more: live.length - rows.length };
 }
 
-function keyOf(s: AttentionSession): string {
+/** Sessions are scoped by source and native id, as /attention scopes them. */
+export function sessionKey(s: AttentionSession): string {
   return JSON.stringify([s.source, s.id]);
 }

@@ -1,0 +1,778 @@
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ApiError } from "../../api";
+import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
+import { isEscapeClaimed } from "../../escape";
+import { createScope } from "../../scope";
+import type { ScopePatch, ScopeStore } from "../../scope";
+import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
+import { createFleet } from "./index";
+import type { FleetApi, FleetPanel } from "./index";
+
+const MIN = 60_000;
+const REFRESH = 15_000;
+const TIMEOUT = 5_000;
+
+const S = {
+  needA: () => att({ id: "sa", repo_id: "repoA", worktree_id: "wt-open", waitMs: 8 * MIN }),
+  workA: () => att({ id: "sw", repo_id: "repoA", worktree_id: "wt-open" }),
+  workB: () => att({ id: "sb", repo_id: "repoB", worktree_id: "wt-b1", source: "codex", agent: "codex" }),
+  fog: () => att({ id: "sz", repo_id: "repoZ", repo: "zeta" }),
+  noRepo: () => att({ id: "sn", waitMs: 2 * MIN }),
+};
+const baseSessions = (): AttentionSession[] => [S.needA(), S.workA(), S.workB(), S.fog(), S.noRepo()];
+
+let nowMs = NOW;
+const panels: FleetPanel[] = [];
+const spies: Array<{ mockRestore(): void }> = [];
+const flush = async (): Promise<void> => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+const never = <T>(): Promise<T> => new Promise<T>(() => {});
+
+interface Rig {
+  api: { worktrees: ReturnType<typeof vi.fn>; attention: ReturnType<typeof vi.fn>; sessions: ReturnType<typeof vi.fn> };
+  data: { wt: WorktreeLifetimeView[]; sessions: AttentionSession[]; summaries: SessionSummary[]; events: FirehoseEvent[] };
+}
+
+function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void } = {}) {
+  const store: ScopeStore = createScope(opts.scope);
+  const data: Rig["data"] = { wt: FIXTURE_ROWS, sessions: baseSessions(), summaries: [], events: [] };
+  const api = {
+    worktrees: vi.fn((_s?: AbortSignal) => Promise.resolve(data.wt)),
+    attention: vi.fn((_s?: AbortSignal) => Promise.resolve({ sessions: data.sessions, warnings: [] })),
+    sessions: vi.fn((_s?: AbortSignal) => Promise.resolve(data.summaries)),
+  };
+  const go = vi.fn((_n: string, p?: ScopePatch) => { if (opts.realGo && p) store.narrow(p); });
+  const panel = createFleet({
+    store, go: go as never, events: () => data.events, api: api as unknown as FleetApi,
+    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels,
+  });
+  document.body.append(panel.root);
+  panels.push(panel);
+  const q = (s: string) => [...panel.root.querySelectorAll<HTMLElement>(s)];
+  const byKey = (k: string) => q("[data-key]").find((n) => n.getAttribute("data-key") === k)!;
+  return { store, api, data, go, panel, q, byKey };
+}
+const key = (e: string, ...parts: string[]) => `${e}:${parts.join("|")}`;
+const needKey = (source: string, id: string) => key("need", JSON.stringify([source, id]));
+const press = (k: string, init: KeyboardEventInit = {}, target: EventTarget = document.body): KeyboardEvent => {
+  const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(e);
+  return e;
+};
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  nowMs = NOW;
+});
+afterEach(() => {
+  for (const p of panels.splice(0)) p.deactivate();
+  document.body.replaceChildren();
+  vi.useRealTimers();
+  for (const s of spies.splice(0)) s.mockRestore();
+});
+
+describe("render", () => {
+  test("one row per repo in stable order: known, fog, then no-repo last", async () => {
+    const { panel, q, api } = setup();
+    await panel.activate();
+    expect(q(".fleet-row").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoB"), key("row", "repoA"), key("row", "repoZ"), key("row", "__no_repo__")]);
+    expect(q(".fleet-row.fog").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoZ")]);
+    expect(q(".fleet-row.norepo")).toHaveLength(1);
+    expect(q(".fleet-fork")).toHaveLength(7);
+    expect(q(".fleet-need")).toHaveLength(2);
+    expect(api.worktrees.mock.calls[0]![0]).toBeInstanceOf(AbortSignal);
+    expect(api.attention.mock.calls[0]![0]).toBeInstanceOf(AbortSignal);
+  });
+
+  test("meta appears only in tooltips", async () => {
+    const { panel, q, byKey } = setup();
+    await panel.activate();
+    expect(byKey(key("fork", "repoA", "wt-open")).getAttribute("title")).toContain("cost (meta events): 12");
+    expect(panel.root.textContent!.toLowerCase()).not.toContain("meta");
+    expect(q(".fleet-fork").every((f) => f.getAttribute("aria-label"))).toBe(true);
+  });
+
+  test("labels come from the text, never markup", async () => {
+    const { panel, data, byKey } = setup();
+    data.sessions = [att({ id: "x", repo_id: "repoQ", repo: "<img src=x onerror=alert(1)>" })];
+    await panel.activate();
+    expect(panel.root.querySelector("img")).toBeNull();
+    expect(byKey(key("row", "repoQ")).textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  test("a resolver label replaces the repo name and onLabels reports it once", async () => {
+    const onLabels = vi.fn();
+    const { panel, store, q } = setup({ onLabels });
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === "repoA" ? { project: "Alpha Repo" } : {}) });
+    await panel.activate();
+    expect(q(".fleet-row")[1]!.textContent).toContain("Alpha Repo");
+    expect(onLabels).toHaveBeenCalled();
+    const last = onLabels.mock.calls.at(-1)![0];
+    expect(last.repoA).toBe("Alpha Repo");
+    expect(last.__no_repo__).toBeUndefined();
+    const n = onLabels.mock.calls.length;
+    await panel.refresh();
+    expect(onLabels.mock.calls.length).toBe(n);
+  });
+
+  test("current scope is highlighted on the row and fork", async () => {
+    const { panel, q } = setup({ scope: { project: "repoA", worktree: "wt-open", window: "live" } });
+    await panel.activate();
+    expect(q(".fleet-row.current").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoA")]);
+    expect(q(".fleet-fork.current").map((r) => r.getAttribute("data-key"))).toEqual([key("fork", "repoA", "wt-open")]);
+  });
+});
+
+describe("in-place rendering", () => {
+  test("nodes are reused across refreshes with changed data", async () => {
+    const { panel, data, q, byKey } = setup();
+    await panel.activate();
+    const rowA = byKey(key("row", "repoA"));
+    const forkOpen = byKey(key("fork", "repoA", "wt-open"));
+    const need = byKey(needKey("claude-code", "sa"));
+    data.sessions = [...baseSessions(), att({ id: "sb2", repo_id: "repoA", worktree_id: "wt-open", waitMs: 3 * MIN })];
+    await panel.refresh();
+    expect(q(".fleet-need")).toHaveLength(3);
+    expect(byKey(key("row", "repoA"))).toBe(rowA);
+    expect(byKey(key("fork", "repoA", "wt-open"))).toBe(forkOpen);
+    expect(byKey(needKey("claude-code", "sa"))).toBe(need);
+  });
+
+  test("an unchanged refresh produces zero DOM mutations", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    const seen: MutationRecord[] = [];
+    const mo = new MutationObserver((r) => seen.push(...r));
+    mo.observe(panel.root, { subtree: true, childList: true, attributes: true, characterData: true });
+    await panel.refresh();
+    await flush();
+    expect(seen.length + mo.takeRecords().length).toBe(0);
+    mo.disconnect();
+  });
+
+  test("row order does not move when a later repo becomes the newest", async () => {
+    const { panel, data, q } = setup();
+    await panel.activate();
+    const before = q(".fleet-row").map((r) => r.getAttribute("data-key"));
+    data.wt = FIXTURE_ROWS.map((w) => (w.repo_id === "repoA" ? { ...w, last_time: iso(NOW) } : w));
+    await panel.refresh();
+    expect(q(".fleet-row").map((r) => r.getAttribute("data-key"))).toEqual(before);
+  });
+
+  test("only transitions animate: .changed is set once and expires after 1600ms", async () => {
+    const { panel, data, q, byKey } = setup();
+    await panel.activate();
+    expect(q(".changed")).toHaveLength(0);
+    data.sessions = [...baseSessions(), att({ id: "sb2", repo_id: "repoA", worktree_id: "wt-open", waitMs: 3 * MIN })];
+    await panel.refresh();
+    expect(byKey(key("row", "repoA")).classList.contains("changed")).toBe(true);
+    expect(byKey(key("row", "repoB")).classList.contains("changed")).toBe(false);
+    expect(byKey(needKey("claude-code", "sb2")).classList.contains("changed")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1500);
+    await panel.refresh();
+    expect(byKey(key("row", "repoA")).classList.contains("changed")).toBe(true);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(q(".changed").length).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(q(".changed")).toHaveLength(0);
+    await panel.refresh();
+    expect(q(".changed")).toHaveLength(0);
+  });
+
+  test("a snapshot with attention ahead of worktrees draws fog, then the same row becomes known in place", async () => {
+    const { panel, data, q, byKey } = setup();
+    await panel.activate();
+    const ids = () => q(".fleet-row").map((r) => r.getAttribute("data-key"));
+    const fog = byKey(key("row", "repoZ"));
+    const idx = ids().indexOf(key("row", "repoZ"));
+    expect(fog.classList.contains("fog")).toBe(true);
+    expect(fog.querySelectorAll(".fleet-fork")).toHaveLength(0);
+    data.wt = [...FIXTURE_ROWS, row({ repo_id: "repoZ", worktree_id: "wt-z", label: "/w/zeta", last_time: iso(NOW) })];
+    await panel.refresh();
+    expect(byKey(key("row", "repoZ"))).toBe(fog);
+    expect(ids().indexOf(key("row", "repoZ"))).toBe(idx);
+    expect(fog.classList.contains("fog")).toBe(false);
+    expect(fog.querySelectorAll(".fleet-fork")).toHaveLength(1);
+  });
+});
+
+describe("navigation", () => {
+  const hist = { from: NOW - 5 * 86_400_000, to: NOW - 2 * 86_400_000 };
+  const populated = () => ({ project: "repoA", worktree: "wt-open", session: { id: "z" }, window: hist });
+  const KEYS = ["cell", "project", "session", "window", "worktree"];
+
+  test("every go patch carries project, worktree, session, cell and window keys", async () => {
+    const { panel, go, byKey } = setup({ scope: populated() });
+    await panel.activate();
+    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    byKey(key("fork", "repoA", "wt-landed")).click();
+    byKey(needKey("claude-code", "sa")).click();
+    expect(go.mock.calls.map((c) => c[0])).toEqual(["project", "project", "score"]);
+    for (const c of go.mock.calls) {
+      expect(Object.keys(c[1]!).sort()).toEqual(KEYS);
+      expect((c[1] as ScopePatch).window).toEqual(hist);
+    }
+    expect(go.mock.calls[0]![1]).toMatchObject({ project: "repoB", worktree: undefined, session: undefined });
+    expect(go.mock.calls[1]![1]).toMatchObject({ project: "repoA", worktree: "wt-landed", session: undefined });
+    expect(go.mock.calls[2]![1]).toMatchObject({ project: "repoA", worktree: "wt-open", session: { id: "sa", source: "claude-code" } });
+  });
+
+  test("a live window is passed as 'live'", async () => {
+    const { panel, go, byKey } = setup();
+    await panel.activate();
+    byKey(key("fork", "repoA", "wt-open")).click();
+    expect((go.mock.calls[0]![1] as ScopePatch).window).toBe("live");
+  });
+
+  test.each([
+    ["row", () => key("row", "repoB"), ".fleet-row-head"],
+    ["fork", () => key("fork", "repoA", "wt-landed"), ""],
+    ["need", () => needKey("claude-code", "sa"), ""],
+    ["lane", () => `claude-code\u0000sa`, ""],
+  ])("%s click keeps the historical window in the real store", async (name, k, sub) => {
+    const { panel, store, byKey, data } = setup({ scope: populated(), realGo: true });
+    data.events = [ev({ id: "e1", session_id: "sa", time: iso(hist.to - 10_000) })];
+    if (name === "lane") panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    const node = name === "lane" ? panel.root.querySelector<HTMLElement>(".fleet-lane-row")! : byKey(k());
+    (sub ? node.querySelector<HTMLElement>(sub)! : node).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(store.get().window).toEqual(hist);
+  });
+
+  test("the unattributed row and fog rows are not navigable but their needs are", async () => {
+    const { panel, go, byKey } = setup();
+    await panel.activate();
+    byKey(key("row", "__no_repo__")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    byKey(key("row", "repoZ")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    expect(go).not.toHaveBeenCalled();
+    byKey(needKey("claude-code", "sn")).click();
+    expect(go.mock.calls[0]![0]).toBe("score");
+    expect((go.mock.calls[0]![1] as ScopePatch).project).toBeUndefined();
+  });
+
+  test("a window-only store change neither refetches nor re-renders rows, and updates the chip", async () => {
+    const { panel, store, api, q } = setup();
+    await panel.activate();
+    expect(q(".fleet-window")).toHaveLength(0);
+    const calls = api.worktrees.mock.calls.length;
+    const seen: MutationRecord[] = [];
+    const mo = new MutationObserver((r) => seen.push(...r));
+    mo.observe(panel.root.querySelector(".fleet-body")!, { subtree: true, childList: true, attributes: true, characterData: true });
+    store.narrow({ window: hist });
+    await flush();
+    expect(q(".fleet-window")).toHaveLength(1);
+    expect(q(".fleet-window")[0]!.textContent).toContain("→");
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+    expect(seen.length + mo.takeRecords().length).toBe(0);
+    mo.disconnect();
+    store.narrow({ window: "live" });
+    expect(q(".fleet-window")).toHaveLength(0);
+  });
+
+  test("a project change updates highlight without refetching", async () => {
+    const { panel, store, api, q } = setup();
+    await panel.activate();
+    const calls = api.worktrees.mock.calls.length;
+    store.narrow({ project: "repoB" });
+    expect(q(".fleet-row.current").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoB")]);
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("keys", () => {
+  test("1-9 select a row, Enter opens it, n/N walk needs, Space jumps to the longest wait", async () => {
+    const { panel, go, q } = setup();
+    await panel.activate();
+    const k1 = press("1");
+    expect(k1.defaultPrevented).toBe(true);
+    expect(q(".fleet-row.selected").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoB")]);
+    press("Enter");
+    expect(go.mock.calls.at(-1)![0]).toBe("project");
+    expect((go.mock.calls.at(-1)![1] as ScopePatch).project).toBe("repoB");
+    press("n");
+    expect(q(".fleet-need.selected").map((r) => r.getAttribute("data-key"))).toEqual([needKey("claude-code", "sa")]);
+    press("n");
+    expect(q(".fleet-need.selected").map((r) => r.getAttribute("data-key"))).toEqual([needKey("claude-code", "sn")]);
+    press("n");
+    expect(q(".fleet-need.selected").map((r) => r.getAttribute("data-key"))).toEqual([needKey("claude-code", "sa")]);
+    press("N");
+    expect(q(".fleet-need.selected").map((r) => r.getAttribute("data-key"))).toEqual([needKey("claude-code", "sn")]);
+    press("Enter");
+    expect(go.mock.calls.at(-1)![0]).toBe("score");
+    const n = go.mock.calls.length;
+    const sp = press(" ");
+    expect(sp.defaultPrevented).toBe(true);
+    expect(go.mock.calls.length).toBe(n + 1);
+    expect((go.mock.calls.at(-1)![1] as ScopePatch).session).toEqual({ id: "sa", source: "claude-code" });
+  });
+
+  test("1-9 beyond the row count does nothing", async () => {
+    const { panel, go, q } = setup();
+    await panel.activate();
+    expect(press("9").defaultPrevented).toBe(false);
+    expect(q(".selected")).toHaveLength(0);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  test("Tab is never handled or prevented", async () => {
+    const { panel, go, q } = setup();
+    await panel.activate();
+    press("1");
+    const t = press("Tab");
+    expect(t.defaultPrevented).toBe(false);
+    expect(go).not.toHaveBeenCalled();
+    expect(q(".fleet-row.selected")).toHaveLength(1);
+  });
+
+  test("guards: modifiers, inputs inside the root, outside targets, inactive panel", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const input = document.createElement("input");
+    panel.root.append(input);
+    const outside = document.createElement("div");
+    document.body.append(outside);
+    expect(press("1", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(press("1", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(press("1", {}, input).defaultPrevented).toBe(false);
+    expect(press("1", {}, outside).defaultPrevented).toBe(false);
+    expect(q(".selected")).toHaveLength(0);
+    expect(press("1", {}, panel.root.querySelector(".fleet-body")!).defaultPrevented).toBe(true);
+    panel.deactivate();
+    expect(press("2").defaultPrevented).toBe(false);
+  });
+
+  test("Enter on a focused button-like node activates it exactly once", async () => {
+    const { panel, go, byKey } = setup();
+    await panel.activate();
+    const fork = byKey(key("fork", "repoA", "wt-open"));
+    press("Enter", {}, fork);
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  test("Escape is claimed in the capture phase only while there is a selection", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const none = press("Escape");
+    expect(isEscapeClaimed(none)).toBe(false);
+    press("1");
+    const sel = press("Escape");
+    expect(isEscapeClaimed(sel)).toBe(true);
+    expect(q(".selected")).toHaveLength(0);
+    expect(isEscapeClaimed(press("Escape"))).toBe(false);
+  });
+
+  test("a selection never outlives the encoding that draws it; hidden selections do not capture keys", async () => {
+    const { panel, q, go } = setup();
+    await panel.activate();
+    press("1");
+    expect(q(".selected")).toHaveLength(1);
+    panel.encoding = "matrix";
+    expect(isEscapeClaimed(press("Escape"))).toBe(false);
+    panel.encoding = "map";
+    expect(q(".selected")).toHaveLength(0);
+    // n/N and Enter only act where the selection is visible.
+    panel.encoding = "airspace";
+    expect(press("n").defaultPrevented).toBe(false);
+    expect(press("Enter").defaultPrevented).toBe(false);
+    panel.encoding = "matrix";
+    expect(press("n").defaultPrevented).toBe(false);
+    press("Enter");
+    expect(go).not.toHaveBeenCalled();
+    panel.encoding = "dwell";
+    expect(press("n").defaultPrevented).toBe(true);
+    expect(isEscapeClaimed(press("Escape"))).toBe(true);
+  });
+
+  test("a resolver that arrives after the first draw relabels rows without another load", async () => {
+    const onLabels = vi.fn();
+    const { panel, store, q, api } = setup({ onLabels });
+    await panel.activate();
+    expect(q(".fleet-row")[1]!.textContent).not.toContain("Late Alpha");
+    const calls = api.worktrees.mock.calls.length;
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === "repoA" ? { project: "Late Alpha" } : {}) });
+    expect(q(".fleet-row")[1]!.textContent).toContain("Late Alpha");
+    expect(onLabels.mock.calls.at(-1)![0].repoA).toBe("Late Alpha");
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+    panel.deactivate();
+    store.setResolver(null);
+    store.setResolver({ sessions: () => undefined, labels: () => ({ project: "Ignored" }) });
+    expect(panel.root.textContent).not.toContain("Ignored");
+  });
+
+  test("listener hygiene: balanced add/remove, no leaked timers, idempotent activate", async () => {
+    const add = vi.spyOn(document, "addEventListener");
+    const rem = vi.spyOn(document, "removeEventListener");
+    spies.push(add, rem);
+    const { panel } = setup();
+    await panel.activate();
+    await panel.activate();
+    const keydownAdds = () => add.mock.calls.filter((c) => c[0] === "keydown");
+    expect(keydownAdds()).toHaveLength(2);
+    panel.deactivate();
+    const removed = rem.mock.calls.filter((c) => c[0] === "keydown");
+    for (const a of keydownAdds()) {
+      expect(removed.some((r) => r[1] === a[1] && Boolean(r[2]) === Boolean(a[2]))).toBe(true);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("encodings", () => {
+  test("map is the default and encoding switches via the header", async () => {
+    const { panel, q } = setup();
+    expect(panel.encoding).toBe("map");
+    await panel.activate();
+    expect(q(".fleet-enc[aria-pressed='true']").map((b) => b.getAttribute("data-enc"))).toEqual(["map"]);
+    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    expect(panel.encoding).toBe("dwell");
+    expect(q(".fleet-row")).toHaveLength(0);
+    expect(q(".fleet-dwell-row").length).toBeGreaterThan(0);
+  });
+
+  test("dwell shows a bar per live session and opens its score", async () => {
+    const { panel, go, q } = setup();
+    panel.encoding = "dwell";
+    await panel.activate();
+    expect(q(".fleet-dwell-row")).toHaveLength(5);
+    q(".fleet-dwell-row")[0]!.click();
+    expect(go.mock.calls[0]![0]).toBe("score");
+    expect((go.mock.calls[0]![1] as ScopePatch).session).toEqual({ id: "sa", source: "claude-code" });
+  });
+
+  test("dwell values update in place as time passes", async () => {
+    const { panel, q } = setup();
+    panel.encoding = "dwell";
+    await panel.activate();
+    const first = q(".fleet-dwell-row")[0]!;
+    const before = first.textContent;
+    nowMs += 3 * MIN;
+    await panel.refresh();
+    expect(q(".fleet-dwell-row")[0]).toBe(first);
+    expect(first.textContent).not.toBe(before);
+  });
+
+  test("matrix is a repo by agent grid with counts", async () => {
+    const { panel, q } = setup();
+    panel.encoding = "matrix";
+    await panel.activate();
+    expect(q("table.fleet-matrix")).toHaveLength(1);
+    expect(q(".fleet-matrix tbody tr")).toHaveLength(4);
+    expect(q(".fleet-matrix thead th").map((t) => t.textContent)).toEqual(expect.arrayContaining(["claude", "codex"]));
+  });
+
+  test("matrix cells carry glyph and count, the needs class, button semantics, and descend into the cell", async () => {
+    const { panel, q, data, go } = setup();
+    data.sessions = [
+      att({ id: "sa", repo_id: "repoA", repo: "alpha", worktree_id: "wt-open", waitMs: 8 * MIN }),
+      att({ id: "sw", repo_id: "repoA", repo: "alpha", worktree_id: "wt-open" }),
+      att({ id: "sb", repo_id: "repoB", repo: "beta", worktree_id: "wt-b1", source: "codex", agent: "codex" }),
+      att({ id: "sz", repo_id: "repoZ", repo: "zeta" }),
+      att({ id: "sn", waitMs: 2 * MIN }),
+    ];
+    panel.encoding = "matrix";
+    await panel.activate();
+    const cellsOf = (id: string) => [...panel.root.querySelectorAll<HTMLElement>(`tr[data-key="matrix:${id}"] td`)];
+    const [aClaude, aCodex] = cellsOf("repoA");
+    expect(aClaude!.textContent).toMatch(/2$/);
+    expect(aClaude!.classList.contains("needs")).toBe(true);
+    expect(aClaude!.getAttribute("role")).toBe("button");
+    expect(aClaude!.getAttribute("aria-label")).toContain("claude");
+    expect(aClaude!.getAttribute("aria-label")).toContain("2 sessions");
+    expect(aCodex!.textContent).toBe("");
+    expect(aCodex!.getAttribute("role")).toBeNull();
+    const [bClaude, bCodex] = cellsOf("repoB");
+    expect(bClaude!.textContent).toBe("");
+    expect(bCodex!.textContent).toMatch(/1$/);
+    expect(bCodex!.classList.contains("needs")).toBe(false);
+    // Fog and no-repo rows have no openable cells.
+    for (const id of ["repoZ", "__no_repo__"]) expect(cellsOf(id).filter((c) => c.getAttribute("role") === "button")).toHaveLength(0);
+    // Activating a cell scopes Sessions to that workspace x agent inside its project, every key explicit.
+    aClaude!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go.mock.calls[0]![0]).toBe("sessions");
+    expect(go.mock.calls[0]![1]).toMatchObject({ project: "repoA", worktree: undefined, session: undefined, cell: { where: "alpha", agent: "claude" }, window: "live" });
+    expect(Object.keys(go.mock.calls[0]![1]!).sort()).toEqual(["cell", "project", "session", "window", "worktree"]);
+    // Keyboard works too.
+    press("Enter", {}, bCodex!);
+    expect(go).toHaveBeenCalledTimes(2);
+    expect(go.mock.calls[1]![1]).toMatchObject({ project: "repoB", cell: { where: "beta", agent: "codex" } });
+  });
+
+  test("a matrix cell mixing workspaces opens the project instead of guessing one cell", async () => {
+    const { panel, q, data, go } = setup();
+    data.sessions = [
+      att({ id: "s1", repo_id: "repoA", repo: "alpha" }),
+      att({ id: "s2", repo_id: "repoA", repo: "alpha-fork" }),
+    ];
+    panel.encoding = "matrix";
+    await panel.activate();
+    q('tr[data-key="matrix:repoA"] td')[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(go.mock.calls[0]![0]).toBe("project");
+    expect(go.mock.calls[0]![1]).toMatchObject({ project: "repoA", cell: undefined });
+  });
+
+  test("airspace draws band chips without claiming running or idle", async () => {
+    const { panel, q } = setup();
+    panel.encoding = "airspace";
+    await panel.activate();
+    expect(q(".fleet-band")).toHaveLength(5);
+    expect(panel.root.textContent!.toLowerCase()).not.toMatch(/running|idle/);
+  });
+
+  test("the sessions request exists only while lanes is active, with its own controller", async () => {
+    const { panel, api, data, q } = setup();
+    await panel.activate();
+    expect(api.sessions).not.toHaveBeenCalled();
+    data.events = [
+      ev({ id: "1", source: "claude-code", session_id: "s", call_id: "c", time: iso(NOW - 40_000), payload: { phase: "start" } }),
+      ev({ id: "2", source: "codex", session_id: "s", call_id: "c", time: iso(NOW - 20_000), payload: { phase: "end" } }),
+    ];
+    panel.encoding = "lanes";
+    await flush();
+    expect(api.sessions).toHaveBeenCalledTimes(1);
+    expect(api.sessions.mock.calls[0]![0]).toBeInstanceOf(AbortSignal);
+    expect(q(".fleet-lane-row")).toHaveLength(2);
+    expect(q("rect.lane-span.open")).toHaveLength(1);
+    panel.encoding = "map";
+    await vi.advanceTimersByTimeAsync(REFRESH);
+    expect(api.sessions).toHaveBeenCalledTimes(1);
+  });
+
+  test("lane click opens the session with its attention scope", async () => {
+    const { panel, go, data, q } = setup();
+    data.events = [ev({ id: "1", session_id: "sa", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    q(".fleet-lane-row")[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(go.mock.calls[0]![0]).toBe("score");
+    expect(go.mock.calls[0]![1]).toMatchObject({ project: "repoA", worktree: "wt-open", session: { id: "sa", source: "claude-code" } });
+    expect(Object.keys(go.mock.calls[0]![1]!).sort()).toEqual(["cell", "project", "session", "window", "worktree"]);
+  });
+});
+
+describe("loading", () => {
+  const deferred = <T>() => {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((a, b) => { resolve = a; reject = b; });
+    return { promise, resolve, reject };
+  };
+
+  test("a stale response never overwrites a newer one", async () => {
+    const { panel, api, q } = setup();
+    const first = deferred<WorktreeLifetimeView[]>();
+    api.worktrees.mockImplementationOnce(() => first.promise);
+    const p1 = panel.activate();
+    const p2 = panel.refresh();
+    await p2;
+    expect(q(".fleet-row.fog").length).toBe(1);
+    first.resolve([row({ repo_id: "repoOld", worktree_id: "wt-old" })]);
+    await p1;
+    await flush();
+    expect(q(".fleet-row").map((r) => r.getAttribute("data-key"))).not.toContain(key("row", "repoOld"));
+  });
+
+  test("a response after deactivate is ignored and its signal was aborted", async () => {
+    const { panel, api, q } = setup();
+    const d = deferred<WorktreeLifetimeView[]>();
+    api.worktrees.mockImplementationOnce(() => d.promise);
+    const p = panel.activate();
+    const signal = api.worktrees.mock.calls[0]![0] as AbortSignal;
+    panel.deactivate();
+    expect(signal.aborted).toBe(true);
+    d.resolve(FIXTURE_ROWS);
+    await p;
+    await flush();
+    expect(q(".fleet-fork")).toHaveLength(0);
+  });
+
+  test("the timer does not stack requests while one is in flight", async () => {
+    const { panel, api } = setup();
+    api.worktrees.mockImplementationOnce(() => never());
+    void panel.activate();
+    await vi.advanceTimersByTimeAsync(REFRESH - 1);
+    // the hung request hit its deadline at TIMEOUT, so only after that may a tick issue another
+    expect(api.worktrees.mock.calls.length).toBe(1);
+  });
+
+  test("an event burst triggers one throttled refresh", async () => {
+    const { panel, api } = setup();
+    await panel.activate();
+    const n = api.attention.mock.calls.length;
+    for (let i = 0; i < 20; i++) panel.onEvent(ev({ id: `e${i}`, session_id: "sa", time: iso(NOW) }));
+    panel.onEvent(ev({ id: "meta", session_id: "sa", source: "firehose", time: iso(NOW) }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(api.attention.mock.calls.length).toBe(n + 1);
+  });
+});
+
+describe("deadlines", () => {
+  test("a hung worktrees request is aborted, keeps last data as stale, then recovers on the next tick", async () => {
+    const { panel, api, data, q } = setup();
+    await panel.activate();
+    expect(q(".fleet-stale")).toHaveLength(0);
+    let hungSignal: AbortSignal | undefined;
+    api.worktrees.mockImplementationOnce((s?: AbortSignal) => { hungSignal = s; return never(); });
+    data.sessions = [...baseSessions(), att({ id: "late", repo_id: "repoB", worktree_id: "wt-b1", waitMs: 4 * MIN })];
+    const p = panel.refresh();
+    await vi.advanceTimersByTimeAsync(TIMEOUT);
+    await p;
+    expect(hungSignal!.aborted).toBe(true);
+    expect(q(".fleet-stale")).toHaveLength(1);
+    expect(q(".fleet-fork")).toHaveLength(7);
+    // attention, a separate request in the same load, was not affected by the timeout
+    expect(q(".fleet-need")).toHaveLength(3);
+    const calls = api.worktrees.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(REFRESH - TIMEOUT);
+    expect(api.worktrees.mock.calls.length).toBe(calls + 1);
+    await flush();
+    expect(q(".fleet-stale")).toHaveLength(0);
+  });
+
+  test("a hung sessions request times out on its own and recovers", async () => {
+    const { panel, api, q } = setup();
+    panel.encoding = "lanes";
+    let hung: AbortSignal | undefined;
+    api.sessions.mockImplementationOnce((s?: AbortSignal) => { hung = s; return never(); });
+    await panel.activate();
+    await vi.advanceTimersByTimeAsync(TIMEOUT);
+    expect(hung!.aborted).toBe(true);
+    expect(api.worktrees.mock.calls[0]![0].aborted).toBe(false);
+    expect(q(".fleet-stale")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(REFRESH - TIMEOUT);
+    await flush();
+    expect(api.sessions).toHaveBeenCalledTimes(2);
+    expect(q(".fleet-stale")).toHaveLength(0);
+  });
+});
+
+describe("degraded states", () => {
+  test("a 404 on /worktrees says so and still shows attention as fog rows", async () => {
+    const { panel, api, q } = setup();
+    api.worktrees.mockRejectedValue(new ApiError("/worktrees", 404, "not found", "GET"));
+    await panel.activate();
+    expect(q(".fleet-status")[0]!.textContent).toContain("/worktrees");
+    expect(q(".fleet-row.fog").length).toBeGreaterThan(0);
+    expect(q(".fleet-stale")).toHaveLength(0);
+  });
+
+  test("a failure with no data shows an error with Retry that reloads", async () => {
+    const { panel, api, q } = setup();
+    api.worktrees.mockRejectedValueOnce(new Error("boom"));
+    api.attention.mockRejectedValueOnce(new Error("boom"));
+    await panel.activate();
+    expect(q(".fleet-error")).toHaveLength(1);
+    q(".fleet-retry")[0]!.click();
+    await flush();
+    expect(q(".fleet-error")).toHaveLength(0);
+    expect(q(".fleet-row").length).toBeGreaterThan(0);
+  });
+
+  test("a failure while disconnected waits for the daemon and reloads on reconnect", async () => {
+    const { panel, api, q } = setup();
+    panel.setConnected(false);
+    api.worktrees.mockRejectedValueOnce(new Error("down"));
+    api.attention.mockRejectedValueOnce(new Error("down"));
+    await panel.activate();
+    expect(q(".fleet-connecting")).toHaveLength(1);
+    panel.setConnected(true);
+    await flush();
+    expect(q(".fleet-connecting")).toHaveLength(0);
+    expect(q(".fleet-row").length).toBeGreaterThan(0);
+  });
+
+  test("a failed refresh keeps the last data and marks it stale", async () => {
+    const { panel, api, q } = setup();
+    await panel.activate();
+    api.attention.mockRejectedValueOnce(new Error("blip"));
+    await panel.refresh();
+    expect(q(".fleet-stale")).toHaveLength(1);
+    expect(q(".fleet-row").length).toBe(4);
+  });
+
+  test("no data at all shows an empty state", async () => {
+    const { panel, data, q } = setup();
+    data.wt = [];
+    data.sessions = [];
+    await panel.activate();
+    expect(q(".fleet-empty")).toHaveLength(1);
+  });
+});
+
+describe("review regressions", () => {
+  test("an unchanged-signature refresh keeps waiting times current", async () => {
+    const { panel, q, byKey } = setup();
+    await panel.activate();
+    const before = byKey(needKey("claude-code", "sa")).getAttribute("aria-label");
+    expect(before).toContain("waiting 8m");
+    nowMs += 3 * MIN;
+    await panel.refresh();
+    const need = byKey(needKey("claude-code", "sa"));
+    expect(need.getAttribute("aria-label")).toContain("waiting 11m");
+    expect(need.querySelector(".fleet-need-dwell")!.textContent).toBe("11m");
+    expect(q(".fleet-row").some((r) => r.querySelector(".fleet-dwell")!.textContent === "11m")).toBe(true);
+  });
+
+  test("a changed question or fork detail redraws the Map text and tooltip", async () => {
+    const { panel, data, byKey } = setup();
+    await panel.activate();
+    const s = S.needA();
+    s.pending = { ...s.pending!, summary: "a new question" };
+    data.sessions = [s, S.workA(), S.workB(), S.fog(), S.noRepo()];
+    data.wt = FIXTURE_ROWS.map((r) => (r.worktree_id === "wt-open" ? { ...r, ahead: 5 } : r));
+    await panel.refresh();
+    expect(byKey(needKey("claude-code", "sa")).querySelector(".fleet-need-summary")!.textContent).toBe("a new question");
+    expect(byKey(key("fork", "repoA", "wt-open")).getAttribute("title")).toContain("ahead 5");
+  });
+
+  test("Dwell n then Enter focuses the selected row and opens that session", async () => {
+    const { panel, go, q } = setup();
+    panel.encoding = "dwell";
+    await panel.activate();
+    const rows = q(".fleet-dwell-row");
+    rows[0]!.focus();
+    press("n", {}, rows[0]!);
+    const sel = q(".fleet-dwell-row.selected");
+    expect(sel).toHaveLength(1);
+    expect(document.activeElement).toBe(sel[0]);
+    const id = sel[0]!.getAttribute("data-key")!;
+    press("Enter", {}, document.body);
+    expect(JSON.stringify((go.mock.calls.at(-1)![1] as ScopePatch).session)).toContain(JSON.parse(id.slice("dwell:".length))[1]);
+  });
+
+  test("a historical window redraws Lanes against its bounds", async () => {
+    const { panel, store, data, q } = setup();
+    data.events = [ev({ id: "1", session_id: "sa", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(1);
+    store.narrow({ window: { from: NOW - 60 * MIN, to: NOW - 30 * MIN } });
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(0);
+  });
+
+  test("Matrix keeps keyboard focus on its cell across a refresh", async () => {
+    const { panel, data, q } = setup();
+    panel.encoding = "matrix";
+    await panel.activate();
+    const cell = q("td[data-key]")[0]!;
+    cell.focus();
+    const k = cell.getAttribute("data-key");
+    data.sessions = [...baseSessions(), att({ id: "extra", repo_id: "repoQ", repo: "q" })];
+    await panel.refresh();
+    expect((document.activeElement as HTMLElement | null)?.getAttribute("data-key")).toBe(k);
+  });
+
+  test("a lone meta event creates no lane", async () => {
+    const { panel, data, q } = setup();
+    data.sessions = [];
+    data.events = [ev({ id: "m", session_id: "meta-only", category: "meta", name: "PreCompact", time: iso(NOW - 5_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    expect(q(".fleet-lane-row")).toHaveLength(0);
+  });
+});

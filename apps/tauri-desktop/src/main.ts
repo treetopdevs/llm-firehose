@@ -13,27 +13,23 @@ import { renderDetail } from "./ui/detail";
 import { createAttention } from "./ui/attention";
 import { createCourt } from "./ui/court";
 import { createDoctor } from "./ui/doctor";
-import { createDwell } from "./ui/dwell";
 import { createFeed } from "./ui/feed";
 import { createFiles } from "./ui/files";
-import { createLanes } from "./ui/lanes";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createLoops } from "./ui/loops";
 import { createScore } from "./ui/score";
 import { createHandoffs } from "./ui/handoffs";
-import { createAirspace } from "./ui/airspace";
 import { createLoom } from "./ui/loom";
 import { createEcosystem } from "./ui/ecosystem";
 import { createReplay } from "./ui/replay";
 import { createStrata } from "./ui/strata";
+import { createFleet } from "./ui/fleet";
 import { createProject } from "./ui/project";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
-import { createWorkspace } from "./ui/workspace";
 import { createWorkspaceGraph } from "./ui/graph";
-import type { CellScope } from "./ui/workspace/model";
 import { membership, scope, selectSession } from "./scope";
-import type { ScopePatch, SessionRef } from "./scope";
+import type { Scope, ScopePatch, SessionRef } from "./scope";
 import { createEscapeHandler } from "./escape";
 import { createBreadcrumb } from "./breadcrumb";
 
@@ -102,46 +98,60 @@ function openSession(id: string, source?: string) {
   void sessionsPanel.openSession(id, source);
 }
 
-// Descending from a workspace cell scopes the sessions list to it.
-function openCell(cell: CellScope) {
-  go("sessions", { cell }, true);
-}
-
-const dwellPanel = createDwell(openSession);
 const workspacePanel = createWorkspaceGraph(openSession, scope);
-const matrixPanel = createWorkspace(() => feedState.events(), openCell);
-const lanesPanel = createLanes(() => feedState.events(), openSession);
 
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
 attentionPanel.setConnected(false);
-const airspacePanel = createAirspace(openScore, () => show("attention"));
-airspacePanel.setConnected(false);
-// Project is home (D94-D98); Live and attention remain one click away, and the
-// attention strip is visible at every altitude. To revert the landing change:
-// remove the `project` registry key, set `active = "live"`, make the final call
-// show("live"), and drop the projectPanel lines in setStatus/onStreamOpen/show.
+// Altitudes (D94-D98): Fleet > Project > Worktree (sessions) > Session (score).
+// The old fleet panels are encodings inside Fleet. Landing is Project, then once
+// to Fleet when there is more than one repository (see onRows below). The
+// attention strip is visible at every altitude.
+let fleetLabels: Record<string, string> = {};
+let repoCount = 0;
+let landingPending = false;
+const isUntouchedLive = (sc: Scope): boolean =>
+  sc.window === "live" && !sc.project && !sc.worktree && !sc.session && !sc.cell;
 const projectPanel = createProject({
   store: scope,
   go: (name, patch): void => {
     go(name, patch);
   },
+  onRows: (rows) => {
+    repoCount = new Set(rows.map((r) => r.repo_id)).size;
+    if (!landingPending) return;
+    landingPending = false;
+    if (active === "project" && repoCount > 1 && isUntouchedLive(scope.get())) show("fleet");
+  },
+  // The landing rule judges the first load only; a later recovery must not move the user.
+  onLoadFailed: () => {
+    landingPending = false;
+  },
+  projectLabel: (id) => fleetLabels[id],
 });
 projectPanel.setConnected(false);
+const fleetPanel = createFleet({
+  store: scope,
+  go: (name, patch): void => {
+    go(name, patch);
+  },
+  events: () => feedState.events(),
+  onLabels: (labels) => {
+    fleetLabels = labels;
+  },
+});
+fleetPanel.setConnected(false);
 const panels = {
+  fleet: fleetPanel,
   project: projectPanel,
   live: createFeed(feedState, showDetail),
   attention: attentionPanel,
-  dwell: dwellPanel,
   workspace: workspacePanel,
-  matrix: matrixPanel,
-  lanes: lanesPanel,
   sessions: sessionsPanel,
   score: scorePanel,
   loops: loopsPanel,
   strata: createStrata(openLoops, openScore),
   court: courtPanel,
   handoffs: createHandoffs(openScore, () => feedState.events()),
-  airspace: airspacePanel,
   loom: createLoom(openScore),
   ecosystem: createEcosystem(openScore),
   replay: createReplay(openScore),
@@ -159,6 +169,11 @@ const compatBanner = el("div", { class: "compat-banner" });
 const eventCount = el("span", { class: "event-count dim" }, "");
 
 let active: PanelName = "project";
+const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
+  ["Altitudes", ["fleet", "project", "sessions", "score"]],
+  ["Lenses", ["live", "attention", "workspace", "loops", "strata", "court", "handoffs", "loom", "ecosystem", "replay"]],
+  ["Housekeeping", ["files", "doctor", "settings"]],
+];
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 /** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
@@ -171,13 +186,15 @@ function go(name: PanelName, patch?: ScopePatch, replace = false) {
 }
 
 function show(name: PanelName) {
+  // Any navigation other than the boot landing decides the landing rule.
+  if (name !== "project") landingPending = false;
   if (active === "project" && name !== "project") projectPanel.deactivate();
-  if (name === "project") renderDetail(detailPane, null, () => {});
+  if (active === "fleet" && name !== "fleet") fleetPanel.deactivate();
+  if (name === "project" || name === "fleet") renderDetail(detailPane, null, () => {});
   if (active === "score" && name !== "score") scorePanel.deactivate();
   if (active === "court" && name !== "court") courtPanel.refresh();
   if (name === "court") renderDetail(detailPane, null, () => {});
   if (active === "handoffs" && name !== "handoffs") panels.handoffs.refresh();
-  if (active === "airspace" && name !== "airspace") airspacePanel.deactivate();
   if (active === "loom" && name !== "loom") panels.loom.deactivate();
   if (name === "loom") renderDetail(detailPane, null, () => {});
   if (active === "ecosystem" && name !== "ecosystem") panels.ecosystem.deactivate();
@@ -193,10 +210,8 @@ function show(name: PanelName) {
   clear(content);
   content.append(panels[name].root);
   if (name === "handoffs") renderDetail(detailPane, null, () => {});
-  if (name === "airspace") {
-    renderDetail(detailPane, null, () => {});
-    void airspacePanel.activate();
-  } else if (name === "project") void projectPanel.activate();
+  if (name === "fleet") void fleetPanel.activate();
+  else if (name === "project") void projectPanel.activate();
   else if (name === "strata") void panels.strata.activate();
   else {
     panels[name].refresh();
@@ -204,7 +219,7 @@ function show(name: PanelName) {
   }
 }
 
-const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "score", "loops", "workspace", "project"]);
+const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "score", "loops", "workspace", "project", "fleet"]);
 document.addEventListener(
   "keydown",
   createEscapeHandler({
@@ -214,7 +229,7 @@ document.addEventListener(
     afterAscend: (alt, from) => {
       if ((from === "score" || from === "loops") && alt !== "session") show("sessions");
       else if (from === "sessions") void sessionsPanel.refresh();
-      else if (from === "project" && alt === "fleet") show("live");
+      else if (from === "project" && alt === "fleet") show(repoCount > 1 ? "fleet" : "live");
     },
   }),
 );
@@ -227,11 +242,14 @@ sessionsPanel.root.addEventListener("click", (e) => {
 });
 
 const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT", el("br"), "FIREHOSE"));
-for (const name of Object.keys(panels) as PanelName[]) {
-  const btn = el("button", { class: "nav-btn" }, name);
-  btn.addEventListener("click", () => show(name));
-  navButtons.set(name, btn);
-  nav.append(btn);
+for (const [heading, names] of NAV_GROUPS) {
+  nav.append(el("div", { class: "nav-heading" }, heading));
+  for (const name of names) {
+    const btn = el("button", { class: "nav-btn" }, name);
+    btn.addEventListener("click", () => show(name));
+    navButtons.set(name, btn);
+    nav.append(btn);
+  }
 }
 
 const crumb = createBreadcrumb(scope);
@@ -247,14 +265,8 @@ function onEvent(ev: FirehoseEvent) {
   feedState.push(ev);
   received++;
   eventCount.textContent = `${received.toLocaleString()} events`;
-  if (active === "dwell") {
-    dwellPanel.onEvent(ev);
-  }
   workspacePanel.onEvent(ev);
-  if (active === "matrix") matrixPanel.onEvent(ev);
-  if (active === "lanes") {
-    lanesPanel.onEvent(ev);
-  }
+  if (active === "fleet") fleetPanel.onEvent(ev);
   if (active === "live" && !renderQueued) {
     renderQueued = true;
     requestAnimationFrame(() => {
@@ -273,8 +285,8 @@ const connector = createConnector({
   onEvent,
   setStatus: ({ kind, text, compatReason }) => {
     attentionPanel.setConnected(kind === "ok");
-    airspacePanel.setConnected(kind === "ok");
     projectPanel.setConnected(kind === "ok");
+    fleetPanel.setConnected(kind === "ok");
     if (compatReason) {
       compatBanner.textContent = compatReason;
       compatBanner.classList.add("visible");
@@ -286,9 +298,7 @@ const connector = createConnector({
   },
   onStreamOpen: () => {
     if (active === "project") void projectPanel.refresh();
-    if (active === "dwell") {
-      void panels.dwell.refresh();
-    }
+    if (active === "fleet") void fleetPanel.refresh();
   },
 });
 
@@ -297,6 +307,7 @@ setInterval(() => {
   void connector.connect();
 }, 3000);
 show("project");
+landingPending = true;
 
 if (!isOnboarded()) {
   app.append(createOnboarding(() => show("doctor")));

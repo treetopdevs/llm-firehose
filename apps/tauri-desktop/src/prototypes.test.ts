@@ -29,7 +29,7 @@ async function setup() {
 }
 test("all prototypes coexist and close a shared receipt on entry",async()=>{
   await setup();
-  for(const name of ["court","handoffs","airspace","loom","ecosystem","replay"]) {
+  for(const name of ["court","handoffs","loom","ecosystem","replay","fleet"]) {
     renderDetail(document.querySelector<HTMLElement>("aside.detail")!,event,()=>{});
     expect(document.querySelector("aside.detail pre")).not.toBeNull();
     click(name);

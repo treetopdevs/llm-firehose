@@ -246,7 +246,7 @@ let tracked: Boot["keydownListeners"] = [];
 
 type BootOpts = {
   sessions?: unknown[]; repos?: unknown[]; snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
-  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>;
+  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
 };
 async function boot(opts: BootOpts = {}): Promise<Boot> {
   document.body.innerHTML = '<div id="app"></div>';
@@ -266,6 +266,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     const p = u.pathname;
     if (p === "/worktrees") {
       worktreeSignals.push(init?.signal ?? undefined);
+      if (opts.worktreesGate) await opts.worktreesGate;
       if (failNext) { failNext = false; throw new TypeError("network down"); }
       if (opts.worktreesStatus && opts.worktreesStatus !== 200) return new Response("not found", { status: opts.worktreesStatus });
       return json(opts.worktrees ?? []);
@@ -384,20 +385,6 @@ test("F6: openSession outside the resolver membership replaces the context; insi
   scope.set({ project: "A", worktree: "wA", window: "live" });
   await openHistory("Y");
   expect(scope.get().project).toBeUndefined();
-});
-
-test("openCell sets the cell, clears the rest and shows sessions", async () => {
-  const b = await boot({ sessions: [sessionRow("m1")] });
-  b.scope.set({ project: "A", worktree: "wA", session: { id: "z" }, window: "live" });
-  b.nav("matrix").click();
-  await vi.waitFor(() => expect(document.querySelector<HTMLElement>("td.matrix-cell")).not.toBeNull());
-  document.querySelector<HTMLElement>("td.matrix-cell")!.click();
-  const s = b.scope.get();
-  expect(s.cell?.agent).toBe("codex");
-  expect(s.project).toBeUndefined();
-  expect(s.worktree).toBeUndefined();
-  expect(s.session).toBeUndefined();
-  expect(b.active()).toBe("sessions");
 });
 
 test("a sessions row click sets scope.session; the evidence court leaves scope unchanged", async () => {
@@ -604,10 +591,15 @@ const wtRow = (over: Record<string, unknown> = {}) => ({
 });
 const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty");
 
-test("sidebar lists project first then the 19 previous panels unchanged", async () => {
+test("sidebar groups altitudes, lenses and housekeeping; the folded panels are gone", async () => {
   const b = await boot();
   const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
-  expect(names).toEqual(["project", "live", "attention", "dwell", "workspace", "matrix", "lanes", "sessions", "score", "loops", "strata", "court", "handoffs", "airspace", "loom", "ecosystem", "replay", "files", "doctor", "settings"]);
+  expect(names).toEqual(["fleet", "project", "sessions", "score", "live", "attention", "workspace", "loops", "strata", "court", "handoffs", "loom", "ecosystem", "replay", "files", "doctor", "settings"]);
+  const heads = [...document.querySelectorAll(".sidebar .nav-heading")];
+  expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Lenses", "Housekeeping"]);
+  const first = ["fleet", "live", "files"];
+  heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
+  for (const gone of ["dwell", "matrix", "lanes", "airspace"]) expect(b.nav(gone)).toBeUndefined();
   expect(b.active()).toBe("project");
 });
 
@@ -710,7 +702,7 @@ test("cold start recovery: a failed first load shows Connecting, then lanes once
   expect(document.querySelector(".project-connecting")).toBeNull();
 });
 
-test("Escape ascends Project: worktree to project stays on Project, project to fleet lands on Live; inputs are excluded", async () => {
+test("Escape ascends Project: worktree to project stays on Project, project to fleet lands on Live (one repo); inputs are excluded", async () => {
   const b = await boot({ worktrees: [wtRow()] });
   await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
   b.scope.narrow({ project: "repoA", worktree: wtRow().worktree_id });
@@ -739,4 +731,154 @@ test("detail pane is cleared on entering Project", async () => {
   b.nav("project").click();
   expect(pane.classList.contains("open")).toBe(false);
   expect(pane.childElementCount).toBe(0);
+});
+
+// ---------------------------------------------------------------------------
+// Fleet altitude
+// ---------------------------------------------------------------------------
+
+const twoRepos = () => [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b", label: "/w/beta", sessions: [{ source: "codex", session_id: "s-b1", first_time: iso(NOW - 3_600_000), last_time: iso(NOW - 60_000), events: 2 }] })];
+const needy = (id: string, repoId: string | undefined, over: Record<string, unknown> = {}) => {
+  const ev = (kind: string, summary: string, ago: number) => ({ event_id: `e-${id}-${kind}`, source: "codex", kind, summary, time: iso(NOW - ago), observed_at: iso(NOW - ago) });
+  return {
+    id, source: "codex", agent: "codex", events: 2, state: "needs_input", ...(repoId ? { repo_id: repoId, repo: `name-${repoId}` } : {}),
+    last: ev("activity", "ran tests", 30_000), pending: ev("request", "may I run this?", 60_000), ...over,
+  };
+};
+const fleetRows = () => [...document.querySelectorAll(".fleet-row")];
+
+test("landing: one repository stays on Project", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.active()).toBe("project");
+});
+
+test("landing: two repositories move to Fleet once; the project request is aborted, the fleet request is live", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  expect(document.querySelector(".content .fleet")).not.toBeNull();
+  expect(b.worktreeSignals[0]?.aborted).toBe(true);
+  expect(b.worktreeSignals[1]?.aborted).toBe(false);
+  expect(b.scope.get()).toEqual({ window: "live" });
+  // Decided once: a later visit to Project stays on Project after its load.
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane, select.project-repo")).not.toBeNull());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.active()).toBe("project");
+});
+
+test("landing: navigating away before the load lands cancels the move", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const b = await boot({ worktrees: twoRepos(), worktreesGate: gate });
+  b.nav("live").click();
+  release();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.active()).toBe("live");
+  // Positive signal: a full two-repository load completes, and still nothing moves the user.
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  expect(b.active()).toBe("project");
+});
+
+test("landing: narrowing the scope before the load lands cancels the move", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const b = await boot({ worktrees: twoRepos(), worktreesGate: gate });
+  b.scope.narrow({ project: "repoA" });
+  release();
+  // Positive signal: the Project load landed (its lanes are drawn).
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  expect(b.active()).toBe("project");
+  expect(b.scope.get().project).toBe("repoA");
+});
+
+test("landing: a failed first load does not leave a redirect armed for a later recovery", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const b = await boot({ worktrees: twoRepos(), worktreesFailFirst: true, healthGate: gate });
+  await vi.waitFor(() => expect(document.querySelector(".project-connecting")).not.toBeNull());
+  release();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  expect(b.active()).toBe("project");
+});
+
+test("landing: an older daemon (404) stays on Project", async () => {
+  const b = await boot({ worktreesStatus: 404 });
+  await vi.waitFor(() => expect(document.querySelector(".project-unsupported")).not.toBeNull());
+  expect(b.active()).toBe("project");
+});
+
+test("Escape: Project ascends to Fleet when there is more than one repository; Fleet clears the project and an empty scope claims nothing", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
+  b.scope.narrow({ project: "repoA" });
+  expect(esc().defaultPrevented).toBe(true);
+  expect(b.scope.get().project).toBeUndefined();
+  expect(b.active()).toBe("fleet");
+  b.scope.narrow({ project: "repoB" });
+  expect(esc().defaultPrevented).toBe(true);
+  expect(b.scope.get().project).toBeUndefined();
+  expect(b.active()).toBe("fleet");
+  const e = esc();
+  expect(e.defaultPrevented).toBe(false);
+  expect(b.active()).toBe("fleet");
+});
+
+test("Fleet descents carry the window; row, fork and need open project, project+worktree and score", async () => {
+  const win = { from: NOW - 86_400_000, to: NOW - 3_600_000 };
+  const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow("s-n1")], attentionSessions: [needy("s-n1", "repoA", { worktree_id: "wt-open" })] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());
+  b.scope.set({ project: "repoA", window: win });
+  const label = (r: Element) => r.querySelector(".fleet-row-label")!.textContent!;
+  expect(fleetRows().length).toBe(2);
+  // Row head -> Project, window kept, no stale worktree/session.
+  const rowB = fleetRows().find((r) => label(r) !== label(fleetRows().find((x) => x.querySelector(".fleet-need"))!))!;
+  rowB.querySelector<HTMLElement>(".fleet-row-head")!.click();
+  expect(b.active()).toBe("project");
+  expect(b.scope.get()).toMatchObject({ project: "repoB", window: win });
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().session).toBeUndefined();
+  b.nav("fleet").click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
+  const forkA = [...document.querySelectorAll<HTMLElement>(".fleet-fork")].find((f) => f.closest(".fleet-row")?.querySelector(".fleet-need"))!;
+  forkA.click();
+  expect(b.active()).toBe("project");
+  expect(b.scope.get()).toMatchObject({ project: "repoA", worktree: "wt-open", window: win });
+  b.nav("fleet").click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());
+  document.querySelector<HTMLElement>(".fleet-need")!.click();
+  expect(b.active()).toBe("score");
+  expect(b.scope.get().session).toEqual({ id: "s-n1", source: "codex" });
+});
+
+test("Fleet is inert off-screen: keys, stream reconnects and events cause no requests or scope writes", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  b.nav("live").click();
+  const before = b.scope.get();
+  const n = b.worktreeSignals.length;
+  const own = b.worktreeSignals.filter((x) => x !== undefined);
+  expect(own[own.length - 1]?.aborted).toBe(true);
+  for (const key of ["1", "n", "N", " ", "Enter", "ArrowDown"]) {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  }
+  b.sources.forEach((src) => src.onopen?.());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.scope.get()).toEqual(before);
+  expect(b.worktreeSignals).toHaveLength(n);
+  expect(b.active()).toBe("live");
+});
+
+test("Fleet labels rows from attention when /worktrees is a 404, and says so", async () => {
+  const b = await boot({ worktreesStatus: 404, attentionSessions: [needy("s-f1", "repoZ")] });
+  b.nav("fleet").click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-row-label")).not.toBeNull());
+  expect(document.querySelector(".fleet-row-label")!.textContent).toBe("name-repoZ");
+  expect(document.querySelector(".fleet-unsupported")).not.toBeNull();
+  expect(document.querySelector(".fleet-row-head")!.getAttribute("aria-disabled")).toBe("true");
 });

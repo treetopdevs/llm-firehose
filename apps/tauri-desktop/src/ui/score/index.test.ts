@@ -1032,6 +1032,26 @@ describe("score scope integration", () => {
     expect(store.get().window).toBe("live");
   });
 
+  test("DEFERRED RESPONSE: a load resolving after deactivate does not publish the window; activate or open re-enables it", async () => {
+    const late = defer<FirehoseEvent[]>();
+    sessionEvents.mockReset();
+    sessionEvents.mockReturnValueOnce(late.promise).mockResolvedValue(session);
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "claude-code" } });
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    const p = panel.open(SID, "claude-code");
+    panel.deactivate();
+    late.resolve(session); await p;
+    expect(store.get().window).toBe("live");
+    panel.activate();
+    await vi.waitFor(() => expect(store.get().window).not.toBe("live"));
+    store.narrow({ window: "live" });
+    panel.deactivate();
+    await panel.open(SID, "claude-code");
+    expect(store.get().window).not.toBe("live");
+  });
+
   test("activate opens scope.session when it differs, no-ops when equal, keeps the cache when unset", async () => {
     const store = createScope();
     const panel = createScore(() => {}, store);
