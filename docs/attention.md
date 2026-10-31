@@ -1,9 +1,10 @@
 # Attention inbox
 
-Live is the desktop landing view. The attention strip stays visible across all
-views; open **attention** to inspect the working set, snooze a request, or search
-history. Dwell reads the same attention snapshot, so its NEEDS YOU rows match the strip;
-Workspace, Lanes and Sessions remain available.
+Project is the desktop landing view (Fleet when more than one repository has
+rows). The attention strip stays visible across all views; open **attention** to
+inspect the working set, snooze a request, or search history. Fleet reads the
+same attention snapshot, so its needs-you units and dwell match the strip;
+Workspace and Sessions remain available.
 
 The inbox groups by **source and native session ID**, keeps pending requests until
 contrary evidence arrives, and links directly to the captured event. A request is
