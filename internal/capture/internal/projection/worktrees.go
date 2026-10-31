@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/shellverbs"
 )
 
 // Caps on the per-worktree lists a WorktreeLifetime carries. Every cap keeps a
@@ -34,8 +35,9 @@ type WorktreeSession struct {
 }
 
 // WorktreeMark is a lifecycle command (git worktree add|remove, commit, push,
-// gh pr create|merge) parsed from a full-mode claude-code Bash record. Marks
-// exist only where the raw hook payload was captured.
+// gh pr create|merge) from a claude-code Bash PostToolUse record: parsed from
+// the raw hook payload in full mode, otherwise from the adapter's summary
+// suffix. Summary marks are display-only command observations.
 type WorktreeMark struct {
 	Kind      string    `json:"kind"`
 	SessionID string    `json:"session_id,omitempty"`
@@ -140,16 +142,28 @@ func (ix *Projection) foldWorktree(ev event.Event) {
 	for _, p := range EventActivityPaths(ev) {
 		w.addPath(p)
 	}
-	if ev.Source == "claude-code" && ev.Category == event.CategoryShell && strings.HasPrefix(ev.Name, "PostToolUse:") && ev.Raw != "" {
-		kinds, selfMerge := lifecycle(ev.Raw)
-		for _, kind := range kinds {
-			w.addMark(WorktreeMark{Kind: kind, SessionID: ev.SessionID, Time: ev.Time, EventID: ev.ID})
-			if kind == kindCommit && ev.Time.After(w.lastCommit) {
-				w.lastCommit = ev.Time
+	if ev.Source == "claude-code" && ev.Category == event.CategoryShell && strings.HasPrefix(ev.Name, "PostToolUse:") {
+		if ev.Raw != "" {
+			// Full mode: the raw hook payload is authoritative. Only here do
+			// commit and verified self-merge evidence feed the classifier.
+			kinds, selfMerge := shellverbs.Lifecycle(ev.Raw)
+			for _, kind := range kinds {
+				w.addMark(WorktreeMark{Kind: kind, SessionID: ev.SessionID, Time: ev.Time, EventID: ev.ID})
+				if kind == shellverbs.KindCommit && ev.Time.After(w.lastCommit) {
+					w.lastCommit = ev.Time
+				}
 			}
-		}
-		if selfMerge && ev.Time.After(w.lastMerge) {
-			w.lastMerge = ev.Time
+			if selfMerge && ev.Time.After(w.lastMerge) {
+				w.lastMerge = ev.Time
+			}
+		} else {
+			// Balanced/minimal: the adapter's summary suffix. These are
+			// display-only command observations by the issuing session, not
+			// proof of a commit in this worktree, so they never touch
+			// lastCommit, lastMerge or the classifier.
+			for _, kind := range shellverbs.KindsFromSummary(ev.Summary) {
+				w.addMark(WorktreeMark{Kind: kind, SessionID: ev.SessionID, Time: ev.Time, EventID: ev.ID})
+			}
 		}
 	}
 }

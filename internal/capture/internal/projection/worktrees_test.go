@@ -22,7 +22,14 @@ const worktreeFixture = "../../testdata/worktrees_full.ndjson"
 
 func loadWorktreeFixture(t testing.TB) []event.Event {
 	t.Helper()
-	f, err := os.Open(worktreeFixture)
+	return loadFixtureFile(t, worktreeFixture)
+}
+
+const worktreeBalancedFixture = "../../testdata/worktrees_balanced.ndjson"
+
+func loadFixtureFile(t testing.TB, path string) []event.Event {
+	t.Helper()
+	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +259,7 @@ func TestWorktreeLifecycleMarksFromFullModeBash(t *testing.T) {
 	if !reflect.DeepEqual(r.Marks, want) {
 		t.Errorf("marks=%+v\nwant=%+v", r.Marks, want)
 	}
-	// Only Post shell events of claude-code with raw can mark.
+	// Codex events and raw-less events with the default summary give no marks.
 	other := bashEvent("o1", d.Add(time.Hour), "PostToolUse:Bash", "s", "git commit -m x")
 	other.Source = "codex"
 	noRaw := bashEvent("o2", d.Add(time.Hour), "PostToolUse:Bash", "s", "git commit -m x")
@@ -263,96 +270,6 @@ func TestWorktreeLifecycleMarksFromFullModeBash(t *testing.T) {
 	}
 }
 
-func TestLifecycleKindsTable(t *testing.T) {
-	bash := func(cmd string) string {
-		b, _ := json.Marshal(map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": cmd}})
-		return string(b)
-	}
-	cases := []struct {
-		name, raw string
-		want      []string
-	}{
-		{"commit-tree", bash("git commit-tree abc"), nil},
-		{"global -c", bash("git -c user.name=x commit -m m"), []string{"commit"}},
-		{"env prefix", bash("FOO=1 git push"), []string{"push"}},
-		{"abs path git", bash("/usr/bin/git commit --amend"), []string{"commit"}},
-		{"quoted &&", bash("git commit -m 'a && git push'"), []string{"commit"}},
-		{"chain", bash("git add . && git commit -m x && git push origin HEAD"), []string{"commit", "push"}},
-		{"dup kinds", bash("git commit -m a; git commit -m b"), []string{"commit"}},
-		{"quoted heredoc msg", bash("git commit -F - <<'EOF'\nfix\ngit push\nEOF"), []string{"commit"}},
-		{"unquoted heredoc", bash("cat <<EOF\ngit push\nEOF"), nil},
-		{"heredoc then command", bash("cat <<EOF > f\ngit push\nEOF\ngit commit -m x"), []string{"commit"}},
-		{"gh pr create heredoc", bash("gh pr create --title t --body \"$(cat <<'EOF'\ngit commit\nEOF\n)\""), []string{"pr_create"}},
-		{"gh pr create body-file heredoc", bash("gh pr create --body-file - <<'EOF'\ngit commit\nEOF"), []string{"pr_create"}},
-		{"pipeline", bash("git push 2>&1 | tail"), []string{"push"}},
-		{"gh -R merge", bash("gh -R o/r pr merge 3"), []string{"pr_merge"}},
-		{"gh pr view", bash("gh pr view 3"), nil},
-		{"worktree list", bash("git worktree list"), nil},
-		{"worktree add", bash("git worktree add x"), []string{"worktree_add"}},
-		{"worktree remove", bash("git worktree remove --force x"), []string{"worktree_remove"}},
-		{"git -C worktree remove", bash("git -C /a worktree remove /b"), []string{"worktree_remove"}},
-		{"comment", bash("ls # git push"), nil},
-		{"escaped quote", bash(`echo \"; git push`), []string{"push"}},
-		{"commit or true", bash("git commit -m x || true"), nil},
-		{"push or echo", bash("git push || echo failed"), nil},
-		{"or then and", bash("git commit -m x || true && git push"), []string{"push"}},
-		{"push dry-run", bash("git push --dry-run"), nil},
-		{"push -n", bash("git push -n origin HEAD"), nil},
-		{"commit dry-run", bash("git commit --dry-run"), nil},
-		{"commit -n is no-verify", bash("git commit -n -m x"), []string{"commit"}},
-		{"pr merge help", bash("gh pr merge --help"), nil},
-		{"pr merge squash", bash("gh pr merge 3 --squash --delete-branch"), []string{"pr_merge"}},
-		{"Shell tool", `{"tool_name":"Shell","tool_input":{"command":"git push"}}`, []string{"push"}},
-		{"Read tool", `{"tool_name":"Read","tool_input":{"command":"git push"}}`, nil},
-		{"empty", "", nil},
-		{"invalid json with git", "git {", nil},
-		{"non-string command", `{"tool_name":"Bash","tool_input":{"command":["git","push"]}}`, nil},
-		{"no tool_input", `{"tool_name":"Bash","git":1}`, nil},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := lifecycleKinds(c.raw); !reflect.DeepEqual(got, c.want) {
-				t.Errorf("lifecycleKinds=%v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
-func hugeRaw(big string, tail string) string {
-	return `{"tool_response":{"stdout":"` + big + `"},"tool_name":"Bash","tool_input":{"command":"git commit -m x"}` + tail + `}`
-}
-
-func TestLifecycleParserIsBoundedOnHugeToolResponse(t *testing.T) {
-	big := strings.Repeat("x", 5<<20)
-	raw := hugeRaw(big, `,"tool_response2":{"stdout":"`+big+`"}`)
-	if got := lifecycleKinds(raw); !reflect.DeepEqual(got, []string{"commit"}) {
-		t.Fatalf("got %v", got)
-	}
-	// Streaming stops after tool_input: garbage after it is never read.
-	if got := lifecycleKinds(hugeRaw("", `,garbage not json`)); !reflect.DeepEqual(got, []string{"commit"}) {
-		t.Fatalf("decoder read past tool_input: %v", got)
-	}
-	// tool_name after tool_input is still found.
-	late := `{"tool_input":{"command":"git push"},"tool_response":"` + big + `","tool_name":"Bash"}`
-	if got := lifecycleKinds(late); !reflect.DeepEqual(got, []string{"push"}) {
-		t.Fatalf("late tool_name: %v", got)
-	}
-	// No git/gh substring: no decoding, so invalid JSON is simply none.
-	if got := lifecycleKinds(`{{{ not json ` + strings.Repeat("a", 1<<20)); got != nil {
-		t.Fatalf("prefilter: %v", got)
-	}
-}
-
-func BenchmarkLifecycleKinds(b *testing.B) {
-	raw := hugeRaw(strings.Repeat("x", 5<<20), "")
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if len(lifecycleKinds(raw)) != 1 {
-			b.Fatal("no commit")
-		}
-	}
-}
-
 func hexSum(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
@@ -360,6 +277,17 @@ func hexSum(s string) string {
 
 func TestWorktreeBalancedAndMinimalRedaction(t *testing.T) {
 	full := loadWorktreeFixture(t)
+	fullRows := map[string]WorktreeLifetime{}
+	for _, r := range foldProjection(full).Worktrees() {
+		fullRows[hexSum(r.WorktreeID)] = r
+	}
+	for _, ev := range full {
+		if ev.Category == event.CategoryShell && ev.Source == "claude-code" {
+			if got := privacy.Redact(ev, privacy.ModeMinimal).Summary; got != ev.Summary {
+				t.Errorf("minimal Redact changed shell summary %q -> %q", ev.Summary, got)
+			}
+		}
+	}
 	for _, mode := range []privacy.Mode{privacy.ModeBalanced, privacy.ModeMinimal} {
 		t.Run(string(mode), func(t *testing.T) {
 			var red []event.Event
@@ -387,8 +315,8 @@ func TestWorktreeBalancedAndMinimalRedaction(t *testing.T) {
 				r := worktreeRow(t, rows, hexSum(raw))
 				signal += r.SignalEvents
 				meta += r.MetaEvents
-				if len(r.Marks) != 0 || r.MarksTotal != 0 {
-					t.Errorf("%s: marks outside full mode: %+v", raw, r.Marks)
+				if got, want := markKinds(r), markKinds(fullRows[r.WorktreeID]); !reflect.DeepEqual(got, want) || r.MarksTotal != fullRows[r.WorktreeID].MarksTotal {
+					t.Errorf("%s: %s marks %v (total %d), want full-mode kinds %v", raw, mode, got, r.MarksTotal, want)
 				}
 				if r.PathsTotal != len(wantPaths[r.WorktreeID]) {
 					t.Errorf("%s: paths_total=%d, want %d (%v)", raw, r.PathsTotal, len(wantPaths[r.WorktreeID]), r.Paths)
@@ -630,79 +558,6 @@ func TestWorktreePathGuardKeepsSmallestAndReportsSaturation(t *testing.T) {
 	}
 }
 
-// Skipped branches and uncalled function bodies run nothing, so they leave no
-// mark; commands that did run still do.
-func TestLifecycleSkipsUnestablishedExecution(t *testing.T) {
-	bash := func(cmd string) string {
-		b, _ := json.Marshal(map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": cmd}})
-		return string(b)
-	}
-	cases := []struct {
-		name, cmd string
-		want      []string
-	}{
-		{"if false then merge", "if false; then gh pr merge 3; fi", nil},
-		{"else branch", "if true; then :; else git push; fi", nil},
-		{"elif branch", "if true; then :; elif x; then git commit -m x; fi", nil},
-		{"if condition runs", "if git commit -m x; then echo ok; fi", []string{"commit"}},
-		{"for body", "for f in a; do git commit -m $f; done", nil},
-		{"while body", "while false; do git push; done", nil},
-		{"case arm", "case x in y) git commit -m x;; esac", nil},
-		{"function body not called", "f() { git commit -m x; }; echo hi", nil},
-		{"function body one line", "f() { git push; }", nil},
-		{"function keyword", "function f { git push; }\ntrue", nil},
-		{"function keyword parens", "function f() {\n git push\n}\ngit commit -m x", []string{"commit"}},
-		{"after function", "f() { git push; }; git commit -m x", []string{"commit"}},
-		{"brace group runs", "{ git commit -m x; }", []string{"commit"}},
-		{"subshell runs", "(cd x && git commit -m x)", []string{"commit"}},
-		{"and in earlier list", "false && git commit -m x; true", nil},
-		{"and in final list", "git add . && git commit -m x", []string{"commit"}},
-		{"or fallback", "false || git commit -m x", nil},
-		{"or in earlier list", "a || b; git push", []string{"push"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := lifecycleKinds(bash(c.cmd)); !reflect.DeepEqual(got, c.want) {
-				t.Errorf("lifecycleKinds(%q)=%v, want %v", c.cmd, got, c.want)
-			}
-		})
-	}
-}
-
-// Only a plain `gh pr merge` that targets the current branch, as the command's
-// last step, is a verified self-merge.
-func TestLifecycleSelfMerge(t *testing.T) {
-	bash := func(cmd string) string {
-		b, _ := json.Marshal(map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": cmd}})
-		return string(b)
-	}
-	cases := []struct {
-		cmd  string
-		want bool
-	}{
-		{"gh pr merge --squash --delete-branch", true},
-		{"git push && gh pr merge --squash", true},
-		{"gh pr merge -t 'a title' -d", true},
-		{"gh -R o/r pr merge --squash", true},
-		{"gh pr merge 123", false},
-		{"gh pr merge https://github.com/o/r/pull/9", false},
-		{"gh pr merge some-branch --squash", false},
-		{"gh pr merge --auto --squash", false},
-		{"gh pr merge --squash || true", false},
-		{"gh pr merge --squash; echo done", false},
-		{"gh pr merge --squash &", false},
-		{"! gh pr merge --squash", false},
-		{"if false; then gh pr merge --squash; fi", false},
-		{"gh pr merge --dry-run", false},
-		{"git commit -m x", false},
-	}
-	for _, c := range cases {
-		if _, got := lifecycle(bash(c.cmd)); got != c.want {
-			t.Errorf("selfMerge(%q)=%v, want %v", c.cmd, got, c.want)
-		}
-	}
-}
-
 // Classification evidence is kept apart from the capped marks list: a commit
 // followed by 300 pushes still reports its commit time.
 func TestWorktreeEvidenceSurvivesMarkCap(t *testing.T) {
@@ -723,5 +578,209 @@ func TestWorktreeEvidenceSurvivesMarkCap(t *testing.T) {
 	}
 	if !r.LastCommitMark.Equal(d) || !r.LastMergeMark.Equal(d.Add(time.Minute)) {
 		t.Errorf("evidence commit=%v merge=%v", r.LastCommitMark, r.LastMergeMark)
+	}
+}
+
+func sumEvent(id string, at time.Time, name, summary string) event.Event {
+	ev := wtEvent(id, at, event.CategoryShell, "sess-"+id)
+	ev.Name = name
+	ev.Summary = summary
+	return ev
+}
+
+func marksOf(t *testing.T, evs ...event.Event) []WorktreeMark {
+	t.Helper()
+	rows := foldProjection(evs).Worktrees()
+	if len(rows) == 0 {
+		return nil
+	}
+	return rows[0].Marks
+}
+
+func TestWorktreeLifecycleMarksFromSummaryWithoutRaw(t *testing.T) {
+	d := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	mk := func(kinds ...string) []WorktreeMark {
+		var out []WorktreeMark
+		for _, k := range kinds {
+			out = append(out, WorktreeMark{Kind: k, SessionID: "sess-e", Time: d, EventID: "e"})
+		}
+		return out
+	}
+	codex := sumEvent("e", d, "PostToolUse:Bash", "ran shell tool: git commit")
+	codex.Source = "codex"
+	tool := sumEvent("e", d, "PostToolUse:Read", "ran shell tool: git commit")
+	tool.Category = event.CategoryTool
+	cases := []struct {
+		name string
+		ev   event.Event
+		want []WorktreeMark
+	}{
+		{"commit push", sumEvent("e", d, "PostToolUse:Bash", "ran shell tool: git commit, git push"), mk("commit", "push")},
+		{"pr create", sumEvent("e", d, "PostToolUse:Bash", "ran shell tool: gh pr create"), mk("pr_create")},
+		{"plain", sumEvent("e", d, "PostToolUse:Bash", "ran shell tool"), nil},
+		{"unknown", sumEvent("e", d, "PostToolUse:Bash", "ran shell tool: git rebase"), nil},
+		{"interrupted", sumEvent("e", d, "PostToolUse:Bash", "interrupted shell tool: git commit"), nil},
+		{"pre", sumEvent("e", d, "PreToolUse:Bash", "will run shell tool: git commit"), nil},
+		{"failure", sumEvent("e", d, "PostToolUseFailure:Bash", "failed shell tool: git commit"), nil},
+		{"codex", codex, nil},
+		{"tool category", tool, nil},
+	}
+	for _, c := range cases {
+		if got := marksOf(t, c.ev); !reflect.DeepEqual(got, c.want) && !(len(got) == 0 && len(c.want) == 0) {
+			t.Errorf("%s: got %+v want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestWorktreeFullModeMarksNotDoubleCounted(t *testing.T) {
+	d := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	both := bashEvent("b", d, "PostToolUse:Bash", "s", "git add . && git commit -m x && git push")
+	both.Summary = "ran shell tool: git commit, git push"
+	if got := marksOf(t, both); len(got) != 2 {
+		t.Errorf("both: %+v", got)
+	}
+	raw := bashEvent("r", d, "PostToolUse:Bash", "s", "git status")
+	raw.Summary = "ran shell tool: git commit"
+	if got := marksOf(t, raw); len(got) != 0 {
+		t.Errorf("raw must win: %+v", got)
+	}
+	merge := bashEvent("m", d, "PostToolUse:Bash", "s", "gh pr merge --squash")
+	r := worktreeRow(t, foldProjection([]event.Event{merge}).Worktrees(), "/r")
+	if r.LastMergeMark.IsZero() {
+		t.Error("full-mode self-merge must set LastMergeMark")
+	}
+}
+
+func TestWorktreeSummaryMarksAreDisplayOnly(t *testing.T) {
+	d := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	r := worktreeRow(t, foldProjection([]event.Event{sumEvent("c", d, "PostToolUse:Bash", "ran shell tool: git commit")}).Worktrees(), "/r")
+	if len(r.Marks) != 1 || r.Marks[0].Kind != "commit" || !r.LastCommitMark.IsZero() {
+		t.Errorf("commit: %+v", r)
+	}
+	r = worktreeRow(t, foldProjection([]event.Event{sumEvent("m", d, "PostToolUse:Bash", "ran shell tool: gh pr merge")}).Worktrees(), "/r")
+	if len(r.Marks) != 1 || r.Marks[0].Kind != "pr_merge" || !r.LastMergeMark.IsZero() {
+		t.Errorf("merge: %+v", r)
+	}
+	r = worktreeRow(t, foldProjection([]event.Event{bashEvent("f", d, "PostToolUse:Bash", "s", "git commit -m x")}).Worktrees(), "/r")
+	if r.LastCommitMark.IsZero() {
+		t.Error("full-mode commit must set LastCommitMark")
+	}
+}
+
+func TestWorktreeMixedVintageFold(t *testing.T) {
+	d := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	evs := []event.Event{
+		sumEvent("a", d, "PostToolUse:Bash", "ran shell tool"),
+		sumEvent("b", d.Add(time.Minute), "PostToolUse:Bash", "ran shell tool: git commit, git push"),
+		bashEvent("c", d.Add(2*time.Minute), "PostToolUse:Bash", "s", "gh pr create"),
+		sumEvent("d", d.Add(3*time.Minute), "PostToolUse:Bash", "ran shell tool: gh pr merge"),
+	}
+	want := foldProjection(evs).Worktrees()
+	rev := make([]event.Event, len(evs))
+	for i, ev := range evs {
+		rev[len(evs)-1-i] = ev
+	}
+	for name, o := range map[string][]event.Event{"reverse": rev, "shuffle": shuffled(evs, 3), "dup": append(append([]event.Event(nil), evs...), evs...)} {
+		if got := foldProjection(o).Worktrees(); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s differs:\n%+v\n%+v", name, got, want)
+		}
+	}
+	if n := len(want[0].Marks); n != 4 {
+		t.Errorf("marks=%d want 4", n)
+	}
+}
+
+func TestSubstitutionCounterexampleThroughProjection(t *testing.T) {
+	d := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	cmd := `echo "$(printf "%s" "x; git commit -m x")"`
+	if got := marksOf(t, sumEvent("s", d, "PostToolUse:Bash", "ran shell tool")); len(got) != 0 {
+		t.Errorf("raw-less: %+v", got)
+	}
+	if got := marksOf(t, bashEvent("r", d, "PostToolUse:Bash", "s", cmd)); len(got) != 0 {
+		t.Errorf("raw: %+v", got)
+	}
+}
+
+type markKey struct {
+	Kind, Session, EventID string
+	Time                   time.Time
+}
+
+func markKeys(ms []WorktreeMark) []markKey {
+	out := []markKey{}
+	for _, m := range ms {
+		out = append(out, markKey{m.Kind, m.SessionID, m.EventID, m.Time})
+	}
+	return out
+}
+
+// TestWorktreeBalancedMarksEqualFullKinds folds the full fixture and its
+// production balanced redaction: marks are identical (Raw is gone, the summary
+// suffix carries the verbs) but balanced marks are display-only. Counts are
+// pinned at 3/4/3 (alpha, alpha-feat, beta-fix); the T2 parser corrections did
+// not change any fixture command's kinds.
+func TestWorktreeBalancedMarksEqualFullKinds(t *testing.T) {
+	full := foldProjection(loadFixtureFile(t, worktreeFixture)).Worktrees()
+	balEvents := loadFixtureFile(t, worktreeBalancedFixture)
+	bal := foldProjection(balEvents).Worktrees()
+	if len(full) != 3 || len(bal) != 3 {
+		t.Fatalf("rows full=%d balanced=%d", len(full), len(bal))
+	}
+	for _, ev := range balEvents {
+		if ev.Raw != "" {
+			t.Fatalf("balanced fixture record %s has Raw", ev.ID)
+		}
+	}
+	wantTotals := map[string]int{"/work/alpha": 3, "/work/alpha-feat": 4, "/work/beta-fix": 3}
+	signal, meta := 0, 0
+	anyFullCommit := false
+	for raw, total := range wantTotals {
+		f := worktreeRow(t, full, raw)
+		b := worktreeRow(t, bal, hexSum(raw))
+		if f.MarksTotal != total || b.MarksTotal != total {
+			t.Errorf("%s marks_total full=%d balanced=%d, want %d", raw, f.MarksTotal, b.MarksTotal, total)
+		}
+		if !reflect.DeepEqual(markKeys(f.Marks), markKeys(b.Marks)) {
+			t.Errorf("%s mark sequences differ:\nfull     %+v\nbalanced %+v", raw, f.Marks, b.Marks)
+		}
+		if !b.LastCommitMark.IsZero() || !b.LastMergeMark.IsZero() {
+			t.Errorf("%s balanced marks are display-only but set commit/merge: %v %v", raw, b.LastCommitMark, b.LastMergeMark)
+		}
+		if !f.LastCommitMark.IsZero() {
+			anyFullCommit = true
+		}
+		signal += b.SignalEvents
+		meta += b.MetaEvents
+	}
+	if !anyFullCommit {
+		t.Error("full mode lost LastCommitMark")
+	}
+	if signal != 41 || meta != 50 {
+		t.Errorf("balanced signal/meta = %d/%d, want 41/50", signal, meta)
+	}
+	// Pre records carry no lifecycle suffix, so they cannot add marks.
+	pre := 0
+	for _, ev := range balEvents {
+		if strings.HasPrefix(ev.Name, "PreToolUse:") && strings.Contains(ev.Summary, ": git ") || strings.HasPrefix(ev.Name, "PreToolUse:") && strings.Contains(ev.Summary, ": gh ") {
+			pre++
+		}
+	}
+	if pre != 0 {
+		t.Errorf("pre records with lifecycle suffix = %d, want 0", pre)
+	}
+}
+
+// Help and dry runs through a bare switch leave neither marks nor evidence.
+func TestHelpAndDryRunThroughBareSwitchesLeaveNoEvidence(t *testing.T) {
+	d := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	for i, cmd := range []string{"gh pr merge -r --help", "git commit -a --dry-run"} {
+		ev := bashEvent(fmt.Sprintf("e%d", i), d, "PostToolUse:Bash", "s", cmd)
+		if got := marksOf(t, ev); len(got) != 0 {
+			t.Errorf("%q marks: %+v", cmd, got)
+		}
+		rows := foldProjection([]event.Event{ev}).Worktrees()
+		if len(rows) > 0 && (!rows[0].LastMergeMark.IsZero() || !rows[0].LastCommitMark.IsZero()) {
+			t.Errorf("%q evidence: %+v", cmd, rows[0])
+		}
 	}
 }
