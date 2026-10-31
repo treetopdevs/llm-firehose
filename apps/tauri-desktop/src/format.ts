@@ -113,6 +113,13 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+/** Readable name for a repo/worktree id: the last two path segments when the id is a raw path (full privacy), else the eight-character digest prefix. */
+export function idLabel(id: string): string {
+  if (!/[/\\]/.test(id)) return shortId(id);
+  const parts = id.split(/[/\\]/).filter(Boolean);
+  return parts.length ? parts.slice(-2).join("/") : shortId(id);
+}
+
 /**
  * Where a session runs, as a person would say it: the checkout's basename,
  * with the absolute path kept for a tooltip. A digested path (older history,

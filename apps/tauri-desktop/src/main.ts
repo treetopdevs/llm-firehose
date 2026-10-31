@@ -26,6 +26,7 @@ import { createLoom } from "./ui/loom";
 import { createEcosystem } from "./ui/ecosystem";
 import { createReplay } from "./ui/replay";
 import { createStrata } from "./ui/strata";
+import { createProject } from "./ui/project";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspace } from "./ui/workspace";
@@ -115,8 +116,19 @@ const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSess
 attentionPanel.setConnected(false);
 const airspacePanel = createAirspace(openScore, () => show("attention"));
 airspacePanel.setConnected(false);
-// Live is home; attention remains visible at every altitude.
+// Project is home (D94-D98); Live and attention remain one click away, and the
+// attention strip is visible at every altitude. To revert the landing change:
+// remove the `project` registry key, set `active = "live"`, make the final call
+// show("live"), and drop the projectPanel lines in setStatus/onStreamOpen/show.
+const projectPanel = createProject({
+  store: scope,
+  go: (name, patch): void => {
+    go(name, patch);
+  },
+});
+projectPanel.setConnected(false);
 const panels = {
+  project: projectPanel,
   live: createFeed(feedState, showDetail),
   attention: attentionPanel,
   dwell: dwellPanel,
@@ -146,7 +158,7 @@ const statusText = el("span", { class: "status-text dim" }, "connecting…");
 const compatBanner = el("div", { class: "compat-banner" });
 const eventCount = el("span", { class: "event-count dim" }, "");
 
-let active: PanelName = "live";
+let active: PanelName = "project";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 /** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
@@ -159,6 +171,8 @@ function go(name: PanelName, patch?: ScopePatch, replace = false) {
 }
 
 function show(name: PanelName) {
+  if (active === "project" && name !== "project") projectPanel.deactivate();
+  if (name === "project") renderDetail(detailPane, null, () => {});
   if (active === "score" && name !== "score") scorePanel.deactivate();
   if (active === "court" && name !== "court") courtPanel.refresh();
   if (name === "court") renderDetail(detailPane, null, () => {});
@@ -182,14 +196,15 @@ function show(name: PanelName) {
   if (name === "airspace") {
     renderDetail(detailPane, null, () => {});
     void airspacePanel.activate();
-  } else if (name === "strata") void panels.strata.activate();
+  } else if (name === "project") void projectPanel.activate();
+  else if (name === "strata") void panels.strata.activate();
   else {
     panels[name].refresh();
     if (name === "score") scorePanel.activate();
   }
 }
 
-const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "score", "loops", "workspace"]);
+const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "score", "loops", "workspace", "project"]);
 document.addEventListener(
   "keydown",
   createEscapeHandler({
@@ -199,6 +214,7 @@ document.addEventListener(
     afterAscend: (alt, from) => {
       if ((from === "score" || from === "loops") && alt !== "session") show("sessions");
       else if (from === "sessions") void sessionsPanel.refresh();
+      else if (from === "project" && alt === "fleet") show("live");
     },
   }),
 );
@@ -207,7 +223,7 @@ document.addEventListener(
 sessionsPanel.root.addEventListener("click", (e) => {
   const item = (e.target as Element | null)?.closest?.<HTMLElement>(".session-item");
   const id = item?.dataset.id;
-  if (id) selectSession(scope, refOf(id));
+  if (id) selectSession(scope, refOf(id, item?.dataset.source));
 });
 
 const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT", el("br"), "FIREHOSE"));
@@ -258,6 +274,7 @@ const connector = createConnector({
   setStatus: ({ kind, text, compatReason }) => {
     attentionPanel.setConnected(kind === "ok");
     airspacePanel.setConnected(kind === "ok");
+    projectPanel.setConnected(kind === "ok");
     if (compatReason) {
       compatBanner.textContent = compatReason;
       compatBanner.classList.add("visible");
@@ -268,6 +285,7 @@ const connector = createConnector({
     statusText.textContent = text;
   },
   onStreamOpen: () => {
+    if (active === "project") void projectPanel.refresh();
     if (active === "dwell") {
       void panels.dwell.refresh();
     }
@@ -278,7 +296,7 @@ void connector.connect();
 setInterval(() => {
   void connector.connect();
 }, 3000);
-show("live");
+show("project");
 
 if (!isOnboarded()) {
   app.append(createOnboarding(() => show("doctor")));

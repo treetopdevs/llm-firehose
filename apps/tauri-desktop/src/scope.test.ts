@@ -1,4 +1,4 @@
-import { expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { createScope, sameSession, selectSession, scope, type Scope, type ScopeResolver } from './scope';
 
 const cell = { where: 'w', agent: 'a', label: 'l' };
@@ -220,4 +220,91 @@ test('selectSession: same native id under another source is not contained', () =
   expect(s.get()).toMatchObject({ session: { id: 'n1', source: 'claude-code' } });
   expect(s.get().project).toBeUndefined();
   expect(s.get().worktree).toBeUndefined();
+});
+
+describe('fallback resolver', () => {
+  const mk = (over: Partial<ScopeResolver> = {}): ScopeResolver => ({ sessions: () => undefined, labels: () => ({}), ...over });
+
+  test('no fallback: resolver() is the exact primary object', () => {
+    const s = createScope();
+    const p = mk();
+    s.setResolver(p);
+    expect(s.resolver()).toBe(p);
+  });
+
+  test('only a fallback: resolver() exposes it', () => {
+    const s = createScope();
+    const f = mk();
+    s.setFallbackResolver(f);
+    expect(s.resolver()).toBe(f);
+  });
+
+  test('both: primary answers win when defined, fallback fills undefined', async () => {
+    const s = createScope();
+    const sc = s.get();
+    const pm = (ref: { id: string }) => ref.id === 'p';
+    const fm = (ref: { id: string }) => ref.id === 'f';
+    const pRefresh = vi.fn(() => Promise.resolve());
+    const fRefresh = vi.fn(() => Promise.resolve());
+    const primary = mk({ sessions: () => new Set(['p']), matcher: () => pm, labels: () => ({ project: 'P' }), refresh: pRefresh });
+    const fallback = mk({ sessions: () => new Set(['f']), matcher: () => fm, labels: () => ({ project: 'F', worktree: 'W' }), refresh: fRefresh });
+    s.setResolver(primary);
+    s.setFallbackResolver(fallback);
+    const r = s.resolver()!;
+    expect([...r.sessions(sc)!]).toEqual(['p']);
+    expect(r.matcher!(sc)).toBe(pm);
+    expect(r.labels(sc)).toEqual({ project: 'P', worktree: 'W' });
+    await r.refresh!();
+    expect(pRefresh).toHaveBeenCalledTimes(1);
+    expect(fRefresh).toHaveBeenCalledTimes(1);
+
+    s.setResolver(mk());
+    const r2 = s.resolver()!;
+    expect([...r2.sessions(sc)!]).toEqual(['f']);
+    expect(r2.matcher!(sc)).toBe(fm);
+  });
+
+  test('labels: undefined primary keys do not hide fallback', () => {
+    const s = createScope();
+    s.setResolver(mk({ labels: () => ({ project: undefined, worktree: 'pw' }) }));
+    s.setFallbackResolver(mk({ labels: () => ({ project: 'F', worktree: 'fw' }) }));
+    expect(s.resolver()!.labels(s.get())).toEqual({ project: 'F', worktree: 'pw' });
+  });
+
+  test('onResolver fires on setFallbackResolver; setResolver(null) keeps fallback; setFallbackResolver(null) removes', () => {
+    const s = createScope();
+    const fn = vi.fn();
+    s.onResolver(fn);
+    const f = mk();
+    s.setFallbackResolver(f);
+    expect(fn).toHaveBeenCalledTimes(1);
+    s.setResolver(mk());
+    s.setResolver(null);
+    expect(s.resolver()).toBe(f);
+    s.setFallbackResolver(null);
+    expect(fn).toHaveBeenCalledTimes(4);
+    expect(s.resolver()).toBeNull();
+  });
+});
+
+describe("composed resolvers: knowledge", () => {
+  const sc = { project: "p", worktree: "w", window: "live" } as const;
+  test("a primary that does not know the worktree defers to a fallback that does", () => {
+    const store = createScope();
+    store.setResolver({ sessions: () => new Set<string>(), knows: () => false, labels: () => ({}) });
+    store.setFallbackResolver({ sessions: () => new Set(["x"]), knows: () => true, labels: () => ({}) });
+    expect([...store.resolver()!.sessions(sc)!]).toEqual(["x"]);
+    expect(store.resolver()!.matcher!(sc)!({ id: "x" })).toBe(true);
+    expect(store.resolver()!.knows!(sc)).toBe(true);
+  });
+  test("a primary that knows keeps authority; neither knowing stays the primary's answer", () => {
+    const store = createScope();
+    store.setResolver({ sessions: () => new Set<string>(), knows: () => true, labels: () => ({}) });
+    store.setFallbackResolver({ sessions: () => new Set(["x"]), knows: () => true, labels: () => ({}) });
+    expect([...store.resolver()!.sessions(sc)!]).toEqual([]);
+    store.setFallbackResolver({ sessions: () => new Set(["x"]), knows: () => false, labels: () => ({}) });
+    store.setResolver({ sessions: () => new Set<string>(), knows: () => false, labels: () => ({}) });
+    expect([...store.resolver()!.sessions(sc)!]).toEqual([]);
+    expect(store.resolver()!.knows!(sc)).toBe(false);
+  });
 });

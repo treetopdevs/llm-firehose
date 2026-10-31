@@ -399,6 +399,21 @@ describe("sessions panel reads the shared scope", () => {
     expect(r.calls[0].worktree).toBe("ws-graph-id");
   });
 
+  test("a fallback-only resolver scopes the worktree list", async () => {
+    sessions.mockResolvedValue([
+      summary({ id: "s1", source: "codex", agent: "codex" }),
+      summary({ id: "s1", source: "claude-code" }),
+      summary({ id: "s3" }),
+    ]);
+    const store = createScope();
+    store.setFallbackResolver({ sessions: () => undefined, matcher: () => (r) => r.id === "s1" && r.source === "codex", labels: () => ({}) });
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    store.narrow({ project: "repoA", worktree: "wt-open" });
+    await panel.refresh();
+    expect(ids(panel)).toEqual(["s1"]);
+    expect(panel.root.textContent).toContain("active sessions in this scope");
+  });
+
   test("a scoped refresh asks the resolver to re-read membership before filtering", async () => {
     sessions.mockResolvedValue(three());
     const store = createScope();
@@ -575,5 +590,31 @@ describe("sessions history is invalidated by scope (F5)", () => {
     expect(panel.root.textContent).toContain("A evidence");
     panel.setScope({ where: "/x", agent: "claude", label: "x · claude" });
     expect(panel.root.querySelector(".sessions-events")?.textContent).toBe("");
+  });
+
+  test("score and loops buttons and the row carry the session's source", async () => {
+    sessions.mockResolvedValue([summary({ id: "dup", source: "codex" })]);
+    attention.mockResolvedValue({ sessions: [] });
+    const onScore = vi.fn();
+    const onLoops = vi.fn();
+    const panel = createSessions(() => {}, () => [], onScore, onLoops, createScope());
+    await panel.refresh();
+    const item = panel.root.querySelector<HTMLElement>(".session-item")!;
+    expect(item.dataset.source).toBe("codex");
+    panel.root.querySelector<HTMLElement>(".score-open")!.click();
+    panel.root.querySelector<HTMLElement>(".loops-open")!.click();
+    expect(onScore).toHaveBeenCalledWith("dup", "codex");
+    expect(onLoops).toHaveBeenCalledWith("dup", "codex");
+  });
+
+  test("a partial scope membership is stated in the scope note", async () => {
+    sessions.mockResolvedValue([summary({ id: "a" })]);
+    attention.mockResolvedValue({ sessions: [] });
+    const store = createScope();
+    store.setFallbackResolver({ sessions: () => undefined, matcher: () => () => true, partial: () => ({ known: 200, total: 350 }), labels: () => ({}) });
+    store.narrow({ project: "p" });
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    await panel.refresh();
+    expect(panel.root.querySelector(".sessions-scope-note")!.textContent).toContain("200 of 350 sessions known");
   });
 });

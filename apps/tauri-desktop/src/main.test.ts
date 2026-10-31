@@ -8,7 +8,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-test("Live is home and the shared attention strip remains available across views", async () => {
+test("Project is the landing view; live and the attention strip remain available", async () => {
   document.body.innerHTML = '<div id="app"></div>';
   vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
@@ -37,14 +37,18 @@ test("Live is home and the shared attention strip remains available across views
     ),
   );
   await import("./main");
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("live");
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("project");
+  expect(document.querySelector(".content .project")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
-  const inbox = [
-    ...document.querySelectorAll<HTMLButtonElement>(".nav-btn"),
-  ].find((b) => b.textContent === "attention")!;
-  inbox.click();
+  const btn = (n: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === n)!;
+  btn("attention").click();
   expect(document.querySelector(".attention-inbox")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
+  btn("live").click();
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("live");
+  expect(document.querySelector(".content .project")).toBeNull();
+  expect(document.querySelector(".content")?.children.length).toBeGreaterThan(0);
 });
 
 test("the score view is reachable from the sidebar and starts empty", async () => {
@@ -235,23 +239,41 @@ type Boot = {
   keydownListeners: Array<[EventListenerOrEventListenerObject, unknown]>;
   nav: (name: string) => HTMLButtonElement;
   active: () => string | null | undefined;
+  worktreeSignals: Array<AbortSignal | undefined>;
+  sources: Array<{ onopen: (() => void) | null }>;
 };
 let tracked: Boot["keydownListeners"] = [];
 
-async function boot(opts: { sessions?: unknown[]; repos?: unknown[]; snapshots?: Record<string, unknown>; attentionSessions?: unknown[] } = {}): Promise<Boot> {
+type BootOpts = {
+  sessions?: unknown[]; repos?: unknown[]; snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
+  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>;
+};
+async function boot(opts: BootOpts = {}): Promise<Boot> {
   document.body.innerHTML = '<div id="app"></div>';
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
   vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
-  vi.stubGlobal("EventSource", class { onopen = null; onerror = null; onmessage = null; close() {} });
+  const sources: Array<{ onopen: (() => void) | null }> = [];
+  vi.stubGlobal("EventSource", class { onopen: (() => void) | null = null; onerror = null; onmessage = null; constructor() { sources.push(this); } close() {} });
   const urls: string[] = [];
+  const worktreeSignals: Array<AbortSignal | undefined> = [];
+  let failNext = opts.worktreesFailFirst === true;
   const json = (b: unknown) => new Response(JSON.stringify(b));
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     urls.push(url);
     const u = new URL(url);
     const p = u.pathname;
-    if (p === "/health") return json({ status: "ok", version: "test", schema_version: 1 });
+    if (p === "/worktrees") {
+      worktreeSignals.push(init?.signal ?? undefined);
+      if (failNext) { failNext = false; throw new TypeError("network down"); }
+      if (opts.worktreesStatus && opts.worktreesStatus !== 200) return new Response("not found", { status: opts.worktreesStatus });
+      return json(opts.worktrees ?? []);
+    }
+    if (p === "/health") {
+      if (opts.healthGate) await opts.healthGate;
+      return json({ status: "ok", version: "test", schema_version: 1 });
+    }
     if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: [] });
     if (p === "/sessions") return json(opts.sessions ?? []);
     if (p.startsWith("/sessions/")) return json(scoreFixture);
@@ -271,7 +293,7 @@ async function boot(opts: { sessions?: unknown[]; repos?: unknown[]; snapshots?:
   expect(scope.get()).toEqual({ window: "live" });
   const nav = (name: string) =>
     [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === name)!;
-  return { scope, urls, keydownListeners: tracked, nav, active: () => document.querySelector(".nav-btn.active")?.textContent };
+  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, active: () => document.querySelector(".nav-btn.active")?.textContent };
 }
 
 const esc = (target: EventTarget = document.body, init: KeyboardEventInit = {}) => {
@@ -296,7 +318,7 @@ test("openScore and openLoops narrow scope.session and show the panel; score ope
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".score-open")).not.toBeNull());
   document.querySelector<HTMLElement>(".score-open")!.click();
-  expect(b.scope.get().session).toEqual({ id: S1 });
+  expect(b.scope.get().session).toEqual({ id: S1, source: "codex" });
   expect(b.active()).toBe("score");
   await vi.waitFor(() => expect(document.querySelector(".score")?.textContent).not.toContain("open a session"));
   expect(b.urls.filter((u) => u.includes(`/sessions/${S1}?view=timeline`))).toHaveLength(1);
@@ -304,7 +326,7 @@ test("openScore and openLoops narrow scope.session and show the panel; score ope
   await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".loops-open")).not.toBeNull());
   document.querySelector<HTMLElement>(".loops-open")!.click();
   expect(b.active()).toBe("loops");
-  expect(b.scope.get().session).toEqual({ id: S1 });
+  expect(b.scope.get().session).toEqual({ id: S1, source: "codex" });
 });
 
 test("F3: Score A, Loops B, then the Score nav button shows B; an unset scope.session does not reopen", async () => {
@@ -383,7 +405,7 @@ test("a sessions row click sets scope.session; the evidence court leaves scope u
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
   document.querySelector<HTMLElement>(".session-item[data-id='r1']")!.click();
-  expect(b.scope.get().session).toEqual({ id: "r1" });
+  expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
   expect(b.active()).toBe("sessions");
   const before = b.scope.get();
   b.nav("court").click();
@@ -420,7 +442,7 @@ test("a sessions row click only narrows scope: no refetch, the clicked row survi
   const before = listCalls();
   row.click();
   await Promise.resolve();
-  expect(b.scope.get().session).toEqual({ id: "r1" });
+  expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
   expect(listCalls()).toBe(before);
   expect(document.querySelector(".session-item[data-id='r1']")).toBe(row);
 });
@@ -521,7 +543,8 @@ test("footer crumb sits between the status text and the event count and never as
   expect(crumb.querySelectorAll(".unresolved")).toHaveLength(2);
   b.scope.setResolver({ sessions: () => undefined, labels: () => ({ project: "Alpha", worktree: "main" }) });
   expect(crumb.textContent).toBe("Alpha › main");
-  expect(b.urls.some((u) => u.includes("/worktrees"))).toBe(false);
+  // Landing on Project issues the one /worktrees request; the crumb adds none.
+  expect(b.urls.filter((u) => new URL(u).pathname === "/worktrees")).toHaveLength(1);
 });
 
 test("graph round trip: a second project scope loads that repository; sessions filter only through the resolver", async () => {
@@ -566,4 +589,154 @@ test("Escape in the real graph clears the selection first and leaves the project
   expect(document.querySelector(".workspace-label.selected, .workspace-label[aria-selected='true']")).toBeNull();
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(1));
+});
+
+// ---------------------------------------------------------------------------
+// Project altitude (landing view)
+// ---------------------------------------------------------------------------
+
+const wtRow = (over: Record<string, unknown> = {}) => ({
+  repo_id: "repoA", worktree_id: "wt-open", label: "/w/alpha-open",
+  first_time: iso(NOW - 2 * 86_400_000), last_time: iso(NOW - 30 * 60_000),
+  sessions: [{ source: "codex", session_id: "s-o1", first_time: iso(NOW - 2 * 86_400_000), last_time: iso(NOW - 30 * 60_000), events: 5 }],
+  sessions_total: 1, paths: [], paths_total: 0, signal_events: 5, meta_events: 0,
+  marks: [], marks_total: 0, marks_available: true, state: "open", ahead: 1, ...over,
+});
+const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty");
+
+test("sidebar lists project first then the 19 previous panels unchanged", async () => {
+  const b = await boot();
+  const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
+  expect(names).toEqual(["project", "live", "attention", "dwell", "workspace", "matrix", "lanes", "sessions", "score", "loops", "strata", "court", "handoffs", "airspace", "loom", "ecosystem", "replay", "files", "doctor", "settings"]);
+  expect(b.active()).toBe("project");
+});
+
+test.each([
+  ["rows", [wtRow()], ".project-lane"],
+  ["no rows", [], ".project-empty"],
+])("landing requests /worktrees once, does not write scope, aborts on leaving (%s)", async (_n, worktrees, sel) => {
+  const b = await boot({ worktrees });
+  expect(b.worktreeSignals).toHaveLength(1);
+  expect(b.worktreeSignals[0]?.aborted).toBe(false);
+  await vi.waitFor(() => expect(laneOrEmpty()).not.toBeNull());
+  expect(document.querySelector(sel)).not.toBeNull();
+  expect(b.scope.get()).toEqual({ window: "live" });
+  expect(b.worktreeSignals).toHaveLength(1);
+  b.nav("live").click();
+  expect(b.worktreeSignals[0]?.aborted).toBe(true);
+  b.nav("project").click();
+  expect(b.worktreeSignals).toHaveLength(2);
+  expect(b.worktreeSignals[1]?.aborted).toBe(false);
+});
+
+function expectProjectInert(b: Boot) {
+  // Resolver refreshes fetch without a signal; the panel's own loads always carry one.
+  const own = b.worktreeSignals.filter((x) => x !== undefined);
+  expect(own[own.length - 1]?.aborted).toBe(true);
+  const before = b.scope.get();
+  const n = b.worktreeSignals.length;
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true }));
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+  expect(b.scope.get()).toEqual(before);
+  expect(b.worktreeSignals).toHaveLength(n);
+}
+
+test("SSE reconnect refreshes Project only while it is the active panel", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  expect(b.sources.length).toBeGreaterThan(0);
+  const n = b.worktreeSignals.length;
+  b.sources.forEach((s) => s.onopen?.());
+  await vi.waitFor(() => expect(b.worktreeSignals.length).toBe(n + 1));
+  b.nav("live").click();
+  const m = b.worktreeSignals.length;
+  b.sources.forEach((s) => s.onopen?.());
+  await Promise.resolve();
+  expect(b.worktreeSignals).toHaveLength(m);
+});
+
+test("lane click scopes the sessions list", async () => {
+  const b = await boot({
+    worktrees: [wtRow()],
+    sessions: [sessionRow("s-o1"), sessionRow("s-x")],
+  });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  document.querySelector<SVGGElement>(".project-lane")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  expect(b.scope.get()).toMatchObject({ project: "repoA", worktree: "wt-open" });
+  expect(b.active()).toBe("sessions");
+  expectProjectInert(b);
+  await vi.waitFor(() => expect([...document.querySelectorAll(".session-item")].map((i) => i.getAttribute("data-id"))).toEqual(["s-o1"]));
+  expect(document.querySelector(".scope-crumb")?.textContent).toContain("/w/alpha-open");
+  expect(document.querySelector(".scope-crumb")?.textContent).not.toMatch(/wt-open/);
+  expect(b.urls.some((u) => new URL(u).pathname === "/workspace-graph")).toBe(false);
+});
+
+test("bead click opens Score", async () => {
+  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow("s-o1")] });
+  b.nav("live").click();
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-bead")).not.toBeNull());
+  document.querySelector<SVGRectElement>(".project-bead")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  expect(b.scope.get().session).toEqual({ id: "s-o1", source: "codex" });
+  expect(b.active()).toBe("score");
+  expectProjectInert(b);
+  await vi.waitFor(() => expect(b.urls.some((u) => u.includes("/sessions/s-o1?view=timeline"))).toBe(true));
+});
+
+test("older daemon: /worktrees 404 renders the unsupported notice without touching scope", async () => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  const unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown) => unhandled.push(e);
+  process.on("unhandledRejection", onUnhandled);
+  const b = await boot({ worktreesStatus: 404 });
+  await vi.waitFor(() => expect(document.querySelector(".project-unsupported")).not.toBeNull());
+  b.nav("live").click();
+  expect(b.active()).toBe("live");
+  expect(b.scope.get()).toEqual({ window: "live" });
+  await new Promise((r) => setTimeout(r, 0));
+  process.off("unhandledRejection", onUnhandled);
+  expect(unhandled).toEqual([]);
+  expect(errors).not.toHaveBeenCalled();
+});
+
+test("cold start recovery: a failed first load shows Connecting, then lanes once the daemon is healthy", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  await boot({ worktrees: [wtRow()], worktreesFailFirst: true, healthGate: gate });
+  await vi.waitFor(() => expect(document.querySelector(".project-connecting")).not.toBeNull());
+  expect(document.querySelector(".project-error")).toBeNull();
+  release();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  expect(document.querySelector(".project-connecting")).toBeNull();
+});
+
+test("Escape ascends Project: worktree to project stays on Project, project to fleet lands on Live; inputs are excluded", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
+  b.scope.narrow({ project: "repoA", worktree: wtRow().worktree_id });
+  const before = b.scope.get();
+  const e1 = esc(document.querySelector("select.project-repo")!);
+  expect(e1.defaultPrevented).toBe(false);
+  expect(b.scope.get()).toEqual(before);
+  esc();
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().project).toBe("repoA");
+  expect(b.active()).toBe("project");
+  const e3 = esc();
+  expect(e3.defaultPrevented).toBe(true);
+  expect(b.scope.get().project).toBeUndefined();
+  expect(b.active()).toBe("live");
+});
+
+test("detail pane is cleared on entering Project", async () => {
+  const b = await boot();
+  const { renderDetail } = await import("./ui/detail");
+  const fixture = (await import("./ui/score/fixture.errsig.json")).default;
+  b.nav("files").click();
+  const pane = document.querySelector<HTMLElement>(".detail")!;
+  renderDetail(pane, fixture[0], () => {});
+  expect(pane.childElementCount).toBeGreaterThan(0);
+  b.nav("project").click();
+  expect(pane.classList.contains("open")).toBe(false);
+  expect(pane.childElementCount).toBe(0);
 });

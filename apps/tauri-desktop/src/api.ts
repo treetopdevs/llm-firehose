@@ -133,7 +133,7 @@ export interface ConfigUpdateResult {
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   const resp = await fetch(`${DAEMON_URL}${path}`, {signal});
   if (!resp.ok) {
-    throw new Error(`GET ${path}: ${resp.status} ${await resp.text()}`);
+    throw new ApiError(path, resp.status, await resp.text(), "GET");
   }
   return resp.json() as Promise<T>;
 }
