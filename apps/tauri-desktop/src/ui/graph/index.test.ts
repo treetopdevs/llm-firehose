@@ -5,7 +5,7 @@ import { graphAPI, type Snapshot, type Workspace } from "./api";
 import { perfBudget } from "./layout.fixtures";
 import { attention, getConfig, type AttentionSession } from "../../api";
 import { createScope, type ScopeStore } from "../../scope";
-import { claimEscape } from "../../escape";
+import { claimEscape, isEscapeClaimed } from "../../escape";
 vi.mock("../../api", () => ({
   DAEMON_URL: "http://127.0.0.1:4517",
   attention: vi.fn(async () => ({ sessions: [] })),
@@ -1559,4 +1559,28 @@ test("scope review: Escape on the focused More trigger closes an open menu and i
   const e = esc(moreBtn);
   expect(menu.hidden).toBe(true);
   expect(e.defaultPrevented).toBe(true);
+});
+
+test("scope review: Escape with the More menu open closes only the menu, wherever focus is", async () => {
+  for (const where of ["more", "item", "body"] as const) {
+    const store = createScope();
+    store.narrow({ project: "r1" });
+    const panel = await scoped(store);
+    panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+    await flush();
+    expect(store.get().worktree).toBe("w1");
+    const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+    const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+    moreBtn.focus();
+    moreBtn.click();
+    expect(menu.hidden).toBe(false);
+    const target = where === "more" ? moreBtn : where === "item" ? menu.querySelector("button")! : document.body;
+    const e = esc(target);
+    expect(menu.hidden, where).toBe(true);
+    expect(e.defaultPrevented, where).toBe(true);
+    expect(isEscapeClaimed(e), where).toBe(true);
+    expect(store.get().worktree, where).toBe("w1");
+    expect(selectedIds(panel.root), where).toBeGreaterThan(0);
+    panel.root.remove();
+  }
 });

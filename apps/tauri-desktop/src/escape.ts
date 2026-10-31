@@ -24,7 +24,7 @@ export function isEscapeEligible(e: KeyboardEvent): boolean {
     if ((t as HTMLElement).isContentEditable || t.closest('[contenteditable=""], [contenteditable="true"]')) return false;
     if (t.closest('.graph-menu')) return false;
   }
-  if (typeof document !== 'undefined' && document.querySelector(OVERLAYS)) return false;
+  if (typeof document !== 'undefined' && (document.querySelector(OVERLAYS) || document.querySelector('.graph-menu:not([hidden])'))) return false;
   return true;
 }
 

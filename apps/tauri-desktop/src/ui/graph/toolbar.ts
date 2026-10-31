@@ -248,8 +248,18 @@ export function createToolbar(h: ToolbarHandlers) {
   const closeOnOutside = (e: Event) => {
     if (!more.contains(e.target as Node)) closeMenu();
   };
+  // An open menu owns Escape wherever focus is; closes it before anything else reacts.
+  const closeOnEscape = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || menu.hidden || e.isComposing || isEscapeClaimed(e)) return;
+    claimEscape(e);
+    e.preventDefault();
+    const hadFocus = more.contains(document.activeElement);
+    closeMenu();
+    if (hadFocus) moreBtn.focus();
+  };
   function openMenu() {
     menu.hidden = false;
+    document.addEventListener("keydown", closeOnEscape, true);
     moreBtn.setAttribute("aria-expanded", "true");
     document.addEventListener("pointerdown", closeOnOutside, true);
   }
@@ -258,6 +268,7 @@ export function createToolbar(h: ToolbarHandlers) {
     form.hidden = true;
     moreBtn.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", closeOnOutside, true);
+    document.removeEventListener("keydown", closeOnEscape, true);
   }
   moreBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
   more.onkeydown = (e) => {
