@@ -1,0 +1,112 @@
+[
+  {
+    "slug": "01-causal-loom",
+    "title": "Causal Loom",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. A textile-like causal debugging interface: horizontal threads for Claude, Codex, shell, files and tests, woven together by explicit source parent/call links. A selected red knot exposes a failed test and its upstream file edit. Dashed links mean inferred association, solid links mean captured correlation. Large readable labels: Causal Loom, Captured, Inferred, api_test.go, Inspect evidence. Indigo background, coral and cyan threads. Practical time ruler and right evidence inspector.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-63e2a4b8-ec00-42c3-8963-f26ce52436cf.png",
+    "description": [
+      "Follow the thread from a failed test back through tool calls, edits, and agent turns. Select a knot to isolate its upstream and downstream observations across agents.",
+      "A cross-agent failure investigation that would otherwise require opening several transcripts.",
+      "Start with source-provided parent/call/trace IDs. Temporal or file-based associations remain dashed; correlation alone does not establish root cause."
+    ]
+  },
+  {
+    "slug": "02-repository-weather",
+    "title": "Repository Weather",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. A beautiful topographic weather map of a source repository, with labeled terrain islands internal/capture, adapters, desktop, tests. Activity forms amber heat fronts; repeated errors form red storm cells; quiet areas are cool blue. Show a time scrubber, a legend Activity / Repeated errors / No observations, and selected storm with '12 failures · 3 sessions'. Clearly label 'Activity map · not code quality'. Sophisticated cartographic contours, muted midnight navy.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-bf5ae114-44c7-4762-aa52-fff45dab00bf.png",
+    "description": [
+      "Watch activity fronts move across a topographic repository map. Heat shows edits and tool activity; storm cells show repeated observed errors. Scrub time to see where effort accumulated.",
+      "Orient yourself after an overnight run or spot a small module absorbing disproportionate attention.",
+      "Join captured file observations to the local workspace graph. Stable terrain positions matter. Activity is not code quality; quiet may mean missing capture."
+    ]
+  },
+  {
+    "slug": "03-loop-observatory",
+    "title": "Loop Observatory",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. An observatory for repeated agent attempts. Large concentric orbital paths made of discrete tool events, three loops returning to the same failed test. Selected orbit expands read → edit → test → fail steps. Right pane compares attempt 2 and 3, repeated error fingerprint, changed files. Exact large labels Loop Observatory, Similar sequence, 3 attempts, Compare attempts. Emerald and amber on charcoal. Similarity marked heuristic.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-1df4600c-9af1-4881-997a-467c671034b0.png",
+    "description": [
+      "Repeated read → edit → test → fail sequences become nested orbits. Compare attempts to see what changed while the same failure persisted.",
+      "Notice an agent spending its fifth attempt on the same unsuccessful strategy.",
+      "Local sequence matching and error fingerprints can power an initial version. Similarity is heuristic, and users choose when to intervene."
+    ]
+  },
+  {
+    "slug": "04-evidence-court",
+    "title": "Evidence Court",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. A dramatic but usable forensic evidence desk UI. A claim card 'The reconnect bug is fixed' at top, branching down to captured test command, exit result, touched files and missing runtime proof. Verified captured observations mint, unsupported claims amber, missing evidence outlined. Right sidebar source receipt with timestamp and event ID. Large labels Evidence Court, Claim, Captured evidence, Missing proof, Open receipt. Warm ivory editorial surface and dark ink with restrained mint and orange.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-4b1d79cc-9b5e-40b0-9409-c45ccb5aa707.png",
+    "description": [
+      "Pin a completion claim and attach receipts for commands, results, and changed files. Missing requested evidence remains an explicit gap. Open any receipt at its source.",
+      "Review an agent's 'fixed' claim before committing or shipping.",
+      "Start with user-selected claims and a manual evidence checklist. Automated claim extraction is optional and local. A captured green test supports that test result, not universal correctness."
+    ]
+  },
+  {
+    "slug": "05-session-stratigraphy",
+    "title": "Session Stratigraphy",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. A geological core sample interface for months of coding sessions. Tall layered strata represent days, textured bands correspond to prompts/tools/errors; fossil-like recurring error markers connect across layers. A magnified core section shows 'Reconnect regression' appearing in three sessions. Timeline at left, detailed event receipt at right. Large labels Session Stratigraphy, Recurring pattern, 3 sessions, Jump to event. Museum-quality ochre, slate, cream, carefully drawn data visualization not fantasy art.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-cc85bd6a-d190-404e-a3af-41750463ea87.png",
+    "description": [
+      "Treat months of sessions as geological layers. Recurring error signatures become fossils spanning multiple strata; drill into one to recover its earlier appearances and surrounding work.",
+      "Find the older session where the same failure was investigated, or explore how a project’s working patterns changed.",
+      "Daily aggregates and a local signature index are rebuildable from history. Preserve source timestamps and capture gaps; visual layer thickness needs a consistent legend."
+    ]
+  },
+  {
+    "slug": "06-handoff-subway",
+    "title": "Handoff Subway",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. Transit-map interface showing work traveling between human, Claude, Codex and shell. Colored train lines are sessions, stations are prompts, edits, test results, explicit handoffs. Dotted transfer labeled Possible continuation. One broken interchange shows 'Context gap: no linked handoff'. Clicked station opens the source prompt and event receipt. Large labels Handoff Subway, Explicit handoff, Possible continuation, Inspect transfer. Cream background with strong blue red green transit lines, clear readable path and time axis.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-e85e3640-3dbf-4a40-b59e-c7bab948cf1e.png",
+    "description": [
+      "Human, Claude, Codex, and shell activity become transit lines. Handoffs are interchanges; selected stations expose the prompt and receipts. Missing explicit connections appear as context gaps.",
+      "Understand how a task moved between tools and where a crucial instruction stopped traveling.",
+      "Use explicit source links or user annotations for confirmed transfers. Shared files and similar prompts only suggest a possible continuation."
+    ]
+  },
+  {
+    "slug": "07-patch-ecosystem",
+    "title": "Patch Ecosystem",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. An isometric living terrarium data visualization where file modules are labeled plant beds; new edits grow translucent shoots, successful observed tests create mint markers, reversions leave pale ghost branches, repeated churn shows tangled amber stems. Keep clear this visualizes observed edits, not software health. Side inspector for stream.go with edit chronology and event links, bottom chronological replay scrubber. Large labels Patch Ecosystem, Edit growth, Reversion, Observed test, Replay. Dark olive and luminous lime, elegant developer desktop tool.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-01cf8f7b-171b-4f8b-be4d-25a210a2077b.png",
+    "description": [
+      "A replayable terrarium of file activity: edits grow shoots, reversions leave ghost branches, and repeated changes tangle into amber stems. Select a bed to inspect its real chronology.",
+      "Build spatial memory for a codebase and notice where a supposedly small change kept expanding.",
+      "Needs reliable edit/reversion observations; optional local Git inspection adds evidence where available. Growth expresses activity, not quality. Provide a flat accessible view."
+    ]
+  },
+  {
+    "slug": "08-attention-airspace",
+    "title": "Attention Airspace",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. Air traffic control style desktop interface for many local coding agents. Aircraft-like markers are sessions in horizontal altitude bands Running, Waiting for you, Quiet, Ended, with fading trails of tool activity. Two waiting sessions get clear amber request cards with elapsed time. A file overlap region is labeled Shared file activity, not collision prediction. Large labels Attention Airspace, Waiting for you, 4 active sessions, Open request. Dark aviation display, restrained cyan and amber, no gimmicky radar decoration without data.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-203ffc93-28b9-4eaa-bf44-2eea61caf243.png",
+    "description": [
+      "Local sessions fly through running, waiting, quiet, and ended bands. Requests for human input form holding patterns, while shared file activity becomes a highlighted airspace.",
+      "Manage several simultaneous agents and find the one waiting longest for your decision.",
+      "Build over session and attention projections. Quiet means no recent observations, not proof of productive background work. Shared activity does not prove a write conflict."
+    ]
+  },
+  {
+    "slug": "09-counterfactual-replay",
+    "title": "Forked Replay Lab",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. An advanced read-only replay lab UI comparing an observed session path with a user-authored hypothetical alternative. Split branching timeline left labeled Observed with captured receipts; right labeled Hypothetical with dashed ghost nodes such as 'Run narrow test first'. No fake measured savings: prominent 'Outcome unknown'. Central divergence point, synchronized time scrubber, inspector. Large labels Forked Replay Lab, Observed, Hypothetical, Outcome unknown, Add annotation. Violet and peach on near-black, precise professional UI.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-5295ac74-d60a-4940-8b1b-917533bff850.png",
+    "description": [
+      "Freeze a session at a decision point and sketch an alternative route beside the captured path: run a narrower test, inspect an error, or defer an edit. Keep the hypothetical branch visibly separate.",
+      "Turn a frustrating session into a retrospective or teaching artifact.",
+      "An annotation layer can work without rerunning anything. Outcomes and timings on hypothetical branches remain unknown. A future execution experiment would need a separate isolated checkout."
+    ]
+  },
+  {
+    "slug": "10-agent-score",
+    "title": "Agent Score",
+    "prompt": "Use case: ui-mockup. Create one high fidelity wide desktop application screenshot for a speculative extension of Agent Firehose, an on-device AI coding activity observatory. Single app window fills image, front-on, no physical monitor, no collage. Crisp carefully composed information design, polished experimental visualization occupies 70 percent, slim sidebar with Firehose wordmark, workspace selector llm-firehose, compact top toolbar, small 'CONCEPT · ILLUSTRATIVE DATA' badge. Readable headings and short labels, detailed plausible UI but avoid dense illegible prose. No cloud, accounts, leaderboards, invented accuracy scores. The visualization must express the specific concept, not a generic analytics dashboard. A music sequencer inspired event visualization for coding sessions. Horizontal tracks Prompt, Read, Edit, Shell, Test, Error; tool calls are colored note blocks with durations only where known, gaps are explicit. Repeated test failures create a visible rhythmic motif highlighted across three bars. Bottom playback controls include 'Sonification off', tempo controls only for replay speed, right event inspector. Large labels Agent Score, Repeated motif, Inspect event, Sonification off. Elegant charcoal DAW interface, lilac cyan coral blocks, useful event labels.",
+    "source": "/Users/nicholas/.codex/generated_images/01a14210-bfa1-76f2-a226-de582668f634/exec-19125461-1fe0-4bf7-9fc6-79bd598681f6.png",
+    "description": [
+      "A coding session becomes a sequencer: prompts, reads, edits, commands, tests, and errors occupy separate tracks. Repeated failures form motifs. Optional local sonification makes patterns audible.",
+      "Recognize repeated behavior during a long replay or monitor activity while looking elsewhere.",
+      "Map captured categories and event times to visual and sound cues. Render duration only when start/end evidence exists; keep real gaps. Sound is opt-in and never affects capture."
+    ]
+  }
+]
