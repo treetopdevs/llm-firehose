@@ -5,6 +5,7 @@ import fixture from "../score/fixture.errsig.json";
 const api = vi.hoisted(() => ({ sessionEvents: vi.fn(), errorSignatures: vi.fn(), capturedEvent: vi.fn(), sessions: vi.fn() }));
 vi.mock("../../api", () => api);
 import { createLoops } from "./index";
+import { createScope } from "../../scope";
 const sid = "019fd182-8513-7461-a816-e786f1fe439e";
 const events = (fixture as FirehoseEvent[]).filter(e => e.session_id === sid);
 const settle = async () => { for(let i=0;i<8;i++) await Promise.resolve(); };
@@ -193,4 +194,60 @@ test('reselecting the active signature preserves sequence inspection and invalid
  const panel=createLoops();await panel.open(sid,'codex');click(panel.root,'Compare interval 1');click(panel.root,'Compare sequences');click(panel.root,'Browse A run');const view=panel.root.querySelector('.loops-sequence');
  (panel.root.querySelector('.loops-signatures button') as HTMLButtonElement).click();expect(panel.root.querySelector('.loops-sequence')).toBe(view);expect(panel.root.textContent).toContain('Run observations');
  const input=panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;input.value='1';click(panel.root,'Compare sequences');const feedback=panel.root.querySelector('.loops-comparison-feedback');expect(feedback?.textContent).toContain('Choose a different interval');expect(feedback?.previousElementSibling?.textContent).toBe('Compare sequences');
+});
+
+test("choosing a session or source publishes the selection; preselects a pre-existing scope.session on first show; never subscribes", async () => {
+  const store = createScope();
+  const subscribe = vi.spyOn(store, "subscribe");
+  api.sessions.mockResolvedValue([{id: sid, source: "codex", agent: "codex"}]);
+  const panel = createLoops(store); document.body.append(panel.root);
+  await panel.refresh(); await settle();
+  const sel = panel.root.querySelector<HTMLSelectElement>("select[aria-label='Loop session']")!;
+  sel.value = sid; sel.dispatchEvent(new Event("change")); await settle();
+  expect(store.get().session).toEqual({id: sid});
+  const src = panel.root.querySelector<HTMLSelectElement>("select[aria-label='Loop source']")!;
+  src.value = "codex"; src.dispatchEvent(new Event("change"));
+  expect(store.get().session).toEqual({id: sid, source: "codex"});
+  expect(subscribe).not.toHaveBeenCalled();
+
+  const pre = createScope(); pre.narrow({session: {id: sid, source: "codex"}});
+  api.sessionEvents.mockClear();
+  const second = createLoops(pre); document.body.append(second.root);
+  await second.refresh(); await settle();
+  expect(api.sessionEvents).toHaveBeenCalledWith(sid, "timeline", expect.any(AbortSignal));
+  expect(second.root.querySelector<HTMLSelectElement>("select[aria-label='Loop session']")!.value).toBe(sid);
+  expect(second.root.querySelector<HTMLSelectElement>("select[aria-label='Loop source']")!.value).toBe("codex");
+  expect(pre.get().session).toEqual({id: sid, source: "codex"});
+  const e = new KeyboardEvent("keydown", {key: "Escape", bubbles: true, cancelable: true});
+  second.root.dispatchEvent(e);
+  expect(e.defaultPrevented).toBe(false);
+});
+
+test("loops reconciles with scope.session on every show, and clearing the select clears scope.session", async () => {
+  const store = createScope();
+  api.sessions.mockResolvedValue([{id: sid, source: "codex", agent: "codex"}]);
+  const panel = createLoops(store); document.body.append(panel.root);
+  await panel.refresh(); await settle();
+  expect(api.sessionEvents).not.toHaveBeenCalledWith(sid, "timeline", expect.any(AbortSignal));
+  api.sessionEvents.mockClear();
+  store.narrow({session: {id: sid}});
+  await panel.refresh(); await settle();
+  expect(api.sessionEvents).toHaveBeenCalledWith(sid, "timeline", expect.any(AbortSignal));
+  const sel = panel.root.querySelector<HTMLSelectElement>("select[aria-label='Loop session']")!;
+  expect(sel.value).toBe(sid);
+  sel.value = ""; sel.dispatchEvent(new Event("change"));
+  expect(store.get().session).toBeUndefined();
+});
+
+test("choosing a session outside the scoped project/worktree clears them", async () => {
+  const store = createScope();
+  store.narrow({project: "A", worktree: "w1"});
+  api.sessions.mockResolvedValue([{id: sid, source: "codex", agent: "codex"}]);
+  const panel = createLoops(store); document.body.append(panel.root);
+  await panel.refresh(); await settle();
+  const sel = panel.root.querySelector<HTMLSelectElement>("select[aria-label='Loop session']")!;
+  sel.value = sid; sel.dispatchEvent(new Event("change")); await settle();
+  expect(store.get().session).toEqual({id: sid});
+  expect(store.get().project).toBeUndefined();
+  expect(store.get().worktree).toBeUndefined();
 });

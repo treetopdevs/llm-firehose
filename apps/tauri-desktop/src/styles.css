@@ -900,3 +900,6 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .map-storm > rect { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 2; vector-effect: non-scaling-stroke; }
 .map-errors { margin-top: 1rem; overflow-wrap: anywhere; }
 .map-errors li { margin-bottom: 0.8rem; }
+
+.scope-crumb { margin-left: 12px; }
+.scope-crumb .unresolved { font-family: monospace; opacity: 0.7; }

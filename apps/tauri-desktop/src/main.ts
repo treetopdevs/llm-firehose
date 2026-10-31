@@ -31,6 +31,10 @@ import { createSettings } from "./ui/settings";
 import { createWorkspace } from "./ui/workspace";
 import { createWorkspaceGraph } from "./ui/graph";
 import type { CellScope } from "./ui/workspace/model";
+import { membership, scope, selectSession } from "./scope";
+import type { ScopePatch, SessionRef } from "./scope";
+import { createEscapeHandler } from "./escape";
+import { createBreadcrumb } from "./breadcrumb";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -56,11 +60,16 @@ const scorePanel = createScore((ev, sessionSiblings, signature, dismiss) =>
     signature,
     offerEvidence,
   ),
+  scope,
 );
 
+const refOf = (id: string, source?: string): SessionRef => (source === undefined ? { id } : { id, source });
+
+// The single Score opener is scorePanel.activate(), run by show("score"): it
+// opens scope.session unless that session is already loaded.
 function openScore(id: string, source?: string) {
+  selectSession(scope, refOf(id, source));
   show("score");
-  void scorePanel.open(id, source);
 }
 
 const courtPanel = createCourt(openScore);
@@ -70,28 +79,35 @@ function offerEvidence(id: string) {
   courtPanel.offerEvent(id);
 }
 
-const loopsPanel = createLoops();
+const loopsPanel = createLoops(scope);
 function openLoops(id: string, source?: string) {
-  show("loops");
+  // open() first so the panel's first-show preselect sees a session and skips.
   void loopsPanel.open(id, source);
+  selectSession(scope, refOf(id, source));
+  show("loops");
 }
 
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops);
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope);
 
-function openSession(id: string, source?:string) {
-  sessionsPanel.setScope(null);
-  show("sessions");
-  void sessionsPanel.openSession(id,source);
+// Opening a session from elsewhere keeps the project/worktree parents only
+// when the graph resolver says the session belongs to them; otherwise the
+// context is replaced.
+function openSession(id: string, source?: string) {
+  const cur = scope.get();
+  const ref = refOf(id, source);
+  const member = cur.project || cur.worktree ? membership(scope, cur) : undefined;
+  if (member?.(ref)) go("sessions", { session: ref, cell: undefined });
+  else go("sessions", { session: ref }, true);
+  void sessionsPanel.openSession(id, source);
 }
 
 // Descending from a workspace cell scopes the sessions list to it.
-function openCell(scope: CellScope) {
-  sessionsPanel.setScope(scope);
-  show("sessions");
+function openCell(cell: CellScope) {
+  go("sessions", { cell }, true);
 }
 
 const dwellPanel = createDwell(openSession);
-const workspacePanel = createWorkspaceGraph(openSession);
+const workspacePanel = createWorkspaceGraph(openSession, scope);
 const matrixPanel = createWorkspace(() => feedState.events(), openCell);
 const lanesPanel = createLanes(() => feedState.events(), openSession);
 
@@ -133,6 +149,15 @@ const eventCount = el("span", { class: "event-count dim" }, "");
 let active: PanelName = "live";
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
+/** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
+function go(name: PanelName, patch?: ScopePatch, replace = false) {
+  if (patch) {
+    if (replace) scope.replaceContext(patch);
+    else scope.narrow(patch);
+  }
+  show(name);
+}
+
 function show(name: PanelName) {
   if (active === "score" && name !== "score") scorePanel.deactivate();
   if (active === "court" && name !== "court") courtPanel.refresh();
@@ -158,8 +183,32 @@ function show(name: PanelName) {
     renderDetail(detailPane, null, () => {});
     void airspacePanel.activate();
   } else if (name === "strata") void panels.strata.activate();
-  else panels[name].refresh();
+  else {
+    panels[name].refresh();
+    if (name === "score") scorePanel.activate();
+  }
 }
+
+const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "score", "loops", "workspace"]);
+document.addEventListener(
+  "keydown",
+  createEscapeHandler({
+    store: scope,
+    activePanel: () => active,
+    scopePanels: SCOPE_PANELS,
+    afterAscend: (alt, from) => {
+      if ((from === "score" || from === "loops") && alt !== "session") show("sessions");
+      else if (from === "sessions") void sessionsPanel.refresh();
+    },
+  }),
+);
+
+// A row click is a context-narrowing action: it records the session in scope.
+sessionsPanel.root.addEventListener("click", (e) => {
+  const item = (e.target as Element | null)?.closest?.<HTMLElement>(".session-item");
+  const id = item?.dataset.id;
+  if (id) selectSession(scope, refOf(id));
+});
 
 const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT", el("br"), "FIREHOSE"));
 for (const name of Object.keys(panels) as PanelName[]) {
@@ -169,7 +218,8 @@ for (const name of Object.keys(panels) as PanelName[]) {
   nav.append(btn);
 }
 
-const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, eventCount);
+const crumb = createBreadcrumb(scope);
+const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount);
 app.append(compatBanner, attentionPanel.strip, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
 
 // --- live data -------------------------------------------------------------

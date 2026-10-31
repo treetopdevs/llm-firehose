@@ -12,6 +12,7 @@ vi.mock("../../api", () => ({
 
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { SIGNATURES_TIMEOUT_MS, createScore } from "./index";
+import { createScope } from "../../scope";
 import { BUCKET_PX, buildScore, coalesce, timelineProjection } from "./model";
 import fixture from "./fixture.session.json";
 import errsigFixture from "./fixture.errsig.json";
@@ -946,5 +947,123 @@ describe("session score timeline view", () => {
     await flush();
     expect(calls).toHaveLength(0);
     expect(capturedEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("score scope integration", () => {
+  const defer = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+  const win = (st: ReturnType<typeof createScope>) => st.get().window;
+
+  test("a successful open publishes the full bounds; zoom and fit publish the drawn view", async () => {
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "claude-code" } });
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    await panel.open(SID, "claude-code");
+    const all = buildScore(session);
+    expect(win(store)).toEqual({ from: all.start, to: all.end });
+    button(panel.root, "zoom in").click();
+    const w = win(store) as { from: number; to: number };
+    expect(w.to - w.from).toBeLessThan(all.end - all.start);
+    button(panel.root, "fit").click();
+    expect(win(store)).toEqual({ from: all.start, to: all.end });
+  });
+
+  test("F2: different source in flight is not deduped, the first result is discarded, only the second publishes", async () => {
+    const a = defer<FirehoseEvent[]>(), b = defer<FirehoseEvent[]>();
+    sessionEvents.mockReset();
+    sessionEvents.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "opencode" } });
+    const panel = createScore(() => {}, store);
+    const p1 = panel.open(SID, "codex");
+    const p2 = panel.open(SID, "opencode");
+    expect(sessionEvents).toHaveBeenCalledTimes(2);
+    a.resolve(session); await p1;
+    expect(panel.loadedSession()).toBeNull();
+    expect(win(store)).toBe("live");
+    b.resolve(session.map((e) => ({ ...e, source: "opencode" }))); await p2;
+    expect(panel.loadedSession()).toEqual({ id: SID, source: "opencode" });
+    expect(win(store)).not.toBe("live");
+  });
+
+  test("undefined source and explicit source are different keys; the same key in flight dedups; retry after failure refetches", async () => {
+    const a = defer<FirehoseEvent[]>();
+    sessionEvents.mockReset();
+    sessionEvents.mockReturnValueOnce(a.promise).mockResolvedValue(session);
+    const panel = createScore(() => {}, createScope());
+    const p1 = panel.open(SID);
+    const p1b = panel.open(SID);
+    expect(sessionEvents).toHaveBeenCalledTimes(1);
+    void panel.open(SID, "codex");
+    expect(sessionEvents).toHaveBeenCalledTimes(2);
+    a.resolve(session); await Promise.all([p1, p1b]);
+
+    sessionEvents.mockReset();
+    sessionEvents.mockRejectedValueOnce(new Error("boom")).mockResolvedValue(session);
+    const store = createScope();
+    const panel2 = createScore(() => {}, store);
+    store.narrow({ session: { id: SID } });
+    await panel2.open(SID);
+    expect(panel2.loadedSession()).toBeNull();
+    expect(store.get().window).toBe("live");
+    await panel2.open(SID);
+    expect(sessionEvents).toHaveBeenCalledTimes(2);
+    expect(panel2.loadedSession()).toEqual({ id: SID });
+  });
+
+  test("no publish when scope.session differs by (id, source) or is unset; late open after the scope moved publishes nothing", async () => {
+    const store = createScope();
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    expect(panel.loadedSession()).toBeNull();
+    await panel.open(SID, "claude-code");
+    expect(store.get().window).toBe("live"); // scope.session unset
+    store.narrow({ session: { id: SID } }); // differs by source
+    button(panel.root, "zoom in").click();
+    expect(store.get().window).toBe("live");
+
+    const late = defer<FirehoseEvent[]>();
+    sessionEvents.mockReset();
+    sessionEvents.mockReturnValueOnce(late.promise);
+    const p = panel.open(SID, "claude-code");
+    store.narrow({ session: { id: "other" } });
+    late.resolve(session); await p;
+    expect(store.get().window).toBe("live");
+  });
+
+  test("activate opens scope.session when it differs, no-ops when equal, keeps the cache when unset", async () => {
+    const store = createScope();
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    panel.activate();
+    expect(sessionEvents).not.toHaveBeenCalled();
+    await panel.open("A", "codex");
+    expect(sessionEvents).toHaveBeenCalledTimes(1);
+    panel.activate(); // scope.session unset: keep the cached chart
+    expect(sessionEvents).toHaveBeenCalledTimes(1);
+    expect(panel.loadedSession()).toEqual({ id: "A", source: "codex" });
+    store.narrow({ session: { id: "A", source: "codex" } });
+    panel.activate(); // explicit reopen of the loaded session refetches history
+    expect(sessionEvents).toHaveBeenCalledTimes(2);
+    panel.activate(); // a request already in flight is joined, not duplicated
+    expect(sessionEvents).toHaveBeenCalledTimes(2);
+    await panel.open("A", "codex");
+    store.narrow({ session: { id: "B" } }); // loops chose B
+    panel.activate();
+    expect(sessionEvents).toHaveBeenCalledTimes(3);
+    expect(sessionEvents).toHaveBeenLastCalledWith("B", "timeline");
+    await panel.open("B"); // joins the in-flight load activate() started
+    expect(panel.loadedSession()).toEqual({ id: "B" });
+    expect(store.get().session).toEqual({ id: "B" });
+  });
+
+  test("Escape is not consumed by the score", async () => {
+    const panel = createScore(() => {}, createScope());
+    document.body.append(panel.root);
+    await panel.open(SID);
+    const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    panel.root.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
   });
 });

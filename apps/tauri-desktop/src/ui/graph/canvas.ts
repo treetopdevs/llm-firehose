@@ -5,6 +5,7 @@
 // svg, no per-node handlers.
 
 import { el } from "../../dom";
+import { claimEscape, isEscapeEligible } from "../../escape";
 import {
   fitBounds,
   layoutWorkspaceGraph,
@@ -85,7 +86,7 @@ export interface CanvasHandlers {
   selectWorkspace(id: string): void;
   selectRevision(key: string): void;
   toggleCluster(revisionKey: string): void;
-  clearSelection(): void;
+  clearSelection(): boolean;
   expandHistory(): void;
 }
 
@@ -1127,7 +1128,10 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       const ev = e as KeyboardEvent;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
       if (ev.key === "Escape") {
-        handlers.clearSelection();
+        if (isEscapeEligible(ev) && handlers.clearSelection()) {
+          claimEscape(ev);
+          ev.preventDefault();
+        }
         return;
       }
       const key = keyOf(ev.target);

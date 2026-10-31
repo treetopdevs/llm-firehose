@@ -11,6 +11,8 @@ import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatClockMs, formatDuration } from "../../format";
+import { createScope, sameSession } from "../../scope";
+import type { ScopeStore, SessionRef } from "../../scope";
 import type { Siblings } from "../detail";
 import {
   SPEEDS,
@@ -45,6 +47,10 @@ export type ScorePanel = {
   tick(elapsedMs: number): void;
   playhead(): number;
   deactivate(): void;
+  /** The (id, source) whose events are drawn; null before any successful load. */
+  loadedSession(): SessionRef | null;
+  /** Called on every show: opens scope.session when it differs from what is loaded. */
+  activate(): void;
 };
 
 /** How long the optional GET /errors fetch may take before it is aborted; the score then renders without daemon signatures. */
@@ -91,7 +97,7 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
  * `onSelect` renders the detail pane; `dismiss` is the score's half of that
  * pane's close button, so a fetch still in flight never reopens it.
  */
-export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void): ScorePanel {
+export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void, store: ScopeStore = createScope()): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
   const bar = el("div", { class: "score-bar" });
@@ -131,6 +137,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let playing = false;
   let speed: number = SPEEDS[0];
   let version = 0;
+  let loadedKey: SessionRef | null = null;
+  let inflight: { id: string; source: string | undefined; promise: Promise<void> } | null = null;
   /** Drawn tick per track, kind, and pixel column; the current event's node is found by its column. */
   let tickNodes = new Map<string, SVGElement>();
   /** Lane width the chart was last drawn at; columns are computed against it, not the live width. */
@@ -452,6 +460,14 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   function setView(next: View) {
     view = clampView(next, bounds());
     draw();
+    publishWindow();
+  }
+
+  /** The drawn view becomes the shared window, only for the session the scope names. Output only: never subscribes. */
+  function publishWindow() {
+    if (!loadedKey || !sameSession(loadedKey, store.get().session)) return;
+    if (!Number.isFinite(view.from) || !Number.isFinite(view.to) || view.from > view.to) return;
+    store.narrow({ window: { from: view.from, to: view.to } });
   }
 
   // --- drawing --------------------------------------------------------------------
@@ -652,9 +668,18 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   // --- data -----------------------------------------------------------------------
 
-  async function open(id: string, source?: string) {
+  function open(id: string, source?: string): Promise<void> {
+    if (inflight && inflight.id === id && inflight.source === source) return inflight.promise;
+    const entry: { id: string; source: string | undefined; promise: Promise<void> } = { id, source, promise: undefined as unknown as Promise<void> };
+    entry.promise = load(id, source).finally(() => { if (inflight === entry) inflight = null; });
+    inflight = entry;
+    return entry.promise;
+  }
+
+  async function load(id: string, source?: string) {
     sound.disable();
     const v = ++version;
+    loadedKey = null;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.
     cancelDetail();
@@ -705,12 +730,14 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       byId = new Map(evs.map((e) => [e.id, e]));
       score = buildScore(evs, memberKeys);
       ready = true;
+      loadedKey = source === undefined ? { id } : { id, source };
       view = bounds();
       currentId = undefined;
       kinSig = undefined;
       at = score.start;
       drawHead();
       draw();
+      publishWindow();
       // A load that lands after the user left the Score, or closed the pane,
       // draws but leaves the shared detail pane alone.
       const under = eventAt(score, at);
@@ -738,5 +765,11 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     playing = false; playBtn.setAttribute("aria-pressed", "false"); playBtn.textContent = "▶";
     sound.disable(); cancelDetail();
   }
-  return { root, refresh, open, tick, playhead: () => at, deactivate };
+  function activate() {
+    const want = store.get().session;
+    if (!want) return;
+    // An explicit reopen refetches (history may have grown); open() dedups a request already in flight.
+    void open(want.id, want.source);
+  }
+  return { root, refresh, open, tick, playhead: () => at, deactivate, loadedSession: () => loadedKey, activate };
 }

@@ -3,6 +3,7 @@
 // updated in place, so typing in search is never interrupted by a refresh.
 
 import { clear, el } from "../../dom";
+import { claimEscape, isEscapeClaimed } from "../../escape";
 import { stateDescription, type AgentState } from "./names";
 
 const svgNS = "http://www.w3.org/2000/svg";
@@ -189,6 +190,9 @@ export function createToolbar(h: ToolbarHandlers) {
         choose(r);
       }
     } else if (e.key === "Escape") {
+      if (e.isComposing || isEscapeClaimed(e)) return;
+      claimEscape(e);
+      e.preventDefault();
       e.stopPropagation();
       if (input.value) {
         input.value = "";
@@ -256,8 +260,11 @@ export function createToolbar(h: ToolbarHandlers) {
     document.removeEventListener("pointerdown", closeOnOutside, true);
   }
   moreBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
-  menu.onkeydown = (e) => {
-    if (e.key === "Escape") {
+  more.onkeydown = (e) => {
+    if (e.key === "Escape" && !menu.hidden) {
+      if (e.isComposing || isEscapeClaimed(e)) return;
+      claimEscape(e);
+      e.preventDefault();
       closeMenu();
       moreBtn.focus();
     }
