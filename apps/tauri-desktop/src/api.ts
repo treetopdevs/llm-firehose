@@ -144,8 +144,9 @@ export class ApiError extends Error {
     readonly path: string,
     readonly status: number,
     readonly body: string,
+    method = "POST",
   ) {
-    super(`POST ${path}: ${status} ${body}`);
+    super(`${method} ${path}: ${status} ${body}`);
     this.name = "ApiError";
   }
 }
@@ -262,3 +263,55 @@ export interface AttentionSnapshot {
 
 export const attention = (signal?:AbortSignal) => getJSON<AttentionSnapshot>("/attention",signal);
 export const capturedEvent = (id: string, signal?: AbortSignal) => getJSON<FirehoseEvent>(`/attention/event?id=${encodeURIComponent(id)}`, signal);
+
+export interface WorktreeSessionRef { source: string; session_id: string; first_time: string; last_time: string; events: number }
+export interface WorktreeMark {
+  kind: "worktree_add" | "worktree_remove" | "commit" | "push" | "pr_create" | "pr_merge";
+  session_id?: string;
+  time: string;
+  event_id: string;
+}
+export type WorktreeState = "open" | "landed" | "never_diverged" | "gone" | "unknown";
+export type WorktreeOutcome = "landed" | "abandoned" | "never_diverged" | "unknown";
+export interface WorktreeLifetimeView {
+  repo_id: string;
+  worktree_id: string;
+  label?: string;
+  first_time: string;
+  last_time: string;
+  sessions: WorktreeSessionRef[];
+  sessions_total: number;
+  paths: string[];
+  paths_total: number;
+  paths_saturated?: boolean;
+  signal_events: number;
+  meta_events: number;
+  marks: WorktreeMark[];
+  marks_total: number;
+  marks_available: boolean;
+  state: WorktreeState;
+  outcome?: WorktreeOutcome;
+  state_reason?: string;
+  default_target_ref?: string;
+  head?: string;
+  ahead?: number;
+  behind?: number;
+  dirty?: boolean;
+  last_observed?: string;
+}
+export interface WorktreeCommit {
+  commit_id: string;
+  time?: string;
+  subject?: string;
+  session_id?: string;
+  attribution: "time_join";
+}
+export interface WorktreeDetail extends WorktreeLifetimeView { commits: WorktreeCommit[] }
+
+export const worktrees = (signal?: AbortSignal) => getJSON<WorktreeLifetimeView[]>("/worktrees", signal);
+export async function worktree(id: string, signal?: AbortSignal): Promise<WorktreeDetail> {
+  const path = `/worktrees/${encodeURIComponent(id)}`;
+  const resp = await fetch(`${DAEMON_URL}${path}`, { signal });
+  if (!resp.ok) throw new ApiError(path, resp.status, await resp.text(), "GET");
+  return resp.json() as Promise<WorktreeDetail>;
+}

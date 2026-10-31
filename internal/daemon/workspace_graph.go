@@ -152,6 +152,7 @@ func (s *Server) reconcileGraphRoots(ctx context.Context) {
 		_, _ = s.graph.service.Snapshot(scanCtx, repo.ID, "", true)
 		cancel()
 	}
+	s.observeWorktrees(ctx)
 }
 func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")

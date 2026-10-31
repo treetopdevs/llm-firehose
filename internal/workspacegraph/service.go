@@ -296,6 +296,19 @@ func runEnv(ctx context.Context, root, bin string, env []string, args ...string)
 	return out.String(), nil
 }
 
+// CachedSnapshot returns the retained snapshot of a repository without ever
+// scanning: ok is false when none is cached (never scanned, or cleared by a
+// privacy change).
+func (s *Service) CachedSnapshot(id string) (Snapshot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.find(id)
+	if r == nil || r.snapshot == nil {
+		return Snapshot{}, false
+	}
+	return clone(*r.snapshot), true
+}
+
 // Root exposes raw scan configuration only to the host, never to a response.
 func (s *Service) Root(id string) (string, string, error) {
 	s.mu.Lock()

@@ -165,6 +165,8 @@ The daemon (`firehose daemon`) serves a localhost-only HTTP API, default
 | `GET /traces/{id}` | all events sharing one `trace_id`, oldest first |
 | `GET /artifacts/files` | touched-file summaries `[{path, events, sources, first_time, last_time}]`, most recently touched first |
 | `GET /artifacts/file-sessions` | exact recorded workspace/path/source/session summaries; see [GET /artifacts/file-sessions (additive)](#get-artifactsfile-sessions-additive) below |
+| `GET /worktrees` | derived worktree lifetimes joined with the last reconcile-loop observation; see [GET /worktrees (additive)](#get-worktrees-additive) below |
+| `GET /worktrees/{id}` | one worktree (URL-escaped id, any alias) with a `commits` array; unknown id → 404 `worktree not found`; see [GET /worktrees (additive)](#get-worktrees-additive) |
 | `GET /doctor` | adapter wiring checks `[{name, ok, detail}]`; adapter entries add `transport`, `fidelity`, `supported_events`, and `filtered_events` |
 | `POST /install/{adapter}` | wire an adapter (claude-code \| claude-otel \| codex \| opencode \| antigravity); `{ok, detail}`; `claude-otel` also accepts an optional `{"replace": true}` or `{"forward": true}` body (mutually exclusive; 409 names the conflicting endpoints) |
 | `POST /export` | NDJSON export stream; `X-Firehose-Export-Version` header |
@@ -507,6 +509,104 @@ scope/path/source/session tuples; the full response and snapshot derivation are
 unbounded by history size. Client paging uses one loaded snapshot for stability.
 The route uses the standard local API origin guard. Exact receipt inspection uses
 GET /attention/event?id= and can be unavailable for missing IDs or records.
+### GET /worktrees (additive)
+
+`GET /worktrees` returns 200 with `Cache-Control: no-store` and a JSON array,
+never null, ordered by `last_time` descending, then `repo_id`, then
+`worktree_id`. `GET /worktrees/{id}` returns the same object plus `commits`.
+Other methods are 405 and a disallowed Origin is 403 (the standard local API
+origin guard). Both handlers are read-only: they combine the Capture Engine
+projection with the last observation made by the reconcile loop and run no git,
+except the single bounded compare of the detail route (see Commits).
+
+Fields (a key marked optional is absent when empty): `repo_id`, `worktree_id`
+(both in the current privacy mode's form: the raw git common dir and worktree id
+in `full`, sha256 hex otherwise; the id is the lookup key and the detail route
+also accepts any alias, raw or digest), `label` (optional, readable worktree root
+path when a registered workspace is known), `first_time`, `last_time`,
+`sessions` `[{source, session_id, first_time, last_time, events}]` (latest 200 by
+`last_time`, ascending by `first_time`), `sessions_total`, `paths` (lexically
+smallest 500, ascending), `paths_total`, `paths_saturated` (optional, true when more than 20,000 distinct paths were seen: `paths_total` is then a lower bound and the list still holds the smallest 500), `signal_events`, `meta_events`, `marks`
+`[{kind, session_id?, time, event_id}]` (latest 200, ascending), `marks_total`,
+`marks_available`, `state`, `outcome` (optional), `state_reason` (optional),
+`default_target_ref` (optional, `main` or `master`), `head` (optional full
+commit id; last observed for gone worktrees), `ahead`, `behind`, `dirty`
+(optional, absent when unknown), `last_observed` (optional). Arrays are never
+null.
+
+Signal versus meta (D95): `signal_events` counts the allowlist `file`, `tool`,
+`shell`, `prompt`, `session`, `error`, `permission`. `meta_events` is counted
+separately and never affects `first_time`, `last_time`, sessions or paths;
+`message` events are neither, so message-only history makes no row. `paths`
+include files named by Codex `apply_patch` patch headers and result summaries.
+Caps never hide size: each capped list has a `_total`. When one row merges
+lifetimes recorded under several privacy modes and a contributing list was
+capped, `sessions_total`, `paths_total` and `marks_total` can count an identity
+once per mode: they are upper bounds, never below the retained distinct count.
+
+Marks come from `full` mode only: exact `git worktree add|remove`, `git commit`,
+`git push`, and `gh pr create|merge` shell events, with kinds `worktree_add`,
+`worktree_remove`, `commit`, `push`, `pr_create`, `pr_merge`. A mark attaches to
+the worktree that issued the command, not to the one it names. Commands that
+carry `--dry-run`, `--help`, `-h` or (for push) `-n`, and commands directly
+followed by `||`, produce no mark; a mark records that the command ran, not that
+it succeeded. Commands whose execution static analysis cannot establish (an
+`if`/`for`/`while` body, a `case` arm, a function body, or a command joined by
+`&&`/`||` to an earlier one in a list that is not the last) produce no mark.
+The row is keyed by the worktree path, so `marks`, `sessions` and `paths` span
+every lifetime of that path; classification uses only the current lifetime. `marks_available` is true when the current privacy mode is `full`
+or the row already carries marks; it reflects the current mode, so in `full` mode
+over history captured earlier in `balanced` it is true although no marks exist
+for that period. Otherwise marks are not evidence of absence.
+
+`state` is one of `open`, `landed`, `never_diverged`, `gone`, `unknown`. For
+`gone`, `outcome` is `landed`, `abandoned`, `never_diverged` or `unknown`.
+`state_reason` (optional) is one of `repo_unregistered`, `graph_unavailable`,
+`graph_stale`, `no_default_target`, `unborn_head`, `compare_failed`,
+`never_observed`, `primary_worktree`, `worktree_unavailable`, `pr_merge_mark`.
+`worktree_unavailable`: git still lists the checkout but its state cannot be read
+(permissions, corrupt index); it is never settled as gone until the path is
+confirmed missing. `ahead`, `behind` are present only after a successful compare
+and absent for the primary checkout, unborn heads and `no_default_target` /
+`compare_failed` rows; `dirty` is absent while unavailable. The primary checkout is
+`unknown`/`primary_worktree`.
+
+Limitations, stated plainly:
+
+- `landed` means reachable from the default branch. A squash or rebase merge
+  leaves different commit ids and shows as `open`. Once such a worktree is gone,
+  it is `landed` with reason `pr_merge_mark` only when the worktree's current
+  lifetime ran a verified self-merge (full mode): a plain `gh pr merge` with no
+  PR selector and no `--auto` as the last step of a command that exited 0.
+  Other `gh pr merge` commands (a PR number, URL or branch, `--auto`) never
+  prove landing; otherwise it reads `abandoned`.
+- `never_diverged` means no divergence was observed by the daemon and no commit
+  mark exists, so it depends on the daemon having run.
+- A reset to main after divergence reads as `landed`.
+- A head that was removed by gc or whose branch was deleted cannot be compared:
+  the row is `gone` with outcome `unknown` and reason `compare_failed`.
+- Historical rows from different privacy modes that resolve to the same
+  registered workspace are merged into one row; rows that cannot be resolved stay
+  separate and mode-segmented (ids in the form they were recorded).
+
+Commits (detail route only): `commits` is always an array, never null, and is
+non-empty only when `state` is `open`. Items are
+`{commit_id, time?, subject?, session_id?, attribution}` for the commits ahead of
+the default target, newest first, capped at 200, computed for that one worktree
+under a 5 second bound. `session_id` is chosen by session time window plus a 10
+minute trailing grace and is absent when no window covers the commit.
+`attribution` is always `time_join`: a timing coincidence, not causality or
+proof that the session made the commit. List items never contain `commits`.
+
+Host-private state: the reconcile loop is the sole writer of
+`~/.agentfirehose/worktree-states.json` (directory 0700, file 0600, atomic
+writes, written in every privacy mode, raw absolute paths, at most 2000 records).
+It is what lets a vanished worktree be classified as landed, abandoned or never
+diverged. It sits beside `graph-roots.json` under the same rules: never part of
+the spool, the live stream, an export or any API response. This route adds
+optional fields and routes only; there is no `schema_version` bump and the event
+envelope, spool, export and privacy semantics are unchanged.
+
 ### Cancellation of session and trace reads
 
 Session and trace HTTP history reads use the request context during spool scans,

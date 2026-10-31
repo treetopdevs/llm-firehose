@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"agentfirehose/internal/capture/internal/projection"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -280,7 +281,7 @@ func TestApplyPatchSummaryPaths(t *testing.T) {
 		{"json timeout", `{"output":"command timed out after 10005 milliseconds\n","metadata":{"exit_code":124}}`, nil},
 		{"json without output", `{"metadata":{"exit_code":0}}`, nil},
 	} {
-		if got := applyPatchSummaryPaths(tc.output); !reflect.DeepEqual(got, tc.want) {
+		if got := projection.ApplyPatchSummaryPaths(tc.output); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -299,7 +300,7 @@ func TestApplyPatchPaths(t *testing.T) {
 		{"diff lines are not headers", "*** Begin Patch\n*** Update File: a.go\n+*** Add File: b.go\n- *** Update File: c.go\n*** End Patch\n", []string{"a.go"}},
 		{"empty header", "*** Begin Patch\n*** Add File: \n*** End Patch\n", nil},
 	} {
-		if got := applyPatchPaths(tc.text); !reflect.DeepEqual(got, tc.want) {
+		if got := projection.ApplyPatchPaths(tc.text); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
 	}

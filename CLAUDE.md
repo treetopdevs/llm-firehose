@@ -72,12 +72,14 @@ sources ──adapters──▶ event.Event ──capture.Admit──▶ spool (
 - **`internal/capture/internal/spool`** — sealed append-only NDJSON and reconciliation.
   Daily `O_APPEND` records remain the canonical source of truth.
 - **`internal/capture/internal/projection`** — sealed disposable session, trace, file, and
-  attention state rebuilt from the spool.
+  attention state rebuilt from the spool. Also worktree lifetime per (repo, worktree): times,
+  sessions, paths, signal vs meta counts and `full`-mode lifecycle marks. The daemon graph host
+  joins it with `workspacegraph` state; the reconcile loop alone writes `worktree-states.json`.
 - **`internal/store`** — ring buffer, filters, and burst coalescing (`×N` rows) for the TUI.
 - **`internal/daemon`** — the Capture Engine's local HTTP adapter (`net/http`
   `mux.HandleFunc`, Go 1.22+ routing). Routes: `/health`, `/config`, `/events`,
   `/events/stream` (SSE), `/emit`, `/sessions[/{id}]`, `/traces/{id}`, `/artifacts/files`, `/artifacts/file-sessions`,
-  `/doctor`, `/install/{adapter}`, `/export`.
+  `GET /worktrees` and `GET /worktrees/{id}` (route family `/worktrees[/{id}]`), `/doctor`, `/install/{adapter}`, `/export`.
 - **`internal/client`** — HTTP client the TUI/desktop use to consume the daemon.
 - **`internal/tui`** — Bubble Tea model (`tui.go`) + rendering (`view.go`).
 - **`internal/cli`** — testable subcommand implementations (config, doctor, install, status,
