@@ -68,7 +68,12 @@ func wtDetail(t *testing.T, s *Server, id string) map[string]any {
 
 func fixtureEvents(t *testing.T) []event.Event {
 	t.Helper()
-	f, err := os.Open("../capture/testdata/worktrees_full.ndjson")
+	return fixtureEventsFrom(t, "../capture/testdata/worktrees_full.ndjson")
+}
+
+func fixtureEventsFrom(t *testing.T, path string) []event.Event {
+	t.Helper()
+	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,12 +546,135 @@ func TestDocsListWorktreeRoutes(t *testing.T) {
 	}
 	for _, w := range []string{"worktree-states.json", "time_join", "marks_available", "paths_total", "sessions_total",
 		"primary_worktree", "compare_failed", "open", "landed", "never_diverged", "gone", "unknown",
-		"squash", "mode-segmented", "gc"} {
+		"squash", "mode-segmented", "gc", "shell tool: ", "D101"} {
 		if !strings.Contains(contracts, w) {
 			t.Errorf("contracts.md missing %q", w)
 		}
 	}
 	if !strings.Contains(claude, "/worktrees[/{id}]") {
 		t.Error("CLAUDE.md missing /worktrees[/{id}]")
+	}
+}
+
+// summaryMarkRow admits one session in a worktree plus one PostToolUse:Bash
+// event, observes the real git fork, then optionally removes the worktree, and
+// returns its /worktrees row. mode "balanced" carries the lifecycle verb only
+// in the summary; "full" carries it in Raw.
+func summaryMarkRow(t *testing.T, mode, name string, remove bool, summary, raw string) map[string]any {
+	t.Helper()
+	f := newWorktreeGitFixture(t)
+	cfg := fullConfig(t)
+	cfg.PrivacyMode = mode
+	engine := testEngine(t, cfg)
+	cwd := f.Wt[name]
+	for i, at := range []string{"2026-10-31T11:00:00Z", "2026-10-31T11:20:00Z"} {
+		if _, err := engine.Admit(t.Context(), event.Event{
+			ID: "w-" + string(rune('a'+i)), Time: mustTime(at), Source: "claude-code", SessionID: "sess-w",
+			Category: event.CategoryTool, Name: "PostToolUse:Read", Summary: "read", CWD: cwd,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := engine.Admit(t.Context(), event.Event{
+		ID: "w-mark", Time: mustTime("2026-10-31T11:10:00Z"), Source: "claude-code", SessionID: "sess-w",
+		Category: event.CategoryShell, Name: "PostToolUse:Bash", Summary: summary, CWD: cwd, Raw: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(engine, cfg, t.TempDir(), "test")
+	registerFixture(t, s, f.Main)
+	refreshObserve(t, s)
+	if remove {
+		f.git(f.Main, "", "worktree", "remove", "--force", cwd)
+		refreshObserve(t, s)
+	}
+	rows := wtList(t, s)
+	if len(rows) != 1 {
+		t.Fatalf("want one row, got %v", rows)
+	}
+	return rows[0]
+}
+
+func TestSummaryMarksDoNotFeedClassifier(t *testing.T) {
+	// Balanced: a summary commit mark is display-only, so a gone worktree that
+	// never diverged stays never_diverged.
+	row := summaryMarkRow(t, "balanced", "feat-idle", true, "ran shell tool: git commit", "")
+	if row["marks_total"] != float64(1) || row["marks_available"] != true || row["state"] != "gone" || row["outcome"] != "never_diverged" {
+		t.Fatalf("balanced summary mark: %v", row)
+	}
+	// Same inputs with a full-mode raw commit are unchanged: landed.
+	row = summaryMarkRow(t, "full", "feat-idle", true, "ran shell tool",
+		`{"tool_name":"Bash","tool_input":{"command":"git commit -m wip"}}`)
+	if row["marks_total"] != float64(1) || row["state"] != "gone" || row["outcome"] != "landed" {
+		t.Fatalf("full raw mark: %v", row)
+	}
+	// An open-by-ahead worktree stays open; a never-ahead one with only a
+	// summary commit mark is not promoted to landed.
+	row = summaryMarkRow(t, "balanced", "feat-idle", false, "ran shell tool: git commit", "")
+	if row["state"] != "never_diverged" {
+		t.Fatalf("open worktree with summary mark only: %v", row)
+	}
+	row = summaryMarkRow(t, "full", "feat-idle", false, "ran shell tool",
+		`{"tool_name":"Bash","tool_input":{"command":"git commit -m wip"}}`)
+	if row["state"] != "landed" {
+		t.Fatalf("full raw mark on idle worktree: %v", row)
+	}
+}
+
+func TestMarksAvailableUnchangedSemantics(t *testing.T) {
+	row := summaryMarkRow(t, "balanced", "feat-idle", false, "ran shell tool", "")
+	if row["marks_total"] != float64(0) || row["marks_available"] != false {
+		t.Fatalf("pre-change balanced history: %v", row)
+	}
+	row = summaryMarkRow(t, "balanced", "feat-idle", false, "ran shell tool: git commit", "")
+	if row["marks_total"] != float64(1) || row["marks_available"] != true {
+		t.Fatalf("suffixed balanced history: %v", row)
+	}
+	row = summaryMarkRow(t, "full", "feat-idle", false, "ran shell tool", "")
+	if row["marks_total"] != float64(0) || row["marks_available"] != true {
+		t.Fatalf("full mode: %v", row)
+	}
+}
+
+// TestWorktreesRouteBalancedFixtureMarks serves the production balanced
+// redaction of the fixture: the lifecycle verbs survive in the summary, so the
+// marks (display-only) match full mode, with the same response key set.
+func TestWorktreesRouteBalancedFixtureMarks(t *testing.T) {
+	cfg := fullConfig(t)
+	cfg.PrivacyMode = "balanced"
+	w := capturehistory.NewAdmitter(cfg.SpoolDir)
+	for _, ev := range fixtureEventsFrom(t, "../capture/testdata/worktrees_balanced.ndjson") {
+		if _, err := w.Append(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := New(testEngine(t, cfg), cfg, t.TempDir(), "test")
+	rows := wtList(t, s)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d", len(rows))
+	}
+	totals := []float64{}
+	keys := []string{"repo_id", "worktree_id", "first_time", "last_time", "sessions", "sessions_total", "paths", "paths_total", "signal_events", "meta_events", "marks", "marks_total", "marks_available", "state", "state_reason"}
+	sort.Strings(keys)
+	for _, r := range rows {
+		totals = append(totals, r["marks_total"].(float64))
+		if len(r["marks"].([]any)) != int(r["marks_total"].(float64)) {
+			t.Fatalf("marks length: %v", r)
+		}
+		if r["state"] != "unknown" || r["state_reason"] != "repo_unregistered" || r["marks_available"] != true {
+			t.Fatalf("state: %v", r)
+		}
+		got := make([]string, 0, len(r))
+		for k := range r {
+			got = append(got, k)
+		}
+		sort.Strings(got)
+		if !reflect.DeepEqual(got, keys) {
+			t.Fatalf("key set %v want %v", got, keys)
+		}
+	}
+	sort.Float64s(totals)
+	if !reflect.DeepEqual(totals, []float64{3, 3, 4}) {
+		t.Fatalf("marks_total = %v, want 3/4/3", totals)
 	}
 }

@@ -66,6 +66,14 @@ daemonless hosts use the same Admission path.
 | `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept | replaced with sha256 hex digests |
 | `full` | kept | kept verbatim | kept | kept (canonical absolute paths) |
 
+`summary` is not redacted in any mode, so `minimal` also persists the Claude
+Code lifecycle verb suffix (`ran shell tool: git commit`). Decision D101
+(2026-10-31, `docs/plans/2026-10-18-backlog-coordination.html`): keep this as
+is. The suffix is a fixed category label from a six-phrase allowlist, never a
+value, so it discloses nothing `minimal` is designed to digest. Blanking it
+would be a privacy-semantics change needing a `schema_version` bump and a dual
+reader.
+
 These modes govern **captured history**: the event spool, the live event stream
 and exports. They do not redact the local workspace-graph views or the
 host-private repository list, which are readable in every mode (see
@@ -544,15 +552,37 @@ lifetimes recorded under several privacy modes and a contributing list was
 capped, `sessions_total`, `paths_total` and `marks_total` can count an identity
 once per mode: they are upper bounds, never below the retained distinct count.
 
-Marks come from `full` mode only: exact `git worktree add|remove`, `git commit`,
-`git push`, and `gh pr create|merge` shell events, with kinds `worktree_add`,
-`worktree_remove`, `commit`, `push`, `pr_create`, `pr_merge`. A mark attaches to
-the worktree that issued the command, not to the one it names. Commands that
-carry `--dry-run`, `--help`, `-h` or (for push) `-n`, and commands directly
-followed by `||`, produce no mark; a mark records that the command ran, not that
-it succeeded. Commands whose execution static analysis cannot establish (an
-`if`/`for`/`while` body, a `case` arm, a function body, or a command joined by
-`&&`/`||` to an earlier one in a list that is not the last) produce no mark.
+Marks use the kinds `worktree_add`, `worktree_remove`, `commit`, `push`,
+`pr_create`, `pr_merge`, from `git worktree add|remove`, `git commit`,
+`git push` and `gh pr create|merge` shell commands. A mark attaches to the
+worktree that issued the command, not to the one it names. Commands that carry
+`--dry-run`, `--help`, `-h` or (for push) `-n`, and commands directly followed
+by `||`, produce no mark; a mark records that the command ran, not that it
+succeeded. Commands whose execution static analysis cannot establish (an
+`if`/`for`/`while` body, a `case` arm, a function body, a quoted `$( )` region,
+or a command joined by `&&`/`||` to an earlier one in a list that is not the
+last) produce no mark.
+
+- `full` mode: the exact command is in `raw`, with the full exclusions above.
+  It is the sole source of verified self-merge and of commit/merge evidence.
+- `balanced` and `minimal`: the Claude Code adapter appends allowlisted phrases
+  to the summary of a successful (`PostToolUse`) Bash/Shell event, for example
+  `ran shell tool: git commit, git push`. Phrases are in command order, deduped,
+  carry no arguments and follow the same exclusions. `interrupted`, failed and
+  `will run` summaries carry none (only a completed `ran` run does). When `raw` is absent the projection derives
+  display-only marks from `PostToolUse` summaries (`shell tool: ` grammar);
+  when `raw` is present it wins, so nothing is counted twice. Marks are command
+  observations by the issuing session, not proof of a commit in that worktree:
+  conditional successors, `git -C other` and commits that fail under `; true`
+  are best effort. Summary-derived marks never feed `LastCommitMark`,
+  `LastMergeMark` or `landed`/`never_diverged` classification; `pr_merge_mark`
+  landing proof stays full-only. Forged summaries from `ingest` claiming source
+  `claude-code` are accepted by design (local-first).
+- History captured before this change has no suffix and reports no marks
+  outside `full`. The change is additive to the summary text: no
+  `schema_version` bump. Rollback: suffixed history stays in the spool and an
+  older reader simply ignores the suffix.
+
 The row is keyed by the worktree path, so `marks`, `sessions` and `paths` span
 every lifetime of that path; classification uses only the current lifetime. `marks_available` is true when the current privacy mode is `full`
 or the row already carries marks; it reflects the current mode, so in `full` mode
@@ -576,7 +606,7 @@ Limitations, stated plainly:
 - `landed` means reachable from the default branch. A squash or rebase merge
   leaves different commit ids and shows as `open`. Once such a worktree is gone,
   it is `landed` with reason `pr_merge_mark` only when the worktree's current
-  lifetime ran a verified self-merge (full mode): a plain `gh pr merge` with no
+  lifetime ran a verified self-merge (full mode only; summary-derived marks never prove landing): a plain `gh pr merge` with no
   PR selector and no `--auto` as the last step of a command that exited 0.
   Other `gh pr merge` commands (a PR number, URL or branch, `--auto`) never
   prove landing; otherwise it reads `abandoned`.

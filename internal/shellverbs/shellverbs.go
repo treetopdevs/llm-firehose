@@ -1,4 +1,7 @@
-package projection
+// Package shellverbs recognises lifecycle verbs (git worktree add|remove, git
+// commit, git push, gh pr create|merge) in shell commands and in the summary
+// phrases the claude-code adapter derives from them. It is a stdlib-only leaf.
+package shellverbs
 
 import (
 	"encoding/json"
@@ -9,22 +12,90 @@ import (
 
 // Lifecycle mark kinds parsed out of Bash commands.
 const (
-	kindWorktreeAdd    = "worktree_add"
-	kindWorktreeRemove = "worktree_remove"
-	kindCommit         = "commit"
-	kindPush           = "push"
-	kindPRCreate       = "pr_create"
-	kindPRMerge        = "pr_merge"
+	KindWorktreeAdd    = "worktree_add"
+	KindWorktreeRemove = "worktree_remove"
+	KindCommit         = "commit"
+	KindPush           = "push"
+	KindPRCreate       = "pr_create"
+	KindPRMerge        = "pr_merge"
 )
 
-// lifecycleKinds returns the distinct lifecycle kinds a claude-code Bash hook
-// payload runs, in command order. See lifecycle.
-func lifecycleKinds(raw string) []string {
-	kinds, _ := lifecycle(raw)
+// Summary grammar of the claude-code adapter's Bash summary suffix:
+// SummaryPrefixRan followed by the Phrases of the kinds joined by SummarySep.
+const (
+	SummaryPrefixRan = "ran shell tool: "
+	SummarySep       = ", "
+	maxPhrases       = 6
+)
+
+var kindPhrases = []struct{ kind, phrase string }{
+	{KindWorktreeAdd, "git worktree add"},
+	{KindWorktreeRemove, "git worktree remove"},
+	{KindCommit, "git commit"},
+	{KindPush, "git push"},
+	{KindPRCreate, "gh pr create"},
+	{KindPRMerge, "gh pr merge"},
+}
+
+// Phrases renders kinds as fixed command phrases joined by SummarySep. Unknown
+// kinds are skipped, duplicates removed, and at most six are emitted.
+func Phrases(kinds []string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, k := range kinds {
+		for _, kp := range kindPhrases {
+			if kp.kind == k && !seen[k] {
+				seen[k] = true
+				out = append(out, kp.phrase)
+			}
+		}
+		if len(out) == maxPhrases {
+			break
+		}
+	}
+	return strings.Join(out, SummarySep)
+}
+
+// KindsFromSummary reads the kinds back out of a Bash summary of the form
+// SummaryPrefixRan + Phrases. Anything else, including any unknown phrase, is
+// rejected whole: nil. At most six phrases are read.
+func KindsFromSummary(summary string) []string {
+	rest, ok := strings.CutPrefix(summary, SummaryPrefixRan)
+	if !ok || rest == "" {
+		return nil
+	}
+	parts := strings.Split(rest, SummarySep)
+	if len(parts) > maxPhrases {
+		parts = parts[:maxPhrases]
+	}
+	var kinds []string
+	seen := map[string]bool{}
+	for _, p := range parts {
+		kind := ""
+		for _, kp := range kindPhrases {
+			if kp.phrase == p {
+				kind = kp.kind
+			}
+		}
+		if kind == "" {
+			return nil
+		}
+		if !seen[kind] {
+			seen[kind] = true
+			kinds = append(kinds, kind)
+		}
+	}
 	return kinds
 }
 
-// lifecycle returns the distinct lifecycle kinds a claude-code Bash hook
+// Kinds returns the distinct lifecycle kinds a claude-code Bash hook
+// payload runs, in command order. See Lifecycle.
+func Kinds(raw string) []string {
+	kinds, _ := Lifecycle(raw)
+	return kinds
+}
+
+// Lifecycle returns the distinct lifecycle kinds a claude-code Bash hook
 // payload ran, in command order, and whether it verifiably merged this
 // worktree's own pull request. It never panics and returns nil for anything it
 // cannot read. The raw payload can carry megabytes of tool_response, so it is
@@ -40,15 +111,28 @@ func lifecycleKinds(raw string) []string {
 // without a PR selector (so gh merges the PR of the current branch, i.e. of the
 // worktree that issued it) and without --auto, and the hook fired, which for
 // PostToolUse means the whole command exited 0.
-func lifecycle(raw string) (kinds []string, selfMerge bool) {
-	if !strings.Contains(raw, "git") && !strings.Contains(raw, "gh") {
+func Lifecycle(raw string) (kinds []string, selfMerge bool) {
+	// Prefilter on the raw text, tolerant of JSON escapes: a command encoded as
+	// g\u0069t only shows its verbs once decoded, so any backslash passes.
+	if !strings.Contains(raw, "git") && !strings.Contains(raw, "gh") && !strings.Contains(raw, `\`) {
 		return nil, false
 	}
 	tool, command, ok := hookToolCommand(raw)
 	if !ok || (tool != "Bash" && tool != "Shell") {
 		return nil, false
 	}
-	segs := shellSegments(command)
+	return CommandKinds(command)
+}
+
+// CommandKinds is Lifecycle for an already decoded shell command string.
+func CommandKinds(command string) (kinds []string, selfMerge bool) {
+	if !strings.Contains(command, "git") && !strings.Contains(command, "gh") {
+		return nil, false
+	}
+	segs, ok := shellSegments(command)
+	if !ok {
+		return nil, false // an unterminated substitution: nothing is established
+	}
 	finalList := -1
 	if len(segs) > 0 {
 		finalList = segs[len(segs)-1].list
@@ -70,7 +154,7 @@ func lifecycle(raw string) (kinds []string, selfMerge bool) {
 			seen[k] = true
 			kinds = append(kinds, k)
 		}
-		if k == kindPRMerge && i == len(segs)-1 && !seg.background && isSelfMerge(seg.words) {
+		if k == KindPRMerge && i == len(segs)-1 && !seg.background && isSelfMerge(seg.words) {
 			selfMerge = true
 		}
 	}
@@ -82,6 +166,24 @@ type flow struct {
 	funcPending bool // a function header was seen; its body comes next
 	funcDepth   int  // inside a function body's braces
 	inCase      bool // between `case` and `esac`
+	depth       int  // nesting of if/while/until/for/select ... fi/done
+	// condPhase: at depth 1 of an if/while/until, before its then/do, where the
+	// first condition list necessarily runs.
+	condPhase bool
+}
+
+// flowSkip are words that may precede a compound-command keyword on the same
+// segment (`then if x`).
+var flowSkip = map[string]bool{"then": true, "do": true, "else": true, "elif": true, "{": true, "!": true}
+
+// flowKeyword returns the first non-skipped word of a segment and its index.
+func flowKeyword(w []string) string {
+	for _, x := range w {
+		if !flowSkip[x] {
+			return x
+		}
+	}
+	return ""
 }
 
 // step reports whether a segment is outside every unestablished construct.
@@ -112,6 +214,39 @@ func (f *flow) step(seg shellSegment) bool {
 	}
 	if seg.fnDef {
 		f.funcPending = true
+		return false
+	}
+	kw := flowKeyword(w)
+	if f.depth > 0 {
+		if f.condPhase && f.depth == 1 {
+			switch {
+			case head == "then" || head == "do" || head == "else" || head == "elif":
+				f.condPhase = false
+			case slices.Contains([]string{"if", "while", "until", "for", "select", "fi", "done"}, kw):
+				f.condPhase = false
+			default:
+				return true // a command of the initial condition list
+			}
+		}
+		switch kw {
+		case "if", "while", "until", "for", "select":
+			f.depth++
+		case "fi", "done":
+			f.depth--
+			if f.depth == 0 {
+				f.condPhase = false
+			}
+		}
+		return false // a body or later condition of an open construct
+	}
+	switch kw {
+	case "if", "while", "until", "for", "select":
+		if !flowSkip[head] {
+			f.depth++ // the first condition runs; everything after is a body
+			f.condPhase = kw != "for" && kw != "select"
+			return true
+		}
+		f.depth++
 		return false
 	}
 	switch head {
@@ -255,8 +390,9 @@ func skipValue(dec *json.Decoder) bool {
 // unquoted parentheses and backticks. Single quotes, double quotes (without
 // parsing $(...) inside them), backslashes, comments and here-document bodies
 // are honored, so text that merely mentions git is not a command.
-func shellSegments(cmd string) []shellSegment {
+func shellSegments(cmd string) ([]shellSegment, bool) {
 	var (
+		bad     bool // an unterminated $( ) or backtick inside double quotes
 		segs    []shellSegment
 		words   []string
 		list    int  // index of the current ;-, newline- or &-delimited list
@@ -325,6 +461,25 @@ func shellSegments(cmd string) []shellSegment {
 			inWord = true
 			i++
 			for i < n && cmd[i] != '"' {
+				if (cmd[i] == '$' && i+1 < n && cmd[i+1] == '(') || cmd[i] == '`' {
+					start := i + 1
+					if cmd[i] == '$' {
+						start = i + 2
+					}
+					var j int
+					if cmd[i] == '$' {
+						j = skipSubst(cmd, start)
+					} else {
+						j = skipBacktick(cmd, start)
+					}
+					if j < 0 {
+						bad, i = true, n
+						break
+					}
+					cur.WriteString(cmd[i:j]) // opaque word text
+					i = j
+					continue
+				}
 				if cmd[i] == '\\' && i+1 < n && strings.IndexByte("\"\\$`\n", cmd[i+1]) >= 0 {
 					if cmd[i+1] != '\n' {
 						cur.WriteByte(cmd[i+1])
@@ -340,7 +495,11 @@ func shellSegments(cmd string) []shellSegment {
 			for i < n && cmd[i] != '\n' {
 				i++
 			}
-		case c == '<' && strings.HasPrefix(cmd[i:], "<<") && !strings.HasPrefix(cmd[i:], "<<<"):
+		case c == '<' && strings.HasPrefix(cmd[i:], "<<<"):
+			cur.WriteString("<<<") // a here-string, never a here-document
+			inWord = true
+			i += 3
+		case c == '<' && strings.HasPrefix(cmd[i:], "<<"):
 			h, next := parseHeredocStart(cmd, i)
 			endWord()
 			pending = append(pending, h)
@@ -399,7 +558,7 @@ func shellSegments(cmd string) []shellSegment {
 		}
 	}
 	endSeg()
-	return segs
+	return segs, !bad
 }
 
 // shellSegment is one simple command. orNext reports that it is directly
@@ -515,35 +674,86 @@ func segmentKind(w []string) string {
 	}
 	switch path.Base(w[i]) {
 	case "git":
-		if k := gitKind(w[i+1:]); k != "" && !noOpInvocation(k, w[i+1:]) {
+		if k, rest := gitKind(w[i+1:]); k != "" && !noOpInvocation(k, rest) {
 			return k
 		}
 	case "gh":
-		if k := ghKind(w[i+1:]); k != "" && !noOpInvocation(k, w[i+1:]) {
+		if k, rest := ghKind(w[i+1:]); k != "" && !noOpInvocation(k, rest) {
 			return k
 		}
 	}
 	return ""
 }
 
+// optArity lists, for one command, the options that take a separate value
+// argument. Short options may be bundled (`-am msg`); a bundle ends in a value
+// option when its value is the next argument.
+type optArity struct {
+	short string          // single-letter options taking a separate value
+	long  map[string]bool // --long options taking a separate value
+}
+
+func longSet(names ...string) map[string]bool {
+	m := map[string]bool{}
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// arities are per command: -r is a reviewer value for gh pr create but a bare
+// rebase switch for gh pr merge, so one shared table would misread help and
+// dry-run flags as values.
+var arities = map[string]optArity{
+	KindCommit: {"mFCct", longSet("--message", "--file", "--reuse-message", "--reedit-message",
+		"--author", "--date", "--template", "--cleanup", "--fixup", "--squash", "--trailer",
+		"--pathspec-from-file")},
+	KindPush:           {"o", longSet("--push-option", "--repo", "--receive-pack", "--exec")},
+	KindWorktreeAdd:    {"bB", longSet("--reason")},
+	KindWorktreeRemove: {"", nil},
+	KindPRCreate: {"tbFBHalrpmTR", longSet("--title", "--body", "--body-file", "--base", "--head",
+		"--assignee", "--label", "--reviewer", "--project", "--milestone", "--template", "--repo", "--recover")},
+	KindPRMerge: {"tbFAR", longSet("--subject", "--body", "--body-file", "--author-email",
+		"--match-head-commit", "--repo")},
+}
+
 // noOpInvocation reports flags that make the command change nothing:
-// --dry-run (and -n for push), --help and -h. Arguments after a bare `--` are
-// operands, not flags.
+// --dry-run (and -n for push), --help and -h. args are the arguments after the
+// subcommand. A value option consumes the next argument (`-m --dry-run` is a
+// message); arguments after a bare `--` are operands, not flags.
 func noOpInvocation(kind string, args []string) bool {
+	ar := arities[kind]
+	skip := false
 	for _, a := range args {
+		if skip {
+			skip = false
+			continue
+		}
 		switch {
 		case a == "--":
 			return false
 		case a == "--dry-run" || a == "--help" || a == "-h":
 			return true
-		case a == "-n" && kind == kindPush:
-			return true
+		case strings.HasPrefix(a, "--"):
+			skip = ar.long[a]
+		case len(a) > 1 && a[0] == '-':
+			for k := 1; k < len(a); k++ {
+				if kind == KindPush && a[k] == 'n' {
+					return true
+				}
+				if strings.IndexByte(ar.short, a[k]) >= 0 {
+					skip = k == len(a)-1 // otherwise the value is attached
+					break
+				}
+			}
 		}
 	}
 	return false
 }
 
-func gitKind(w []string) string {
+// gitKind returns the lifecycle kind of git arguments and the arguments after
+// the subcommand.
+func gitKind(w []string) (string, []string) {
 	i := 0
 	for i < len(w) && strings.HasPrefix(w[i], "-") {
 		switch w[i] {
@@ -554,27 +764,27 @@ func gitKind(w []string) string {
 		}
 	}
 	if i >= len(w) {
-		return ""
+		return "", nil
 	}
 	switch w[i] {
 	case "commit":
-		return kindCommit
+		return KindCommit, w[i+1:]
 	case "push":
-		return kindPush
+		return KindPush, w[i+1:]
 	case "worktree":
 		if i+1 < len(w) {
 			switch w[i+1] {
 			case "add":
-				return kindWorktreeAdd
+				return KindWorktreeAdd, w[i+2:]
 			case "remove":
-				return kindWorktreeRemove
+				return KindWorktreeRemove, w[i+2:]
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
-func ghKind(w []string) string {
+func ghKind(w []string) (string, []string) {
 	i := 0
 	for i < len(w) && strings.HasPrefix(w[i], "-") {
 		if w[i] == "-R" || w[i] == "--repo" {
@@ -584,13 +794,123 @@ func ghKind(w []string) string {
 		}
 	}
 	if i+1 >= len(w) || w[i] != "pr" {
-		return ""
+		return "", nil
 	}
 	switch w[i+1] {
 	case "create":
-		return kindPRCreate
+		return KindPRCreate, w[i+2:]
 	case "merge":
-		return kindPRMerge
+		return KindPRMerge, w[i+2:]
 	}
-	return ""
+	return "", nil
+}
+
+// skipSubst returns the index just past the `)` closing a `$(` whose body
+// starts at i, or -1 when unterminated. Quotes, nested substitutions,
+// backticks, comments and here-document bodies inside are opaque.
+func skipSubst(cmd string, i int) int {
+	depth := 1
+	var pending []heredoc
+	n := len(cmd)
+	for i < n {
+		c := cmd[i]
+		switch {
+		case c == '\\':
+			i += 2
+		case c == '\'':
+			j := strings.IndexByte(cmd[i+1:], '\'')
+			if j < 0 {
+				return -1
+			}
+			i += j + 2
+		case c == '"':
+			if i = skipDQuote(cmd, i+1); i < 0 {
+				return -1
+			}
+		case c == '`':
+			if i = skipBacktick(cmd, i+1); i < 0 {
+				return -1
+			}
+		case c == '(':
+			depth++
+			i++
+		case c == ')':
+			depth--
+			i++
+			if depth == 0 {
+				return i
+			}
+		case c == '<' && strings.HasPrefix(cmd[i:], "<<<"):
+			i += 3 // a here-string, never a here-document
+		case c == '<' && strings.HasPrefix(cmd[i:], "<<"):
+			var h heredoc
+			h, i = parseHeredocStart(cmd, i)
+			pending = append(pending, h)
+		case c == '\n':
+			i++
+			for _, h := range pending {
+				i = skipHeredoc(cmd, i, h)
+			}
+			pending = pending[:0]
+		case c == '#' && (i == 0 || strings.IndexByte(" \t\n;&|(", cmd[i-1]) >= 0):
+			for i < n && cmd[i] != '\n' {
+				i++
+			}
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
+// skipDQuote returns the index just past the `"` closing a double-quoted
+// string whose body starts at i, or -1.
+func skipDQuote(cmd string, i int) int {
+	n := len(cmd)
+	for i < n {
+		switch {
+		case cmd[i] == '\\':
+			i += 2
+		case cmd[i] == '"':
+			return i + 1
+		case cmd[i] == '$' && i+1 < n && cmd[i+1] == '(':
+			if i = skipSubst(cmd, i+2); i < 0 {
+				return -1
+			}
+		case cmd[i] == '`':
+			if i = skipBacktick(cmd, i+1); i < 0 {
+				return -1
+			}
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
+// skipBacktick returns the index just past the closing backtick of a command
+// substitution whose body starts at i, or -1.
+func skipBacktick(cmd string, i int) int {
+	n := len(cmd)
+	for i < n {
+		switch cmd[i] {
+		case '\\':
+			i += 2
+		case '`':
+			return i + 1
+		case '\'':
+			j := strings.IndexByte(cmd[i+1:], '\'')
+			if j < 0 {
+				return -1
+			}
+			i += j + 2
+		case '"':
+			if i = skipDQuote(cmd, i+1); i < 0 {
+				return -1
+			}
+		default:
+			i++
+		}
+	}
+	return -1
 }

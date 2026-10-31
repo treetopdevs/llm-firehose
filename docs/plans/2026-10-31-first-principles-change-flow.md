@@ -187,7 +187,7 @@ What game UIs teach about rendering that the current views ignore:
 Build the Worktree rung and nothing else. It is the only rung that is both
 missing and derivable from what exists.
 
-> Status (2026-10-31): slice 1 implemented on `feat/worktree-lifetime`: projection, `GET /worktrees[/{id}]`, contracts documented; not yet merged.
+> Status (2026-10-31): slice 1 implemented on `feat/worktree-lifetime`: projection, `GET /worktrees[/{id}]`, contracts documented; not yet merged. Slice 4 (D94) implemented on `feat/bash-lifecycle-verb`: the Bash summary carries lifecycle verbs; D101 decided (minimal persists the suffix).
 
 1. **Projection: worktree lifetime.** In `internal/capture/internal/projection`,
    per `(repo_id, worktree_id)`: first seen, last seen, sessions, file paths
