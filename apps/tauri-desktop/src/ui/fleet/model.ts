@@ -5,7 +5,7 @@
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
 import { idLabel, sessionName } from "../../format";
-import { isFailure } from "../../needs";
+import { evidenceTime, isFailure } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
 import { IDLE_AFTER_MS, isIdleWorker, orderLanes } from "../project/model";
 
@@ -19,15 +19,23 @@ export const IDLE_MARK = "…";
 /** Row id for sessions waiting on you that carry no repo_id. */
 export const NOREPO_KEY = "__no_repo__";
 
+/** Glyphs a row draws before the "+N" overflow chip. */
+export const GLYPH_CAP = 12;
+/** A gone fork older than this stays behind the overflow. */
+export const GONE_RECENT_MS = 7 * 24 * 3_600_000;
 const SPARK_BUCKETS = 14;
 const SPARK_BUCKET_MS = IDLE_AFTER_MS * 3; // 12h: fourteen buckets cover the seven-day live window
 
 export interface FleetFork {
   id: string;
   label: string;
+  /** Last path segment of the label; drawn beside the glyph only for open forks. */
+  short: string;
   state: WorktreeState;
   glyph: string;
   idle: boolean;
+  /** Gone for more than seven days: hidden behind the overflow by default. */
+  old: boolean;
   ariaLabel: string;
   tooltip: string;
   /** Needs-you sessions attributed to this fork by worktree_id. */
@@ -48,6 +56,8 @@ export interface FleetNeed {
   dwellMs: number;
   failed: boolean;
   summary: string;
+  /** The request is old enough that the engine's freshness rule no longer calls the session live; still counted, as the attention strip counts it. */
+  stale: boolean;
 }
 
 export interface FleetRow {
@@ -56,7 +66,13 @@ export interface FleetRow {
   /** True only when /worktrees lists this repo. */
   known: boolean;
   noRepo?: boolean;
+  /** The label is only a digest prefix: recorded in balanced/minimal mode or an unregistered repository. */
+  digest: boolean;
   forks: FleetFork[];
+  /** Open forks (idle ones included), the idle subset, and forks gone in the last seven days. */
+  openForks: number;
+  idleForks: number;
+  goneRecent: number;
   needs: FleetNeed[];
   needsCount: number;
   longestDwellMs: number;
@@ -85,6 +101,15 @@ export interface FleetResult {
   unattributed: AttentionSession[];
 }
 
+/** Display-only: drops a trailing "/.git" (repo ids are git common dirs). Never applied to ids. */
+export function displayRepoLabel(label: string): string {
+  const stripped = label.replace(/[/\\]\.git[/\\]?$/, "");
+  return stripped === "" ? label : stripped;
+}
+
+const lastSegment = (s: string): string => idLabel(s).split("/").pop() || s;
+const looksDigest = (id: string): boolean => !/[/\\]/.test(id) && /^[0-9a-f]{8,}$/i.test(id);
+
 const time = (s: string | undefined): number => (s === undefined ? NaN : Date.parse(s));
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const finiteOr = (v: number, d: number): number => (Number.isFinite(v) ? v : d);
@@ -110,15 +135,34 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
   return {
     id: r.worktree_id,
     label,
+    short: lastSegment(label),
     state: r.state,
     glyph: FORK_GLYPH[r.state] ?? FORK_GLYPH.unknown,
     idle: isIdleWorker(r, now),
+    old: r.state === "gone" && !(now - finiteOr(time(r.last_time), 0) <= GONE_RECENT_MS),
     ariaLabel: `${label}, ${r.state}`,
     tooltip: tooltipOf(r, label),
     needs: 0,
     lastMs: finiteOr(time(r.last_time), 0),
     spans,
   };
+}
+
+const RANK = (f: FleetFork): number =>
+  f.state === "open" ? (f.idle ? 0 : 1) : f.state === "landed" ? 2 : f.state === "never_diverged" ? 3 : f.state === "unknown" ? 4 : 5;
+
+/**
+ * The glyphs a row draws: open+idle first, then open, landed, never_diverged,
+ * unknown, gone; ties keep the row's stable fork order. Collapsed, old gone
+ * forks and everything past GLYPH_CAP sit behind `more`.
+ */
+export function stripOf(forks: readonly FleetFork[], expanded: boolean, cap = GLYPH_CAP): { shown: FleetFork[]; hidden: FleetFork[]; more: number } {
+  const ranked = forks.map((f, i) => ({ f, i })).sort((a, b) => RANK(a.f) - RANK(b.f) || a.i - b.i).map((x) => x.f);
+  if (expanded) return { shown: ranked, hidden: [], more: 0 };
+  const eligible = ranked.filter((f) => !f.old);
+  const shown = eligible.slice(0, cap);
+  const hidden = [...eligible.slice(cap), ...ranked.filter((f) => f.old)];
+  return { shown, hidden, more: hidden.length };
 }
 
 type Orderable = Pick<FleetRow, "id" | "known" | "lastMs"> & { noRepo?: boolean };
@@ -160,7 +204,19 @@ export function buildFleet(input: FleetInput): FleetResult {
     return a;
   };
   const unattributed: AttentionSession[] = [];
-  for (const { s, since, last } of live) {
+  // A pending request is counted whether or not it is still fresh, as the attention
+  // strip counts it: stale ones are flagged, never dropped. Other sessions need to be live.
+  const liveKeys = new Set(live.map((l) => sessionKey(l.s)));
+  const seen = [...live];
+  for (const s of sessions) {
+    if (!s.pending || !s.id || liveKeys.has(sessionKey(s))) continue;
+    const since = evidenceTime(s.pending);
+    if (!Number.isFinite(since)) continue;
+    const l = evidenceTime(s.last);
+    seen.push({ s, since, last: Number.isFinite(l) ? l : since });
+  }
+  const freshKeys = new Set(live.filter((l) => l.s.pending).map((l) => sessionKey(l.s)));
+  for (const { s, since, last } of seen) {
     const pending = !!s.pending;
     const rowId = s.repo_id || (pending ? NOREPO_KEY : undefined);
     if (rowId === undefined) { unattributed.push(s); continue; }
@@ -172,6 +228,7 @@ export function buildFleet(input: FleetInput): FleetResult {
         key: sessionKey(s), id: s.id, source: s.source, repoId: rowId,
         ...(s.worktree_id ? { worktreeId: s.worktree_id } : {}),
         label: sessionName(s), dwellMs: Math.max(0, now - since), failed: isFailure(s), summary: s.pending?.summary ?? "",
+        stale: !freshKeys.has(sessionKey(s)),
       });
     } else if (s.state === "working") a.working++;
     else a.idle++;
@@ -195,14 +252,20 @@ export function buildFleet(input: FleetInput): FleetResult {
     }
     const noRepo = id === NOREPO_KEY;
     let label: string;
+    let digest = false;
     if (noRepo) label = "No repo id";
     else {
       let resolved: string | undefined;
       try { resolved = input.resolveLabel?.(id) || undefined; } catch { resolved = undefined; }
-      label = resolved ?? (a.repoName || idLabel(id));
+      const named = resolved ?? (a.repoName || undefined);
+      digest = named === undefined && looksDigest(id);
+      label = displayRepoLabel(named ?? idLabel(id));
     }
     rows.set(id, {
-      id, label, known: byRepo.has(id), ...(noRepo ? { noRepo: true } : {}), forks, needs,
+      id, label, known: byRepo.has(id), ...(noRepo ? { noRepo: true } : {}), digest, forks, needs,
+      openForks: forks.filter((f) => f.state === "open").length,
+      idleForks: forks.filter((f) => f.idle).length,
+      goneRecent: forks.filter((f) => f.state === "gone" && !f.old).length,
       needsCount: needs.length,
       longestDwellMs: needs.reduce((m, n) => Math.max(m, n.dwellMs), 0),
       failed: needs.some((n) => n.failed),
@@ -249,8 +312,8 @@ export function longestWaiting(needs: readonly FleetNeed[]): FleetNeed | undefin
 /** A string equal for equal derived state: every rendered field except time-varying dwell and sparklines, which are refreshed in place. */
 export function signature(r: FleetResult): string {
   return JSON.stringify([
-    r.rows.map((x) => [x.id, x.label, x.known, !!x.noRepo, x.needs.map((n) => [n.key, n.failed, n.worktreeId ?? "", n.label, n.summary]), x.failed, x.working, x.idle,
-      x.forks.map((f) => [f.id, f.label, f.state, f.idle, f.needs, f.glyph, f.ariaLabel, f.tooltip])]),
+    r.rows.map((x) => [x.id, x.label, x.known, !!x.noRepo, x.digest, x.openForks, x.idleForks, x.goneRecent, x.needs.map((n) => [n.key, n.failed, n.stale, n.worktreeId ?? "", n.label, n.summary]), x.failed, x.working, x.idle,
+      x.forks.map((f) => [f.id, f.label, f.state, f.idle, f.old, f.needs, f.glyph, f.ariaLabel, f.tooltip])]),
     r.unattributed.map(sessionKey),
   ]);
 }

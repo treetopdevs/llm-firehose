@@ -828,7 +828,7 @@ test("Escape: Project ascends to Fleet when there is more than one repository; F
   expect(b.active()).toBe("fleet");
 });
 
-test("Fleet descents carry the window; row, fork and need open project, project+worktree and score", async () => {
+test("Fleet descents carry the window; row, fork and need open project, sessions (project+worktree) and score", async () => {
   const win = { from: NOW - 86_400_000, to: NOW - 3_600_000 };
   const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow("s-n1")], attentionSessions: [needy("s-n1", "repoA", { worktree_id: "wt-open" })] });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
@@ -847,7 +847,8 @@ test("Fleet descents carry the window; row, fork and need open project, project+
   await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
   const forkA = [...document.querySelectorAll<HTMLElement>(".fleet-fork")].find((f) => f.closest(".fleet-row")?.querySelector(".fleet-need"))!;
   forkA.click();
-  expect(b.active()).toBe("project");
+  // Changed (fleet-altitude item 3): a fork narrows project+worktree and descends to Sessions, not Project.
+  expect(b.active()).toBe("sessions");
   expect(b.scope.get()).toMatchObject({ project: "repoA", worktree: "wt-open", window: win });
   b.nav("fleet").click();
   await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());

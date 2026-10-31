@@ -8,15 +8,13 @@ import { clear, el, keepFocus, onActivate } from "../../dom";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import type { CellScope } from "../workspace/model";
-import { workspaceKey } from "../../format";
 import { formatAge } from "../../spark";
 import { deriveAirspace } from "../airspace/model";
-import { buildDwell, liveSessions, sessionKey } from "../dwell/model";
+import { buildDwell, sessionKey } from "../dwell/model";
 import type { DwellRow } from "../dwell/model";
 import { LANE_WINDOWS_MS, buildLanes } from "../lanes/model";
-import { stateGlyph, worstState } from "../workspace/model";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
-import { ENCODINGS, IDLE_MARK, NOREPO_KEY, buildFleet, longestWaiting, nextNeed, repoBuckets, signature } from "./model";
+import { ENCODINGS, IDLE_MARK, NOREPO_KEY, buildFleet, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
 import type { Encoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
 export type { Encoding } from "./model";
@@ -59,6 +57,8 @@ const AIRSPACE_WINDOW_MS = 15 * 60_000;
 const BLOCKS = "▁▂▃▄▅▆▇█";
 const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Dwell", matrix: "Matrix", lanes: "Lanes", airspace: "Airspace" };
 const FALLBACK_W = 800;
+const TOAST_MS = 2500;
+const NO_NEEDS = "no sessions need you";
 
 const setText = (n: Element, v: string): void => { if (n.textContent !== v) n.textContent = v; };
 const setAttr = (n: Element, k: string, v: string | null): void => {
@@ -136,6 +136,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let lastKey: string | undefined;
   let statusKind: StatusKind = "";
   let lastLabels = "{}";
+  const expanded = new Set<string>(); // rows whose fork strip is open; kept across refreshes
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Loading.
   let loadCtl: AbortController | undefined;
@@ -170,18 +172,26 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const staleChip = el("span", { class: "fleet-stale", title: "Showing the last data received; a refresh is overdue" }, "stale");
   const flags = el("span", { class: "fleet-flags" });
   const statusBox = el("div", { class: "fleet-status", role: "status" });
+  const toast = el("div", { class: "fleet-toast", role: "status" });
   const body = el("div", { class: "fleet-body" });
   const foot = el("div", { class: "fleet-foot" });
-  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a fork to open its worktree, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick.");
+  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a fork glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick.");
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
     el("header", { class: "fleet-header" }, el("h2", {}, "Fleet"), el("div", { class: "fleet-encs", role: "group", "aria-label": "Encoding" }, ...encButtons), flags),
     statusBox,
+    toast,
     body,
     foot,
     hint,
   );
+
+  function notify(msg: string): void {
+    setText(toast, msg);
+    if (toastTimer !== undefined) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastTimer = undefined; setText(toast, ""); }, TOAST_MS);
+  }
 
   // ---- navigation -------------------------------------------------------
 
@@ -195,11 +205,6 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const openRow = (row: FleetRow): void => {
     if (row.noRepo || !row.known) return;
     nav("project", { project: row.id, worktree: undefined, session: undefined });
-  };
-  /** A matrix cell narrows Sessions to one workspace x agent, inside its project. */
-  const openCell = (row: FleetRow, cell: CellScope): void => {
-    if (row.noRepo || !row.known) return;
-    nav("sessions", { project: row.id, worktree: undefined, session: undefined, cell });
   };
   const openNeed = (n: FleetNeed): void =>
     nav("score", { project: n.repoId === NOREPO_KEY ? undefined : n.repoId, worktree: n.worktreeId, session: { id: n.id, source: n.source } });
@@ -216,30 +221,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     return [sc.project ?? "", sc.worktree ?? "", sc.session?.source ?? "", sc.session?.id ?? ""].join(SEP);
   }
 
-  function matrixOf(now: number): { agents: string[]; cells: Map<string, { n: number; state: string; where: string | undefined }> } {
-    const cells = new Map<string, { n: number; state: string; where: string | undefined }>();
-    const agents = new Set<string>();
-    for (const { s } of liveSessions(att ?? [], now)) {
-      const rowId = s.repo_id || (s.pending ? NOREPO_KEY : undefined);
-      if (rowId === undefined) continue;
-      const agent = s.agent || s.source;
-      agents.add(agent);
-      const k = `${rowId}${SEP}${agent}`;
-      const w = workspaceKey(s.repo, s.cwd);
-      const c = cells.get(k) ?? { n: 0, state: "", where: w };
-      if (c.where !== w) c.where = undefined; // mixed workspaces: no single cell scope
-      c.n++;
-      c.state = worstState(c.state, s.pending ? "needs_input" : s.state);
-      cells.set(k, c);
-    }
-    return { agents: [...agents].sort(), cells };
-  }
+  const lastText = (r: FleetRow, now: number): string => (r.lastMs > 0 ? formatAge(Math.max(0, now - r.lastMs)) : "–");
 
   function encodingKey(now: number): string {
-    if (encoding === "matrix") {
-      const m = matrixOf(now);
-      return JSON.stringify([m.agents, [...m.cells].sort((a, b) => (a[0] < b[0] ? -1 : 1))]);
-    }
+    if (encoding === "matrix") return JSON.stringify(result.rows.map((r) => [r.id, lastText(r, now)]));
     if (encoding === "airspace") return JSON.stringify(deriveAirspace(att ?? [], { now, windowMs: AIRSPACE_WINDOW_MS }).counts);
     return "";
   }
@@ -374,9 +359,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         forks: el("div", { class: "fleet-forks" }),
         queue: el("div", { class: "fleet-queue" }),
       };
-      head.append(refs.glyph, refs.label, refs.needs, refs.dwell, refs.counts, refs.spark);
+      head.append(refs.glyph, refs.label, refs.needs, refs.dwell, refs.counts);
       onActivate(head, () => { const r = result.rows.find((x) => x.id === row.id); if (r) openRow(r); });
-      node.append(head, refs.forks, refs.queue);
+      node.append(head, refs.forks, refs.spark, refs.queue);
       rowRefs.set(node, refs);
     }
     const navigable = row.known && !row.noRepo;
@@ -387,34 +372,54 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setClass(node, "selected", selRow === row.id);
     setAttr(refs.head, "aria-disabled", navigable ? null : "true");
     setAttr(refs.head, "aria-label", `${row.label}${row.needsCount ? `, ${row.needsCount} need you` : ""}`);
-    setAttr(refs.head, "title", row.noRepo ? "Sessions waiting on you that carry no repository id" : row.known ? `${row.forks.length} worktrees` : "Seen by attention only: no worktree data captured for this repository");
+    setClass(node, "unregistered", row.digest);
+    const base = row.noRepo ? "Sessions waiting on you that carry no repository id" : row.known ? `${row.forks.length} worktrees` : "Seen by attention only: no worktree data captured for this repository";
+    setAttr(refs.head, "title", row.digest ? `${base}\nunregistered: only a digest was recorded (balanced/minimal privacy, or the repository is not registered)` : base);
     setText(refs.glyph, row.noRepo ? "–" : row.known ? "●" : "?");
     setText(refs.label, row.label);
     setText(refs.needs, row.needsCount > 0 ? `${row.needsCount}?` : "");
-    setText(refs.counts, `${row.working}● ${row.idle}·`);
+    setText(refs.counts, row.known ? `${row.openForks}● ${row.idleForks}${IDLE_MARK}` : "");
+    setAttr(refs.counts, "title", "open forks, idle forks (ahead of main, quiet for hours)");
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
-    const forkNodes = row.forks.map((f) => {
+    const open = expanded.has(row.id);
+    const strip = stripOf(row.forks, open);
+    const forkNodes: Element[] = strip.shown.map((f) => {
       const k = keyed("fork:" + row.id + "|" + f.id, () => el("div", { class: "fleet-fork", tabindex: "0", role: "button" }), seen);
       let fr = forkRefs.get(k.node);
       if (k.fresh || !fr) {
         fr = { glyph: el("span", { class: "fleet-fork-glyph", "aria-hidden": "true" }), label: el("span", { class: "fleet-fork-label" }), needs: el("span", { class: "fleet-fork-needs" }) };
         k.node.append(fr.glyph, fr.label, fr.needs);
         forkRefs.set(k.node, fr);
-        onActivate(k.node, () => nav("project", { project: row.id, worktree: f.id, session: undefined }));
+        // A fork narrows project and worktree and descends to Sessions.
+        onActivate(k.node, () => nav("sessions", { project: row.id, worktree: f.id, session: undefined, cell: undefined }));
       }
       setClass(k.node, "idle", f.idle);
       setClass(k.node, "current", sc.project === row.id && sc.worktree === f.id);
-      for (const s of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${s}`, f.state === s);
+      for (const st of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${st}`, f.state === st);
       setAttr(k.node, "title", f.tooltip);
       setAttr(k.node, "aria-label", f.ariaLabel);
       setText(fr.glyph, f.glyph + (f.idle ? IDLE_MARK : ""));
-      setText(fr.label, f.label);
+      setText(fr.label, f.state === "open" ? f.short : "");
       setText(fr.needs, f.needs > 0 ? `${f.needs}?` : "");
       track("fork:" + row.id + "|" + f.id, `${f.state}|${f.idle}|${f.needs}`, k.node);
       return k.node;
     });
+    if (strip.more > 0 || (open && stripOf(row.forks, false).more > 0)) {
+      const m = keyed("more:" + row.id, () => el("button", { class: "fleet-more", type: "button" }), seen);
+      if (m.fresh) {
+        m.node.addEventListener("click", () => {
+          if (expanded.has(row.id)) expanded.delete(row.id);
+          else expanded.add(row.id);
+          recompute(true);
+        });
+      }
+      setText(m.node, open ? "collapse" : `+${strip.more}`);
+      setAttr(m.node, "aria-expanded", open ? "true" : "false");
+      setAttr(m.node, "aria-label", open ? "collapse forks" : `show ${strip.more} more forks`);
+      forkNodes.push(m.node);
+    }
     reconcile(refs.forks, forkNodes);
 
     const needEntries = row.needs.map((n) => {
@@ -428,7 +433,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       }
       setClass(k.node, "failed", n.failed);
       setClass(k.node, "selected", selNeed === n.key);
-      setAttr(k.node, "title", n.summary);
+      setClass(k.node, "stale", n.stale);
+      setAttr(k.node, "title", n.stale ? `${n.summary}\nstale: no recent activity captured, request still pending` : n.summary);
       setText(nr.label, n.label);
       setText(nr.summary, n.summary);
       updateNeedTimes(n, nr, k.node);
@@ -498,29 +504,31 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const restore = keepFocus(body);
     clear(body);
     nodes.clear();
-    const m = matrixOf(now);
     const table = el("table", { class: "fleet-matrix" });
-    table.append(el("thead", {}, el("tr", {}, el("th", {}, "repository"), ...m.agents.map((a) => el("th", {}, a)))));
+    table.append(el("thead", {}, el("tr", {}, ...["repository", "open", "idle", "needs you", "gone (7d)", "last activity"].map((h) => el("th", {}, h)))));
     const tbody = el("tbody");
     for (const r of result.rows) {
-      const tr = el("tr", { "data-key": "matrix:" + r.id }, el("th", { scope: "row" }, r.label));
-      for (const a of m.agents) {
-        const c = m.cells.get(`${r.id}${SEP}${a}`);
-        const td = el("td", {}, c ? `${stateGlyph(c.state)}${c.n}` : "");
-        if (c) {
-          setClass(td, "needs", c.state === "needs_input");
-          if (r.known && !r.noRepo) {
-            td.setAttribute("role", "button");
-            td.setAttribute("tabindex", "0");
-            td.setAttribute("aria-label", `${r.label}, ${a}, ${c.n} sessions`);
-            td.setAttribute("data-key", `matrix:${r.id}|${a}`);
-            const where = c.where;
-            onActivate(td, () => (where ? openCell(r, { where, agent: a, label: `${r.label} · ${a}` }) : openRow(r)));
-          }
-        }
-        tr.append(td);
+      const head = el("th", { scope: "row" }, r.label);
+      if (r.known && !r.noRepo) {
+        head.setAttribute("role", "button");
+        head.setAttribute("tabindex", "0");
+        head.setAttribute("aria-label", `${r.label}, open project`);
+        onActivate(head, () => { const cur = result.rows.find((x) => x.id === r.id); if (cur) openRow(cur); });
       }
-      tbody.append(tr);
+      setClass(head, "unregistered", r.digest);
+      if (r.digest) head.setAttribute("title", "unregistered: only a digest was recorded");
+      const count = (n: number): HTMLElement => el("td", { class: n === 0 ? "zero" : "" }, String(n));
+      const needs = count(r.needsCount);
+      if (r.needsCount > 0) {
+        setClass(needs, "needs", true);
+        setClass(needs, "failed", r.failed);
+        needs.setAttribute("role", "button");
+        needs.setAttribute("tabindex", "0");
+        needs.setAttribute("data-key", `matrix:${r.id}|needs`);
+        needs.setAttribute("aria-label", `${r.label}, ${r.needsCount} need you, open the longest-waiting`);
+        onActivate(needs, () => { const cur = result.rows.find((x) => x.id === r.id)?.needs[0]; if (cur) openNeed(cur); });
+      }
+      tbody.append(el("tr", { "data-key": "matrix:" + r.id }, head, count(r.openForks), count(r.idleForks), needs, count(r.goneRecent), el("td", { class: "dim" }, lastText(r, now))));
     }
     table.append(tbody);
     body.append(table);
@@ -738,7 +746,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (e.key === "n" || e.key === "N") {
       if (!selectable) return;
       const n = nextNeed(visibleNeeds(nowFn()), selNeed, e.key === "n" ? 1 : -1);
-      if (!n) return;
+      if (!n) { e.preventDefault(); notify(NO_NEEDS); return; }
       e.preventDefault();
       selNeed = n.key; selRow = undefined;
       recompute();
@@ -748,7 +756,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (e.key === " ") {
       if (onControl) return;
       const n = longestWaiting(result.needs);
-      if (!n) return;
+      if (!n) { e.preventDefault(); notify(NO_NEEDS); return; }
       e.preventDefault();
       openNeed(n);
     }
@@ -803,6 +811,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       timer = undefined;
       if (eventTimer !== undefined) clearTimeout(eventTimer);
       eventTimer = undefined;
+      if (toastTimer !== undefined) clearTimeout(toastTimer);
+      toastTimer = undefined;
+      setText(toast, "");
       if (lanesTimer !== undefined) clearTimeout(lanesTimer);
       lanesTimer = undefined;
       for (const [node, t] of expiry) { clearTimeout(t); setClass(node, "changed", false); }

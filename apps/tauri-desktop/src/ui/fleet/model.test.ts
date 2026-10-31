@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { AttentionSession, WorktreeLifetimeView } from "../../api";
 import { FIXTURE_ROWS, NOW, att, iso, row } from "./model.fixtures";
 import {
-  ENCODINGS, FORK_GLYPH, IDLE_MARK, NOREPO_KEY, buildFleet, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, signature,
+  ENCODINGS, FORK_GLYPH, GLYPH_CAP, IDLE_MARK, NOREPO_KEY, buildFleet, displayRepoLabel, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, signature, stripOf,
 } from "./model";
 import type { FleetInput, FleetNeed } from "./model";
 
@@ -94,11 +94,15 @@ describe("needs and counts", () => {
   test("needs-you count and longest dwell, sorted longest first, keyed by [source,id]", () => {
     const r = buildFleet(input({ sessions }));
     const a = r.rows.find((x) => x.id === "repoA")!;
-    expect(a.needsCount).toBe(2);
-    expect(a.longestDwellMs).toBe(9 * MIN);
-    expect(a.needs.map((n) => n.key)).toEqual([key("codex", "n2"), key("claude-code", "n1")]);
-    expect(r.needs.map((n) => n.key)[0]).toBe(key("codex", "n2"));
-    expect(r.needs.find((n) => n.id === "old")).toBeUndefined();
+    // The stale "old" request is included (item 6), so it is the longest wait and leads.
+    expect(a.needsCount).toBe(3);
+    expect(a.longestDwellMs).toBe(3 * 24 * 60 * MIN);
+    expect(a.needs.map((n) => n.key)).toEqual([key("claude-code", "old"), key("codex", "n2"), key("claude-code", "n1")]);
+    expect(r.needs.map((n) => n.key)[0]).toBe(key("claude-code", "old"));
+    // Changed (fleet-altitude item 6): a days-old pending request is no longer dropped, because the
+    // attention strip counts it; the row shows it flagged stale instead of silently disagreeing.
+    expect(r.needs.find((n) => n.id === "old")!.stale).toBe(true);
+    expect(r.needs.find((n) => n.id === "n2")!.stale).toBe(false);
   });
 
   test("a failure sets failed on the row", () => {
@@ -272,5 +276,140 @@ describe("signature and purity", () => {
   test("ENCODINGS lists the views of the altitude", () => {
     expect(ENCODINGS.length).toBeGreaterThan(1);
     expect(new Set(ENCODINGS).size).toBe(ENCODINGS.length);
+  });
+});
+
+describe("fork counts (item 2)", () => {
+  test("open, idle and needs counts come from forks and needs, not session states", () => {
+    const r = buildFleet(input({ sessions: [att({ id: "n1", repo_id: "repoA", worktree_id: "wt-open", waitMs: 2 * MIN })] }));
+    const a = r.rows.find((x) => x.id === "repoA")!;
+    // wt-open and wt-idle are open; wt-idle is idle (ahead, quiet for a day).
+    expect(a.openForks).toBe(2);
+    expect(a.idleForks).toBe(1);
+    expect(a.needsCount).toBe(1);
+    expect(a.goneRecent).toBe(1);
+    expect(r.rows.find((x) => x.id === "repoB")!.openForks).toBe(1);
+  });
+
+  test("a repo with many open forks and no sessions is not zero", () => {
+    const wts = Array.from({ length: 56 }, (_, i) => row({ repo_id: "big", worktree_id: `w${i}`, state: "open", last_time: iso(NOW - MIN) }));
+    expect(buildFleet(input({ worktrees: wts })).rows[0]!.openForks).toBe(56);
+  });
+
+  test("gone counts only forks that went away in the last seven days", () => {
+    const D = 24 * 60 * MIN;
+    const wts = [
+      row({ repo_id: "g", worktree_id: "g1", state: "gone", last_time: iso(NOW - 2 * D) }),
+      row({ repo_id: "g", worktree_id: "g2", state: "gone", last_time: iso(NOW - 9 * D) }),
+    ];
+    const g = buildFleet(input({ worktrees: wts })).rows[0]!;
+    expect(g.goneRecent).toBe(1);
+    expect(g.forks.find((f) => f.id === "g2")!.old).toBe(true);
+    expect(g.forks.find((f) => f.id === "g1")!.old).toBe(false);
+  });
+});
+
+describe("glyph strip (item 1)", () => {
+  const D = 24 * 60 * MIN;
+  const mk = (id: string, state: WorktreeLifetimeView["state"], extra: Partial<WorktreeLifetimeView> = {}) =>
+    row({ repo_id: "r", worktree_id: id, label: `/Users/x/proj/.claude/worktrees/${id}`, state, last_time: iso(NOW - MIN), ...extra });
+  const wts = [
+    mk("gone-recent", "gone", { last_time: iso(NOW - D) }),
+    mk("gone-old", "gone", { last_time: iso(NOW - 8 * D) }),
+    mk("unk", "unknown"),
+    mk("never", "never_diverged"),
+    mk("open", "open"),
+    mk("idle", "open", { ahead: 2, last_time: iso(NOW - D) }),
+    mk("landed", "landed"),
+  ];
+  const fork = (r: ReturnType<typeof buildFleet>["rows"][number]) => r.forks;
+
+  test("order is open+idle, open, landed, never_diverged, unknown, gone; old gone sits behind the overflow", () => {
+    const r = buildFleet(input({ worktrees: wts })).rows[0]!;
+    const s = stripOf(fork(r), false);
+    expect(s.shown.map((f) => f.id)).toEqual(["idle", "open", "landed", "never", "unk", "gone-recent"]);
+    expect(s.more).toBe(1);
+    expect(s.hidden.map((f) => f.id)).toEqual(["gone-old"]);
+  });
+
+  test("expanded shows everything, in the same order", () => {
+    const r = buildFleet(input({ worktrees: wts })).rows[0]!;
+    const s = stripOf(fork(r), true);
+    const ids = s.shown.map((f) => f.id);
+    expect(ids.slice(0, 5)).toEqual(["idle", "open", "landed", "never", "unk"]);
+    expect(ids.slice(5).sort()).toEqual(["gone-old", "gone-recent"]); // ties keep the row's stable fork order
+    expect(s.more).toBe(0);
+  });
+
+  test("at most GLYPH_CAP glyphs by default; the rest overflow", () => {
+    const many = Array.from({ length: 30 }, (_, i) => mk(`w${String(i).padStart(2, "0")}`, "open"));
+    const r = buildFleet(input({ worktrees: many })).rows[0]!;
+    expect(GLYPH_CAP).toBe(12);
+    const s = stripOf(r.forks, false);
+    expect(s.shown).toHaveLength(12);
+    expect(s.more).toBe(18);
+    expect(stripOf(r.forks, true).shown).toHaveLength(30);
+  });
+
+  test("short is the last path segment of the label", () => {
+    const f = buildFleet(input({ worktrees: wts })).rows[0]!.forks.find((x) => x.id === "open")!;
+    expect(f.short).toBe("open");
+    expect(f.label).toBe("/Users/x/proj/.claude/worktrees/open");
+  });
+});
+
+describe("repo labels (item 5)", () => {
+  test("a trailing /.git or bare .git segment is stripped for display only", () => {
+    expect(displayRepoLabel("browser-life/.git")).toBe("browser-life");
+    expect(displayRepoLabel("/Users/n/browser-life/.git")).toBe("/Users/n/browser-life");
+    expect(displayRepoLabel(".git")).toBe(".git");
+    expect(displayRepoLabel("alpha.git")).toBe("alpha.git");
+  });
+
+  test("the row keeps the raw id and shows the stripped label", () => {
+    const id = "/Users/n/develop/browser-life/.git";
+    const r = buildFleet(input({ worktrees: [row({ repo_id: id, worktree_id: "w" })] })).rows[0]!;
+    expect(r.id).toBe(id);
+    expect(r.label).toBe("browser-life");
+    expect(r.digest).toBe(false);
+  });
+
+  test("a digest-only repo id is labelled with its prefix and flagged unregistered", () => {
+    const id = "3f9a1c0de5b7a2446f1d8e9c0b7a6d5e4c3b2a190f8e7d6c5b4a39281706f5e4";
+    const r = buildFleet(input({ worktrees: [row({ repo_id: id, worktree_id: "w" })] })).rows[0]!;
+    expect(r.label).toBe("3f9a1c0d");
+    expect(r.digest).toBe(true);
+    // A resolved or attention-named repo is not unregistered.
+    expect(buildFleet(input({ worktrees: [row({ repo_id: id, worktree_id: "w" })], resolveLabel: () => "Real" })).rows[0]!.digest).toBe(false);
+    expect(buildFleet(input({ worktrees: [], sessions: [att({ id: "s", repo_id: id, repo: "named" })] })).rows[0]!.digest).toBe(false);
+  });
+});
+
+describe("needs-you never silently dropped (item 6)", () => {
+  test("a pending session whose repo_id matches no /worktrees row still shows as a unit, on its own fog row", () => {
+    const s = att({ id: "orphan", repo_id: "deadbeefcafe0123", waitMs: 40 * 60 * MIN, lastAgoMs: 40 * 60 * MIN });
+    const r = buildFleet(input({ sessions: [s] }));
+    const row = r.rows.find((x) => x.id === "deadbeefcafe0123")!;
+    expect(row.known).toBe(false);
+    expect(row.needsCount).toBe(1);
+    expect(row.needs[0]!.stale).toBe(true);
+    expect(r.needs.map((n) => n.id)).toEqual(["orphan"]);
+  });
+
+  test("a pending session with an empty repo_id lands on the No repo id row even when stale", () => {
+    const r = buildFleet(input({ sessions: [att({ id: "e", waitMs: 5 * 24 * 60 * MIN, lastAgoMs: 5 * 24 * 60 * MIN })] }));
+    const last = r.rows[r.rows.length - 1]!;
+    expect(last.noRepo).toBe(true);
+    expect(last.needsCount).toBe(1);
+  });
+
+  test("the unit count equals the attention strip's count of pending sessions", () => {
+    const sessions = [
+      att({ id: "a", repo_id: "repoA", waitMs: 2 * MIN }),
+      att({ id: "b", repo_id: "ffffffff00", waitMs: 90 * 60 * MIN, lastAgoMs: 90 * 60 * MIN }),
+      att({ id: "c", waitMs: 3 * 24 * 60 * MIN, lastAgoMs: 3 * 24 * 60 * MIN }),
+    ];
+    const r = buildFleet(input({ sessions }));
+    expect(r.rows.reduce((n, x) => n + x.needsCount, 0)).toBe(sessions.filter((s) => s.pending).length);
   });
 });
