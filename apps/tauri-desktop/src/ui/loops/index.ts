@@ -2,7 +2,9 @@ import { capturedEvent, errorSignatures, sessionEvents, sessions } from "../../a
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatDuration } from "../../format";
-import { createScope, selectSession } from "../../scope";
+import { createScope, membership, selectSession } from "../../scope";
+import { activeRange, inWindow, sessionKey } from "../session/context";
+import type { Range, SessionTabContext } from "../session/context";
 import type { ScopeStore } from "../../scope";
 import { eventLabel, stripControl } from "../score/model";
 import {sequenceRuns,compareSequences} from "./sequence";
@@ -45,6 +47,23 @@ export function createLoops(store: ScopeStore = createScope()) {
   let groupPage = 0;
   let evidencePage = 0;
   let interval: Interval | undefined;
+  // Session-tab context: the window filters timed lists; lastRef is the key of the session last delivered.
+  let win: Range | null = null, lastRef: string | null = null, lockedSource = false, detailEvent: FirehoseEvent | undefined;
+  // True while the scope session was written by this panel's own pickers: they stay usable and nothing reloads.
+  let selfWritten = false;
+  function writeScope(ref: {id: string; source?: string}) {
+    const cur = store.get();
+    selfWritten = true; lastRef = sessionKey(ref);
+    // Adding a source to the same id refines in place; the shared window must survive it.
+    if (cur.session && cur.session.id === ref.id && !cur.session.source) {
+      // Refinement still answers to containment: parents stay only when the source-aware resolver confirms this exact (source, session).
+      const member = cur.project || cur.worktree ? membership(store, cur) : undefined;
+      if (!member || member(ref)) store.narrow({session: ref, window: cur.window});
+      else store.replaceContext({session: ref, window: cur.window});
+    }
+    else selectSession(store, ref);
+  }
+  const setSourceDisabled = (v: boolean) => { sourceSelect.disabled = v || lockedSource; };
 
   let comparison: {a: [string,string]; b: [string,string]; view: HTMLElement; caption: string; numbering: string} | undefined;
   let referenceDraft: string | undefined, comparisonNotice = "";
@@ -55,7 +74,8 @@ export function createLoops(store: ScopeStore = createScope()) {
     comparison={a:[a.from.id,a.to.id],b:[b.from.id,b.to.id],numbering:`${aIndex}:${bIndex}`,caption:`A interval ${aIndex}: ${a.from.time} → ${a.to.time}; B interval ${bIndex}: ${b.from.time} → ${b.to.time}`,view:renderSequenceComparison(compareSequences(sequenceRuns(model.events,a.fromIndex,a.toIndex),sequenceRuns(model.events,b.fromIndex,b.toIndex)),event=>void selectEvent(event),cancelDetail)};
     referenceDraft=String(bIndex);notice.textContent=comparisonNotice=`Comparing interval ${aIndex} with interval ${bIndex}.`;
   }
-  function cancelDetail() { selection++; detailAbort?.abort(); detailAbort = undefined; clear(detail); }
+  const intervalInWindow = (i: Interval) => inWindow(i.from.time, win) && inWindow(i.to.time, win);
+  function cancelDetail() { selection++; detailAbort?.abort(); detailAbort = undefined; detailEvent = undefined; clear(detail); }
   function button(text: string, handler: () => void, key = text) {
     const b = el("button", {"data-key": key}, text); b.addEventListener("click", handler); return b;
   }
@@ -66,7 +86,7 @@ export function createLoops(store: ScopeStore = createScope()) {
     host.append(el("div", {class: "loops-pager"}, previous, el("span", {}, `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} of ${total}`), next));
   }
   function renderDetail(event: FirehoseEvent, message: string) {
-    clear(detail);
+    clear(detail); detailEvent = event;
     const close = button("Close detail", cancelDetail);
     detail.append(el("h3", {}, "Captured event"), close, el("p", {role: "status"}, message), el("pre", {}, JSON.stringify(event, null, 2)));
   }
@@ -124,16 +144,20 @@ export function createLoops(store: ScopeStore = createScope()) {
     body.append(groups);
     pager(body, groupPage, model.groups.length, "signatures", page => { groupPage = page; draw(); });
     body.append(el("h3", {}, stripControl(active.key)), el("p", {class: "dim"}, `${active.fallbackOccurrences} of ${active.occurrences.length} selected occurrences use local fallback identity.`), overview(active));
-    const list = el("ol", {class: "loops-occurrences", start: String(occurrencePage * PAGE_SIZE + 1)});
-    active.occurrences.slice(occurrencePage * PAGE_SIZE, (occurrencePage + 1) * PAGE_SIZE).forEach((event, offset) => {
-      const i = occurrencePage * PAGE_SIZE + offset;
+    const visible = active.occurrences.map((event, i) => ({event, i})).filter(item => inWindow(item.event.time, win));
+    occurrencePage = Math.min(occurrencePage, Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1));
+    if (win) body.append(el("p", {class: "dim", role: "status", "data-key": "occurrence-window"}, `${visible.length} of ${active.occurrences.length} occurrences in window`));
+    const pageItems = visible.slice(occurrencePage * PAGE_SIZE, (occurrencePage + 1) * PAGE_SIZE);
+    const list = el("ol", {class: "loops-occurrences", start: String((pageItems[0]?.i ?? 0) + 1)});
+    pageItems.forEach(({event, i}) => {
       const row = el("li", {class: "loop-occurrence"}, button(`View occurrence ${i + 1}`, () => void selectEvent(event)), el("time", {datetime: event.time}, event.time));
       if (i === 0) row.append(el("span", {class: "dim"}, "Baseline observation"));
+      else if (!intervalInWindow(active.intervals[i - 1])) row.append(el("span", {class: "dim"}, `Interval ${i} reaches outside the window`));
       else row.append(button(`Compare interval ${i} · ${formatDuration(active.intervals[i - 1].elapsedMs)}`, () => { interval = active.intervals[i - 1]; evidencePage = 0; resetComparison(); draw(); }));
       list.append(row);
     });
     body.append(list);
-    pager(body, occurrencePage, active.occurrences.length, "occurrences", page => { occurrencePage = page; draw(); });
+    pager(body, occurrencePage, visible.length, "occurrences", page => { occurrencePage = page; draw(); });
     if (interval) {
       body.append(el("h3", {}, "Captured activity between recurrences"), el("p", {}, `${interval.from.time} → ${interval.to.time} · ${formatDuration(interval.elapsedMs)}`),
         el("p", {class: "dim"}, "After the first observation through the next, ordered by time then event id. Synthetic state transitions excluded. Category counts describe captured events, not successful work."),
@@ -146,6 +170,7 @@ export function createLoops(store: ScopeStore = createScope()) {
         body.append(el("label", {}, `Compare selected interval A (${current+1}) with interval B `,reference),button("Compare sequences",()=>{
           const number=Number(reference.value);
           if (!Number.isInteger(number)||number<1||number>active.intervals.length) {resetComparison(`Enter a whole interval number from 1 to ${active.intervals.length}.`);referenceDraft=reference.value;draw();return;}
+          if(!intervalInWindow(active.intervals[number-1])){resetComparison(`Interval ${number} is outside the current window.`);referenceDraft=reference.value;draw();return;}
           if(number===current+1){resetComparison("Choose a different interval for B.");referenceDraft=reference.value;draw();return;}
           buildComparison(active,interval!,active.intervals[number-1]);draw();
         },"sequence:compare"),el("p", {class:"loops-comparison-feedback"},comparisonNotice));
@@ -192,7 +217,7 @@ export function createLoops(store: ScopeStore = createScope()) {
   }
   async function open(id: string, selectedSource?: string) {
     const current = ++version; resetComparison();
-    phase = "loading"; sourceSelect.disabled = true;
+    phase = "loading"; setSourceDisabled(true);
     historyAbort?.abort();
     const historyCtl = new AbortController(); historyAbort = historyCtl;
     signatureAbort?.abort(); clearTimeout(signatureTimer);
@@ -210,10 +235,10 @@ export function createLoops(store: ScopeStore = createScope()) {
     try {
       const got = await sessionEvents(id, "timeline", historyCtl.signal);
       if (current !== version) return;
-      events = got; loaded = true; phase = "ready"; sourceSelect.disabled = false; selectSources(); derive();
+      events = got; loaded = true; phase = "ready"; setSourceDisabled(false); selectSources(); derive();
     } catch (error) {
       if (current !== version) return;
-      phase = "error"; sourceSelect.disabled = true;
+      phase = "error"; setSourceDisabled(true);
       ctl.abort(); clearTimeout(signatureTimer); clear(body);
       body.append(el("p", {class: "error", role: "alert"}, `History unavailable: ${String(error)}`), button("Retry history", () => void open(sessionId, source)));
     }
@@ -232,15 +257,47 @@ export function createLoops(store: ScopeStore = createScope()) {
     } catch { if (token === listingVersion) sessionStatus.textContent = "Session list unavailable. Refresh to retry."; }
   }
   sessionSelect.addEventListener("change", () => {
-    if (sessionSelect.value) { void open(sessionSelect.value); selectSession(store, {id: sessionSelect.value}); return; }
+    if (sessionSelect.value) { void open(sessionSelect.value); writeScope({id: sessionSelect.value}); return; }
     store.narrow({session: undefined});
     version++; resetComparison(); historyAbort?.abort(); signatureAbort?.abort(); clearTimeout(signatureTimer);
-    phase = "idle"; sourceSelect.disabled = true;
+    phase = "idle"; setSourceDisabled(true);
     sessionId = ""; source = undefined; events = []; signatures = []; activeKey = undefined; interval = undefined;
     selectSources(); derive();
   });
-  sourceSelect.addEventListener("change", () => { if (phase !== "ready") return; source = sourceSelect.value || undefined; selectSession(store, source ? {id: sessionId, source} : {id: sessionId}); resetComparison(); activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0; derive(); });
+  sourceSelect.addEventListener("change", () => { if (phase !== "ready" || lockedSource) return; source = sourceSelect.value || undefined; writeScope(source ? {id: sessionId, source} : {id: sessionId}); resetComparison(); activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0; derive(); });
   refreshButton.addEventListener("click", () => { void refresh(); if (sessionId) void open(sessionId, source); });
-  sourceSelect.disabled = true; selectSources(); draw();
-  return {root, open, refresh};
+  setSourceDisabled(true); selectSources(); draw();
+  function windowChanged() {
+    occurrencePage = 0;
+    const outside = (e: FirehoseEvent) => !inWindow(e.time, win);
+    const events = (ids: [string, string]) => model.events.filter(e => e.id === ids[0] || e.id === ids[1]);
+    let dropped = false;
+    if (comparison && (events(comparison.a).some(outside) || events(comparison.b).some(outside))) { resetComparison(); dropped = true; }
+    if (interval && (outside(interval.from) || outside(interval.to))) { interval = undefined; evidencePage = 0; resetComparison(); dropped = true; }
+    if (dropped || (detailEvent && outside(detailEvent))) cancelDetail();
+    draw();
+  }
+  /** Session-tab context: the scope session is opened once per key; a window-only change redraws without refetching. */
+  function setContext(ctx: SessionTabContext) {
+    const next = activeRange(ctx.window);
+    const changed = (next?.from ?? null) !== (win?.from ?? null) || (next?.to ?? null) !== (win?.to ?? null);
+    win = next;
+    const ref = ctx.session;
+    const key = ref ? sessionKey(ref) : null;
+    if (key !== lastRef) selfWritten = false;
+    sessionSelect.disabled = !!ref && !selfWritten; lockedSource = !!ref?.source && !selfWritten;
+    if (!ref) { lastRef = null; selfWritten = false; setSourceDisabled(phase !== "ready"); if (changed) windowChanged(); return; }
+    setSourceDisabled(phase !== "ready");
+    if (key !== lastRef) { lastRef = key; void open(ref.id, ref.source); return; }
+    if (changed) windowChanged();
+  }
+  function deactivate() {
+    lastRef = null; selfWritten = false;
+    if (phase === "loading") {
+      version++; historyAbort?.abort(); signatureAbort?.abort(); clearTimeout(signatureTimer); cancelDetail();
+      phase = "error"; setSourceDisabled(true); clear(body);
+      body.append(el("p", {class: "error", role: "alert"}, "History load paused."), button("Retry history", () => void open(sessionId, source)));
+    }
+  }
+  return {root, open, refresh, setContext, deactivate};
 }

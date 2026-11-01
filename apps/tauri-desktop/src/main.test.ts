@@ -80,8 +80,10 @@ test("the score view is reachable from the sidebar and starts empty", async () =
     ),
   );
   await import("./main");
-  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "score")!;
+  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "session")!;
   btn.click();
+  document.querySelector<HTMLElement>("#session-tab-score")!.click();
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
   expect(document.querySelector(".score")).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("open a session");
   const close=vi.fn().mockResolvedValue(undefined);
@@ -92,7 +94,9 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   expect(document.querySelector(".score")?.textContent).toContain("Replay sound on");
   [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b=>b.textContent==="live")!.click();
   expect(close).toHaveBeenCalledOnce();
-  btn.click();expect(document.querySelector('[aria-label="Enable replay sound"]')).not.toBeNull();
+  btn.click();
+  expect(document.querySelector("#session-tab-score")?.getAttribute("aria-selected")).toBe("true");
+  expect(document.querySelector('[aria-label="Enable replay sound"]')).not.toBeNull();
 });
 
 test("the loops view is reachable from the sidebar and starts empty", async () => {
@@ -124,8 +128,10 @@ test("the loops view is reachable from the sidebar and starts empty", async () =
     ),
   );
   await import("./main");
-  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "loops")!;
+  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "session")!;
   btn.click();
+  document.querySelector<HTMLElement>("#session-tab-loops")!.click();
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
   expect(document.querySelector(".loops")).not.toBeNull();
   expect(document.querySelector(".loops")?.textContent).toContain("Choose a session");
 });
@@ -146,12 +152,13 @@ test("entering Loom closes and empties the open shared detail pane", async () =>
   renderDetail(pane, fixture[0], () => {});
   expect(pane.classList.contains("open")).toBe(true);
   expect(pane.childElementCount).toBeGreaterThan(0);
-  [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b => b.textContent === "loom")!.click();
+  [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b => b.textContent === "session")!.click();
+  document.querySelector<HTMLElement>("#session-tab-loom")!.click();
   expect(pane.classList.contains("open")).toBe(false);
   expect(pane.childElementCount).toBe(0);
   expect(document.querySelector(".loom")).not.toBeNull();
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("loom");
-
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
+  expect(document.querySelector("#session-tab-loom")?.getAttribute("aria-selected")).toBe("true");
 });
 
 test("leaving Files aborts its pending history request", async () => {
@@ -246,6 +253,7 @@ let tracked: Boot["keydownListeners"] = [];
 
 type BootOpts = {
   sessions?: unknown[]; repos?: unknown[]; snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
+  events?: unknown[]; sessionEvents?: unknown[];
   worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
 };
 async function boot(opts: BootOpts = {}): Promise<Boot> {
@@ -277,7 +285,8 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     }
     if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: [] });
     if (p === "/sessions") return json(opts.sessions ?? []);
-    if (p.startsWith("/sessions/")) return json(scoreFixture);
+    if (p.startsWith("/sessions/")) return json(opts.sessionEvents ?? scoreFixture);
+    if (p === "/events") return json(opts.events ?? []);
     if (p === "/workspace-graph/repos") return json(opts.repos ?? []);
     if (p === "/workspace-graph") return json(opts.snapshots?.[u.searchParams.get("repo_id") ?? ""] ?? {});
     if (p === "/config") return json({ privacy_mode: "balanced" });
@@ -307,6 +316,16 @@ const resolverOf = (members: string[]): ScopeResolver => ({
   labels: () => ({}),
 });
 
+// Session altitude helpers: the six lenses are tabs of the "session" nav entry.
+const tabBtn = (t: string) => document.querySelector<HTMLElement>(`#session-tab-${t}`)!;
+const tabOn = (t: string) => tabBtn(t)?.getAttribute("aria-selected") === "true";
+const openTab = (b: Boot, t: string) => {
+  b.nav("session").click();
+  tabBtn(t).click();
+};
+const visiblePanels = () => document.querySelectorAll(".session-panel [role='tabpanel']:not([hidden])");
+const timelineCalls = (b: Boot, id = S1) => b.urls.filter((u) => u.includes(`/sessions/${id}?view=timeline`)).length;
+
 afterEach(() => {
   for (const [fn, o] of tracked) document.removeEventListener("keydown", fn, o as EventListenerOptions);
   tracked = [];
@@ -320,13 +339,15 @@ test("openScore and openLoops narrow scope.session and show the panel; score ope
   await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".score-open")).not.toBeNull());
   document.querySelector<HTMLElement>(".score-open")!.click();
   expect(b.scope.get().session).toEqual({ id: S1, source: "codex" });
-  expect(b.active()).toBe("score");
+  expect(b.active()).toBe("session");
+  expect(tabOn("score")).toBe(true);
   await vi.waitFor(() => expect(document.querySelector(".score")?.textContent).not.toContain("open a session"));
   expect(b.urls.filter((u) => u.includes(`/sessions/${S1}?view=timeline`))).toHaveLength(1);
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".loops-open")).not.toBeNull());
   document.querySelector<HTMLElement>(".loops-open")!.click();
-  expect(b.active()).toBe("loops");
+  expect(b.active()).toBe("session");
+  expect(tabOn("loops")).toBe(true);
   expect(b.scope.get().session).toEqual({ id: S1, source: "codex" });
 });
 
@@ -335,19 +356,19 @@ test("F3: Score A, Loops B, then the Score nav button shows B; an unset scope.se
   const A = S1;
   const B = "other-session";
   const { scope } = b;
-  b.nav("score").click();
+  openTab(b, "score");
   expect(b.urls.filter((u) => u.includes("/sessions/"))).toHaveLength(0);
   scope.narrow({ session: { id: A } });
-  b.nav("score").click();
+  openTab(b, "score");
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes(`/sessions/${A}?view=timeline`))).toBe(true));
   scope.narrow({ session: { id: B } });
-  b.nav("loops").click();
-  b.nav("score").click();
+  openTab(b, "loops");
+  openTab(b, "score");
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes(`/sessions/${B}?view=timeline`))).toBe(true));
   const before = b.urls.length;
   scope.narrow({ session: undefined });
   b.nav("live").click();
-  b.nav("score").click();
+  openTab(b, "score");
   await Promise.resolve();
   expect(b.urls.slice(before).filter((u) => u.includes("?view=timeline"))).toHaveLength(0);
 });
@@ -376,7 +397,8 @@ test("F6: openSession outside the resolver membership replaces the context; insi
   expect(scope.get().project).toBeUndefined();
   expect(scope.get().worktree).toBeUndefined();
   expect(scope.get().cell).toBeUndefined();
-  expect(b.active()).toBe("sessions");
+  expect(b.active()).toBe("session");
+  expect(tabOn("score")).toBe(true);
   scope.set({ project: "A", worktree: "wA", window: "live" });
   await openHistory("Y");
   expect(scope.get()).toMatchObject({ project: "A", worktree: "wA", session: { id: "Y", source: "codex" } });
@@ -395,14 +417,15 @@ test("a sessions row click sets scope.session; the evidence court leaves scope u
   expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
   expect(b.active()).toBe("sessions");
   const before = b.scope.get();
-  b.nav("court").click();
+  openTab(b, "court");
+  expect(tabOn("court")).toBe(true);
   expect(b.scope.get()).toBe(before);
 });
 
 test("Escape ascends session, worktree, project from score; fleet is a no-op", async () => {
   const b = await boot({ sessions: [sessionRow(S1)] });
   b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
-  b.nav("score").click();
+  openTab(b, "score");
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes("?view=timeline"))).toBe(true));
   const e1 = esc();
   expect(e1.defaultPrevented).toBe(true);
@@ -455,8 +478,9 @@ test("opening a session outside the scoped project/worktree clears them; a confi
 test("Escape from loops returns to sessions and ascends; Escape on sessions refetches the list", async () => {
   const b = await boot({ sessions: [sessionRow(S1)] });
   b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
-  b.nav("loops").click();
-  expect(b.active()).toBe("loops");
+  openTab(b, "loops");
+  expect(b.active()).toBe("session");
+  expect(tabOn("loops")).toBe(true);
   esc();
   expect(b.active()).toBe("sessions");
   expect(b.scope.get().session).toBeUndefined();
@@ -473,7 +497,7 @@ test("Escape from loops returns to sessions and ascends; Escape on sessions refe
 test("Escape is a no-op on non-scope panels", async () => {
   const b = await boot();
   b.scope.set({ project: "P", window: "live" });
-  for (const name of ["files", "court", "doctor"]) {
+  for (const name of ["files", "doctor"]) {
     b.nav(name).click();
     const e = esc();
     expect(e.defaultPrevented).toBe(false);
@@ -594,12 +618,12 @@ const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty"
 test("sidebar groups altitudes, lenses and housekeeping; the folded panels are gone", async () => {
   const b = await boot();
   const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
-  expect(names).toEqual(["fleet", "project", "sessions", "score", "live", "attention", "workspace", "loops", "strata", "court", "handoffs", "loom", "ecosystem", "replay", "files", "doctor", "settings"]);
+  expect(names).toEqual(["fleet", "project", "sessions", "session", "live", "attention", "workspace", "strata", "ecosystem", "files", "doctor", "settings"]);
   const heads = [...document.querySelectorAll(".sidebar .nav-heading")];
   expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Lenses", "Housekeeping"]);
   const first = ["fleet", "live", "files"];
   heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
-  for (const gone of ["dwell", "matrix", "lanes", "airspace"]) expect(b.nav(gone)).toBeUndefined();
+  for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeUndefined();
   expect(b.active()).toBe("project");
 });
 
@@ -670,7 +694,8 @@ test("bead click opens Score", async () => {
   await vi.waitFor(() => expect(document.querySelector(".project-bead")).not.toBeNull());
   document.querySelector<SVGRectElement>(".project-bead")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   expect(b.scope.get().session).toEqual({ id: "s-o1", source: "codex" });
-  expect(b.active()).toBe("score");
+  expect(b.active()).toBe("session");
+  expect(tabOn("score")).toBe(true);
   expectProjectInert(b);
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes("/sessions/s-o1?view=timeline"))).toBe(true));
 });
@@ -853,7 +878,8 @@ test("Fleet descents carry the window; row, fork and need open project, sessions
   b.nav("fleet").click();
   await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());
   document.querySelector<HTMLElement>(".fleet-need")!.click();
-  expect(b.active()).toBe("score");
+  expect(b.active()).toBe("session");
+  expect(tabOn("score")).toBe(true);
   expect(b.scope.get().session).toEqual({ id: "s-n1", source: "codex" });
 });
 
@@ -898,4 +924,215 @@ test("Fleet labels rows from attention when /worktrees is a 404, and says so", a
   expect(document.querySelector(".fleet-row-label")!.textContent).toBe("name-repoZ");
   expect(document.querySelector(".fleet-unsupported")).not.toBeNull();
   expect(document.querySelector(".fleet-row-head")!.getAttribute("aria-disabled")).toBe("true");
+});
+
+// ---------------------------------------------------------------------------
+// Session altitude: six lenses as tabs over one session and one transport
+// ---------------------------------------------------------------------------
+
+import errsigFixture from "./ui/score/fixture.errsig.json";
+
+const T0 = Date.parse(scoreFixture[0].time);
+const S1_SOURCE = scoreFixture[0].source as string;
+const scoreView = () => document.querySelector(".score-overview .score-view");
+const viewW = () => Number(scoreView()!.getAttribute("width"));
+const loadedScore = () => vi.waitFor(() => expect(scoreView(), document.querySelector(".score-chart")?.textContent).not.toBeNull());
+const ERR_SID = "019fd182-8513-7461-a816-e786f1fe439e";
+const errEvents = (errsigFixture as Array<Record<string, any>>).filter((e) => e.session_id === ERR_SID);
+
+test.each(["court", "loom", "replay", "handoffs"])("Escape on the %s tab neither ascends nor is prevented", async (t) => {
+  const b = await boot();
+  b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
+  openTab(b, t);
+  const before = b.scope.get();
+  const e = esc(tabBtn(t));
+  expect(e.defaultPrevented).toBe(false);
+  expect(b.scope.get()).toBe(before);
+  expect(b.active()).toBe("session");
+  expect(tabOn(t)).toBe(true);
+});
+
+test("Escape from the Loom Source input is not prevented", async () => {
+  const b = await boot();
+  b.scope.set({ project: "P", session: { id: S1 }, window: "live" });
+  openTab(b, "loom");
+  const source = document.querySelector<HTMLInputElement>('[aria-label="Source"]')!;
+  expect(source).not.toBeNull();
+  expect(esc(source).defaultPrevented).toBe(false);
+  expect(b.scope.get().session).toEqual({ id: S1 });
+  expect(b.active()).toBe("session");
+  expect(tabOn("loom")).toBe(true);
+});
+
+test("Escape round trip: Session -> Sessions clears the session, keeps the worktree; the score button returns with the window live", async () => {
+  const b = await boot({ sessions: [sessionRow(S1)] });
+  b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
+  b.nav("session").click();
+  expect(esc().defaultPrevented).toBe(true);
+  expect(b.active()).toBe("sessions");
+  expect(b.scope.get().session).toBeUndefined();
+  expect(b.scope.get().worktree).toBe("W");
+  await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".score-open")).not.toBeNull());
+  document.querySelector<HTMLElement>(".score-open")!.click();
+  expect(b.active()).toBe("session");
+  expect(tabOn("score")).toBe(true);
+  expect(b.scope.get().window).toBe("live");
+  expect(b.scope.get().session).toEqual({ id: S1, source: "codex" });
+});
+
+test("tab keyboard: ArrowRight, End and Home move the selected tab, focus and the one visible tabpanel", async () => {
+  const b = await boot();
+  b.nav("session").click();
+  const press = (key: string) => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  tabBtn("score").focus();
+  press("ArrowRight");
+  expect(tabOn("loops")).toBe(true);
+  expect(document.activeElement?.id).toBe("session-tab-loops");
+  expect(visiblePanels()).toHaveLength(1);
+  expect(visiblePanels()[0]!.id).toBe("session-panel-loops");
+  press("End");
+  expect(tabOn("court")).toBe(true);
+  expect(document.activeElement?.id).toBe("session-tab-court");
+  expect(visiblePanels()[0]!.id).toBe("session-panel-court");
+  press("Home");
+  expect(tabOn("score")).toBe(true);
+  expect(document.activeElement?.id).toBe("session-tab-score");
+  expect(visiblePanels()).toHaveLength(1);
+  expect(visiblePanels()[0]!.id).toBe("session-panel-score");
+});
+
+test("the tab is remembered per session across nav away and back; openers naming no tab land on Score", async () => {
+  const b = await boot({ sessions: [sessionRow(S1)] });
+  b.scope.set({ session: { id: S1, source: "codex" }, window: "live" });
+  openTab(b, "loops");
+  b.nav("live").click();
+  b.nav("session").click();
+  expect(tabOn("loops")).toBe(true);
+  b.nav("live").click();
+  b.scope.narrow({ session: { id: "other-session" } });
+  b.nav("session").click();
+  expect(tabOn("score")).toBe(true);
+  b.nav("live").click();
+  b.scope.narrow({ session: { id: S1, source: "codex" } });
+  b.nav("session").click();
+  expect(tabOn("loops")).toBe(true);
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".score-open")).not.toBeNull());
+  document.querySelector<HTMLElement>(".score-open")!.click();
+  expect(b.active()).toBe("session");
+  expect(tabOn("score")).toBe(true);
+});
+
+test("scope.window drives Score and the filter lenses; the panel only writes through the reset chip", async () => {
+  const b = await boot();
+  b.scope.set({ session: { id: S1, source: S1_SOURCE }, window: "live" });
+  b.nav("session").click();
+  await loadedScore();
+  const full = viewW();
+  const narrow = { from: T0 + 100_000, to: T0 + 200_000 };
+  b.scope.narrow({ window: narrow });
+  expect(viewW()).toBeLessThan(full);
+  expect(b.scope.get().window).toEqual(narrow);
+  const wide = { from: T0, to: T0 + 600_000 };
+  const narrowBeforeWiden = viewW();
+  b.scope.narrow({ window: wide });
+  expect(viewW()).toBeGreaterThan(narrowBeforeWiden);
+  expect(viewW()).toBeLessThanOrEqual(full);
+  expect(b.scope.get().window).toEqual(wide);
+  b.scope.narrow({ window: narrow });
+  const narrowW = viewW();
+  b.scope.narrow({ window: wide });
+  expect(viewW()).toBeGreaterThan(narrowW);
+  expect(timelineCalls(b)).toBe(1);
+
+  tabBtn("loops").click();
+  const head = (t: string) => document.querySelector<HTMLElement>(`#session-panel-${t} .session-lens-head`)!;
+  const reset = head("loops").querySelector<HTMLButtonElement>("button")!;
+  expect(reset).not.toBeNull();
+  expect(head("loops").textContent).toContain("→");
+  reset.click();
+  expect(b.scope.get().window).toBe("live");
+  expect(head("loops").querySelector("button")).toBeNull();
+  b.scope.narrow({ window: wide });
+  for (const t of ["handoffs", "court"]) {
+    tabBtn(t).click();
+    expect(head(t).textContent).toContain("does not apply");
+    expect(head(t).querySelector("button")).toBeNull();
+  }
+  expect(b.scope.get().window).toEqual(wide);
+});
+
+test("late-event consistency: a live window shows an event after the former bounds on Loops", async () => {
+  const ts = errEvents.map((e) => Date.parse(e.time));
+  const lateTime = new Date(Math.max(...ts) + 86_400_000).toISOString();
+  const late = { ...errEvents[errEvents.length - 1], id: "late-event-1", time: lateTime };
+  const b = await boot({ sessionEvents: [...errEvents, late] });
+  const win = { from: Math.min(...ts), to: Math.max(...ts) };
+  b.scope.set({ session: { id: ERR_SID, source: errEvents[0]!.source }, window: win });
+  openTab(b, "loops");
+  await vi.waitFor(() => expect(document.querySelector(".loops")?.textContent).toContain("2 of 3 occurrences in window"));
+  document.querySelector<HTMLButtonElement>("#session-panel-loops .session-window-reset")!.click();
+  expect(b.scope.get().window).toBe("live");
+  await vi.waitFor(() => expect(document.querySelectorAll(".loop-occurrence")).toHaveLength(3));
+  expect(document.querySelector(".loops")?.textContent).not.toContain("occurrences in window");
+});
+
+test("a disjoint window is left unchanged by Score, and survives Session -> Fleet -> Session", async () => {
+  const b = await boot();
+  const disjoint = { from: T0 - 10 * 86_400_000, to: T0 - 9 * 86_400_000 };
+  b.scope.set({ session: { id: S1, source: S1_SOURCE }, window: disjoint });
+  openTab(b, "score");
+  await loadedScore();
+  expect(b.scope.get().window).toEqual(disjoint);
+  b.nav("fleet").click();
+  b.nav("session").click();
+  expect(b.scope.get().window).toEqual(disjoint);
+  await loadedScore();
+  expect(b.scope.get().window).toEqual(disjoint);
+});
+
+test("empty scope: every tab opens without error or session fetch and says no session in scope", async () => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  const b = await boot();
+  expect(b.scope.get().session).toBeUndefined();
+  for (const t of ["score", "loops", "loom", "replay", "handoffs", "court"]) {
+    openTab(b, t);
+    expect(tabOn(t)).toBe(true);
+    expect(document.querySelector(`#session-panel-${t} .session-lens-title`)?.textContent).toBe("no session in scope");
+    expect(document.querySelector(`#session-panel-${t} .session-lens-head`)?.textContent).not.toMatch(/window|whole session/);
+    // Lens roots are attached in the active panel only; handoffs and court keep standalone behaviour.
+    expect(document.querySelector(`#session-panel-${t}`)!.children.length).toBeGreaterThan(1);
+  }
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.urls.filter((u) => new URL(u).pathname.startsWith("/sessions/"))).toHaveLength(0);
+  expect(errors).not.toHaveBeenCalled();
+});
+
+test("Use in Evidence Court opens the Court tab with the event id carried over", async () => {
+  const ev = scoreFixture[0];
+  const b = await boot({ events: [ev] });
+  b.nav("live").click();
+  await vi.waitFor(() => expect(document.querySelector(".feed-row")).not.toBeNull());
+  document.querySelector<HTMLElement>(".feed-row")!.click();
+  const offer = [...document.querySelectorAll<HTMLButtonElement>("aside.detail button")].find((x) => x.textContent === "Use in Evidence Court")!;
+  expect(offer).toBeTruthy();
+  offer.click();
+  expect(tabOn("court")).toBe(true);
+  expect(b.active()).toBe("session");
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Event ID"]')!.value).toBe(ev.id);
+});
+
+test("late-event consistency: a live window shows an event after the former bounds in Fleet lanes", async () => {
+  const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(b.sources.length).toBeGreaterThan(0));
+  const bounds = { from: NOW - 3_600_000, to: NOW - 1_800_000 };
+  b.scope.set({ window: bounds });
+  const late = { ...scoreFixture[0], id: "late-fleet-1", session_id: S1, source: S1_SOURCE, time: iso(NOW - 10_000) };
+  b.sources.forEach((s) => (s as unknown as { onmessage: ((m: { data: string }) => void) | null }).onmessage?.({ data: JSON.stringify(late) }));
+  document.querySelector<HTMLElement>('[data-enc="lanes"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-lanes")).not.toBeNull());
+  expect(document.querySelectorAll("rect.lane-tick")).toHaveLength(0);
+  b.scope.narrow({ window: "live" });
+  await vi.waitFor(() => expect(document.querySelectorAll("rect.lane-tick")).toHaveLength(1));
 });

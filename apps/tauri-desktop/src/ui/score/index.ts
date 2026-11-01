@@ -12,7 +12,7 @@ import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatClockMs, formatDuration } from "../../format";
 import { createScope, sameSession } from "../../scope";
-import type { ScopeStore, SessionRef } from "../../scope";
+import type { ScopeStore, ScopeWindow, SessionRef } from "../../scope";
 import type { Siblings } from "../detail";
 import {
   SPEEDS,
@@ -49,8 +49,14 @@ export type ScorePanel = {
   deactivate(): void;
   /** The (id, source) whose events are drawn; null before any successful load. */
   loadedSession(): SessionRef | null;
-  /** Called on every show: opens scope.session when it differs from what is loaded. */
+  /** Called on every show: refetches scope.session (history may have grown); the selected window is kept. */
   activate(): void;
+  /** Re-reads scope.window into the drawn viewport (no fetch, no store write); clears the departed flag. */
+  followWindow(): void;
+  /** Hosted with no session in scope: clears the drawn session and drops any pending load. */
+  showEmpty(): void;
+  /** The loaded session's full span, or null before any successful load. */
+  fullRange(): { from: number; to: number } | null;
 };
 
 /** How long the optional GET /errors fetch may take before it is aborted; the score then renders without daemon signatures. */
@@ -97,6 +103,9 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
  * `onSelect` renders the detail pane; `dismiss` is the score's half of that
  * pane's close button, so a fetch still in flight never reopens it.
  */
+const sameWindowValue = (a: ScopeWindow, b: ScopeWindow): boolean =>
+  a === "live" || b === "live" ? a === b : a.from === b.from && a.to === b.to;
+
 export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void, store: ScopeStore = createScope()): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
@@ -116,7 +125,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   soundButton.addEventListener("click", () => { if (soundState === "on" || soundState === "enabling") sound.disable(); else void sound.enable(); });
   const soundControls = el("details", {}, el("summary", {}, "Optional replay sound"), soundButton, soundStatus,
     el("p", {}, `Quiet local tones during playback only; off by default. ${Object.entries(REPLAY_PITCHES).map(([category, hz]) => `${category} ${hz} Hz`).join(", ")}; other 196 Hz. At most one latest crossed observation every 150 ms; dense events and first/final observations may be silent. This is not an error detector. Tones describe captured categories, not success. Leaving Score, hiding the page, or opening another session switches sound off.`));
-  const root = el("section", { class: "score", tabindex: "0" }, head, bar, soundControls, overview, chart);
+  const windowNote = el("p", { class: "dim score-window-note", hidden: "" });
+  const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, soundControls, overview, chart);
   const clipId = `score-clip-${++clipSeq}`;
 
   let sessionId = "";
@@ -459,19 +469,55 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     return LABEL_W + ((t - b.from) / span) * laneW();
   }
 
+  /** An explicit user action (zoom, pan, jump, reset) sets the view and publishes it. */
   function setView(next: View) {
     view = clampView(next, bounds());
     draw();
     publishWindow();
   }
 
-  /** The drawn view becomes the shared window, only for the session the scope names. Output only: never subscribes. */
+  /**
+   * Score is the writer and a reader of scope.window. Writes happen only on
+   * explicit user actions, for the session the scope names: a view covering the
+   * whole session publishes 'live' (the canonical whole-session value), any
+   * other view publishes its range. Loads and reconciles never write.
+   */
   function publishWindow() {
     if (departed) return;
     if (!loadedKey || !sameSession(loadedKey, store.get().session)) return;
     if (!Number.isFinite(view.from) || !Number.isFinite(view.to) || view.from > view.to) return;
-    store.narrow({ window: { from: view.from, to: view.to } });
+    const b = bounds();
+    store.narrow({ window: view.from <= b.from && view.to >= b.to ? "live" : { from: view.from, to: view.to } });
   }
+
+  /** scope.window as a view, when it applies to the loaded session and is not the whole session. */
+  function scopedWindow(): { from: number; to: number } | null {
+    if (!loadedKey || !sameSession(loadedKey, store.get().session)) return null;
+    const w = store.get().window;
+    return w === "live" ? null : w;
+  }
+  const scopedView = (): View | null => scopedWindow();
+
+  function syncNote(w: ScopeWindow) {
+    const b = bounds();
+    const outside = loaded() && w !== "live" && (w.to < b.from || w.from > b.to);
+    windowNote.hidden = !outside;
+    windowNote.textContent = outside ? "window outside this session's span" : "";
+  }
+
+  /** Draws the viewport scope.window names; never writes the store. */
+  function applyScopeWindow() {
+    if (departed || !loaded() || !loadedKey || !sameSession(loadedKey, store.get().session)) return;
+    const w = store.get().window;
+    view = w === "live" ? bounds() : clampView(w, bounds());
+    syncNote(w);
+    draw();
+  }
+
+  store.subscribe((next, prev) => {
+    if (sameWindowValue(next.window, prev.window)) return;
+    applyScopeWindow();
+  });
 
   // --- drawing --------------------------------------------------------------------
 
@@ -683,6 +729,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   async function load(id: string, source?: string) {
     sound.disable();
     const v = ++version;
+    const priorKey = loadedKey, priorAt = at;
     loadedKey = null;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.
@@ -735,13 +782,17 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       score = buildScore(evs, memberKeys);
       ready = true;
       loadedKey = source === undefined ? { id } : { id, source };
-      view = bounds();
+      const scoped = scopedView();
+      view = scoped ? clampView(scoped, bounds()) : bounds();
+      syncNote(store.get().window);
       currentId = undefined;
       kinSig = undefined;
-      at = score.start;
+      // With an applied scope window the playhead starts inside the viewport (keeping the
+      // previous position when it already lies there), so Play never pans away from it.
+      const keep = scoped && priorKey && sameSession(priorKey, loadedKey) && Number.isFinite(priorAt) && priorAt >= view.from && priorAt <= view.to;
+      at = scoped ? (keep ? priorAt : view.from) : score.start;
       drawHead();
       draw();
-      publishWindow();
       // A load that lands after the user left the Score, or closed the pane,
       // draws but leaves the shared detail pane alone.
       const under = eventAt(score, at);
@@ -773,9 +824,28 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   function activate() {
     departed = false;
     const want = store.get().session;
-    if (!want) return;
+    if (!want) {
+      // Session tabs do not call refresh() on entry; show the empty state.
+      draw();
+      return;
+    }
     // An explicit reopen refetches (history may have grown); open() dedups a request already in flight.
     void open(want.id, want.source);
   }
-  return { root, refresh, open, tick, playhead: () => at, deactivate, loadedSession: () => loadedKey, activate };
+  /** Hosted Session tab with no session in scope: drop the drawn session and invalidate any pending load. */
+  function showEmpty() {
+    departed = false;
+    version++; inflight = null; loadedKey = null;
+    sound.disable(); cancelDetail(); setPlaying(false);
+    sessionId = ""; events = []; byId = new Map(); fullById = new Map(); sigs = new Map(); memberKeys = new Map();
+    score = buildScore([]); view = { from: NaN, to: NaN }; at = NaN; currentId = undefined; kinSig = undefined;
+    clear(head); syncNote("live");
+    draw();
+  }
+  function followWindow() {
+    departed = false;
+    applyScopeWindow();
+  }
+  const fullRange = () => (loadedKey && loaded() ? bounds() : null);
+  return { root, refresh, open, tick, playhead: () => at, deactivate, loadedSession: () => loadedKey, activate, followWindow, fullRange, showEmpty };
 }

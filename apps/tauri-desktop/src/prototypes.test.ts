@@ -8,6 +8,7 @@ const click = (label:string) => {
   const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === label);
   expect(button, label).toBeTruthy(); button!.click();
 };
+const tab = (name:string) => document.querySelector<HTMLElement>(`#session-tab-${name}`)!.click();
 const input = (label:string, value:string) => {
   const field = document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
   expect(field, label).toBeTruthy(); field.value=value; field.dispatchEvent(new Event("input"));
@@ -32,19 +33,39 @@ test("all prototypes coexist and close a shared receipt on entry",async()=>{
   for(const name of ["court","handoffs","loom","ecosystem","replay","fleet"]) {
     renderDetail(document.querySelector<HTMLElement>("aside.detail")!,event,()=>{});
     expect(document.querySelector("aside.detail pre")).not.toBeNull();
-    click(name);
-    expect(document.querySelector(".nav-btn.active")?.textContent).toBe(name);
+    const tab = ["court","handoffs","loom","replay"].includes(name);
+    if (tab) {click("session");document.querySelector<HTMLElement>(`#session-tab-${name}`)!.click();}
+    else click(name);
+    expect(document.querySelector(".nav-btn.active")?.textContent).toBe(tab?"session":name);
     expect(document.querySelector("aside.detail")?.textContent).not.toContain(event.id);
     expect(document.querySelector(".attention-strip")).not.toBeNull();
   }
 });
 test("leaving Court cancels its pending receipt and preserves unsaved text across other prototypes",async()=>{
-  const signal=await setup(); click("court");
+  const signal=await setup(); click("session");tab("court");
   input("New claim","Tests pass");click("Create claim");input("New requirement","Captured result");click("Add requirement");
   input("Event ID",event.id);click("Look up event");
   expect(signal()).toBeDefined();
-  input("New claim","Unsubmitted idea");click("replay");
+  input("New claim","Unsubmitted idea");tab("replay");
   expect(signal()!.aborted).toBe(true);
-  click("ecosystem");click("court");
+  click("ecosystem");click("session");
+  expect(document.querySelector("#session-tab-replay")?.getAttribute("aria-selected")).toBe("true");
+  tab("court");
   expect(document.querySelector<HTMLInputElement>('[aria-label="New claim"]')?.value).toBe("Unsubmitted idea");
+});
+test("Escape neither aborts a pending Court receipt nor leaves the tab; it is not prevented in the claim input",async()=>{
+  const signal=await setup(); click("session");tab("court");
+  input("New claim","Tests pass");click("Create claim");input("New requirement","Captured result");click("Add requirement");
+  input("Event ID",event.id);click("Look up event");
+  expect(signal()).toBeDefined();
+  const field=document.querySelector<HTMLElement>('[aria-label="New claim"]')!;
+  const inField=new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true});
+  field.dispatchEvent(inField);
+  const onTab=new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true});
+  document.querySelector("#session-tab-court")!.dispatchEvent(onTab);
+  expect(inField.defaultPrevented).toBe(false);
+  expect(onTab.defaultPrevented).toBe(false);
+  expect(signal()!.aborted).toBe(false);
+  expect(document.querySelector("#session-tab-court")?.getAttribute("aria-selected")).toBe("true");
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
 });

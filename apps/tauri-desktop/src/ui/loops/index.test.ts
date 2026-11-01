@@ -251,3 +251,218 @@ test("choosing a session outside the scoped project/worktree clears them", async
   expect(store.get().project).toBeUndefined();
   expect(store.get().worktree).toBeUndefined();
 });
+
+// --- Session tab context ---------------------------------------------------
+import type { SessionTabContext } from "../session/context";
+const T = (e: FirehoseEvent) => Date.parse(e.time);
+const three: FirehoseEvent[] = [...events, {...events[1], id: "late-3", time: new Date(T(events[1]) + 60_000).toISOString()}];
+const ref = {id: sid, source: "codex"};
+const ctx = (over: Partial<SessionTabContext> = {}): SessionTabContext => ({session: ref, window: "live", ...over});
+const win = (from: number, to: number) => ({from, to});
+const items = (root: HTMLElement) => [...root.querySelectorAll(".loop-occurrence")];
+
+test("setContext opens the named session once; window-only change never loads; null session unlocks", async () => {
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  const select = panel.root.querySelector<HTMLSelectElement>('[aria-label="Loop session"]')!;
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(panel.root.textContent).toContain("2 occurrences"));
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+  expect(api.sessionEvents).toHaveBeenCalledWith(sid, "timeline", expect.any(AbortSignal));
+  expect(select.disabled).toBe(true);
+  panel.setContext(ctx());
+  panel.setContext(ctx({window: win(T(events[0]) - 1, T(events[1]) + 1)}));
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+  panel.setContext(ctx({session: null}));
+  expect(select.disabled).toBe(false);
+  expect(panel.root.textContent).toContain("2 occurrences");
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+});
+
+test("occurrence list filtered to the window, original numbering kept", async () => {
+  api.sessionEvents.mockResolvedValue(three);
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(items(panel.root)).toHaveLength(3));
+  expect(panel.root.textContent).not.toContain("occurrences in window");
+  panel.setContext(ctx({window: win(T(three[1]) - 1, T(three[2]) + 1)}));
+  expect(items(panel.root)).toHaveLength(2);
+  expect(items(panel.root)[0].textContent).toContain("View occurrence 2");
+  expect(panel.root.textContent).toContain("2 of 3 occurrences in window");
+  expect(panel.root.textContent).not.toContain("Baseline observation");
+  panel.setContext(ctx({window: win(T(three[0]) - 1, T(three[1]) + 1)}));
+  expect(items(panel.root)).toHaveLength(2);
+  expect(panel.root.textContent).toContain("Baseline observation");
+  panel.setContext(ctx());
+  expect(items(panel.root)).toHaveLength(3);
+  expect(panel.root.textContent).not.toContain("in window");
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+});
+
+test("window change clears an excluded selection and drops its deferred receipt; an in-window selection is kept", async () => {
+  api.sessionEvents.mockResolvedValue(three);
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(items(panel.root)).toHaveLength(3));
+  click(panel.root, "Compare interval 1");
+  expect(panel.root.textContent).toContain("Captured activity between recurrences");
+  let resolve!: (v: FirehoseEvent) => void;
+  api.capturedEvent.mockReturnValueOnce(new Promise(r => resolve = r));
+  click(panel.root, "View occurrence 1");
+  // the whole interval stays in window: selection kept
+  panel.setContext(ctx({window: win(T(three[0]) - 1, T(three[2]) + 1)}));
+  expect(panel.root.textContent).toContain("Captured activity between recurrences");
+  expect(panel.root.querySelector(".loops-detail pre")).toBeTruthy();
+  // now exclude the interval's first boundary
+  panel.setContext(ctx({window: win(T(three[1]) - 1, T(three[2]) + 1)}));
+  expect(panel.root.textContent).not.toContain("Captured activity between recurrences");
+  expect(panel.root.querySelector(".loops-detail pre")).toBeNull();
+  resolve({...three[0], summary: "STALE RECEIPT"});
+  await vi.waitFor(() => expect(api.capturedEvent).toHaveBeenCalled());
+  await Promise.resolve();
+  expect(panel.root.textContent).not.toContain("STALE RECEIPT");
+});
+
+test("window change clears an excluded comparison", async () => {
+  api.sessionEvents.mockResolvedValue(three);
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(items(panel.root)).toHaveLength(3));
+  click(panel.root, "Compare interval 2");
+  click(panel.root, "Compare sequences");
+  expect(panel.root.querySelector(".loops-sequence-caption")).toBeTruthy();
+  panel.setContext(ctx({window: win(T(three[1]) - 1, T(three[2]) + 1)}));
+  expect(panel.root.querySelector(".loops-sequence-caption")).toBeNull();
+});
+
+test("leave-before-resolve then same-session re-entry reloads; a stale response is dropped", async () => {
+  let first!: (v: FirehoseEvent[]) => void;
+  api.sessionEvents.mockReturnValueOnce(new Promise(r => first = r));
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  panel.deactivate();
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(api.sessionEvents).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(panel.root.textContent).toContain("2 occurrences"));
+  first([]);
+  await Promise.resolve(); await Promise.resolve();
+  expect(panel.root.textContent).toContain("2 occurrences");
+  expect(panel.root.textContent).not.toContain("No captured events");
+});
+
+test("race: A in flight, setContext(B), A resolves renders only B", async () => {
+  let a!: (v: FirehoseEvent[]) => void;
+  api.sessionEvents.mockReturnValueOnce(new Promise(r => a = r));
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  api.sessionEvents.mockResolvedValueOnce([]);
+  panel.setContext(ctx({session: {id: "other", source: "codex"}}));
+  await vi.waitFor(() => expect(panel.root.textContent).toContain("No captured events"));
+  a(events);
+  await Promise.resolve(); await Promise.resolve();
+  expect(panel.root.textContent).toContain("No captured events");
+  expect(panel.root.textContent).not.toContain("2 occurrences");
+});
+
+test("window-only change redraws without refetch and resets the occurrence page", async () => {
+  api.sessionEvents.mockResolvedValue(Array.from({length: 120}, (_, i) => ({...events[0], id: `large-${String(i).padStart(3, "0")}`, time: new Date(T(events[0]) + i * 1000).toISOString()})));
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(items(panel.root)).toHaveLength(40));
+  click(panel.root, "Next occurrences");
+  expect(panel.root.textContent).toContain("41–80 of 120");
+  panel.setContext(ctx({window: win(T(events[0]) - 1, T(events[0]) + 99_000)}));
+  expect(panel.root.textContent).toContain("1–40 of 100");
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+});
+
+test("null session re-enables the picker; a manually opened session survives window changes; never subscribes", async () => {
+  const store = createScope(); const subscribe = vi.spyOn(store, "subscribe");
+  const panel = createLoops(store); document.body.append(panel.root);
+  panel.setContext({session: null, window: "live"});
+  await panel.open(sid, "codex");
+  const select = panel.root.querySelector<HTMLSelectElement>('[aria-label="Loop session"]')!;
+  expect(select.disabled).toBe(false);
+  panel.setContext({session: null, window: win(T(events[0]) - 1, T(events[1]) + 1)});
+  expect(panel.root.textContent).toContain("2 occurrences");
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+  expect(subscribe).not.toHaveBeenCalled();
+});
+
+test("empty scope: a picker choice keeps both pickers usable and loads the history once", async () => {
+  const store = createScope(); const panel = createLoops(store); document.body.append(panel.root);
+  panel.setContext({session: null, window: "live"});
+  await panel.refresh();
+  const select = panel.root.querySelector<HTMLSelectElement>('[aria-label="Loop session"]')!;
+  select.append(Object.assign(document.createElement("option"), {value: sid, textContent: sid}));
+  select.value = sid; select.dispatchEvent(new Event("change"));
+  expect(store.get().session).toEqual({id: sid});
+  panel.setContext({session: store.get().session ?? null, window: store.get().window});
+  await vi.waitFor(() => expect(panel.root.textContent).toContain("2 occurrences"));
+  expect(select.disabled).toBe(false);
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+  // Navigation from outside still locks the picker.
+  panel.setContext({session: {id: "other", source: "codex"}, window: "live"});
+  expect(select.disabled).toBe(true);
+});
+
+test("choosing a source for a source-less scope session keeps the window and does not reload", async () => {
+  const store = createScope({session: {id: sid}}); const panel = createLoops(store); document.body.append(panel.root);
+  const w = win(T(events[0]) - 1, T(events[1]) + 1);
+  store.narrow({window: w});
+  panel.setContext({session: store.get().session ?? null, window: w});
+  await vi.waitFor(() => expect(panel.root.textContent).toContain("2 occurrences"));
+  const source = panel.root.querySelector<HTMLSelectElement>('[aria-label="Loop source"]')!;
+  source.value = "codex"; source.dispatchEvent(new Event("change"));
+  expect(store.get().session).toEqual({id: sid, source: "codex"});
+  expect(store.get().window).toEqual(w);
+  panel.setContext({session: store.get().session ?? null, window: store.get().window});
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+  expect(source.disabled).toBe(false);
+});
+
+test("F2: refining the source of a scoped session honours containment and keeps the window", async () => {
+  const w = win(T(events[0]) - 1, T(events[1]) + 1);
+  const mk = () => createScope({project: "A", worktree: "w1", session: {id: sid}});
+  const run = async (store: ReturnType<typeof createScope>) => {
+    store.narrow({window: w});
+    const panel = createLoops(store); document.body.append(panel.root);
+    panel.setContext({session: store.get().session ?? null, window: w});
+    await vi.waitFor(() => expect(panel.root.textContent).toContain("2 occurrences"));
+    const source = panel.root.querySelector<HTMLSelectElement>('[aria-label="Loop source"]')!;
+    source.value = "codex"; source.dispatchEvent(new Event("change"));
+    panel.root.remove();
+  };
+  // Resolver rejects exactly this (source, session): parents are dropped, the window survives.
+  const rejecting = mk();
+  rejecting.setResolver({sessions: () => undefined, matcher: () => (r) => r.source !== "codex", labels: () => ({})});
+  await run(rejecting);
+  expect(rejecting.get().session).toEqual({id: sid, source: "codex"});
+  expect(rejecting.get().project).toBeUndefined();
+  expect(rejecting.get().worktree).toBeUndefined();
+  expect(rejecting.get().window).toEqual(w);
+  // Resolver confirms membership (or is unrestricted): parents stay.
+  const confirming = mk();
+  confirming.setResolver({sessions: () => undefined, matcher: () => () => true, labels: () => ({})});
+  await run(confirming);
+  expect(confirming.get().project).toBe("A");
+  expect(confirming.get().session).toEqual({id: sid, source: "codex"});
+  expect(confirming.get().window).toEqual(w);
+});
+
+test("F3: intervals reaching outside the window are neither offered nor accepted as reference B", async () => {
+  api.sessionEvents.mockResolvedValue(three);
+  const panel = createLoops(createScope()); document.body.append(panel.root);
+  panel.setContext(ctx());
+  await vi.waitFor(() => expect(items(panel.root)).toHaveLength(3));
+  panel.setContext(ctx({window: win(T(three[1]) - 1, T(three[2]) + 1)}));
+  const labels = () => [...panel.root.querySelectorAll("button")].map(b => b.textContent ?? "");
+  expect(labels().some(l => l.startsWith("Compare interval 1"))).toBe(false);
+  expect(labels().some(l => l.startsWith("Compare interval 2"))).toBe(true);
+  click(panel.root, "Compare interval 2");
+  expect(panel.root.querySelector(`[data-key="event:${three[0].id}"]`)).toBeNull(); // no evidence from the excluded occurrence
+  const ref = panel.root.querySelector<HTMLInputElement>('[aria-label="Reference interval B"]')!;
+  ref.value = "1"; ref.dispatchEvent(new Event("input"));
+  click(panel.root, "Compare sequences");
+  expect(panel.root.querySelector(".loops-sequence-caption")).toBeNull();
+  expect(panel.root.textContent).toContain("outside the current window");
+});

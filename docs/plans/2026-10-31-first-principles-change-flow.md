@@ -249,3 +249,5 @@ entries live in `docs/plans/2026-10-18-backlog-coordination.html` (D94–D98).
 3. Desktop Project altitude as landing view (§6.3).
 4. Bash summary carries lifecycle verb (D94).
 5. Fold fleet panels into a Fleet altitude (§4).
+
+Status 2026-11-01, slice 8 (session tabs): the six session lenses (score, loops, loom, replay, handoffs, court) are tabs of one Session altitude. Score is the transport reading `scope.window`: it clamps only the drawn viewport (a disjoint window is preserved in the store) and writes the window only on explicit user actions, publishing `live` when the view covers the whole session. Loops, loom and replay filter their lists to the window; handoffs and court state that the window does not apply. Escape ascends only from the Score and Loops tabs.
