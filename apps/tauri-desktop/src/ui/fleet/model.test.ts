@@ -105,6 +105,35 @@ describe("needs and counts", () => {
     expect(r.needs.find((n) => n.id === "n2")!.stale).toBe(false);
   });
 
+  test("a live failure without pending evidence flags its repo without counting as idle", () => {
+    const failed = att({ id: "failed-only", repo_id: "repoB", state: "failed" });
+    expect(failed.pending).toBeUndefined();
+    const r = buildFleet(input({ sessions: [failed] }));
+    const b = r.rows.find((x) => x.id === "repoB")!;
+    expect(b.failed).toBe(true);
+    expect(b.idle).toBe(0);
+    expect(b.working).toBe(0);
+    expect(b.needsCount).toBe(0);
+    expect(r.needs).toEqual([]);
+  });
+
+  test("failed sessions preserve live filtering, mixed counts, fog and unattributed routing", () => {
+    const failed = att({ id: "f", repo_id: "ghost", state: "failed" });
+    const r = buildFleet(input({ sessions: [
+      failed,
+      att({ id: "w", repo_id: "ghost", state: "working" }),
+      att({ id: "i", repo_id: "ghost", state: "idle" }),
+      att({ id: "p", repo_id: "ghost", waitMs: MIN }),
+      att({ id: "u", state: "failed" }),
+    ] }));
+    const fog = r.rows.find((x) => x.id === "ghost")!;
+    expect([fog.known, fog.failed, fog.working, fog.idle, fog.needsCount]).toEqual([false, true, 1, 1, 1]);
+    expect(r.unattributed.map((s) => s.id)).toEqual(["u"]);
+    expect(r.rows.some((x) => x.noRepo)).toBe(false);
+    const stale = buildFleet(input({ sessions: [{ ...failed, last: { ...failed.last!, time: iso(NOW - 30 * MIN) } }] }));
+    expect(stale.rows.some((x) => x.id === "ghost")).toBe(false);
+  });
+
   test("a failure sets failed on the row", () => {
     const r = buildFleet(input({ sessions: [att({ id: "f", repo_id: "repoB", waitMs: MIN, pending: undefined, state: "failed" }), att({ id: "fp", repo_id: "repoB", waitMs: MIN, pending: { event_id: "x", source: "claude-code", kind: "failure", summary: "boom", time: iso(NOW - MIN), observed_at: iso(NOW - MIN) } })] }));
     const b = r.rows.find((x) => x.id === "repoB")!;

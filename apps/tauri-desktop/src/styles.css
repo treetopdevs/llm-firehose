@@ -1013,6 +1013,9 @@ span.agent-dot.big { width: 14px; height: 14px; }
 /* fleet encodings */
 .fleet-lane-row { cursor: pointer; }
 .fleet-lane-row:focus { outline: none; }
+/* Inset so the SVG viewport cannot clip the keyboard focus perimeter. */
+.fleet-lane-focus { fill: none; stroke: transparent; stroke-width: 2; pointer-events: none; }
+.fleet-lane-row:focus-visible .fleet-lane-focus { stroke: var(--accent); }
 .fleet-lane-row:hover .lane-hit, .fleet-lane-row:focus .lane-hit { fill: var(--bg-hover); }
 .lane-label.needs { fill: #ff9f43; font-weight: 700; }
 .fleet-bands { display: flex; flex-wrap: wrap; gap: 0.4rem; }

@@ -208,11 +208,11 @@ export function buildFleet(input: FleetInput): FleetResult {
     else byRepo.set(w.repo_id, [w]);
   }
 
-  type Acc = { needs: FleetNeed[]; working: number; idle: number; last: number; repoName?: string };
+  type Acc = { failed: boolean; needs: FleetNeed[]; working: number; idle: number; last: number; repoName?: string };
   const acc = new Map<string, Acc>();
   const accOf = (id: string): Acc => {
     let a = acc.get(id);
-    if (!a) acc.set(id, (a = { needs: [], working: 0, idle: 0, last: 0 }));
+    if (!a) acc.set(id, (a = { failed: false, needs: [], working: 0, idle: 0, last: 0 }));
     return a;
   };
   const unattributed: AttentionSession[] = [];
@@ -221,6 +221,7 @@ export function buildFleet(input: FleetInput): FleetResult {
     const rowId = s.repo_id || (pending ? NOREPO_KEY : undefined);
     if (rowId === undefined) { unattributed.push(s); continue; }
     const a = accOf(rowId);
+    a.failed ||= isFailure(s);
     a.last = Math.max(a.last, last);
     if (s.repo && !a.repoName) a.repoName = s.repo;
     if (pending) {
@@ -231,7 +232,7 @@ export function buildFleet(input: FleetInput): FleetResult {
         stale: !!stale,
       });
     } else if (s.state === "working") a.working++;
-    else a.idle++;
+    else if (!isFailure(s)) a.idle++;
   }
   unattributed.sort((a, b) => cmp(sessionKey(a), sessionKey(b)));
 
@@ -240,7 +241,7 @@ export function buildFleet(input: FleetInput): FleetResult {
   const rows = new Map<string, FleetRow>();
   for (const id of rowIds) {
     const wts = byRepo.get(id) ?? [];
-    const a = acc.get(id) ?? { needs: [], working: 0, idle: 0, last: 0 };
+    const a = acc.get(id) ?? { failed: false, needs: [], working: 0, idle: 0, last: 0 };
     const forkOrder = orderLanes(input.order?.forks[id], wts);
     order.forks[id] = forkOrder;
     const byWt = new Map(wts.map((w) => [w.worktree_id, w]));
@@ -269,7 +270,7 @@ export function buildFleet(input: FleetInput): FleetResult {
       goneUnknown: forks.filter((f) => f.ageUnknown).length,
       needsCount: needs.length,
       longestDwellMs: needs.reduce((m, n) => Math.max(m, n.dwellMs), 0),
-      failed: needs.some((n) => n.failed),
+      failed: a.failed,
       working: a.working, idle: a.idle,
       lastMs: Math.max(a.last, ...forks.map((f) => f.lastMs), 0),
     });

@@ -110,6 +110,7 @@ export function lanesStrip(
       else if (t.kind === "needs") g.append(svg("circle", { class: "lane-tick needs", cx: tx, cy: mid, r: 4 }));
       else g.append(svg("rect", { class: "lane-tick", x: tx - 1, y: mid - 5, width: 2, height: 10 }));
     }
+    g.append(svg("rect", { class: "fleet-lane-focus", x: 1, y: y + 1, width: w - 2, height: ROW_H - 2 }));
     canvas.append(g);
   });
   return canvas;
