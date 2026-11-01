@@ -1,7 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, test, vi } from "vitest";
 
+const tauri = vi.hoisted(() => ({ on: false, invoke: undefined as undefined | ((cmd: string, args?: unknown) => Promise<unknown>) }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => tauri.on,
+  invoke: (cmd: string, args?: unknown) => (tauri.invoke ? tauri.invoke(cmd, args) : Promise.reject("no invoke")),
+}));
+
 afterEach(() => {
+  tauri.on = false;
+  tauri.invoke = undefined;
   document.body.replaceChildren();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -898,4 +906,128 @@ test("Fleet labels rows from attention when /worktrees is a 404, and says so", a
   expect(document.querySelector(".fleet-row-label")!.textContent).toBe("name-repoZ");
   expect(document.querySelector(".fleet-unsupported")).not.toBeNull();
   expect(document.querySelector(".fleet-row-head")!.getAttribute("aria-disabled")).toBe("true");
+});
+
+// ---------------------------------------------------------------------------
+// Slice 6: control from the map
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = { id: "repoA", vcs: "git", label: "/r/alpha/.git", status: "ok", observed_at: iso(NOW) };
+const gitFetches = () => vi.mocked(fetch).mock.calls.map((c) => ({ url: new URL(String(c[0])), method: (c[1] as RequestInit | undefined)?.method ?? "GET" }));
+const previewReply = {
+  token: "tok", root: "/r/alpha", common_dir: "/r/alpha/.git",
+  entries: [{ id: "old", line: "Removing old", gitdir_path: "/gone/old" }], skipped: [],
+};
+const openRepoMenu = async () => {
+  await vi.waitFor(() => expect(document.querySelector("button.unit-actions")).not.toBeNull());
+  document.querySelector<HTMLButtonElement>("button.unit-actions")!.click();
+  expect(document.querySelector(".action-menu")).not.toBeNull();
+};
+const pruneItem = () => [...document.querySelectorAll<HTMLButtonElement>(".action-menu button")].find((b) => b.textContent === "Prune stale worktrees")!;
+
+test("boot reads graph repos once without ever activating the graph panel; Project menus have prune and registered state", async () => {
+  const b = await boot({ worktrees: [wtRow()], repos: [REPO_ROOT] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await vi.waitFor(() => expect(gitFetches().filter((f) => f.url.pathname === "/workspace-graph/repos")).toHaveLength(1));
+  expect(b.active()).toBe("project");
+  expect(document.querySelector(".workspace-graph")).toBeNull();
+  expect(gitFetches().some((f) => f.url.pathname === "/config")).toBe(false);
+  expect(gitFetches().some((f) => f.url.pathname === "/workspace-graph")).toBe(false);
+  await openRepoMenu();
+  const labels = [...document.querySelectorAll(".action-menu button")].map((x) => x.textContent);
+  expect(labels).toEqual(["Prune stale worktrees"]);
+});
+
+test("an unregistered repo offers Register root; choosing it registers, refreshes roots and the graph panel, and Fleet/Project", async () => {
+  tauri.on = true;
+  const b = await boot({ worktrees: [wtRow({ state: "unknown", state_reason: "repo_unregistered" })], repos: [] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await openRepoMenu();
+  const reg = [...document.querySelectorAll<HTMLButtonElement>(".action-menu button")].find((x) => x.textContent?.startsWith("Register root"))!;
+  expect(reg.textContent).toBe("Register root: /w/alpha-open");
+  const before = gitFetches().length;
+  const wtBefore = gitFetches().filter((f) => f.url.pathname === "/worktrees").length;
+  reg.click();
+  await vi.waitFor(() => expect(gitFetches().some((f) => f.method === "POST" && f.url.pathname === "/workspace-graph/repos")).toBe(true));
+  await vi.waitFor(() => {
+    const after = gitFetches().slice(before);
+    const post = after.findIndex((f) => f.method === "POST");
+    expect(post).toBeGreaterThanOrEqual(0);
+    expect(after.findIndex((f, i) => i > post && f.method === "GET" && f.url.pathname === "/workspace-graph/repos")).toBeGreaterThan(post);
+  });
+  await vi.waitFor(() => expect(gitFetches().filter((f) => f.url.pathname === "/worktrees").length).toBeGreaterThan(wtBefore));
+  await vi.waitFor(() => expect(gitFetches().some((f) => f.url.pathname === "/config")).toBe(true)); // graph panel refreshed
+  expect(b.active()).toBe("project");
+});
+
+test("arriving at Project from another panel re-reads roots so registration made elsewhere is seen", async () => {
+  tauri.on = true;
+  const b = await boot({ worktrees: [wtRow()], repos: [REPO_ROOT] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  b.nav("live").click();
+  const n0 = gitFetches().filter((f) => f.url.pathname === "/workspace-graph/repos").length;
+  b.nav("project").click();
+  await vi.waitFor(() => expect(gitFetches().filter((f) => f.url.pathname === "/workspace-graph/repos").length).toBeGreaterThan(n0));
+});
+
+test("navigation cancels actions: an open menu, a pending confirmation, and a preview in flight", async () => {
+  tauri.on = true;
+  const calls: string[] = [];
+  let release!: (v: unknown) => void;
+  let hold = false;
+  tauri.invoke = (cmd) => {
+    calls.push(cmd);
+    if (cmd !== "prune_preview") return Promise.resolve({ removed: [], remaining: [], skipped: [] });
+    return hold ? new Promise((r) => { release = r; }) : Promise.resolve(previewReply);
+  };
+  const b = await boot({ worktrees: [wtRow()], repos: [REPO_ROOT] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await vi.waitFor(() => expect(gitFetches().some((f) => f.url.pathname === "/workspace-graph/repos")).toBe(true));
+  await new Promise((r) => setTimeout(r, 0));
+
+  // 1. open menu
+  await openRepoMenu();
+  b.nav("score").click();
+  expect(document.querySelector(".action-menu")).toBeNull();
+
+  // 2. pending confirmation
+  b.nav("project").click();
+  await openRepoMenu();
+  pruneItem().click();
+  await vi.waitFor(() => expect(document.querySelector(".action-dialog")).not.toBeNull());
+  b.nav("live").click();
+  expect(document.querySelector(".action-dialog")).toBeNull();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(calls).not.toContain("prune_apply");
+
+  // 3. preview in flight
+  hold = true;
+  b.nav("project").click();
+  await openRepoMenu();
+  pruneItem().click();
+  await vi.waitFor(() => expect(calls.filter((c) => c === "prune_preview")).toHaveLength(2));
+  b.nav("live").click();
+  release(previewReply);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(document.querySelector(".action-dialog")).toBeNull();
+  expect(calls).not.toContain("prune_apply");
+
+  // the destination can start a new action immediately
+  hold = false;
+  b.nav("project").click();
+  await openRepoMenu();
+  pruneItem().click();
+  await vi.waitFor(() => expect(document.querySelector(".action-dialog")).not.toBeNull());
+  expect(document.querySelectorAll(".action-dialog")).toHaveLength(1);
+});
+
+test("Fleet shares the one controller: its fork menu renders in the shell-owned host", async () => {
+  const b = await boot({ worktrees: twoRepos(), repos: [] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
+  document.querySelector(".fleet-fork")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  expect(document.querySelectorAll(".actions-host")).toHaveLength(1);
+  expect(document.querySelector(".actions-host .action-menu")).not.toBeNull();
+  b.nav("score").click();
+  expect(document.querySelector(".action-menu")).toBeNull();
 });

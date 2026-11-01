@@ -10,6 +10,9 @@ import { layoutLanes, orderLanes, resolveWindow, xToTime } from "./model";
 import { isEscapeClaimed } from "../../escape";
 import { createProject } from "./index";
 import type { ProjectPanel } from "./index";
+import type { ActionsUi } from "../actions";
+import type { Roots } from "../actions/roots";
+import type { UnitAction } from "../actions/model";
 
 const { worktreesMock, worktreeMock } = vi.hoisted(() => ({ worktreesMock: vi.fn(), worktreeMock: vi.fn() }));
 vi.mock("../../api", async (orig) => ({
@@ -36,7 +39,7 @@ const commit = (id: string, t: number, session?: string): WorktreeCommit => ({
   commit_id: id, time: iso(t), attribution: "time_join", ...(session ? { session_id: session } : {}),
 });
 
-function setup(goImpl?: (store: ScopeStore, getPanel: () => ProjectPanel) => (n: string, p?: never) => void) {
+function setup(goImpl?: (store: ScopeStore, getPanel: () => ProjectPanel) => (n: string, p?: never) => void, extra: { actions?: ActionsUi; roots?: Roots } = {}) {
   const store = createScope();
   const go = vi.fn();
   let panel!: ProjectPanel;
@@ -45,6 +48,7 @@ function setup(goImpl?: (store: ScopeStore, getPanel: () => ProjectPanel) => (n:
     go: goImpl ? (goImpl(store, () => panel) as never) : go,
     now: () => NOW,
     refreshMs: 15000,
+    ...extra,
   });
   document.body.append(panel.root);
   panels.push(panel);
@@ -1010,5 +1014,129 @@ describe("fleet hooks", () => {
     expect(opts.find((o) => o.getAttribute("value") === "repoA")!.textContent).toBe("Alpha");
     const other = opts.find((o) => o.getAttribute("value") !== "repoA")!;
     expect(other.textContent).toBe(other.getAttribute("value"));
+  });
+});
+
+describe("actions (Slice 6)", () => {
+  const withDiff = FIXTURE_ROWS.map((r) => (r.state === "gone" ? r : { ...r, default_target_ref: "main" }));
+  const roots = (resolved: string[], raw: Record<string, string> = {}): Roots => ({
+    refresh: async () => {},
+    loaded: () => true,
+    resolved: (id) => id !== undefined && resolved.includes(id),
+    rawLabel: (id) => (id === undefined ? undefined : raw[id]),
+  });
+  function rig(r: Roots = roots(["repoA"])) {
+    const openMenu = vi.fn<(a: readonly UnitAction[], anchor: unknown, opts?: unknown) => void>();
+    const ui = { root: document.createElement("div"), openMenu, close: vi.fn(), run: vi.fn(), cancelAll: vi.fn() } as unknown as ActionsUi;
+    const s = setup(undefined, { actions: ui, roots: r });
+    s.store.narrow({ project: "repoA" });
+    return { ...s, openMenu };
+  }
+  const ids = (l: readonly UnitAction[]): string[] => l.map((a) => a.id);
+  const ctx = (t: Element) => {
+    const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 7, clientY: 9, button: 2 });
+    t.dispatchEvent(e);
+    return e;
+  };
+  const key = (k: string, target: EventTarget = document.body, init: KeyboardEventInit = {}) => {
+    const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(e);
+    return e;
+  };
+
+  test("right-click on a lane opens the worktree menu and prevents the native one", async () => {
+    worktreesMock.mockResolvedValue(withDiff);
+    const { panel, q, openMenu, go } = rig();
+    await panel.activate();
+    const lane = q(".project-lane").find((l) => l.getAttribute("data-wt") === "wt-open")!;
+    expect(lane.getAttribute("data-unit")).toBe("lane");
+    const e = ctx(lane.querySelector(".project-hit")!);
+    expect(e.defaultPrevented).toBe(true);
+    expect(ids(openMenu.mock.calls[0]![0])).toEqual(["open-terminal", "open-editor", "reveal", "copy-diff"]);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  test("a contextmenu mousedown starts no drag and suppresses no click", async () => {
+    worktreesMock.mockResolvedValue(withDiff);
+    const { panel, q, go } = rig();
+    await panel.activate();
+    spies.push(vi.spyOn(SVGSVGElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, right: 960, bottom: 200, width: 960, height: 200, x: 0, y: 0, toJSON: () => ({}) } as DOMRect));
+    const svg = q("svg.project-svg")[0]!;
+    svg.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 550, button: 2 }));
+    svg.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 550, button: 0, ctrlKey: true }));
+    document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 300 }));
+    expect(q(".project-brush")).toHaveLength(0);
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 300 }));
+    q(".project-lane")[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  test("ArrowDown then '.' targets the picked lane; arrows and digits are unaffected", async () => {
+    worktreesMock.mockResolvedValue(withDiff);
+    const { panel, openMenu, keys, q } = rig();
+    await panel.activate();
+    key("ArrowDown");
+    const e = key(".");
+    expect(e.defaultPrevented).toBe(true);
+    const picked = q(".project-lane.selected")[0]!.getAttribute("data-key");
+    expect(picked).toBe(keys()[0]);
+    const view = withDiff.find((r) => r.worktree_id === picked)!;
+    expect(openMenu.mock.calls[0]![0].length).toBe(view.state === "gone" ? 0 : 4);
+    key("ArrowDown");
+    expect(q(".project-lane.selected")[0]!.getAttribute("data-key")).toBe(keys()[1]);
+  });
+
+  test("'.' is ignored with modifiers, on repeat, or with no lane picked", async () => {
+    const { panel, openMenu } = rig();
+    await panel.activate();
+    key(".");
+    key("ArrowDown");
+    key(".", document.body, { ctrlKey: true });
+    key(".", document.body, { repeat: true });
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test("a bead offers only Copy resume command and its contextmenu does not navigate", async () => {
+    const { panel, q, openMenu, go } = rig();
+    await panel.activate();
+    const bead = q(".project-bead").find((b) => b.getAttribute("data-source") === "claude-code")!;
+    const e = ctx(bead);
+    expect(e.defaultPrevented).toBe(true);
+    expect(openMenu.mock.calls[0]![0].map((a) => a.label)).toEqual(["Copy resume command"]);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  test("header button.unit-actions opens the repo menu with register and prune", async () => {
+    worktreesMock.mockResolvedValue(withDiff);
+    const { panel, q, openMenu } = rig(roots([], { repoA: "/r/alpha/.git" }));
+    await panel.activate();
+    const btn = q("button.unit-actions")[0]!;
+    expect(btn.getAttribute("aria-haspopup")).toBe("menu");
+    btn.click();
+    expect(ids(openMenu.mock.calls[0]![0])).toEqual(["register-root", "prune-stale"]);
+    expect(openMenu.mock.calls[0]![0][1]!.request).toEqual({ type: "prune", root: "/r/alpha" });
+  });
+
+  test("registered comes from roots, not the display label", async () => {
+    const { panel, q, openMenu } = rig(roots([]));
+    await panel.activate();
+    q("button.unit-actions")[0]!.click();
+    expect(ids(openMenu.mock.calls[0]![0])).toContain("register-root");
+  });
+
+  test("older daemon (404) and no data: no actions, no errors", async () => {
+    worktreesMock.mockRejectedValue(new ApiError("/worktrees", 404, "", "GET"));
+    const { panel, q, openMenu } = rig();
+    await panel.activate();
+    expect(() => q("button.unit-actions")[0]!.click()).not.toThrow();
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test("without a controller nothing is offered and the native menu is kept", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    expect(q("button.unit-actions")).toHaveLength(0);
+    expect(ctx(q(".project-lane")[0]!).defaultPrevented).toBe(false);
   });
 });

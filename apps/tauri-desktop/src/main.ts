@@ -28,6 +28,9 @@ import { createProject } from "./ui/project";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspaceGraph } from "./ui/graph";
+import { graphAPI } from "./ui/graph/api";
+import { createActions } from "./ui/actions";
+import { createRoots } from "./ui/actions/roots";
 import { membership, scope, selectSession } from "./scope";
 import type { Scope, ScopePatch, SessionRef } from "./scope";
 import { createEscapeHandler } from "./escape";
@@ -100,6 +103,24 @@ function openSession(id: string, source?: string) {
 
 const workspacePanel = createWorkspaceGraph(openSession, scope);
 
+// One roots store and one actions controller for the whole shell, independent of
+// the Graph panel: Fleet and Project read raw repo labels from here, so Register
+// and Prune are correct before the Graph panel is ever opened.
+const roots = createRoots({ repos: () => graphAPI.repos() });
+const actions = createActions({
+  registerRoot: async (path) => {
+    await graphAPI.register(path, "");
+    await roots.refresh();
+    void workspacePanel.refresh();
+  },
+  onChanged: () => {
+    void roots.refresh();
+    void fleetPanel.refresh();
+    void projectPanel.refresh();
+  },
+});
+void roots.refresh();
+
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSession,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
 attentionPanel.setConnected(false);
 // Altitudes (D94-D98): Fleet > Project > Worktree (sessions) > Session (score).
@@ -113,6 +134,8 @@ const isUntouchedLive = (sc: Scope): boolean =>
   sc.window === "live" && !sc.project && !sc.worktree && !sc.session && !sc.cell;
 const projectPanel = createProject({
   store: scope,
+  actions,
+  roots,
   go: (name, patch): void => {
     go(name, patch);
   },
@@ -134,6 +157,8 @@ projectPanel.setConnected(false);
 let sessionsViaFleet = false;
 const fleetPanel = createFleet({
   store: scope,
+  actions,
+  roots,
   go: (name, patch): void => {
     go(name, patch);
     sessionsViaFleet = name === "sessions";
@@ -190,6 +215,10 @@ function go(name: PanelName, patch?: ScopePatch, replace = false) {
 }
 
 function show(name: PanelName) {
+  // An open menu, a pending confirmation or an in-flight action belongs to the panel that started it.
+  if (name !== active) actions.cancelAll();
+  // Registration can happen elsewhere (Workspace toolbar): re-read roots on arrival.
+  if ((name === "fleet" || name === "project") && name !== active) void roots.refresh();
   // Any navigation other than the boot landing decides the landing rule.
   if (name !== "project") landingPending = false;
   if (!["fleet", "project", "sessions", "score", "loops"].includes(name)) sessionsViaFleet = false;
@@ -269,7 +298,7 @@ for (const [heading, names] of NAV_GROUPS) {
 
 const crumb = createBreadcrumb(scope);
 const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount);
-app.append(compatBanner, attentionPanel.strip, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
+app.append(compatBanner, attentionPanel.strip, el("div", { class: "layout" }, nav, content, detailPane), statusBar, actions.root);
 
 // --- live data -------------------------------------------------------------
 
@@ -299,6 +328,7 @@ const connector = createConnector({
   clientSchemaVersion: CLIENT_SCHEMA_VERSION,
   onEvent,
   setStatus: ({ kind, text, compatReason }) => {
+    if (kind === "ok" && !roots.loaded()) void roots.refresh();
     attentionPanel.setConnected(kind === "ok");
     projectPanel.setConnected(kind === "ok");
     fleetPanel.setConnected(kind === "ok");
@@ -312,6 +342,7 @@ const connector = createConnector({
     statusText.textContent = text;
   },
   onStreamOpen: () => {
+    void roots.refresh();
     if (active === "project") void projectPanel.refresh();
     if (active === "fleet") void fleetPanel.refresh();
   },

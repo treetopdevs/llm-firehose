@@ -95,6 +95,21 @@ views need a daemon that serves `GET /worktrees` and degrade to a notice
 against an older one. It bundles `firehosed` as a sidecar and spawns it when no daemon is
 already running — a daemon you run yourself always wins.
 
+**Actions.** Click a repository's **Actions** button, or right-click / press `.`
+(also `ContextMenu` / `Shift+F10`) on a worktree, lane, bead or session in Fleet
+or Project, to open one shared action menu: open in
+Terminal or VS Code, reveal in Finder, copy a hardened `git diff` command, copy
+a Claude Code or Codex resume command, register a repository root, and prune
+stale worktree entries. Each action is your own click, runs a fixed command on a
+validated path (macOS openers only; other platforms report unsupported), and
+never steers an agent. The copied diff disables pagers, external diff, textconv
+and submodule recursion. Prune shows the exact stale entries, requires
+confirmation, and removes only the listed git administrative records under
+`.git/worktrees` (never branches or working directories, never following
+symlinks, never anything that changed since you confirmed). Worktrees on
+removable volumes should be locked (`git worktree lock`) so they are not
+treated as stale.
+
 Under **workspace**, register a local Git or JJ root or select one observed by
 the running capture engine. Graph edges represent actual revision parents;
 workspace labels show current checkout positions. Select a workspace to inspect

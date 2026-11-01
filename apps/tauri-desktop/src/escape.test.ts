@@ -139,3 +139,14 @@ test('ascend prevents default and calls afterAscend; works on focused button; ig
   expect(store.get().project).toBeUndefined();
   expect(afterAscend).toHaveBeenCalledWith('fleet', 'score');
 });
+
+test('action menu and action dialog are escape overlays', () => {
+  for (const cls of ['action-menu', 'action-dialog']) {
+    const d = document.createElement('div');
+    d.className = cls;
+    document.body.append(d);
+    expect(isEscapeEligible(key())).toBe(false);
+    d.remove();
+    expect(isEscapeEligible(key())).toBe(true);
+  }
+});

@@ -12,7 +12,7 @@ export function isEscapeClaimed(e: Event): boolean {
   return claimed.has(e);
 }
 
-const OVERLAYS = '.onboarding-overlay, [role="dialog"], dialog[open], [aria-modal]';
+const OVERLAYS = '.onboarding-overlay, [role="dialog"], dialog[open], [aria-modal], .action-menu, .action-dialog';
 
 /** True when nothing else owns this Escape (input, IME, dialog, menu, claim). */
 export function isEscapeEligible(e: KeyboardEvent): boolean {

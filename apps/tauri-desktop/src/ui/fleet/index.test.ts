@@ -8,6 +8,10 @@ import type { ScopePatch, ScopeStore } from "../../scope";
 import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
 import { createFleet } from "./index";
 import type { FleetApi, FleetPanel } from "./index";
+import type { ActionsUi } from "../actions";
+import type { Roots } from "../actions/roots";
+import type { UnitAction } from "../actions/model";
+import { wt as wtFix, wtUnregistered } from "../actions/fixtures";
 
 const MIN = 60_000;
 const REFRESH = 15_000;
@@ -33,7 +37,7 @@ interface Rig {
   data: { wt: WorktreeLifetimeView[]; sessions: AttentionSession[]; summaries: SessionSummary[]; events: FirehoseEvent[] };
 }
 
-function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void } = {}) {
+function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; actions?: ActionsUi; roots?: Roots } = {}) {
   const store: ScopeStore = createScope(opts.scope);
   const data: Rig["data"] = { wt: FIXTURE_ROWS, sessions: baseSessions(), summaries: [], events: [] };
   const api = {
@@ -45,6 +49,7 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const panel = createFleet({
     store, go: go as never, events: () => data.events, api: api as unknown as FleetApi,
     now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels,
+    actions: opts.actions, roots: opts.roots,
   });
   document.body.append(panel.root);
   panels.push(panel);
@@ -1061,5 +1066,265 @@ describe("adversarial review round 2", () => {
     r().querySelector<HTMLElement>(".fleet-more")!.click();
     r().querySelector<HTMLElement>(".fleet-more")!.click();
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
+  });
+});
+
+// ---- actions (Slice 6) ---------------------------------------------------
+
+function fakeActions() {
+  const openMenu = vi.fn<(a: readonly UnitAction[], anchor: unknown, opts?: unknown) => void>();
+  const ui = { root: document.createElement("div"), openMenu, close: vi.fn(), run: vi.fn(), cancelAll: vi.fn() } as unknown as ActionsUi;
+  return { ui, openMenu };
+}
+const fakeRoots = (resolved: string[] = [], raw: Record<string, string> = {}): Roots => ({
+  refresh: async () => {},
+  loaded: () => true,
+  resolved: (id) => id !== undefined && resolved.includes(id),
+  rawLabel: (id) => (id === undefined ? undefined : raw[id]),
+});
+const ids = (calls: readonly UnitAction[]): string[] => calls.map((a) => a.id);
+const ctx = (target: Element): MouseEvent => {
+  const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 6 });
+  target.dispatchEvent(e);
+  return e;
+};
+
+describe("actions", () => {
+  const openRow = (over: Partial<WorktreeLifetimeView> = {}) => wtFix({ repo_id: "/r/alpha/.git", worktree_id: "/w/a", state: "open", default_target_ref: "main", ...over });
+
+  async function rig(wts: WorktreeLifetimeView[], o: { resolved?: string[]; raw?: Record<string, string>; sessions?: AttentionSession[] } = {}) {
+    const a = fakeActions();
+    const r = setup({ actions: a.ui, roots: fakeRoots(o.resolved, o.raw) });
+    r.data.wt = wts;
+    r.data.sessions = o.sessions ?? [];
+    await r.panel.activate();
+    return { ...r, ...a };
+  }
+
+  test("contextmenu on an open fork offers open actions and copy diff, and prevents the native menu", async () => {
+    const { q, openMenu } = await rig([openRow()], { resolved: ["/r/alpha/.git"] });
+    const fork = q(".fleet-fork")[0]!;
+    const e = ctx(fork);
+    expect(e.defaultPrevented).toBe(true);
+    expect(ids(openMenu.mock.calls[0]![0])).toEqual(["open-terminal", "open-editor", "reveal", "copy-diff"]);
+    expect(openMenu.mock.calls[0]![1]).toEqual({ x: 5, y: 6 });
+  });
+
+  test("a gone fork has no open actions and no fork menu ever has prune", async () => {
+    const { q, openMenu } = await rig([openRow({ worktree_id: "/w/g", state: "gone" }), openRow()], { resolved: ["/r/alpha/.git"] });
+    for (const f of q(".fleet-fork")) ctx(f);
+    expect(openMenu.mock.calls.map((c) => ids(c[0])).filter((l) => l.length === 0)).toHaveLength(1);
+    for (const c of openMenu.mock.calls) expect(ids(c[0])).not.toContain("prune-stale");
+  });
+
+  test("'.' on a focused fork opens the same menu; ContextMenu and Shift+F10 too", async () => {
+    const { q, openMenu } = await rig([openRow()], { resolved: ["/r/alpha/.git"] });
+    const fork = q(".fleet-fork")[0]!;
+    fork.focus();
+    expect(press(".", {}, fork).defaultPrevented).toBe(true);
+    press("ContextMenu", {}, fork);
+    press("F10", { shiftKey: true }, fork);
+    expect(openMenu).toHaveBeenCalledTimes(3);
+    for (const c of openMenu.mock.calls) expect(ids(c[0])).toEqual(["open-terminal", "open-editor", "reveal", "copy-diff"]);
+  });
+
+  test("'.' with a selected row opens the repo menu; prune only from a raw root", async () => {
+    const { openMenu, q } = await rig([openRow()], { resolved: ["/r/alpha/.git"], raw: { "/r/alpha/.git": "/r/alpha/.git" } });
+    press("1");
+    expect(q(".fleet-row.selected")).toHaveLength(1);
+    const e = press(".");
+    expect(e.defaultPrevented).toBe(true);
+    expect(ids(openMenu.mock.calls[0]![0])).toEqual(["prune-stale"]);
+    expect(openMenu.mock.calls[0]![0][0]!.request).toEqual({ type: "prune", root: "/r/alpha" });
+  });
+
+  test("'.' is ignored with modifiers, in inputs, while a menu or dialog is open, and on repeat", async () => {
+    const { q, openMenu } = await rig([openRow()], { resolved: [] });
+    const fork = q(".fleet-fork")[0]!;
+    press(".", { ctrlKey: true }, fork);
+    press(".", { metaKey: true }, fork);
+    press(".", { altKey: true }, fork);
+    press(".", { repeat: true }, fork);
+    const input = document.createElement("input");
+    document.body.append(input);
+    press(".", {}, input);
+    const menu = document.createElement("div");
+    menu.className = "action-menu";
+    document.body.append(menu);
+    press(".", {}, fork);
+    menu.remove();
+    const dlg = document.createElement("div");
+    dlg.className = "action-dialog";
+    document.body.append(dlg);
+    press(".", {}, fork);
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test("selection fallback does not apply when a different non-unit row has focus", async () => {
+    const { q, panel, openMenu } = await rig([openRow()], { sessions: [att({ id: "sa", repo_id: "/r/alpha/.git", waitMs: 5 * MIN }), att({ id: "sb", repo_id: "/r/alpha/.git", waitMs: 4 * MIN })] });
+    panel.encoding = "dwell";
+    await flush();
+    press("n");
+    const rows = q(".fleet-dwell-row");
+    expect(rows.length).toBeGreaterThan(1);
+    const other = rows[rows.length - 1]!;
+    other.setAttribute("tabindex", "0");
+    other.focus();
+    for (const [k, init] of [[".", {}], ["ContextMenu", {}], ["F10", { shiftKey: true }]] as const) press(k, init, other);
+    expect(openMenu).not.toHaveBeenCalled();
+    press(".");
+    expect(openMenu).toHaveBeenCalledTimes(1);
+  });
+
+  test("existing keys are not shadowed: 1-9, Enter, n, Space still act", async () => {
+    const { q, go, openMenu } = await rig([openRow()], { resolved: [], sessions: [att({ id: "sa", repo_id: "/r/alpha/.git", worktree_id: "/w/a", waitMs: 5 * MIN })] });
+    press("1");
+    press("Enter");
+    expect(go).toHaveBeenCalledWith("project", expect.anything());
+    press("n");
+    expect(q(".fleet-need.selected")).toHaveLength(1);
+    press(" ");
+    expect(go).toHaveBeenCalledWith("score", expect.anything());
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test("repo menu register: offered when unresolved and a non-gone fork has an absolute path, including the genuine unknown/repo_unregistered shape", async () => {
+    const { q, openMenu } = await rig([wtUnregistered({ repo_id: "deadbeefcafe", worktree_id: "/w/u", label: "/w/u" })]);
+    ctx(q(".fleet-row-head")[0]!);
+    expect(ids(openMenu.mock.calls[0]![0])).toEqual(["register-root"]);
+    expect(openMenu.mock.calls[0]![0][0]!.request).toEqual({ type: "register", path: "/w/u" });
+  });
+
+  test("repo menu register never when the resolver has resolved the repo", async () => {
+    const { q, openMenu } = await rig([openRow()], { resolved: ["/r/alpha/.git"] });
+    ctx(q(".fleet-row-head")[0]!);
+    expect(ids(openMenu.mock.calls[0]![0])).not.toContain("register-root");
+  });
+
+  test("repo menu: repoName-only row, non-hex id without a resolver label, resolved digest row", async () => {
+    const a = fakeActions();
+    const r = setup({ actions: a.ui, roots: fakeRoots(["abcdef0123456789"], {}) });
+    r.data.wt = [openRow({ repo_id: "abcdef0123456789", worktree_id: "/w/d", label: "/w/d" })];
+    r.data.sessions = [att({ id: "n1", repo_id: "my-repo", repo: "my-repo" })];
+    await r.panel.activate();
+    for (const h of r.q(".fleet-row-head")) ctx(h);
+    const byRepo = new Map(r.q(".fleet-row-head").map((h, i) => [h.dataset.repo, ids(a.openMenu.mock.calls[i]![0])]));
+    // resolved digest row: no register, and no prune (no raw root)
+    expect(byRepo.get("abcdef0123456789")).toEqual([]);
+    // repoName-only / non-hex id with no forks and no resolver label: nothing to prune or register
+    expect(byRepo.get("my-repo")).toEqual([]);
+  });
+
+  test("a need node with claude-code gives Copy resume command; unknown source gives none", async () => {
+    const a = fakeActions();
+    const r = setup({ actions: a.ui, roots: fakeRoots() });
+    r.data.wt = [openRow()];
+    r.data.sessions = [att({ id: "s-1", repo_id: "/r/alpha/.git", waitMs: 3 * MIN }), att({ id: "s-2", repo_id: "/r/alpha/.git", waitMs: 2 * MIN, source: "mystery", agent: "mystery" })];
+    await r.panel.activate();
+    const needs = r.q(".fleet-need");
+    for (const n of needs) ctx(n);
+    const out = a.openMenu.mock.calls.map((c) => c[0]);
+    expect(out.map((l) => l.map((x) => x.label))).toContainEqual(["Copy resume command"]);
+    expect(out).toContainEqual([]);
+  });
+
+  test("no /worktrees data and an older daemon (ApiError 404) offer no fork, register or prune-from-fork actions and never throw", async () => {
+    const a = fakeActions();
+    const r = setup({ actions: a.ui, roots: fakeRoots() });
+    r.api.worktrees.mockRejectedValue(new ApiError("/worktrees", 404, "nope", "GET"));
+    r.data.sessions = [att({ id: "s-1", repo_id: "zzz", repo: "zeta", waitMs: 3 * MIN })];
+    await r.panel.activate();
+    const head = r.q(".fleet-row-head")[0]!;
+    expect(() => ctx(head)).not.toThrow();
+    expect(a.openMenu.mock.calls[0]![0]).toEqual([]);
+    const need = r.q(".fleet-need")[0]!;
+    ctx(need);
+    expect(ids(a.openMenu.mock.calls[1]![0])).toEqual(["copy-resume"]);
+  });
+
+  test("dwell rows, matrix cells and lanes carry no data-unit and keep the native menu", async () => {
+    const { panel, q, openMenu } = await rig([openRow()], { sessions: [att({ id: "d1", repo_id: "/r/alpha/.git", waitMs: 3 * MIN })] });
+    for (const enc of ["dwell", "matrix", "lanes"] as const) {
+      panel.encoding = enc;
+      await flush();
+      expect(q("[data-unit]")).toHaveLength(0);
+      const target = q(".fleet-dwell-row, .fleet-matrix td, .fleet-matrix th, .fleet-body > *")[0]!;
+      expect(ctx(target).defaultPrevented).toBe(false);
+    }
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test("a /worktrees change while a menu is open does not alter the passed actions; refresh keeps working", async () => {
+    const { q, openMenu, data, panel } = await rig([openRow()], { resolved: ["/r/alpha/.git"] });
+    ctx(q(".fleet-fork")[0]!);
+    const passed = openMenu.mock.calls[0]![0];
+    const before = JSON.stringify(passed);
+    data.wt = [openRow({ label: "/w/other", worktree_id: "/w/other" })];
+    nowMs += REFRESH;
+    await vi.advanceTimersByTimeAsync(REFRESH);
+    await panel.refresh();
+    expect(JSON.stringify(passed)).toBe(before);
+  });
+
+  test("each repository row has the shared visible Actions button; it opens the same repo menu as the row's context menu", async () => {
+    const { q, go, openMenu } = await rig([openRow()], {
+      raw: { "/r/alpha/.git": "/r/alpha/.git" },
+      sessions: [att({ id: "nr", waitMs: 5 * MIN })],
+    });
+    const rows = q(".fleet-row");
+    const norepo = q(".fleet-row.norepo")[0]!;
+    expect(norepo.querySelector("button.unit-actions")).toBeNull();
+    const repoRows = rows.filter((r) => r !== norepo);
+    expect(repoRows.length).toBeGreaterThan(0);
+    for (const r of repoRows) expect(r.querySelectorAll(":scope > button.unit-actions")).toHaveLength(1);
+    const btn = repoRows[0]!.querySelector<HTMLElement>("button.unit-actions")!;
+    expect(btn.textContent).toBe("Actions");
+    expect(btn.getAttribute("aria-haspopup")).toBe("menu");
+    expect(btn.getAttribute("title")).toBe("Repository actions");
+    expect(btn.hasAttribute("data-unit")).toBe(false);
+    expect(btn.closest(".fleet-row-head")).toBeNull();
+    btn.click();
+    expect(go).not.toHaveBeenCalled();
+    expect(openMenu).toHaveBeenCalledTimes(1);
+    expect(ids(openMenu.mock.calls[0]![0])).toEqual(["register-root", "prune-stale"]);
+    expect(openMenu.mock.calls[0]![1]).toBe(btn);
+    expect(openMenu.mock.calls[0]![2]).toEqual({ returnFocus: btn });
+    ctx(repoRows[0]!.querySelector(".fleet-row-head")!);
+    expect(openMenu.mock.calls[1]![0]).toEqual(openMenu.mock.calls[0]![0]);
+  });
+
+  test("Enter and Space on the Actions button do not open the selected row or longest wait", async () => {
+    const { q, go, openMenu } = await rig([openRow()], { resolved: ["/r/alpha/.git"], sessions: [att({ id: "sa", repo_id: "/r/alpha/.git", worktree_id: "/w/a", waitMs: 5 * MIN })] });
+    press("1");
+    expect(q(".fleet-row.selected")).toHaveLength(1);
+    const btn = q("button.unit-actions")[0]!;
+    btn.focus();
+    expect(press("Enter", {}, btn).defaultPrevented).toBe(false);
+    expect(press(" ", {}, btn).defaultPrevented).toBe(false);
+    expect(go).not.toHaveBeenCalled();
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test("without a controller Fleet renders no Actions button", async () => {
+    const r = setup();
+    await r.panel.activate();
+    expect(r.q(".fleet-row").length).toBeGreaterThan(0);
+    expect(r.q("button.unit-actions")).toHaveLength(0);
+  });
+
+  test("Escape with the menu open leaves selection and scope alone", async () => {
+    const { q, store } = await rig([openRow()]);
+    press("1");
+    expect(q(".fleet-row.selected")).toHaveLength(1);
+    const menu = document.createElement("div");
+    menu.className = "action-menu";
+    document.body.append(menu);
+    const e = press("Escape");
+    expect(q(".fleet-row.selected")).toHaveLength(1);
+    expect(isEscapeClaimed(e)).toBe(false);
+    expect(store.get().project).toBeUndefined();
+    menu.remove();
+    press("Escape");
+    expect(q(".fleet-row.selected")).toHaveLength(0);
   });
 });

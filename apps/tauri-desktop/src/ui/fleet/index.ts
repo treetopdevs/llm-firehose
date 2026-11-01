@@ -8,6 +8,10 @@ import { clear, el, keepFocus, onActivate } from "../../dom";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import type { CellScope } from "../workspace/model";
+import type { ActionsUi } from "../actions";
+import { actionsForRepo, actionsForSession, actionsForWorktree } from "../actions/model";
+import type { UnitAction } from "../actions/model";
+import type { Roots } from "../actions/roots";
 import { formatAge } from "../../spark";
 import { deriveAirspace } from "../airspace/model";
 import { buildDwell, sessionKey } from "../dwell/model";
@@ -37,6 +41,10 @@ export interface FleetDeps {
   loadTimeoutMs?: number;
   /** Repo id to display label, whenever the set changes. */
   onLabels?: (labels: Record<string, string>) => void;
+  /** The app-owned actions controller; without it the view offers no actions. */
+  actions?: ActionsUi;
+  /** The app-owned repo-roots store (graph resolver raw labels). */
+  roots?: Roots;
 }
 
 export interface FleetPanel {
@@ -365,8 +373,21 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         queue: el("div", { class: "fleet-queue" }),
       };
       head.append(refs.glyph, refs.label, refs.needs, refs.dwell, refs.counts);
+      if (!row.noRepo) {
+        head.setAttribute("data-unit", "repo");
+        head.setAttribute("data-repo", row.id);
+      }
       onActivate(head, () => { const r = result.rows.find((x) => x.id === row.id); if (r) openRow(r); });
-      node.append(head, refs.forks, refs.spark, refs.queue);
+      node.append(head);
+      // Same affordance as Project's header: one visible Actions button per
+      // repository region, a sibling of the head (never nested in role=button).
+      const ui = deps.actions;
+      if (ui && !row.noRepo) {
+        const btn = el("button", { class: "unit-actions", type: "button", "aria-haspopup": "menu", title: "Repository actions" }, "Actions");
+        btn.addEventListener("click", () => ui.openMenu(repoActions(row.id), btn, { returnFocus: btn }));
+        node.append(btn);
+      }
+      node.append(refs.forks, refs.spark, refs.queue);
       rowRefs.set(node, refs);
     }
     const navigable = row.known && !row.noRepo;
@@ -400,6 +421,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         // A fork narrows project and worktree and descends to Sessions.
         onActivate(k.node, () => nav("sessions", { project: row.id, worktree: f.id, session: undefined, cell: undefined }));
       }
+      setAttr(k.node, "data-unit", "fork");
+      setAttr(k.node, "data-repo", row.id);
+      setAttr(k.node, "data-wt", f.id);
       setClass(k.node, "idle", f.idle);
       setClass(k.node, "current", sc.project === row.id && sc.worktree === f.id);
       for (const st of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${st}`, f.state === st);
@@ -443,6 +467,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         needRefs.set(k.node, nr);
         onActivate(k.node, () => { const cur = result.needs.find((x) => x.key === n.key); if (cur) openNeed(cur); });
       }
+      setAttr(k.node, "data-unit", "need");
+      setAttr(k.node, "data-repo", n.repoId);
+      setAttr(k.node, "data-session", n.id);
+      setAttr(k.node, "data-source", n.source);
       setClass(k.node, "failed", n.failed);
       setClass(k.node, "selected", selNeed === n.key);
       setClass(k.node, "stale", n.stale);
@@ -741,10 +769,74 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     return t;
   }
 
+  // ---- actions ----------------------------------------------------------
+
+  /** Actions are built only from the last successful GET /worktrees and the roots store. */
+  function repoActions(repoId: string): UnitAction[] {
+    const { roots } = deps;
+    return actionsForRepo({
+      repoId,
+      rawLabel: roots?.rawLabel(repoId),
+      registered: roots ? !roots.loaded() || roots.resolved(repoId) : true,
+      forks: (wt ?? []).filter((w) => w.repo_id === repoId),
+    });
+  }
+
+  function actionsOfUnit(u: HTMLElement): UnitAction[] {
+    const d = u.dataset;
+    if (d.unit === "fork") {
+      const view = (wt ?? []).find((w) => w.repo_id === d.repo && w.worktree_id === d.wt);
+      return view ? actionsForWorktree(view) : [];
+    }
+    if (d.unit === "need") return actionsForSession({ source: d.source, id: d.session });
+    if (d.unit === "repo" && d.repo !== undefined) return repoActions(d.repo);
+    return [];
+  }
+
+  function onContextMenu(e: MouseEvent): void {
+    const ui = deps.actions;
+    const t = e.target as Element | null;
+    if (!ui || !t || typeof t.closest !== "function") return;
+    const u = t.closest<HTMLElement>("[data-unit]");
+    if (!u || !root.contains(u)) return;
+    e.preventDefault();
+    ui.openMenu(actionsOfUnit(u), { x: e.clientX, y: e.clientY }, { returnFocus: u });
+  }
+  root.addEventListener("contextmenu", onContextMenu);
+
+  function onActionKey(e: KeyboardEvent, t: Element | null): void {
+    const ui = deps.actions;
+    if (!ui || e.repeat) return;
+    const own = t?.closest?.<HTMLElement>("[data-unit]") ?? null;
+    let unit: HTMLElement | null = own && root.contains(own) ? own : null;
+    let actions: UnitAction[] | undefined = unit ? actionsOfUnit(unit) : undefined;
+    // The selection fallback is only for an unfocused document: a focused
+    // control or row that is not an action unit must not borrow the selection.
+    const unfocused = t === null || t === document.body || t === document.documentElement;
+    if (!unit && unfocused) {
+      if (selNeed !== undefined && (encoding === "map" || encoding === "dwell")) {
+        const n = result.needs.find((x) => x.key === selNeed);
+        const node = nodes.get(needNodeKey(selNeed)) as HTMLElement | undefined;
+        if (n && node) { unit = node; actions = actionsForSession({ source: n.source, id: n.id }); }
+      } else if (selRow !== undefined && encoding === "map") {
+        const node = nodes.get("row:" + selRow);
+        const head = node ? rowRefs.get(node)?.head : undefined;
+        if (head && head.hasAttribute("data-unit")) { unit = head; actions = repoActions(selRow); }
+      }
+    }
+    if (!unit || !actions) return;
+    e.preventDefault();
+    ui.openMenu(actions, unit, { returnFocus: unit });
+  }
+
   function onDocKey(e: KeyboardEvent): void {
     if (e.key === "Escape" || e.key === "Tab") return;
     const t = inScope(e);
     if (t === false) return;
+    if (e.key === "." || e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      onActionKey(e, t);
+      return;
+    }
     const onControl = !!t?.closest?.('button, a, select, [role="button"]');
     const inside = t !== document.body;
     const selectable = encoding === "map" || encoding === "dwell";
