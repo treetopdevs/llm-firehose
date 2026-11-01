@@ -1,6 +1,6 @@
 import { buildHandoffMap, type Endpoint, type Handoff } from './model';
 let renderId = 0;
-const colors = ['#73b7ff', '#b59aff', '#76d7ba', '#f2ba72', '#ee91b0'];
+const colors = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)'];
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string>) {
     const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
     for (const [key, value] of Object.entries(attrs))

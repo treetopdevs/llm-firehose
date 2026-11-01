@@ -1,463 +1,527 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-01T20:27:26+00:00",
+  "generatedAt": "2026-11-01T21:00:00+00:00",
   "title": "Design System: Agent Firehose",
   "extensions": {
     "colorMeta": {
-      "night-ink": {
+      "bg": {
         "role": "neutral",
-        "displayName": "Night Ink",
-        "canonical": "oklch(17.6% 0.014 258)",
+        "displayName": "Bg",
+        "canonical": "oklch(17.0% 0.006 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.011 258)",
-          "oklch(25.0% 0.013 258)",
-          "oklch(35.0% 0.014 258)",
-          "oklch(45.0% 0.014 258)",
-          "oklch(55.0% 0.014 258)",
-          "oklch(65.0% 0.014 258)",
-          "oklch(80.0% 0.014 258)",
-          "oklch(95.0% 0.013 258)"
+          "oklch(15.0% 0.006 60)",
+          "oklch(25.0% 0.006 60)",
+          "oklch(35.0% 0.006 60)",
+          "oklch(45.0% 0.006 60)",
+          "oklch(55.0% 0.006 60)",
+          "oklch(65.0% 0.006 60)",
+          "oklch(80.0% 0.006 60)",
+          "oklch(95.0% 0.006 60)"
         ]
       },
-      "panel-slate": {
+      "bg-panel": {
         "role": "neutral",
-        "displayName": "Panel Slate",
-        "canonical": "oklch(22.0% 0.016 257)",
+        "displayName": "Bg Panel",
+        "canonical": "oklch(20.5% 0.007 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.012 257)",
-          "oklch(25.0% 0.014 257)",
-          "oklch(35.0% 0.016 257)",
-          "oklch(45.0% 0.016 257)",
-          "oklch(55.0% 0.016 257)",
-          "oklch(65.0% 0.016 257)",
-          "oklch(80.0% 0.016 257)",
-          "oklch(95.0% 0.014 257)"
+          "oklch(15.0% 0.007 60)",
+          "oklch(25.0% 0.007 60)",
+          "oklch(35.0% 0.007 60)",
+          "oklch(45.0% 0.007 60)",
+          "oklch(55.0% 0.007 60)",
+          "oklch(65.0% 0.007 60)",
+          "oklch(80.0% 0.007 60)",
+          "oklch(95.0% 0.007 60)"
         ]
       },
-      "hover-slate": {
+      "bg-hover": {
         "role": "neutral",
-        "displayName": "Hover Slate",
-        "canonical": "oklch(26.6% 0.021 257)",
+        "displayName": "Bg Hover",
+        "canonical": "oklch(25.0% 0.008 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.015 257)",
-          "oklch(25.0% 0.018 257)",
-          "oklch(35.0% 0.020 257)",
-          "oklch(45.0% 0.021 257)",
-          "oklch(55.0% 0.021 257)",
-          "oklch(65.0% 0.021 257)",
-          "oklch(80.0% 0.021 257)",
-          "oklch(95.0% 0.018 257)"
+          "oklch(15.0% 0.008 60)",
+          "oklch(25.0% 0.008 60)",
+          "oklch(35.0% 0.008 60)",
+          "oklch(45.0% 0.008 60)",
+          "oklch(55.0% 0.008 60)",
+          "oklch(65.0% 0.008 60)",
+          "oklch(80.0% 0.008 60)",
+          "oklch(95.0% 0.008 60)"
         ]
       },
-      "hairline": {
+      "border": {
         "role": "neutral",
-        "displayName": "Hairline",
-        "canonical": "oklch(33.0% 0.015 252)",
+        "displayName": "Border",
+        "canonical": "oklch(52.0% 0.010 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.011 252)",
-          "oklch(25.0% 0.014 252)",
-          "oklch(35.0% 0.015 252)",
-          "oklch(45.0% 0.015 252)",
-          "oklch(55.0% 0.015 252)",
-          "oklch(65.0% 0.015 252)",
-          "oklch(80.0% 0.015 252)",
-          "oklch(95.0% 0.014 252)"
+          "oklch(15.0% 0.010 60)",
+          "oklch(25.0% 0.010 60)",
+          "oklch(35.0% 0.010 60)",
+          "oklch(45.0% 0.010 60)",
+          "oklch(55.0% 0.010 60)",
+          "oklch(65.0% 0.010 60)",
+          "oklch(80.0% 0.010 60)",
+          "oklch(95.0% 0.010 60)"
         ]
       },
-      "row-hairline": {
+      "text": {
         "role": "neutral",
-        "displayName": "Row Hairline",
-        "canonical": "oklch(24.2% 0.019 258)",
+        "displayName": "Text",
+        "canonical": "oklch(93.0% 0.006 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.014 258)",
-          "oklch(25.0% 0.017 258)",
-          "oklch(35.0% 0.019 258)",
-          "oklch(45.0% 0.019 258)",
-          "oklch(55.0% 0.019 258)",
-          "oklch(65.0% 0.019 258)",
-          "oklch(80.0% 0.019 258)",
-          "oklch(95.0% 0.017 258)"
+          "oklch(15.0% 0.006 60)",
+          "oklch(25.0% 0.006 60)",
+          "oklch(35.0% 0.006 60)",
+          "oklch(45.0% 0.006 60)",
+          "oklch(55.0% 0.006 60)",
+          "oklch(65.0% 0.006 60)",
+          "oklch(80.0% 0.006 60)",
+          "oklch(95.0% 0.006 60)"
         ]
       },
-      "paper": {
+      "text-dim": {
         "role": "neutral",
-        "displayName": "Paper",
-        "canonical": "oklch(94.3% 0.011 244)",
+        "displayName": "Text Dim",
+        "canonical": "oklch(72.0% 0.010 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.010 244)",
-          "oklch(25.0% 0.011 244)",
-          "oklch(35.0% 0.011 244)",
-          "oklch(45.0% 0.011 244)",
-          "oklch(55.0% 0.011 244)",
-          "oklch(65.0% 0.011 244)",
-          "oklch(80.0% 0.011 244)",
-          "oklch(95.0% 0.011 244)"
+          "oklch(15.0% 0.010 60)",
+          "oklch(25.0% 0.010 60)",
+          "oklch(35.0% 0.010 60)",
+          "oklch(45.0% 0.010 60)",
+          "oklch(55.0% 0.010 60)",
+          "oklch(65.0% 0.010 60)",
+          "oklch(80.0% 0.010 60)",
+          "oklch(95.0% 0.010 60)"
         ]
       },
-      "paper-dim": {
-        "role": "neutral",
-        "displayName": "Paper Dim",
-        "canonical": "oklch(66.2% 0.018 251)",
+      "accent": {
+        "role": "role",
+        "displayName": "Accent",
+        "canonical": "oklch(72.0% 0.190 50)",
         "tonalRamp": [
-          "oklch(15.0% 0.013 251)",
-          "oklch(25.0% 0.016 251)",
-          "oklch(35.0% 0.018 251)",
-          "oklch(45.0% 0.018 251)",
-          "oklch(55.0% 0.018 251)",
-          "oklch(65.0% 0.018 251)",
-          "oklch(80.0% 0.018 251)",
-          "oklch(95.0% 0.016 251)"
+          "oklch(15.0% 0.041 50)",
+          "oklch(25.0% 0.067 50)",
+          "oklch(35.0% 0.093 50)",
+          "oklch(45.0% 0.119 50)",
+          "oklch(55.0% 0.146 50)",
+          "oklch(65.0% 0.172 50)",
+          "oklch(80.0% 0.127 50)",
+          "oklch(95.0% 0.028 50)"
         ]
       },
-      "ember": {
-        "role": "primary",
-        "displayName": "Ember",
-        "canonical": "oklch(70.1% 0.201 45)",
+      "needs": {
+        "role": "role",
+        "displayName": "Needs",
+        "canonical": "oklch(80.0% 0.160 80)",
         "tonalRamp": [
-          "oklch(15.0% 0.105 45)",
-          "oklch(25.0% 0.134 45)",
-          "oklch(35.0% 0.158 45)",
-          "oklch(45.0% 0.178 45)",
-          "oklch(55.0% 0.197 45)",
-          "oklch(65.0% 0.197 45)",
-          "oklch(80.0% 0.168 45)",
-          "oklch(95.0% 0.134 45)"
+          "oklch(15.0% 0.032 80)",
+          "oklch(25.0% 0.052 80)",
+          "oklch(35.0% 0.073 80)",
+          "oklch(45.0% 0.093 80)",
+          "oklch(55.0% 0.114 80)",
+          "oklch(65.0% 0.135 80)",
+          "oklch(80.0% 0.160 80)",
+          "oklch(95.0% 0.046 80)"
         ]
       },
-      "ember-wash": {
-        "role": "primary",
-        "displayName": "Ember Wash",
-        "canonical": "oklch(70.1% 0.201 45)",
+      "selected": {
+        "role": "role",
+        "displayName": "Selected",
+        "canonical": "oklch(82.0% 0.130 190)",
         "tonalRamp": [
-          "oklch(15.0% 0.105 45)",
-          "oklch(25.0% 0.134 45)",
-          "oklch(35.0% 0.158 45)",
-          "oklch(45.0% 0.178 45)",
-          "oklch(55.0% 0.197 45)",
-          "oklch(65.0% 0.197 45)",
-          "oklch(80.0% 0.168 45)",
-          "oklch(95.0% 0.134 45)"
+          "oklch(15.0% 0.027 190)",
+          "oklch(25.0% 0.043 190)",
+          "oklch(35.0% 0.061 190)",
+          "oklch(45.0% 0.078 190)",
+          "oklch(55.0% 0.095 190)",
+          "oklch(65.0% 0.112 190)",
+          "oklch(80.0% 0.130 190)",
+          "oklch(95.0% 0.073 190)"
         ]
       },
-      "needs-you-amber": {
-        "role": "secondary",
-        "displayName": "Needs-you Amber",
-        "canonical": "oklch(78.5% 0.154 61)",
+      "focus": {
+        "role": "role",
+        "displayName": "Focus",
+        "canonical": "oklch(76.0% 0.120 235)",
         "tonalRamp": [
-          "oklch(15.0% 0.081 61)",
-          "oklch(25.0% 0.103 61)",
-          "oklch(35.0% 0.122 61)",
-          "oklch(45.0% 0.137 61)",
-          "oklch(55.0% 0.151 61)",
-          "oklch(65.0% 0.151 61)",
-          "oklch(80.0% 0.130 61)",
-          "oklch(95.0% 0.103 61)"
+          "oklch(15.0% 0.033 235)",
+          "oklch(25.0% 0.053 235)",
+          "oklch(35.0% 0.074 235)",
+          "oklch(45.0% 0.096 235)",
+          "oklch(55.0% 0.117 235)",
+          "oklch(65.0% 0.120 235)",
+          "oklch(80.0% 0.119 235)",
+          "oklch(95.0% 0.028 235)"
         ]
       },
-      "landed-green": {
-        "role": "tertiary",
-        "displayName": "Landed Green",
-        "canonical": "oklch(69.5% 0.181 146)",
+      "stale": {
+        "role": "role",
+        "displayName": "Stale",
+        "canonical": "oklch(68.0% 0.015 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.094 146)",
-          "oklch(25.0% 0.121 146)",
-          "oklch(35.0% 0.142 146)",
-          "oklch(45.0% 0.161 146)",
-          "oklch(55.0% 0.177 146)",
-          "oklch(65.0% 0.177 146)",
-          "oklch(80.0% 0.152 146)",
-          "oklch(95.0% 0.121 146)"
+          "oklch(15.0% 0.015 60)",
+          "oklch(25.0% 0.015 60)",
+          "oklch(35.0% 0.015 60)",
+          "oklch(45.0% 0.015 60)",
+          "oklch(55.0% 0.015 60)",
+          "oklch(65.0% 0.015 60)",
+          "oklch(80.0% 0.015 60)",
+          "oklch(95.0% 0.015 60)"
         ]
       },
-      "caution-gold": {
-        "role": "tertiary",
-        "displayName": "Caution Gold",
-        "canonical": "oklch(72.0% 0.140 80)",
+      "fog": {
+        "role": "role",
+        "displayName": "Fog",
+        "canonical": "oklch(42.0% 0.020 250)",
         "tonalRamp": [
-          "oklch(15.0% 0.074 80)",
-          "oklch(25.0% 0.094 80)",
-          "oklch(35.0% 0.111 80)",
-          "oklch(45.0% 0.125 80)",
-          "oklch(55.0% 0.138 80)",
-          "oklch(65.0% 0.138 80)",
-          "oklch(80.0% 0.118 80)",
-          "oklch(95.0% 0.094 80)"
+          "oklch(15.0% 0.020 250)",
+          "oklch(25.0% 0.020 250)",
+          "oklch(35.0% 0.020 250)",
+          "oklch(45.0% 0.020 250)",
+          "oklch(55.0% 0.020 250)",
+          "oklch(65.0% 0.020 250)",
+          "oklch(80.0% 0.020 250)",
+          "oklch(95.0% 0.020 250)"
         ]
       },
-      "fault-red": {
-        "role": "tertiary",
-        "displayName": "Fault Red",
-        "canonical": "oklch(66.5% 0.205 27)",
+      "ok": {
+        "role": "role",
+        "displayName": "Ok",
+        "canonical": "oklch(72.0% 0.170 150)",
         "tonalRamp": [
-          "oklch(15.0% 0.106 27)",
-          "oklch(25.0% 0.136 27)",
-          "oklch(35.0% 0.160 27)",
-          "oklch(45.0% 0.181 27)",
-          "oklch(55.0% 0.200 27)",
-          "oklch(65.0% 0.200 27)",
-          "oklch(80.0% 0.171 27)",
-          "oklch(95.0% 0.136 27)"
+          "oklch(15.0% 0.043 150)",
+          "oklch(25.0% 0.069 150)",
+          "oklch(35.0% 0.097 150)",
+          "oklch(45.0% 0.124 150)",
+          "oklch(55.0% 0.152 150)",
+          "oklch(65.0% 0.170 150)",
+          "oklch(80.0% 0.170 150)",
+          "oklch(95.0% 0.083 150)"
         ]
       },
-      "graph-abyss": {
-        "role": "graph",
-        "displayName": "Graph Abyss",
-        "canonical": "oklch(18.0% 0.022 255)",
+      "warn": {
+        "role": "role",
+        "displayName": "Warn",
+        "canonical": "oklch(76.0% 0.140 85)",
         "tonalRamp": [
-          "oklch(15.0% 0.015 255)",
-          "oklch(25.0% 0.018 255)",
-          "oklch(35.0% 0.020 255)",
-          "oklch(45.0% 0.022 255)",
-          "oklch(55.0% 0.022 255)",
-          "oklch(65.0% 0.022 255)",
-          "oklch(80.0% 0.022 255)",
-          "oklch(95.0% 0.018 255)"
+          "oklch(15.0% 0.032 85)",
+          "oklch(25.0% 0.052 85)",
+          "oklch(35.0% 0.072 85)",
+          "oklch(45.0% 0.092 85)",
+          "oklch(55.0% 0.113 85)",
+          "oklch(65.0% 0.133 85)",
+          "oklch(80.0% 0.140 85)",
+          "oklch(95.0% 0.053 85)"
         ]
       },
-      "graph-panel": {
-        "role": "graph",
-        "displayName": "Graph Panel",
-        "canonical": "oklch(19.8% 0.025 256)",
+      "err": {
+        "role": "role",
+        "displayName": "Err",
+        "canonical": "oklch(68.0% 0.190 25)",
         "tonalRamp": [
-          "oklch(15.0% 0.017 256)",
-          "oklch(25.0% 0.020 256)",
-          "oklch(35.0% 0.023 256)",
-          "oklch(45.0% 0.025 256)",
-          "oklch(55.0% 0.025 256)",
-          "oklch(65.0% 0.025 256)",
-          "oklch(80.0% 0.025 256)",
-          "oklch(95.0% 0.020 256)"
+          "oklch(15.0% 0.062 25)",
+          "oklch(25.0% 0.102 25)",
+          "oklch(35.0% 0.142 25)",
+          "oklch(45.0% 0.183 25)",
+          "oklch(55.0% 0.190 25)",
+          "oklch(65.0% 0.190 25)",
+          "oklch(80.0% 0.114 25)",
+          "oklch(95.0% 0.025 25)"
         ]
       },
-      "graph-raised": {
-        "role": "graph",
-        "displayName": "Graph Raised",
-        "canonical": "oklch(22.9% 0.030 259)",
+      "on-err": {
+        "role": "fill",
+        "displayName": "On Err",
+        "canonical": "oklch(16.0% 0.010 25)",
         "tonalRamp": [
-          "oklch(15.0% 0.019 259)",
-          "oklch(25.0% 0.024 259)",
-          "oklch(35.0% 0.027 259)",
-          "oklch(45.0% 0.030 259)",
-          "oklch(55.0% 0.030 259)",
-          "oklch(65.0% 0.030 259)",
-          "oklch(80.0% 0.029 259)",
-          "oklch(95.0% 0.024 259)"
+          "oklch(15.0% 0.010 25)",
+          "oklch(25.0% 0.010 25)",
+          "oklch(35.0% 0.010 25)",
+          "oklch(45.0% 0.010 25)",
+          "oklch(55.0% 0.010 25)",
+          "oklch(65.0% 0.010 25)",
+          "oklch(80.0% 0.010 25)",
+          "oklch(95.0% 0.010 25)"
         ]
       },
-      "graph-line": {
-        "role": "graph",
-        "displayName": "Graph Line",
-        "canonical": "oklch(31.3% 0.040 255)",
+      "on-fill": {
+        "role": "fill",
+        "displayName": "On Fill",
+        "canonical": "oklch(98.5% 0.004 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.024 255)",
-          "oklch(25.0% 0.030 255)",
-          "oklch(35.0% 0.034 255)",
-          "oklch(45.0% 0.038 255)",
-          "oklch(55.0% 0.040 255)",
-          "oklch(65.0% 0.040 255)",
-          "oklch(80.0% 0.036 255)",
-          "oklch(95.0% 0.030 255)"
-        ]
-      },
-      "graph-line-strong": {
-        "role": "graph",
-        "displayName": "Graph Line Strong",
-        "canonical": "oklch(38.8% 0.044 254)",
-        "tonalRamp": [
-          "oklch(15.0% 0.026 254)",
-          "oklch(25.0% 0.032 254)",
-          "oklch(35.0% 0.038 254)",
-          "oklch(45.0% 0.042 254)",
-          "oklch(55.0% 0.044 254)",
-          "oklch(65.0% 0.044 254)",
-          "oklch(80.0% 0.040 254)",
-          "oklch(95.0% 0.032 254)"
-        ]
-      },
-      "graph-teal": {
-        "role": "graph",
-        "displayName": "Graph Teal",
-        "canonical": "oklch(82.4% 0.138 184)",
-        "tonalRamp": [
-          "oklch(15.0% 0.073 184)",
-          "oklch(25.0% 0.093 184)",
-          "oklch(35.0% 0.110 184)",
-          "oklch(45.0% 0.124 184)",
-          "oklch(55.0% 0.137 184)",
-          "oklch(65.0% 0.137 184)",
-          "oklch(80.0% 0.117 184)",
-          "oklch(95.0% 0.093 184)"
-        ]
-      },
-      "graph-purple": {
-        "role": "graph",
-        "displayName": "Graph Purple",
-        "canonical": "oklch(58.6% 0.212 287)",
-        "tonalRamp": [
-          "oklch(15.0% 0.110 287)",
-          "oklch(25.0% 0.141 287)",
-          "oklch(35.0% 0.166 287)",
-          "oklch(45.0% 0.188 287)",
-          "oklch(55.0% 0.207 287)",
-          "oklch(65.0% 0.207 287)",
-          "oklch(80.0% 0.177 287)",
-          "oklch(95.0% 0.141 287)"
-        ]
-      },
-      "graph-amber": {
-        "role": "graph",
-        "displayName": "Graph Amber",
-        "canonical": "oklch(80.4% 0.156 83)",
-        "tonalRamp": [
-          "oklch(15.0% 0.082 83)",
-          "oklch(25.0% 0.105 83)",
-          "oklch(35.0% 0.123 83)",
-          "oklch(45.0% 0.139 83)",
-          "oklch(55.0% 0.153 83)",
-          "oklch(65.0% 0.153 83)",
-          "oklch(80.0% 0.131 83)",
-          "oklch(95.0% 0.105 83)"
-        ]
-      },
-      "graph-green": {
-        "role": "graph",
-        "displayName": "Graph Green",
-        "canonical": "oklch(77.3% 0.153 163)",
-        "tonalRamp": [
-          "oklch(15.0% 0.081 163)",
-          "oklch(25.0% 0.103 163)",
-          "oklch(35.0% 0.121 163)",
-          "oklch(45.0% 0.137 163)",
-          "oklch(55.0% 0.151 163)",
-          "oklch(65.0% 0.151 163)",
-          "oklch(80.0% 0.129 163)",
-          "oklch(95.0% 0.103 163)"
-        ]
-      },
-      "graph-gray": {
-        "role": "graph",
-        "displayName": "Graph Gray",
-        "canonical": "oklch(63.1% 0.036 261)",
-        "tonalRamp": [
-          "oklch(15.0% 0.022 261)",
-          "oklch(25.0% 0.028 261)",
-          "oklch(35.0% 0.032 261)",
-          "oklch(45.0% 0.036 261)",
-          "oklch(55.0% 0.036 261)",
-          "oklch(65.0% 0.036 261)",
-          "oklch(80.0% 0.034 261)",
-          "oklch(95.0% 0.028 261)"
-        ]
-      },
-      "graph-red": {
-        "role": "graph",
-        "displayName": "Graph Red",
-        "canonical": "oklch(67.9% 0.183 24)",
-        "tonalRamp": [
-          "oklch(15.0% 0.095 24)",
-          "oklch(25.0% 0.122 24)",
-          "oklch(35.0% 0.144 24)",
-          "oklch(45.0% 0.162 24)",
-          "oklch(55.0% 0.179 24)",
-          "oklch(65.0% 0.179 24)",
-          "oklch(80.0% 0.153 24)",
-          "oklch(95.0% 0.122 24)"
-        ]
-      },
-      "graph-paper": {
-        "role": "graph",
-        "displayName": "Graph Paper",
-        "canonical": "oklch(91.5% 0.020 241)",
-        "tonalRamp": [
-          "oklch(15.0% 0.014 241)",
-          "oklch(25.0% 0.017 241)",
-          "oklch(35.0% 0.019 241)",
-          "oklch(45.0% 0.020 241)",
-          "oklch(55.0% 0.020 241)",
-          "oklch(65.0% 0.020 241)",
-          "oklch(80.0% 0.020 241)",
-          "oklch(95.0% 0.017 241)"
-        ]
-      },
-      "graph-paper-dim": {
-        "role": "graph",
-        "displayName": "Graph Paper Dim",
-        "canonical": "oklch(68.4% 0.036 255)",
-        "tonalRamp": [
-          "oklch(15.0% 0.022 255)",
-          "oklch(25.0% 0.027 255)",
-          "oklch(35.0% 0.032 255)",
-          "oklch(45.0% 0.035 255)",
-          "oklch(55.0% 0.036 255)",
-          "oklch(65.0% 0.036 255)",
-          "oklch(80.0% 0.033 255)",
-          "oklch(95.0% 0.027 255)"
+          "oklch(15.0% 0.004 60)",
+          "oklch(25.0% 0.004 60)",
+          "oklch(35.0% 0.004 60)",
+          "oklch(45.0% 0.004 60)",
+          "oklch(55.0% 0.004 60)",
+          "oklch(65.0% 0.004 60)",
+          "oklch(80.0% 0.004 60)",
+          "oklch(95.0% 0.004 60)"
         ]
       },
       "map-zero": {
-        "role": "graph",
+        "role": "fill",
         "displayName": "Map Zero",
-        "canonical": "oklch(24.9% 0.033 256)",
+        "canonical": "oklch(24.0% 0.015 235)",
         "tonalRamp": [
-          "oklch(15.0% 0.020 256)",
-          "oklch(25.0% 0.025 256)",
-          "oklch(35.0% 0.029 256)",
-          "oklch(45.0% 0.032 256)",
-          "oklch(55.0% 0.033 256)",
-          "oklch(65.0% 0.033 256)",
-          "oklch(80.0% 0.031 256)",
-          "oklch(95.0% 0.025 256)"
+          "oklch(15.0% 0.015 235)",
+          "oklch(25.0% 0.015 235)",
+          "oklch(35.0% 0.015 235)",
+          "oklch(45.0% 0.015 235)",
+          "oklch(55.0% 0.015 235)",
+          "oklch(65.0% 0.015 235)",
+          "oklch(80.0% 0.015 235)",
+          "oklch(95.0% 0.015 235)"
+        ]
+      },
+      "map-heat": {
+        "role": "fill",
+        "displayName": "Map Heat",
+        "canonical": "oklch(52.0% 0.100 190)",
+        "tonalRamp": [
+          "oklch(15.0% 0.027 190)",
+          "oklch(25.0% 0.043 190)",
+          "oklch(35.0% 0.061 190)",
+          "oklch(45.0% 0.078 190)",
+          "oklch(55.0% 0.095 190)",
+          "oklch(65.0% 0.100 190)",
+          "oklch(80.0% 0.100 190)",
+          "oklch(95.0% 0.073 190)"
+        ]
+      },
+      "attention": {
+        "role": "status",
+        "displayName": "Attention",
+        "canonical": "oklch(80.4% 0.156 83)",
+        "tonalRamp": [
+          "oklch(15.0% 0.032 83)",
+          "oklch(25.0% 0.052 83)",
+          "oklch(35.0% 0.072 83)",
+          "oklch(45.0% 0.093 83)",
+          "oklch(55.0% 0.113 83)",
+          "oklch(65.0% 0.134 83)",
+          "oklch(80.0% 0.156 83)",
+          "oklch(95.0% 0.049 83)"
+        ]
+      },
+      "working": {
+        "role": "status",
+        "displayName": "Working",
+        "canonical": "oklch(77.3% 0.153 163)",
+        "tonalRamp": [
+          "oklch(15.0% 0.033 163)",
+          "oklch(25.0% 0.054 163)",
+          "oklch(35.0% 0.076 163)",
+          "oklch(45.0% 0.097 163)",
+          "oklch(55.0% 0.119 163)",
+          "oklch(65.0% 0.140 163)",
+          "oklch(80.0% 0.153 163)",
+          "oklch(95.0% 0.075 163)"
+        ]
+      },
+      "observed": {
+        "role": "status",
+        "displayName": "Observed",
+        "canonical": "oklch(58.6% 0.212 287)",
+        "tonalRamp": [
+          "oklch(15.0% 0.088 287)",
+          "oklch(25.0% 0.144 287)",
+          "oklch(35.0% 0.202 287)",
+          "oklch(45.0% 0.212 287)",
+          "oklch(55.0% 0.212 287)",
+          "oklch(65.0% 0.198 287)",
+          "oklch(80.0% 0.106 287)",
+          "oklch(95.0% 0.025 287)"
+        ]
+      },
+      "none": {
+        "role": "status",
+        "displayName": "None",
+        "canonical": "oklch(63.1% 0.036 261)",
+        "tonalRamp": [
+          "oklch(15.0% 0.036 261)",
+          "oklch(25.0% 0.036 261)",
+          "oklch(35.0% 0.036 261)",
+          "oklch(45.0% 0.036 261)",
+          "oklch(55.0% 0.036 261)",
+          "oklch(65.0% 0.036 261)",
+          "oklch(80.0% 0.036 261)",
+          "oklch(95.0% 0.024 261)"
+        ]
+      },
+      "series-1": {
+        "role": "series",
+        "displayName": "Series 1",
+        "canonical": "oklch(71.0% 0.119 244)",
+        "tonalRamp": [
+          "oklch(15.0% 0.038 244)",
+          "oklch(25.0% 0.062 244)",
+          "oklch(35.0% 0.086 244)",
+          "oklch(45.0% 0.111 244)",
+          "oklch(55.0% 0.119 244)",
+          "oklch(65.0% 0.119 244)",
+          "oklch(80.0% 0.109 244)",
+          "oklch(95.0% 0.026 244)"
+        ]
+      },
+      "series-2": {
+        "role": "series",
+        "displayName": "Series 2",
+        "canonical": "oklch(76.2% 0.120 65)",
+        "tonalRamp": [
+          "oklch(15.0% 0.035 65)",
+          "oklch(25.0% 0.057 65)",
+          "oklch(35.0% 0.079 65)",
+          "oklch(45.0% 0.101 65)",
+          "oklch(55.0% 0.120 65)",
+          "oklch(65.0% 0.120 65)",
+          "oklch(80.0% 0.120 65)",
+          "oklch(95.0% 0.034 65)"
+        ]
+      },
+      "series-3": {
+        "role": "series",
+        "displayName": "Series 3",
+        "canonical": "oklch(76.9% 0.127 144)",
+        "tonalRamp": [
+          "oklch(15.0% 0.050 144)",
+          "oklch(25.0% 0.081 144)",
+          "oklch(35.0% 0.113 144)",
+          "oklch(45.0% 0.127 144)",
+          "oklch(55.0% 0.127 144)",
+          "oklch(65.0% 0.127 144)",
+          "oklch(80.0% 0.127 144)",
+          "oklch(95.0% 0.090 144)"
+        ]
+      },
+      "series-4": {
+        "role": "series",
+        "displayName": "Series 4",
+        "canonical": "oklch(72.4% 0.134 315)",
+        "tonalRamp": [
+          "oklch(15.0% 0.076 315)",
+          "oklch(25.0% 0.124 315)",
+          "oklch(35.0% 0.134 315)",
+          "oklch(45.0% 0.134 315)",
+          "oklch(55.0% 0.134 315)",
+          "oklch(65.0% 0.134 315)",
+          "oklch(80.0% 0.134 315)",
+          "oklch(95.0% 0.034 315)"
+        ]
+      },
+      "series-5": {
+        "role": "series",
+        "displayName": "Series 5",
+        "canonical": "oklch(85.0% 0.128 106)",
+        "tonalRamp": [
+          "oklch(15.0% 0.033 106)",
+          "oklch(25.0% 0.054 106)",
+          "oklch(35.0% 0.075 106)",
+          "oklch(45.0% 0.096 106)",
+          "oklch(55.0% 0.117 106)",
+          "oklch(65.0% 0.128 106)",
+          "oklch(80.0% 0.128 106)",
+          "oklch(95.0% 0.128 106)"
+        ]
+      },
+      "replay-alt": {
+        "role": "series",
+        "displayName": "Replay Alt",
+        "canonical": "oklch(70.8% 0.128 306)",
+        "tonalRamp": [
+          "oklch(15.0% 0.079 306)",
+          "oklch(25.0% 0.128 306)",
+          "oklch(35.0% 0.128 306)",
+          "oklch(45.0% 0.128 306)",
+          "oklch(55.0% 0.128 306)",
+          "oklch(65.0% 0.128 306)",
+          "oklch(80.0% 0.127 306)",
+          "oklch(95.0% 0.030 306)"
+        ]
+      },
+      "replay-alt-bg": {
+        "role": "series",
+        "displayName": "Replay Alt Bg",
+        "canonical": "oklch(24.2% 0.030 306)",
+        "tonalRamp": [
+          "oklch(15.0% 0.030 306)",
+          "oklch(25.0% 0.030 306)",
+          "oklch(35.0% 0.030 306)",
+          "oklch(45.0% 0.030 306)",
+          "oklch(55.0% 0.030 306)",
+          "oklch(65.0% 0.030 306)",
+          "oklch(80.0% 0.030 306)",
+          "oklch(95.0% 0.030 306)"
+        ]
+      },
+      "selected-wash": {
+        "role": "role",
+        "displayName": "Selected Wash",
+        "canonical": "oklch(82.0% 0.130 190 / 0.18)",
+        "tonalRamp": [
+          "oklch(15.0% 0.027 190)",
+          "oklch(25.0% 0.043 190)",
+          "oklch(35.0% 0.061 190)",
+          "oklch(45.0% 0.078 190)",
+          "oklch(55.0% 0.095 190)",
+          "oklch(65.0% 0.112 190)",
+          "oklch(80.0% 0.130 190)",
+          "oklch(95.0% 0.073 190)"
         ]
       }
     },
     "typographyMeta": {
       "body": {
         "displayName": "Body",
-        "purpose": "Rows, cells, controls, detail text at 13px monospace."
+        "purpose": "Rows, cells, controls and data at --fs-base (13px) monospace."
+      },
+      "prose": {
+        "displayName": "Prose",
+        "purpose": "--font-sans at --fs-base for notes, help text, notices, onboarding and the workspace graph."
       },
       "title": {
         "displayName": "Title",
-        "purpose": "Panel h2 at 1rem, browser-default 700; the Session altitude title is 600."
+        "purpose": "Panel h2 at --fs-base in --font-sans, browser-default 700."
+      },
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "Graph inspector h3 at --fs-lg (16px) 600, the largest declared size."
       },
       "subtitle": {
         "displayName": "Subtitle",
-        "purpose": "Session heading in the Sessions list, 15px 600."
+        "purpose": "Session heading in the Sessions list, --fs-md (14px) 600 in --font-sans."
       },
       "section": {
         "displayName": "Section",
-        "purpose": "h3 inside content panels, 0.9rem, dimmed rather than enlarged."
+        "purpose": "h3 inside content panels, --fs-sm in --font-sans and --text-dim, dimmed rather than enlarged."
       },
       "meta": {
         "displayName": "Meta",
-        "purpose": "12px secondary facts, crumbs, lane labels, transport readout."
+        "purpose": "--fs-sm (12px) secondary facts, crumbs, lane labels, the transport."
       },
       "axis": {
         "displayName": "Axis",
-        "purpose": "11px axis ticks, state words, copyable ids, hints."
+        "purpose": "--fs-xs (11px) axis ticks, state words, copyable ids, map tile labels."
       },
       "label": {
         "displayName": "Label",
-        "purpose": "10px uppercase badges and nav group headings."
-      },
-      "graph-body": {
-        "displayName": "Graph Body",
-        "purpose": "Sans-serif used only inside .workspace-graph (legacy)."
+        "purpose": "--fs-xs uppercase badges and nav group headings."
       }
     },
     "shadows": [
       {
-        "name": "sheet-lift",
-        "value": "0 12px 32px rgba(0, 0, 0, 0.55)",
-        "purpose": "Transient inspector or legend floating over the graph canvas."
+        "name": "popover-lift",
+        "value": "0 12px 32px color-mix(in srgb, var(--bg) 75%, transparent)",
+        "purpose": "Graph search results and overflow menu floating over the canvas."
       },
       {
         "name": "ring-focus",
-        "value": "0 0 0 2px var(--accent)",
-        "purpose": "Focus or change flash where an outline cannot wrap an SVG group."
+        "value": "inset 0 0 0 2px var(--selected)",
+        "purpose": "Graph canvas and map strip focus, where an outline cannot wrap the target. Elsewhere focus is a 2px var(--focus) outline."
       },
       {
         "name": "overlay-scrim",
-        "value": "rgba(4, 6, 10, 0.86)",
+        "value": "color-mix(in srgb, var(--bg) 86%, transparent)",
         "purpose": "Onboarding overlay backdrop; the only modal."
       }
     ],
@@ -470,7 +534,7 @@
       {
         "name": "fleet-change",
         "value": "fleet-change 1.6s ease-out 1",
-        "purpose": "Row flash from Hover Slate plus 2px ember ring to transparent on a state change."
+        "purpose": "Row flash from --bg-hover plus a 2px --text-dim ring to transparent on a state change; off under prefers-reduced-motion."
       },
       {
         "name": "detail-open",
@@ -498,97 +562,97 @@
       "name": "Button",
       "kind": "button",
       "refersTo": "button",
-      "description": "Default shell button: Panel Slate, hairline, 6px radius.",
+      "description": "Default shell button: --bg-panel, --border hairline, 6px radius, --focus ring.",
       "html": "<button class=\"ds-btn\">Open session</button>",
-      "css": ".ds-btn{background:var(--bg-panel,#161b22);color:var(--text,#e6edf3);border:1px solid var(--border,#30363d);border-radius:6px;padding:.35rem .8rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer}.ds-btn:hover{background:var(--bg-hover,#1f2630)}.ds-btn:focus-visible{outline:2px solid var(--accent,#ff6a00);outline-offset:3px}"
+      "css": ".ds-btn{background:var(--bg-panel,#1a1614);color:var(--text,#ebe7e4);border:1px solid var(--border,#6d6863);border-radius:6px;padding:.35rem .8rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer}.ds-btn:hover{background:var(--bg-hover,#25211e)}.ds-btn:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:3px}"
     },
     {
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Ember border and text; the only accent button. Never filled.",
+      "description": "--accent border and text; the only accent button. Never filled.",
       "html": "<button class=\"ds-btn-primary\">Live</button>",
-      "css": ".ds-btn-primary{background:var(--bg-panel,#161b22);color:var(--accent,#ff6a00);border:1px solid var(--accent,#ff6a00);border-radius:6px;padding:.35rem .8rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer}.ds-btn-primary:hover{background:var(--bg-hover,#1f2630)}.ds-btn-primary:focus-visible{outline:2px solid var(--accent,#ff6a00);outline-offset:3px}"
+      "css": ".ds-btn-primary{background:var(--bg-panel,#1a1614);color:var(--accent,#fe7802);border:1px solid var(--accent,#fe7802);border-radius:6px;padding:.35rem .8rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer}.ds-btn-primary:hover{background:var(--bg-hover,#25211e)}.ds-btn-primary:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:3px}"
     },
     {
       "name": "Search Input",
       "kind": "input",
       "refersTo": "input",
-      "description": "Panel Slate field with hairline and ember focus ring.",
+      "description": "--bg-panel field with a --border hairline and a --focus ring.",
       "html": "<input class=\"ds-input\" type=\"search\" placeholder=\"filter events\">",
-      "css": ".ds-input{background:var(--bg-panel,#161b22);color:var(--text,#e6edf3);border:1px solid var(--border,#30363d);border-radius:6px;padding:.3rem .5rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-width:14rem}.ds-input::placeholder{color:var(--text-dim,#8b949e)}.ds-input:focus-visible{outline:2px solid var(--accent,#ff6a00);outline-offset:3px}"
+      "css": ".ds-input{background:var(--bg-panel,#1a1614);color:var(--text,#ebe7e4);border:1px solid var(--border,#6d6863);border-radius:6px;padding:.3rem .5rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-width:14rem}.ds-input::placeholder{color:var(--text-dim,#a9a39e)}.ds-input:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:3px}"
     },
     {
       "name": "Sidebar Navigation",
       "kind": "nav",
       "refersTo": "nav-item",
-      "description": "130px rail with grouped lowercase items; active is ember on Panel Slate.",
-      "html": "<nav class=\"ds-nav\"><div class=\"ds-brand\">FIREHOSE</div><div class=\"ds-nav-h\">Altitudes</div><button class=\"ds-nav-btn\">Fleet</button><button class=\"ds-nav-btn ds-active\" aria-current=\"page\">Project</button><button class=\"ds-nav-btn\">Sessions</button><div class=\"ds-nav-h\">Housekeeping</div><button class=\"ds-nav-btn\">Doctor</button></nav>",
-      "css": ".ds-nav{width:130px;background:var(--bg,#0d1117);border-right:1px solid var(--border,#30363d);padding:.8rem .5rem;display:flex;flex-direction:column;gap:.3rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#e6edf3)}.ds-brand{color:var(--accent,#ff6a00);font-weight:700;letter-spacing:.08em;margin-bottom:1rem}.ds-nav-h{margin:10px 0 2px;padding:0 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.55}.ds-nav-btn{text-align:left;border:0;background:none;color:inherit;font:inherit;padding:.35rem .8rem;border-radius:6px;cursor:pointer}.ds-nav-btn:hover{background:var(--bg-hover,#1f2630)}.ds-nav-btn.ds-active{color:var(--accent,#ff6a00);background:var(--bg-panel,#161b22)}.ds-nav-btn:focus-visible{outline:2px solid var(--accent,#ff6a00);outline-offset:2px}"
+      "description": "130px rail with grouped lowercase items; the brand is --text, active is --accent on --bg-panel.",
+      "html": "<nav class=\"ds-nav\"><div class=\"ds-brand\">AGENT<br>FIREHOSE</div><div class=\"ds-nav-h\">Altitudes</div><button class=\"ds-nav-btn\">Fleet</button><button class=\"ds-nav-btn ds-active\" aria-current=\"page\">Project</button><button class=\"ds-nav-btn\">Sessions</button><div class=\"ds-nav-h\">Housekeeping</div><button class=\"ds-nav-btn\">Doctor</button></nav>",
+      "css": ".ds-nav{width:130px;background:var(--bg,#110f0d);border-right:1px solid var(--border,#6d6863);padding:.8rem .5rem;display:flex;flex-direction:column;gap:.3rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#ebe7e4)}.ds-brand{color:var(--text,#ebe7e4);font-weight:700;letter-spacing:.08em;margin-bottom:1rem;line-height:1.3}.ds-nav-h{margin:10px 0 2px;padding:0 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim,#a9a39e)}.ds-nav-btn{text-align:left;border:0;background:none;color:inherit;font:inherit;padding:.35rem .8rem;border-radius:6px;cursor:pointer}.ds-nav-btn:hover{background:var(--bg-hover,#25211e)}.ds-nav-btn.ds-active{color:var(--accent,#fe7802);background:var(--bg-panel,#1a1614)}.ds-nav-btn:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:2px}"
     },
     {
       "name": "Session Lens Tabs",
       "kind": "nav",
       "refersTo": "segment-group",
-      "description": "Segmented tablist; selected segment is a 14% ember wash.",
+      "description": "Segmented tablist; the selected segment is an 18% --selected wash with --text.",
       "html": "<div class=\"ds-tabs\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">Score</button><button role=\"tab\" aria-selected=\"false\">Loops</button><button role=\"tab\" aria-selected=\"false\">Loom</button><button role=\"tab\" aria-selected=\"false\">Replay</button></div>",
-      "css": ".ds-tabs{display:inline-flex;border:1px solid var(--border,#30363d);border-radius:8px;overflow:hidden;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ds-tabs button{border:0;border-radius:0;background:transparent;color:var(--text-dim,#8b949e);padding:7px 16px;cursor:pointer;font:inherit}.ds-tabs button+button{border-left:1px solid var(--border,#30363d)}.ds-tabs button[aria-selected=true]{background:#ff6a0024;color:var(--text,#e6edf3)}.ds-tabs button:focus-visible{outline:2px solid var(--accent,#ff6a00);outline-offset:-2px}"
+      "css": ".ds-tabs{display:inline-flex;border:1px solid var(--border,#6d6863);border-radius:8px;overflow:hidden;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ds-tabs button{border:0;border-radius:0;background:transparent;color:var(--text-dim,#a9a39e);padding:7px 16px;cursor:pointer;font:inherit}.ds-tabs button+button{border-left:1px solid var(--border,#6d6863)}.ds-tabs button[aria-selected=true]{background:color-mix(in srgb,var(--selected,#3adfd7) 18%,transparent);color:var(--text,#ebe7e4)}.ds-tabs button:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:-2px}"
     },
     {
       "name": "Badges",
       "kind": "chip",
       "refersTo": "badge",
-      "description": "10px uppercase state tags; needs is amber, error is red, idle is dim.",
+      "description": "--fs-xs uppercase state tags; needs is --bg on --needs, error is --on-err on --err, idle is dim.",
       "html": "<span class=\"ds-badge ds-needs\">needs you</span> <span class=\"ds-badge ds-err\">error</span> <span class=\"ds-badge ds-idle\">idle</span>",
-      "css": ".ds-badge{display:inline-block;font:700 10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#30363d);color:var(--text,#e6edf3)}.ds-needs{color:#000;background:#ff9f43;border-color:#ff9f43}.ds-err{color:#fff;background:var(--err,#f85149);border-color:var(--err,#f85149)}.ds-idle{color:var(--text-dim,#8b949e)}"
+      "css": ".ds-badge{display:inline-block;font:700 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#6d6863);color:var(--text,#ebe7e4)}.ds-needs{color:var(--bg,#110f0d);background:var(--needs,#f3b01d);border-color:var(--needs,#f3b01d)}.ds-err{color:var(--on-err,#110c0b);background:var(--err,#f75d59);border-color:var(--err,#f75d59)}.ds-idle{color:var(--text-dim,#a9a39e)}"
     },
     {
       "name": "Fleet Unit Row",
       "kind": "card",
       "refersTo": "unit-row",
-      "description": "A bordered row per worktree; border style encodes state, ember outline marks selection.",
+      "description": "A bordered row per worktree; border style encodes state, an --accent outline marks selection.",
       "html": "<div class=\"ds-row ds-current\" aria-selected=\"true\"><span class=\"ds-row-label\">llm-firehose · feat/shell-transport</span><span class=\"ds-row-dim\">claude-code · 2 min ago</span><span class=\"ds-row-badge ds-row-needs\">needs you</span></div><div class=\"ds-row ds-fog\"><span class=\"ds-row-label\">lorain-data · main</span><span class=\"ds-row-dim\">no evidence 3h</span></div>",
-      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;border:1px solid var(--border,#30363d);border-radius:6px;background:var(--bg-panel,#161b22);padding:4px 10px;margin:4px 0;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#e6edf3)}.ds-row:hover{background:var(--bg-hover,#1f2630)}.ds-row.ds-current{border-color:var(--accent,#ff6a00)}.ds-row[aria-selected=true]{outline:1px solid var(--accent,#ff6a00);outline-offset:1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#8b949e)}.ds-row-label{flex:0 0 22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-dim{color:var(--text-dim,#8b949e);font-size:12px}.ds-row-badge{font:700 10px ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#30363d)}.ds-row-needs{color:#000;background:#ff9f43;border-color:#ff9f43}"
+      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;border:1px solid var(--border,#6d6863);border-radius:6px;background:var(--bg-panel,#1a1614);padding:4px 10px;margin:4px 0;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#ebe7e4)}.ds-row:hover{background:var(--bg-hover,#25211e)}.ds-row.ds-current{border-color:var(--accent,#fe7802)}.ds-row[aria-selected=true]{outline:1px solid var(--accent,#fe7802);outline-offset:1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#a9a39e)}.ds-row-label{flex:0 0 22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-dim{color:var(--text-dim,#a9a39e);font-size:12px}.ds-row-badge{font:700 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#6d6863)}.ds-row-needs{color:var(--bg,#110f0d);background:var(--needs,#f3b01d);border-color:var(--needs,#f3b01d)}"
     },
     {
       "name": "Transport",
       "kind": "custom",
       "refersTo": "transport-control",
-      "description": "Shell-owned time control: presets, Live, Hold, tabular readout and an ember slider track.",
+      "description": "Shell-owned time control: presets, Live, Hold, a tabular readout and a slider track with a --text-dim thumb.",
       "html": "<div class=\"ds-transport\" role=\"group\" aria-label=\"Time window\"><div class=\"ds-presets\"><button aria-pressed=\"false\">2h</button><button aria-pressed=\"true\">8h</button><button aria-pressed=\"false\">24h</button><button aria-pressed=\"false\">7d</button></div><button class=\"ds-live\" aria-pressed=\"true\">Live</button><button>Hold</button><span class=\"ds-range\">Live · last 8h</span><div class=\"ds-track\" role=\"slider\" tabindex=\"0\" aria-valuenow=\"100\"><div class=\"ds-thumb\"></div></div></div>",
-      "css": ".ds-transport{display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border,#30363d);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#e6edf3);background:var(--bg,#0d1117)}.ds-presets{display:flex;gap:4px}.ds-transport button{background:var(--bg-panel,#161b22);color:var(--text,#e6edf3);border:1px solid var(--border,#30363d);border-radius:4px;padding:3px 8px;font:inherit;cursor:pointer}.ds-transport button[aria-pressed=true]{border-color:var(--accent,#ff6a00);color:var(--accent,#ff6a00)}.ds-transport button:focus-visible,.ds-track:focus-visible{outline:2px solid var(--accent,#ff6a00);outline-offset:1px}.ds-range{color:var(--text-dim,#8b949e);font-variant-numeric:tabular-nums;white-space:nowrap}.ds-track{position:relative;flex:1;min-width:80px;height:14px;background:var(--bg-panel,#161b22);border:1px solid var(--border,#30363d);border-radius:7px;cursor:ew-resize}.ds-thumb{position:absolute;top:1px;bottom:1px;left:70%;width:30%;background:var(--accent,#ff6a00);opacity:.7;border-radius:6px;transition:left .12s ease,width .12s ease}"
+      "css": ".ds-transport{display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border,#6d6863);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#ebe7e4);background:var(--bg,#110f0d)}.ds-presets{display:flex;gap:4px}.ds-transport button{background:var(--bg-panel,#1a1614);color:var(--text,#ebe7e4);border:1px solid var(--border,#6d6863);border-radius:4px;padding:3px 8px;font:inherit;cursor:pointer}.ds-transport button[aria-pressed=true]{border-color:var(--accent,#fe7802);color:var(--accent,#fe7802)}.ds-transport button:focus-visible,.ds-track:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:1px}.ds-range{color:var(--text-dim,#a9a39e);font-variant-numeric:tabular-nums;white-space:nowrap}.ds-track{position:relative;flex:1;min-width:80px;height:14px;background:var(--bg-panel,#1a1614);border:1px solid var(--border,#6d6863);border-radius:7px;cursor:ew-resize}.ds-thumb{position:absolute;top:1px;bottom:1px;left:70%;width:30%;background:var(--text-dim,#a9a39e);opacity:.7;border-radius:6px;transition:left .12s ease,width .12s ease}"
     }
   ],
   "narrative": {
     "northStar": "The Operations Board",
-    "overview": "**Creative North Star: \"The Operations Board\"**\n\nAgent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense, monospaced, flat and dark, with one warm ember accent that is spent only on what the operator must act on or has selected. Nothing is decorated. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, \"unknown\"), never as a guess.\n\nThe shell is a single monospace system, 13px on near-black, with hairline borders separating panels instead of shadows or tonal steps. Hierarchy comes from dimming (paper versus paper-dim) and from weight, not from size: the largest text in the product is a 1rem title. Colour is a vocabulary with fixed meanings. Ember is the accent, attention and selection. Amber means \"needs you\". Green means landed or copied. Gold is caution. Red is a fault. The one deliberate exception is the workspace graph, which carries its own cooler, sans-serif palette (teal, purple, amber, green on an abyss blue) scoped under its own root; this file records that palette as it is today, and slice 13 is expected to fold it onto the shell tokens.\n\nThis system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI tiles, gradient accents, identical card grids), the observability \"dark blue with neon\" skin, glassmorphism and gradient text, chat-app friendliness (avatars, bubbles, emoji status), and any surface that identifies a thing by its hash when a human name exists.",
+    "overview": "**Creative North Star: \"The Operations Board\"**\n\nAgent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense, flat and dark, and colour is spent on state, not decoration. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, \"unknown\"), never as a guess.\n\nOne token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for location, pressed state and the primary action, `--needs` for \"needs you\", `--selected` for selection in the graph and session tabs, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.\n\nProduct intent (register, users, tone) lives in [PRODUCT.md](PRODUCT.md).\n\nThis system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI tiles, gradient accents, identical card grids), the observability \"dark blue with neon\" skin, glassmorphism and gradient text, chat-app friendliness (avatars, bubbles, emoji status), and any surface that identifies a thing by its hash when a human name exists.",
     "keyCharacteristics": [
-      "Monospace throughout the shell; tabular numerals on clocks and ranges.",
-      "Flat surfaces, 1px hairlines, no shadows except the onboarding sheet and graph overlays.",
-      "One accent (ember) at well under 10% of any screen; state hues each carry one meaning and always sit next to a word.",
-      "Density first: 12px and 11px are the working sizes, 13px is body, 1rem is a title.",
+      "Monospace for data, sans for prose; tabular numerals on clocks and ranges.",
+      "Flat surfaces, 1px hairlines; shadows only on the two graph popovers (search results, overflow menu), the selected workspace pill and the onboarding scrim.",
+      "Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).",
+      "Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.",
       "Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.",
-      "Keyboard parity is a requirement, not a feature: every clickable row must have a keyboard path and a focus-visible treatment (today five SVG rows and the session and feed openers still fall short; see the inventory)."
+      "Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. The matrix cells, dwell rows, lane rows, fleet lane rows and score tracks now draw a `--focus` indicator (tested); feed rows and session items take focus but have no styled focus-visible yet and fall back to the browser ring."
     ],
     "rules": [
       {
-        "name": "The Ember Budget Rule",
-        "body": "Ember marks location and selection, nothing else. If a screen shows ember on more than one thing the operator did not just choose, something is miscoloured.",
+        "name": "The Accent Budget Rule",
+        "body": "`--accent` marks location, pressed state and the primary action, nothing else. If a screen shows accent on more than one thing the operator did not just choose, something is miscoloured. Selection in the graph and session tabs is `--selected`, and the keyboard ring is `--focus`, so the accent is never doing three jobs at once.",
         "section": "colors"
       },
       {
         "name": "The Word Beside the Dot Rule",
-        "body": "No hue carries state alone. Amber, green, gold and red always sit next to the word they mean (\"needs you\", \"landed\", \"paused\", \"failed\"), because the user may be colour-blind, the display may be dimmed, or the badge may be the only thing in view.",
+        "body": "No hue carries state alone. `--needs`, `--ok`, `--warn` and `--err` always sit next to the word they mean (\"needs you\", \"landed\", \"paused\", \"failed\"), because the user may be colour-blind, the display may be dimmed, or the badge may be the only thing in view.",
         "section": "colors"
       },
       {
         "name": "The One Palette Rule",
-        "body": "New surfaces use the shell tokens (`--bg`, `--bg-panel`, `--bg-hover`, `--border`, `--text`, `--text-dim`, `--accent`, `--ok`, `--warn`, `--err`). The graph's `--g-*` set and the remaining literals are debt recorded in the token inventory below, not a second system to extend.",
+        "body": "New surfaces, the graph included, use the `:root` tokens. There is no second palette: `--g-*` and `--muted` are gone (tested), and no colour literal may appear outside `:root`.",
         "section": "colors"
       },
       {
         "name": "The No Display Rule",
-        "body": "Nothing in the shell is larger than 1rem except the onboarding sheet. Emphasis is weight or ember, never size.",
+        "body": "Nothing declared in the shell is larger than `--fs-lg`. Emphasis is weight or a role colour, never size.",
         "section": "typography"
       },
       {
@@ -598,37 +662,39 @@
       },
       {
         "name": "The Hairline Rule",
-        "body": "Separate with a 1px `--border` line or a tonal step, never a shadow. If a new surface needs a shadow to be seen, its background step is wrong.",
+        "body": "Separate with a 1px `--border` line, a `color-mix()` of it, or a tonal step, never a shadow. If a new surface needs a shadow to be seen, its background step is wrong.",
         "section": "elevation"
       },
       {
         "name": "The Border Speaks Rule",
-        "body": "On a unit row the border style is data (solid, dashed, dotted, ember, red). Do not reuse those styles decoratively.",
+        "body": "On a unit row the border style is data (solid, dashed, dotted, accent, error). Do not reuse those styles decoratively.",
         "section": "elevation"
       }
     ],
     "dos": [
-      "Do build every new surface from the ten shell tokens on `:root` and the type sizes above; add a token before adding a literal.",
-      "Do spend ember only on location and selection (The Ember Budget Rule) and keep it under 10% of any screen.",
+      "Do build every new surface from the `:root` tokens and the `--fs-*` scale; add a token (see Adding a token) before reaching for a literal.",
+      "Do spend `--accent` only on location, pressed state and the primary action (The Accent Budget Rule).",
       "Do put a word beside every state colour: \"needs you\", \"landed\", \"paused\", \"failed\", \"unknown\".",
-      "Do name sessions and worktrees the way the user would (what was asked, where, by which agent, when) and show the hash only as a copyable detail in the 11px id style.",
+      "Do set data in the monospace face and prose in `--font-sans`.",
+      "Do name sessions and worktrees the way the user would (what was asked, where, by which agent, when) and show the hash only as a copyable detail in the `--fs-xs` id style.",
       "Do keep scope and selection when moving between Fleet, Project, Worktree and Session; Escape ascends one rung.",
-      "Do give every clickable row a keyboard path and a visible focus state: 2px ember outline, or a Hover Slate fill on an SVG hit area.",
+      "Do give every clickable row a keyboard path and a visible focus state: a 2px `--focus` outline, or a `--focus` stroke on an SVG hit area.",
       "Do separate with hairlines and tonal steps; draw missing evidence as dashed or dotted borders and the word \"unknown\".",
       "Do respect `prefers-reduced-motion`; motion only conveys a state change and eases out.",
       "Do set clocks, counts and ranges in tabular numerals and truncate long summaries with an ellipsis at a fixed `ch` width."
     ],
     "donts": [
       "Don't build SaaS analytics dashboards: no hero metrics, no KPI tiles, no gradient accents, no identical card grids.",
-      "Don't reach for the observability \"dark blue with neon\" skin, glassmorphism or gradient text; the graph's teal-on-abyss palette is recorded debt, not a precedent.",
+      "Don't reach for the observability \"dark blue with neon\" skin, glassmorphism or gradient text.",
       "Don't add chat-app friendliness: no avatars, no rounded bubbles, no emoji status.",
       "Don't identify a thing by its hash when a human name exists; a UUID is never a label, a heading or a breadcrumb crumb.",
-      "Don't use `border-left` or `border-right` wider than 1px as a coloured stripe on rows, bands or warnings; use a full border, a background tint or a leading badge.",
-      "Don't write `outline: none` on anything focusable without a replacement focus treatment in the same rule.",
+      "Don't add new `border-left` or `border-right` stripes wider than 1px on rows, bands or warnings; use a full border, a background tint or a leading badge. Existing 3px stripes (the identity hue on band rows, the five airspace band markers, the capture warning, the loops disclosure, and the court, airspace and loom notices) are recorded debt, not a precedent.",
+      "Don't write `outline: none` on anything focusable without a replacement focus treatment for `:focus-visible`.",
       "Don't add a second time control, repository picker or event list to a view; the transport, the scope store and the shared lists already exist.",
-      "Don't introduce new hex or rgba literals in `styles.css` or `ui/*/map.ts`; `#ff9f43` appearing eleven times is the cautionary tale.",
+      "Don't introduce colour literals (hex, `rgb()`, `hsl()`, `oklch()` and the rest) outside `:root`, in CSS or TypeScript; the test fails.",
+      "Don't dim text with `opacity`; use `--text-dim`.",
       "Don't nest containers or wrap rows in cards; a unit row is already the container.",
-      "Don't use pure `#000` or `#fff` for new text or fills; the two existing uses (needs and error badge text) should move to tinted neutrals when the token layer lands.",
+      "Don't use pure `#000` or `#fff`; text on a coloured fill uses `--on-err`, `--on-fill` or `--bg`.",
       "Don't use em dashes in interface copy."
     ]
   }

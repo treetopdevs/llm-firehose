@@ -31,3 +31,11 @@ test('keeps marker summaries bounded while selection retains full observation', 
     root.querySelector('button')!.click();
     expect(selected.mock.calls[0][0].session.last.summary).toHaveLength(5000);
 });
+test('band dividers use --border with no hex fallback', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { parseTokens } = await import('../../tokens-helpers');
+    expect(Object.keys(parseTokens(readFileSync("src/styles.css", 'utf8')).base)).toContain('--border');
+    const root = renderAirspaceMap([], counts, vi.fn());
+    expect(root.innerHTML).toContain('var(--border)');
+    expect(root.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+});

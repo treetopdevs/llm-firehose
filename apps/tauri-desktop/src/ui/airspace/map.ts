@@ -9,7 +9,7 @@ export function renderAirspaceMap(rows: AirspaceRow[], counts: Record<Band, numb
         const markers = el('div', { class: 'airspace-markers' });
         markers.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;min-height:40px;align-items:center';
         const section = el('section', { class: 'airspace-band', 'data-band': band.id }, heading, markers);
-        section.style.cssText = 'display:grid;grid-template-columns:minmax(130px,180px) minmax(0,1fr);gap:12px;padding:8px 10px;border-top:1px solid var(--border,#34404e)';
+        section.style.cssText = 'display:grid;grid-template-columns:minmax(130px,180px) minmax(0,1fr);gap:12px;padding:8px 10px;border-top:1px solid var(--border)';
         const members = page.filter(row => row.band === band.id);
         if (!members.length)
             markers.append(el('span', { class: 'dim' }, counts[band.id] ? 'No markers on this page' : 'No observations in this band'));
