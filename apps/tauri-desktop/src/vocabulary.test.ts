@@ -15,7 +15,7 @@
 //   cell(s)                                     -> unchanged id; copy says session/worktree
 // Obsolete uppercase NEEDS YOU / NEEDS INPUT is banned case-sensitively; "Needs you"/"needs you" is required.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, test } from "vitest";
 
@@ -158,7 +158,7 @@ const ALLOW: { file: string; contains: string; why: string }[] = [
 
 const allowed = (c: Copy) => ALLOW.some((a) => c.file.endsWith(a.file) && c.text.includes(a.contains));
 
-const files = walk(SRC).map((f) => ({ file: relative(SRC, f), source: readFileSync(f, "utf8") }));
+const files = walk(SRC).map((f) => ({ file: relative(SRC, f).split(sep).join("/"), source: readFileSync(f, "utf8") }));
 const all: Copy[] = files.flatMap((f) => [...copyOf(f.file, f.source), ...looseCopyOf(f.file, f.source)]);
 
 describe("vocabulary guard", () => {
