@@ -12,6 +12,24 @@ export function isEscapeClaimed(e: Event): boolean {
   return claimed.has(e);
 }
 
+/** True while any aria-modal dialog (the ? legend, for one) is open. */
+export function isModalOpen(): boolean {
+  return typeof document !== 'undefined' && document.querySelector('[aria-modal="true"]') !== null;
+}
+
+/**
+ * An element-local Escape claimer (a drag, the More menu) calls this first: when an open
+ * modal does not contain its element, the modal owns this Escape and the claimer leaves it
+ * alone; its own Escape works again once the modal is closed.
+ */
+export function yieldsToModal(_e: Event, ownerEl: Element | null | undefined): boolean {
+  if (typeof document === 'undefined') return false;
+  for (const m of document.querySelectorAll('[aria-modal="true"]')) {
+    if (!ownerEl || !m.contains(ownerEl)) return true;
+  }
+  return false;
+}
+
 const OVERLAYS = '.onboarding-overlay, [role="dialog"], dialog[open], [aria-modal]';
 
 /** True when nothing else owns this Escape (input, IME, dialog, menu, claim). */

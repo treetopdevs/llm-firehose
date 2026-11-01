@@ -8,6 +8,7 @@ import { graphAPI, type Comparison, type FileChange, type Snapshot, type Workspa
 import { sharedAncestorCount, type GraphNode } from "./model";
 import { displayText, fileName, isDigest, shortDigest, sourceName, stateDescription, type AgentState } from "./names";
 import { icon } from "./toolbar";
+import { LOCAL } from "../../keys";
 
 export interface AgentRow {
   source: string;
@@ -396,7 +397,7 @@ export function createInspector(h: InspectorHandlers) {
         };
         input.onchange = apply;
         input.onkeydown = (e) => {
-          if (e.key === "Enter") apply();
+          if (LOCAL.inspectorCompare.matches(e)) apply();
         };
         frag.append(input);
         if (custom && !FULL_ID.test(custom.trim()))

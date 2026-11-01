@@ -36,6 +36,7 @@ import {
   zoomView,
 } from "./model";
 import type { DrawnTrack, Score, ScoreEvent, View } from "./model";
+import { LOCAL } from "../../keys";
 
 export type ScorePanel = {
   root: HTMLElement;
@@ -249,21 +250,14 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     const target = e.target as HTMLElement | null;
     if (target?.closest("summary")) return;
     const inControl = target?.tagName === "BUTTON" || target?.tagName === "SELECT";
-    switch (e.key) {
-      case "ArrowRight":
-        e.preventDefault();
-        jump(nextEventAfter(score, at));
-        break;
-      case "ArrowLeft":
-        e.preventDefault();
-        jump(prevEventBefore(score, at));
-        break;
-      case " ":
-        if (inControl) return;
-        e.preventDefault();
-        if (playing) setPlaying(false);
-        else play();
-        break;
+    if (LOCAL.scoreStep.matches(e)) {
+      e.preventDefault();
+      jump(e.key === "ArrowRight" ? nextEventAfter(score, at) : prevEventBefore(score, at));
+    } else if (LOCAL.scorePlay.matches(e)) {
+      if (inControl) return;
+      e.preventDefault();
+      if (playing) setPlaying(false);
+      else play();
     }
   });
 
@@ -599,8 +593,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     // Enter or Space on a row steps to that category's next event after the
     // cursor; a click on the row puts the cursor where it landed (see drawChart).
     g.addEventListener("keydown", (e) => {
-      const key = (e as KeyboardEvent).key;
-      if (key !== "Enter" && key !== " ") return;
+      if (!LOCAL.scoreTrack.matches(e as KeyboardEvent)) return;
       e.preventDefault();
       e.stopPropagation();
       const next = score.events.find((e) => e.at > at && e.event.category === tr.category);

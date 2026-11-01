@@ -7,6 +7,12 @@ import type { FirehoseEvent } from "./api";
 export interface Row {
   event: FirehoseEvent;
   count: number;
+  /**
+   * Stable logical identity of the row: the id of the first event folded into it.
+   * Coalescing replaces `event` (so its id changes, e.g. hook id to rollout id) but
+   * never this key, so a view can keep focus on the same row across redraws.
+   */
+  key: string;
 }
 
 export interface Filter {
@@ -61,7 +67,7 @@ export function coalesce(evs: FirehoseEvent[], windowMs = CORRELATION_WINDOW_MS)
       }
     }
 
-    rows.push({ event: ev, count: 1 });
+    rows.push({ event: ev, count: 1, key: ev.id || `${correlatedKey ?? "row"}#${rows.length}` });
     if (correlatedKey) correlated.set(correlatedKey, rows.length - 1);
   }
   return rows;

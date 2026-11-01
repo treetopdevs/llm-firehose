@@ -181,7 +181,7 @@ This system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI t
 - Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).
 - Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.
 - Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.
-- Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. The matrix cells, dwell rows, lane rows, fleet lane rows and score tracks now draw a `--focus` indicator (tested); feed rows and session items take focus but have no styled focus-visible yet and fall back to the browser ring.
+- Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. One global `:focus-visible` rule in `styles.css` draws a 2px `--focus` indicator on every focusable surface, including feed rows, session items and Project beads (the graph keeps `--selected`). Session cards, feed rows and beads activate with Enter and Space. Keys are owned by `src/keys.ts`; element-local handlers share their descriptors with the registry. Glyph geometry and badge strings live in `src/glyphs.ts`. `?` opens the generated legend (`ui/legend.ts`), which mirrors `viewHelp` in `internal/tui/view.go`.
 
 ## 2. Colors
 
@@ -266,7 +266,7 @@ Attention earns colour. `--accent`, `--needs`, `--selected` and `--focus` appear
 
 The allowlist is by selector in `tokens.test.ts` (accent policy). Everything else, including the brand, the feed source column (`.cell.source`), captured/observed rows, notices, decorative bars and hover states, uses `--text`, `--text-dim`, `--border`, `--warn` or a neutral. `.attention-kind` itself uses `--text-dim`; it is not an accent user. Do not carry state by colour alone: keep the text label, and prefer a shape or dashed border for muted states.
 
-Three focus rings still do not use `--focus`: the attention inbox and strip buttons and the Project altitude's lane hit use `--accent` (`ui/project/` belongs to slice 9), and the Loops lens uses `currentColor`. They pass the policy because they are focus selectors; move them to `--focus` when those surfaces are next edited.
+All focus rings except the graph's use `--focus`, through the global `:focus-visible` rule or a per-surface override. The graph keeps `--selected`.
 
 ### Named Rules
 **The Accent Budget Rule.** `--accent` marks location, pressed state and the primary action, nothing else. If a screen shows accent on more than one thing the operator did not just choose, something is miscoloured. Selection in the graph and session tabs is `--selected`, and the keyboard ring is `--focus`, so the accent is never doing three jobs at once.

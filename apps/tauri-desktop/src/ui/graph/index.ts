@@ -46,6 +46,7 @@ import { createToolbar, type SearchResult, type WorkspaceTab } from "./toolbar";
 import { createActivityMap } from "../activity";
 import { createScope, formatRange, formatSpan, liveSpanOf, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
+import { LOCAL, registerKeys } from "../../keys";
 
 /** Workspaces beyond this many on one revision collapse into a counted cluster. */
 const MAX_STACK = 3;
@@ -85,6 +86,8 @@ export interface WorkspaceGraphOptions {
   timelineCap?: number;
 }
 export type GraphView = "graph" | "events";
+
+let activeGraphKeys: (() => void) | undefined;
 
 export function createWorkspaceGraph(
   onOpenSession: (id: string, source?: string) => void,
@@ -1145,10 +1148,15 @@ export function createWorkspaceGraph(
         showInGraph(e);
       };
       row.append(el("td", {}, graph));
-      onActivate(row, () => {
-        timeline.select(e.id);
-        render();
-      });
+      // The row holds its own Show in Graph button: only the row itself selects it.
+      onActivate(
+        row,
+        () => {
+          timeline.select(e.id);
+          render();
+        },
+        { self: true },
+      );
       rows.append(row);
     }
     table.append(rows);
@@ -1513,41 +1521,46 @@ export function createWorkspaceGraph(
 
   // ---- keyboard: ⌘K / Ctrl+K and "/" focus search --------------------------
 
-  const typing = (t: EventTarget | null) => {
-    const e = t as HTMLElement | null;
-    return (
-      !!e &&
-      (e.isContentEditable ||
-        ["INPUT", "TEXTAREA", "SELECT"].includes(e.tagName))
-    );
-  };
+  // Escape clears the selection from anywhere in the graph (a button in the header, the
+  // inspector...), but leaves fields, selects, dialogs and the More menu their own Escape.
+  // It runs in the capture phase so its claim lands before the shell's ascent handler.
   document.addEventListener(
     "keydown",
     (e) => {
-      if (!root.isConnected || !snapshot || hidden()) return;
-      if (e.key === "Escape") {
-        // Clear the selection from anywhere in the graph (a button in the header, the
-        // inspector...), but leave fields, selects, dialogs and the More menu their own Escape.
-        if (tab !== "graph" || !isEscapeEligible(e)) return;
-        if (clearSelection()) {
-          claimEscape(e);
-          e.preventDefault();
-        }
-        return;
+      if (!LOCAL.canvasClear.matches(e) || !root.isConnected || !snapshot || hidden()) return;
+      if (tab !== "graph" || !isEscapeEligible(e)) return;
+      if (clearSelection()) {
+        claimEscape(e);
+        e.preventDefault();
       }
-      const k = e.key.toLowerCase();
-      const hotkey = (e.metaKey || e.ctrlKey) && k === "k";
-      const slash = e.key === "/" && !e.metaKey && !e.ctrlKey && !typing(e.target);
-      if (!hotkey && !slash) return;
-      e.preventDefault();
-      if (tab !== "graph") {
-        switchTab("graph");
-        render();
-      }
-      toolbar.focusSearch();
     },
     true,
   );
+  const focusSearch = (e: KeyboardEvent): boolean => {
+    e.preventDefault();
+    if (tab !== "graph") {
+      switchTab("graph");
+      render();
+    }
+    toolbar.focusSearch();
+    return true;
+  };
+  const graphLive = (): boolean => root.isConnected && !!snapshot && !hidden();
+  // One graph owns the "graph" scope at a time; a stale instance is displaced.
+  activeGraphKeys?.();
+  activeGraphKeys = registerKeys([
+    { scope: "graph", keys: ["/"], display: "/", label: "search the graph", handler: focusSearch, enabled: graphLive },
+    {
+      scope: "graph",
+      keys: ["k", "K"],
+      display: "Cmd/Ctrl+K",
+      label: "search the graph (works inside fields)",
+      modifiers: "any",
+      allowInInput: true,
+      handler: (e) => (e.metaKey || e.ctrlKey ? focusSearch(e) : false),
+      enabled: graphLive,
+    },
+  ]);
   window.addEventListener("focus", () => {
     if (root.isConnected && !busy && !hidden()) void refresh(true);
   });

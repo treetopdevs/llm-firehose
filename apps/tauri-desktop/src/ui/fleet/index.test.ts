@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { isEscapeClaimed } from "../../escape";
+import { __resetKeysForTests, listKeys, registerKeys } from "../../keys";
 import { DEFAULT_LIVE_SPAN_MS, createScope } from "../../scope";
 import type { ScopePatch, ScopeStore } from "../../scope";
 import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
@@ -64,11 +65,13 @@ const press = (k: string, init: KeyboardEventInit = {}, target: EventTarget = do
 };
 
 beforeEach(() => {
+  __resetKeysForTests();
   vi.useFakeTimers();
   nowMs = NOW;
 });
 afterEach(() => {
   for (const p of panels.splice(0)) p.deactivate();
+  __resetKeysForTests();
   document.body.replaceChildren();
   vi.useRealTimers();
   for (const s of spies.splice(0)) s.mockRestore();
@@ -495,6 +498,41 @@ describe("keys", () => {
       expect(removed.some((r) => r[1] === a[1] && Boolean(r[2]) === Boolean(a[2]))).toBe(true);
     }
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("when the shared dispatcher already exists Fleet adds only its capture claimer, and removes it", async () => {
+    registerKeys([{ scope: "global", keys: ["F9"], display: "F9", label: "other", handler: () => {} }]);
+    const add = vi.spyOn(document, "addEventListener");
+    const rem = vi.spyOn(document, "removeEventListener");
+    spies.push(add, rem);
+    const { panel } = setup();
+    await panel.activate();
+    expect(add.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+    panel.deactivate();
+    expect(rem.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+  });
+
+  test("Fleet's four queue keys are listed while active and gone after deactivate", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    document.body.append(panel.root);
+    expect(listKeys().filter((r) => r.scope === "fleet").map((r) => r.display)).toEqual(["Enter", "1–9", "n / N", "Space"]);
+    panel.deactivate();
+    expect(listKeys().filter((r) => r.scope === "fleet")).toEqual([]);
+  });
+
+  test("the legend lists only the fleet keys the current encoding can act on", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    document.body.append(panel.root);
+    const shown = () => listKeys().filter((r) => r.scope === "fleet").map((r) => r.display);
+    expect(shown()).toEqual(["Enter", "1–9", "n / N", "Space"]);
+    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    expect(shown()).toEqual(["Enter", "n / N", "Space"]);
+    for (const enc of ["lanes", "matrix", "airspace"]) {
+      panel.encoding = enc as never;
+      expect(shown(), enc).toEqual(["Space"]);
+    }
   });
 });
 

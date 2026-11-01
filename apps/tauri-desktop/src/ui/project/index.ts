@@ -9,8 +9,11 @@ import { idLabel, shortId } from "../../format";
 import { displayRepoLabel } from "../fleet/model";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
+import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
+import type { KeyBinding } from "../../keys";
 import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
 import type { LaneGeom, TimeRange } from "./model";
+import { CLIP, COMMIT_TICK, DASH, GONE_MARK, HATCH, IDLE_BANG, LANDED_UNKNOWN, laneMarkPath, rejoinPath } from "../../glyphs";
 import { createActivityMap } from "../activity";
 import type { ActivityMap, MapWorkspace } from "../activity";
 
@@ -104,11 +107,7 @@ const outcomeText = (o: string | undefined): string =>
 const MAX_LABEL_CHARS = labelMaxChars(X0);
 const shortLabel = (s: string): string => (s.length > MAX_LABEL_CHARS ? `…${s.slice(1 - MAX_LABEL_CHARS)}` : s);
 
-function glyphPath(kind: string, x: number, y: number): string {
-  if (kind === "push") return `M ${x} ${y - 6} L ${x + 5} ${y + 4} L ${x - 5} ${y + 4} Z`;
-  if (kind === "pr_merge") return `M ${x} ${y - 6} L ${x + 6} ${y} L ${x} ${y + 6} L ${x - 6} ${y} Z`;
-  return `M ${x - 5} ${y - 5} L ${x + 5} ${y - 5} L ${x + 5} ${y + 5} L ${x - 5} ${y + 5} Z`;
-}
+let activeProjectKeys: (() => void) | undefined;
 
 export function createProject(deps: ProjectDeps): ProjectPanel {
   const { store, go } = deps;
@@ -131,6 +130,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   let loadToken = 0;
   let inflight = false;
   let active = false;
+  let unregisterOwnKeys: (() => void) | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let unsub: (() => void) | undefined;
   let unsubResolver: (() => void) | undefined;
@@ -152,7 +152,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   const select = el("select", { class: "project-repo", "aria-label": "Repository" });
   const statusBox = el("div", { class: "project-status", role: "status" });
   const chart = el("div", { class: "project-chart" });
-  const hint = el("p", { class: "project-hint" }, "Click a lane to open its sessions, a bead to open its score. Arrow keys or 1-9 pick a lane, Enter opens it. Drag on the time axis to narrow the window; the time bar above sets the span.");
+  const hint = el("p", { class: "project-hint" }, "Click a lane to open its sessions, a bead to open its score. Arrow keys or 1-9 pick a lane, Enter opens it. Drag on the time axis to narrow the window; the time bar above sets the span. Press ? for all keys and symbols.");
   const chips = el("div", { class: "project-chips", role: "tablist", "aria-label": "Encoding" });
   const chipBtns = new Map<ProjectEncoding, HTMLButtonElement>();
   const lanesBody = el("div", { class: "project-lanes-body" }, chart, hint);
@@ -318,62 +318,69 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (l.end === "hatched") cls.push("hatched");
     if (selected) cls.push("selected");
     if (l.idle) cls.push("idle");
-    const g = svg("g", { class: cls.join(" "), "data-key": l.id, tabindex: 0, role: "button", "aria-label": l.ariaLabel }, svg("title", {}, l.tooltip));
+    const g = svg("g", { class: cls.join(" "), "data-key": l.id, tabindex: 0, role: "group", "aria-label": l.ariaLabel }, svg("title", {}, l.tooltip));
     g.append(svg("rect", { class: "project-hit", x: 0, y: y - ROW_H / 2, width: VIEW_W, height: ROW_H, fill: "transparent" }));
     g.append(svg("text", { class: "project-label", x: LABEL_X, y: y + 4, "font-size": 11, fill: "currentColor" }, shortLabel(l.label)));
     const stroke = { stroke: "currentColor", fill: "none" };
     if (l.end === "hatched") {
       g.append(svg("rect", { class: "project-run", x: l.forkX, y: y - 4, width: Math.max(4, l.endX - l.forkX), height: 8, fill: "url(#project-hatch)", stroke: "currentColor" }));
     } else {
-      g.append(svg("line", { class: "project-run", x1: l.forkX, x2: Math.max(l.endX, l.forkX + 2), y1: y, y2: y, ...stroke, "stroke-width": 2 }));
+      g.append(svg("line", { class: "project-run", x1: l.forkX, x2: Math.max(l.endX, l.forkX + 2), y1: y, y2: y, ...stroke, "stroke-width": 2, ...(l.end === "flat" ? { "stroke-dasharray": DASH.flat } : {}) }));
     }
     if (!l.clippedLeft && (l.end === "rejoin" || l.end === "open" || l.end === "gone")) {
       g.append(svg("path", { class: "project-fork", d: `M ${l.forkX} ${BASE_Y} C ${l.forkX} ${y}, ${l.forkX} ${y}, ${l.forkX + 10} ${y}`, ...stroke }));
     }
     if (l.end === "rejoin") {
       // Activity ends at endX. The rejoin sits at a pr_merge mark's time when one exists;
-      // otherwise the landing time is unknown and the curve is dashed with a "?" glyph.
+      // otherwise the landing time is unknown and the curve is dashed with the landed-unknown mark.
       if (l.rejoinKnown && l.rejoinX > l.endX) {
-        g.append(svg("line", { class: "project-landgap", x1: l.endX, x2: l.rejoinX, y1: y, y2: y, ...stroke, "stroke-dasharray": "2 3" }));
+        g.append(svg("line", { class: "project-landgap", x1: l.endX, x2: l.rejoinX, y1: y, y2: y, ...stroke, "stroke-dasharray": DASH.landgap }));
       }
       const rx = l.rejoinX;
-      g.append(svg("path", { class: l.rejoinKnown ? "project-rejoin" : "project-rejoin unknown-time", d: `M ${rx - 10} ${y} C ${rx} ${y}, ${rx} ${y}, ${rx} ${BASE_Y}`, ...stroke, ...(l.rejoinKnown ? {} : { "stroke-dasharray": "3 3" }) }));
-      if (!l.rejoinKnown) g.append(svg("text", { class: "project-landed-unknown", x: rx + 4, y: y - 6, "font-size": 10, fill: "currentColor" }, "landed ?"));
+      g.append(svg("path", { class: l.rejoinKnown ? "project-rejoin" : "project-rejoin unknown-time", d: rejoinPath(rx - 10, y, rx, BASE_Y), ...stroke, ...(l.rejoinKnown ? {} : { "stroke-dasharray": DASH.unknownRejoin }) }));
+      if (!l.rejoinKnown) g.append(svg("text", { class: "project-landed-unknown", x: rx + 4, y: y - 6, "font-size": 10, fill: "currentColor" }, LANDED_UNKNOWN));
     }
     if (l.end === "open" && l.tailX !== undefined) {
-      g.append(svg("line", { class: "project-tail", x1: l.endX, x2: l.tailX, y1: y, y2: y, ...stroke, "stroke-dasharray": "4 3" }));
+      g.append(svg("line", { class: "project-tail", x1: l.endX, x2: l.tailX, y1: y, y2: y, ...stroke, "stroke-dasharray": DASH.tail }));
     }
     if (l.end === "gone") {
-      g.append(svg("text", { class: "project-gone", x: l.endX, y: y + 4, "text-anchor": "middle", fill: "currentColor" }, "×"));
+      g.append(svg("text", { class: "project-gone", x: l.endX, y: y + 4, "text-anchor": "middle", fill: "currentColor" }, GONE_MARK));
       g.append(svg("text", { class: "project-outcome", x: l.endX + 10, y: y + 4, "font-size": 10, fill: "currentColor" }, outcomeText(l.outcome)));
     }
     for (const b of l.beads) {
-      const bead = svg("rect", { class: "project-bead", x: b.x, y: y - 5, width: b.w, height: 10, rx: 2, "data-session": b.session, "data-source": b.source, fill: "currentColor" });
-      bead.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (consumeSuppress()) return;
-        go("score", { project: repoId, worktree: l.id, session: { id: b.session, source: b.source }, cell: undefined });
+      const bead = svg("rect", {
+        class: "project-bead", x: b.x, y: y - 5, width: b.w, height: 10, rx: 2, "data-session": b.session, "data-source": b.source, "data-key": `${l.id}\0${b.source}\0${b.session}`,
+        tabindex: 0, role: "button", "aria-label": `open score for session ${shortId(b.session)}, ${l.label} ${l.state}`, fill: "currentColor",
       });
+      // stop: a bead is not its lane; its click and keys never reach the lane's handler.
+      onActivate(
+        bead,
+        () => {
+          if (consumeSuppress()) return;
+          go("score", { project: repoId, worktree: l.id, session: { id: b.session, source: b.source }, cell: undefined });
+        },
+        { stop: true },
+      );
       g.append(bead);
     }
     for (const t of l.ticks) {
-      g.append(svg("line", { class: "project-tick", "data-kind": t.kind, "data-id": t.id, x1: t.x, x2: t.x, y1: y - 9, y2: y + 9, stroke: "currentColor" }));
+      g.append(svg("line", { class: "project-tick", "data-kind": t.kind, "data-id": t.id, x1: t.x, x2: t.x, y1: y - COMMIT_TICK.half, y2: y + COMMIT_TICK.half, stroke: "currentColor" }));
     }
     for (const gl of l.glyphs) {
-      g.append(svg("path", { class: "project-glyph", "data-kind": gl.kind, "data-id": gl.id, d: glyphPath(gl.kind, gl.x, y), fill: "currentColor" }));
+      g.append(svg("path", { class: "project-glyph", "data-kind": gl.kind, "data-id": gl.id, d: laneMarkPath(gl.kind, gl.x, y), fill: "currentColor" }));
     }
-    if (l.clippedLeft) g.append(svg("text", { class: "project-clip", x: X0 - 4, y: y - 8, "font-size": 9, fill: "currentColor" }, "‹"));
-    if (l.clippedRight) g.append(svg("text", { class: "project-clip", x: X1 + 2, y: y - 8, "font-size": 9, fill: "currentColor" }, "›"));
+    if (l.clippedLeft) g.append(svg("text", { class: "project-clip", x: X0 - 4, y: y - 8, "font-size": 9, fill: "currentColor" }, CLIP.left));
+    if (l.clippedRight) g.append(svg("text", { class: "project-clip", x: X1 + 2, y: y - 8, "font-size": 9, fill: "currentColor" }, CLIP.right));
     if (l.badge) g.append(svg("text", { class: "project-badge", x: X1 + 8, y: y + 4, "font-size": 10, fill: "currentColor" }, l.badge));
     if (l.idle) {
       g.append(
-        svg("text", { class: "project-idle", role: "img", "aria-label": "idle", x: VIEW_W - 12, y: y + 4, fill: "currentColor" }, svg("title", {}, IDLE_REASON), "!"),
+        svg("text", { class: "project-idle", role: "img", "aria-label": "idle", x: VIEW_W - 12, y: y + 4, fill: "currentColor" }, svg("title", {}, IDLE_REASON), IDLE_BANG),
       );
     }
     onActivate(g, () => {
       if (consumeSuppress()) return;
       go("sessions", { project: repoId, worktree: l.id, cell: undefined });
-    });
+    }, { self: true });
     return g;
   }
 
@@ -519,8 +526,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     b.addEventListener("click", () => setEncodingTo(e));
     b.addEventListener("keydown", (ev) => {
       const i = ENCODINGS.indexOf(e);
-      const j = ev.key === "ArrowRight" ? (i + 1) % ENCODINGS.length : ev.key === "ArrowLeft" ? (i + ENCODINGS.length - 1) % ENCODINGS.length : ev.key === "Home" ? 0 : ev.key === "End" ? ENCODINGS.length - 1 : -1;
-      if (j < 0) return;
+      if (!LOCAL.projectViews.matches(ev)) return;
+      const j = ev.key === "ArrowRight" ? (i + 1) % ENCODINGS.length : ev.key === "ArrowLeft" ? (i + ENCODINGS.length - 1) % ENCODINGS.length : ev.key === "Home" ? 0 : ENCODINGS.length - 1;
       ev.preventDefault();
       setEncodingTo(ENCODINGS[j]!);
       chipBtns.get(ENCODINGS[j]!)?.focus();
@@ -570,7 +577,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     const height = BASE_Y + (lanes.length + 1) * ROW_H + 8;
     const sel = selection();
     const s = svg("svg", { class: "project-svg", viewBox: `0 0 ${VIEW_W} ${height}`, role: "group", "aria-label": `Worktree lanes for ${idLabel(repo)}`, width: "100%" });
-    s.append(svg("defs", {}, svg("pattern", { id: "project-hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse" }, svg("path", { d: "M 0 6 L 6 0", stroke: "currentColor", "stroke-width": 1 }))));
+    s.append(svg("defs", {}, svg("pattern", { id: "project-hatch", width: HATCH.size, height: HATCH.size, patternUnits: "userSpaceOnUse" }, svg("path", { d: HATCH.d, stroke: "currentColor", "stroke-width": 1 }))));
     for (const t of axisTicks(range, X0, X1, 6)) {
       s.append(svg("g", { class: "project-axis-tick" }, svg("line", { x1: t.x, x2: t.x, y1: AXIS_H - 4, y2: height - 4, stroke: "currentColor", "stroke-opacity": 0.12 }), svg("text", { x: t.x, y: AXIS_H - 8, "text-anchor": "middle", "font-size": 10, fill: "currentColor" }, t.label)));
     }
@@ -753,7 +760,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   // Capture phase so the claim lands before the shared bubble-phase ascent handler.
   // Local state first: an in-progress brush, then a keyboard-picked lane not yet in scope.
   function onEscapeCapture(e: KeyboardEvent): void {
-    if (e.key !== "Escape" || !active || encoding !== "lanes" || !root.isConnected || !isEscapeEligible(e)) return;
+    if (!LOCAL.laneClear.matches(e) || !active || encoding !== "lanes" || !root.isConnected || !isEscapeEligible(e)) return;
     if (drag) {
       endDrag();
       claimEscape(e);
@@ -765,38 +772,56 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     }
   }
 
-  function onDocKey(e: KeyboardEvent): void {
-    if (e.key === "Escape") return;
-    if (!active || encoding !== "lanes" || !root.isConnected) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (!isEscapeEligible(e)) return;
+  /** The target when the key belongs to the lanes view, else false. */
+  function inLanes(e: KeyboardEvent): Element | null | false {
+    if (!active || encoding !== "lanes" || !root.isConnected) return false;
+    if (!isEscapeEligible(e)) return false;
     const t = e.target as Element | null;
-    if (t !== document.body && !(t && typeof t.closest === "function" && root.contains(t))) return;
-    if (e.key === "Enter") {
-      if (t?.closest?.('button, a, select, [role="button"]')) return;
-      const id = selection();
-      const repo = pickedRepo();
-      if (id === undefined || repo === undefined) return;
-      e.preventDefault();
-      go("sessions", { project: repo, worktree: id, cell: undefined });
-      return;
-    }
-    const onLane = !!t?.closest?.(".project-lane");
-    if (/^[1-9]$/.test(e.key)) {
-      const id = laneIds[Number(e.key) - 1];
-      if (id === undefined) return;
-      e.preventDefault();
-      moveCursor(id, onLane);
-      return;
-    }
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      if (laneIds.length === 0) return;
-      const i = selection() === undefined ? -1 : laneIds.indexOf(selection()!);
-      const j = i < 0 ? 0 : Math.min(laneIds.length - 1, Math.max(0, i + (e.key === "ArrowDown" ? 1 : -1)));
-      e.preventDefault();
-      moveCursor(laneIds[j]!, onLane);
-    }
+    if (t !== document.body && !(t && typeof t.closest === "function" && root.contains(t))) return false;
+    return t;
   }
+
+  // Each handler returns false when the key is not the lanes view's, so dispatch can fall through.
+  function onOpen(e: KeyboardEvent): boolean {
+    const t = inLanes(e);
+    if (t === false || t?.closest?.('button, a, select, [role="button"], .project-lane')) return false;
+    const id = selection();
+    const repo = pickedRepo();
+    if (id === undefined || repo === undefined) return false;
+    e.preventDefault();
+    go("sessions", { project: repo, worktree: id, cell: undefined });
+    return true;
+  }
+
+  function onPick(e: KeyboardEvent): boolean {
+    const t = inLanes(e);
+    if (t === false) return false;
+    const id = laneIds[Number(e.key) - 1];
+    if (id === undefined) return false;
+    e.preventDefault();
+    moveCursor(id, !!t?.closest?.(".project-lane"));
+    return true;
+  }
+
+  function onArrow(e: KeyboardEvent): boolean {
+    const t = inLanes(e);
+    if (t === false || laneIds.length === 0) return false;
+    const i = selection() === undefined ? -1 : laneIds.indexOf(selection()!);
+    const j = i < 0 ? 0 : Math.min(laneIds.length - 1, Math.max(0, i + (e.key === "ArrowDown" ? 1 : -1)));
+    e.preventDefault();
+    moveCursor(laneIds[j]!, !!t?.closest?.(".project-lane"));
+    return true;
+  }
+
+  // Listed in the legend only while the lanes encoding is showing.
+  const projectKeys = (): KeyBinding[] => {
+    const enabled = (): boolean => active && encoding === "lanes" && root.isConnected;
+    return [
+      { scope: "project", ...QUEUE_KEYS.open, label: "open the selected lane's sessions", handler: onOpen, enabled },
+      { scope: "project", ...QUEUE_KEYS.pick, label: "select a lane by number", handler: onPick, enabled },
+      { scope: "project", keys: ["ArrowDown", "ArrowUp"], display: "↑ / ↓", label: "move between lanes", handler: onArrow, enabled },
+    ];
+  };
 
   return {
     root,
@@ -811,7 +836,9 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
         active = true;
         unsub = store.subscribe(onScope);
         unsubResolver = store.onResolver(() => syncSelect(pickerIds(), repoNow()));
-        document.addEventListener("keydown", onDocKey);
+        // One Project owns the "project" scope at a time; a stale instance is displaced.
+        activeProjectKeys?.();
+        unregisterOwnKeys = activeProjectKeys = registerKeys(projectKeys());
         document.addEventListener("keydown", onEscapeCapture, true);
         timer = setInterval(() => void load(true), refreshMs);
       }
@@ -836,7 +863,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       unsub = undefined;
       unsubResolver?.();
       unsubResolver = undefined;
-      document.removeEventListener("keydown", onDocKey);
+      unregisterOwnKeys?.();
+      unregisterOwnKeys = undefined;
       document.removeEventListener("keydown", onEscapeCapture, true);
       endDrag();
       if (timer !== undefined) clearInterval(timer);

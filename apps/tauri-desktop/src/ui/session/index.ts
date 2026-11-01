@@ -16,6 +16,7 @@ import {
   type SessionTab,
   type SessionTabContext,
 } from "./context";
+import { LOCAL } from "../../keys";
 
 export interface SessionLens {
   root: HTMLElement;
@@ -111,6 +112,7 @@ export function createSession(deps: SessionDeps): SessionPanel {
   root.append(el("h2", {}, "Session"), tablist, ...SESSION_TABS.map((t) => panels[t]));
 
   tablist.addEventListener("keydown", (e) => {
+    if (!LOCAL.sessionTabs.matches(e)) return;
     const i = SESSION_TABS.indexOf(current);
     let n: number;
     switch (e.key) {

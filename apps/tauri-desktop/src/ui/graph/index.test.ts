@@ -1602,3 +1602,97 @@ test("scope review: Escape with the More menu open closes only the menu, whereve
     panel.root.remove();
   }
 });
+
+async function timelineWithRow() {
+  const panel = await setup();
+  const snap = await graphAPI.snapshot("r");
+  panel.root
+    .querySelector<SVGGElement>('[data-key="workspace:w"]')!
+    .dispatchEvent(new MouseEvent("click"));
+  panel.onEvent({
+    id: "keyed",
+    time: "2026-10-05T00:00:00Z",
+    source: "codex",
+    category: "tool",
+    repo_id: "r",
+    worktree_id: snap.workspaces[0].id,
+  });
+  click(panel.root, "Timeline");
+  await flush();
+  return panel;
+}
+const keyEv = (target: Element, key: string) => {
+  const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  target.dispatchEvent(e);
+  return e;
+};
+
+test("keys on the nested Show in Graph button do not select or re-render the timeline row", async () => {
+  const panel = await timelineWithRow();
+  const row = panel.root.querySelector<HTMLElement>('[data-key="event:keyed"]')!;
+  expect(row).not.toBeNull();
+  const btn = row.querySelector<HTMLButtonElement>("button")!;
+  btn.focus();
+  for (const k of ["Enter", " "]) {
+    const e = keyEv(btn, k);
+    expect(e.defaultPrevented).toBe(false);
+  }
+  expect(panel.root.querySelector('[data-key="event:keyed"]')).toBe(row);
+  expect(row.classList.contains("selected")).toBe(false);
+  expect(panel.root.querySelector(".graph-event-detail")?.textContent ?? "").not.toContain("keyed");
+  // the browser turns Enter/Space on a button into one click: that shows it in the graph without selecting the row
+  btn.click();
+  expect(panel.root.querySelector('[data-key="event:keyed"]')).toBeNull();
+  expect(panel.root.querySelector(".graph-canvas")).not.toBeNull();
+});
+
+test("clicking the timeline row elsewhere selects it, and Enter on the row itself selects", async () => {
+  const panel = await timelineWithRow();
+  const cell = panel.root.querySelector<HTMLElement>('[data-key="event:keyed"] td')!;
+  cell.click();
+  expect(panel.root.querySelector('[data-key="event:keyed"]')!.classList.contains("selected")).toBe(true);
+  // unselect by re-rendering through another selection is out of scope: use a fresh panel for Enter
+  document.body.replaceChildren();
+  const second = await timelineWithRow();
+  const row = second.root.querySelector<HTMLElement>('[data-key="event:keyed"]')!;
+  expect(keyEv(row, "Enter").defaultPrevented).toBe(true);
+  expect(second.root.querySelector('[data-key="event:keyed"]')!.classList.contains("selected")).toBe(true);
+});
+
+test("/ focuses search from the body and is ignored while typing in a field", async () => {
+  const { root } = await richSetup();
+  const input = q(root, 'input[aria-label="Search graph"]');
+  const other = document.createElement("input");
+  document.body.append(other);
+  const slash = (target: EventTarget) => {
+    const e = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  };
+  expect(slash(other).defaultPrevented).toBe(false);
+  expect(document.activeElement).not.toBe(input);
+  expect(slash(document.body).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  // Typing "/" into the search box itself is a character, not a command.
+  expect(slash(input).defaultPrevented).toBe(false);
+});
+
+test("Cmd/Ctrl+K focuses search from the body and from inside another field; plain k does nothing", async () => {
+  const { root } = await richSetup();
+  const input = q(root, 'input[aria-label="Search graph"]');
+  const other = document.createElement("input");
+  document.body.append(other);
+  const k = (target: EventTarget, init: KeyboardEventInit) => {
+    const e = new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(e);
+    return e;
+  };
+  expect(k(document.body, {}).defaultPrevented).toBe(false);
+  expect(document.activeElement).not.toBe(input);
+  other.focus();
+  expect(k(other, { metaKey: true }).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  (document.activeElement as HTMLElement).blur();
+  expect(k(document.body, { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+});
