@@ -2,10 +2,11 @@
 // leave and rejoin main through a time window. DOM-free. It never infers
 // causality or handoffs; commit-to-session attribution is a labelled time join.
 import type { WorktreeCommit, WorktreeLifetimeView, WorktreeMark, WorktreeOutcome, WorktreeState } from "../../api";
+import { DEFAULT_LIVE_SPAN_MS, resolveRange } from "../../scope";
 import type { ScopeWindow } from "../../scope";
 import { idLabel } from "../../format";
 
-export const LIVE_SPAN_MS = 7 * 24 * 3_600_000;
+export const LIVE_SPAN_MS = DEFAULT_LIVE_SPAN_MS;
 export const IDLE_AFTER_MS = 4 * 3_600_000;
 export const MIN_BEAD_PX = 6;
 export const MIN_BRUSH_PX = 4;
@@ -54,8 +55,8 @@ export interface LaneGeom {
 const time = (s: string | undefined): number => (s === undefined ? NaN : Date.parse(s));
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
-export function resolveWindow(w: ScopeWindow, now: number): TimeRange {
-  return w === "live" ? { from: now - LIVE_SPAN_MS, to: now } : { from: w.from, to: w.to };
+export function resolveWindow(w: ScopeWindow, now: number, liveSpanMs: number = DEFAULT_LIVE_SPAN_MS): TimeRange {
+  return resolveRange(w, now, liveSpanMs);
 }
 
 export function timeToX(t: number, range: TimeRange, x0: number, x1: number): number {

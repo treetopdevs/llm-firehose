@@ -31,7 +31,8 @@ import { createProject } from "./ui/project";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspaceGraph } from "./ui/graph";
-import { membership, scope, selectSession } from "./scope";
+import { liveSpanOf, membership, scope, selectSession } from "./scope";
+import { createTransport } from "./transport";
 import type { Scope, ScopePatch, SessionRef } from "./scope";
 import { createEscapeHandler } from "./escape";
 import { createBreadcrumb } from "./breadcrumb";
@@ -134,6 +135,7 @@ const fleetPanel = createFleet({
   onLabels: (labels) => {
     fleetLabels = labels;
   },
+  onEncoding: () => transport.refresh(),
 });
 fleetPanel.setConnected(false);
 // The score replays one finished session, so its detail pairs calls from
@@ -203,6 +205,14 @@ const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
 ];
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
+/** Panels that read scope.window; the shell transport is shown only over these. */
+export const TRANSPORT_PANELS: ReadonlySet<string> = new Set(["project", "fleet", "session"]);
+// Fleet knows its own default live span; every other panel reads the user's preference.
+const transport = createTransport({
+  store: scope,
+  effectiveLiveSpan: () => (active === "fleet" ? fleetPanel.effectiveLiveSpan() : liveSpanOf(scope.get())),
+});
+
 /** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
 function go(name: GoName, patch?: ScopePatch, replace = false, tab?: SessionTab) {
   if (patch) {
@@ -226,6 +236,9 @@ function show(name: PanelName, opts?: { tab?: SessionTab }) {
 
   if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
+  transport.setPanel(name);
+  transport.refresh();
+  transport.setVisible(TRANSPORT_PANELS.has(name));
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
   }
@@ -284,7 +297,7 @@ for (const [heading, names] of NAV_GROUPS) {
 
 const crumb = createBreadcrumb(scope);
 const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount);
-app.append(compatBanner, attentionPanel.strip, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
+app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
 
 // --- live data -------------------------------------------------------------
 

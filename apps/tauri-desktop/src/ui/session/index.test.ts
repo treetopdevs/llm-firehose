@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createScope } from "../../scope";
 import type { ScopeStore } from "../../scope";
-import { SESSION_TABS, type SessionTab } from "./context";
+import { SESSION_TABS, windowLabel, type SessionTab } from "./context";
 import { createSession, type SessionLens, type SessionPanel } from "./index";
 
 type Fake = SessionLens & {
@@ -190,6 +190,20 @@ describe("session panel", () => {
     expect(ch.querySelector("button")).toBeNull();
     panel.select("loops");
     expect(panel.root.querySelector("#session-panel-loops .session-lens-head button")).not.toBeNull();
+  });
+
+  test("header and reset chip read the shared store (liveSpanMs aside)", () => {
+    panel.activate();
+    const head = () => panel.root.querySelector<HTMLElement>("#session-panel-score .session-lens-head")!;
+    const explicit = { from: 1000, to: 91000 };
+    store.narrow({ window: explicit, liveSpanMs: 7_200_000 });
+    expect(head().textContent).toContain(windowLabel(explicit));
+    expect(head().querySelector("button")).not.toBeNull();
+    head().querySelector("button")!.click();
+    expect(store.get().window).toBe("live");
+    expect(store.get().liveSpanMs).toBe(7_200_000);
+    expect(head().textContent).toContain("whole session");
+    expect(head().querySelector("button")).toBeNull();
   });
 
   test("no session in scope: neutral header, no window claim, current tab kept", () => {

@@ -7,6 +7,10 @@
 // - Notifications deliver the committed (next, prev) pair. get() may already be
 //   ahead of the pair being delivered when a subscriber re-entrantly narrows;
 //   those changes are queued and delivered in order.
+// - liveSpanMs is a user PREFERENCE for how far 'live' looks back at Project and
+//   (when set) Fleet Lanes. Direct session selection resets window to live but keeps
+//   the preference; navigations that pass an explicit window (Fleet) carry it. The
+//   Session altitude treats live as the whole session and ignores the span.
 // - `cell` is a deliberate escape hatch: SessionSummary carries no
 //   repo_id/worktree_id, so the sessions matrix selects by CellScope instead.
 import type { CellScope } from './ui/workspace/model';
@@ -19,12 +23,22 @@ export interface SessionRef {
   readonly source?: string;
 }
 
+export const DEFAULT_LIVE_SPAN_MS = 7 * 86_400_000;
+export type PresetId = '2h' | '8h' | '24h' | '7d';
+export const PRESETS: readonly { id: PresetId; label: string; ms: number }[] = [
+  { id: '2h', label: '2h', ms: 2 * 3_600_000 },
+  { id: '8h', label: '8h', ms: 8 * 3_600_000 },
+  { id: '24h', label: '24h', ms: 24 * 3_600_000 },
+  { id: '7d', label: '7d', ms: 7 * 86_400_000 },
+];
+
 export interface Scope {
   readonly project?: string;
   readonly worktree?: string;
   readonly session?: SessionRef;
   readonly cell?: CellScope;
   readonly window: ScopeWindow;
+  readonly liveSpanMs?: number;
 }
 
 export type ScopePatch = {
@@ -33,6 +47,7 @@ export type ScopePatch = {
   session?: SessionRef | undefined;
   cell?: CellScope | undefined;
   window?: 'live' | { from?: number; to?: number };
+  liveSpanMs?: number | undefined;
 };
 
 export interface ScopeResolver {
@@ -90,7 +105,10 @@ const sameScope = (a: Scope, b: Scope): boolean =>
   a.worktree === b.worktree &&
   sameSession(a.session, b.session) &&
   sameCell(a.cell, b.cell) &&
-  sameWindow(a.window, b.window);
+  sameWindow(a.window, b.window) &&
+  a.liveSpanMs === b.liveSpanMs;
+
+const validSpan = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
 
 function freezeScope(s: Partial<Scope>): Scope {
   const out: { -readonly [K in keyof Scope]?: Scope[K] } = {};
@@ -103,6 +121,7 @@ function freezeScope(s: Partial<Scope>): Scope {
   }
   if (s.cell !== undefined) out.cell = Object.freeze({ ...s.cell });
   const w = s.window;
+  if (validSpan(s.liveSpanMs)) out.liveSpanMs = s.liveSpanMs;
   out.window = w && w !== 'live' && validWindow(w) ? Object.freeze({ from: w.from, to: w.to }) : 'live';
   return Object.freeze(out) as Scope;
 }
@@ -171,6 +190,7 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
       }
     }
     next.window = win;
+    if (has(patch, 'liveSpanMs') && validSpan(patch.liveSpanMs)) next.liveSpanMs = patch.liveSpanMs;
     return freezeScope(next);
   };
 
@@ -185,7 +205,9 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
     set: (next) => commit(freezeScope(next)),
     narrow: (patch) => commit(compute(current, patch)),
     replaceContext(patch) {
-      commit(compute({ window: current.window }, patch));
+      const base: Partial<Scope> = { window: current.window };
+      if (current.liveSpanMs !== undefined) (base as { liveSpanMs?: number }).liveSpanMs = current.liveSpanMs;
+      commit(compute(base, patch));
     },
     ascend() {
       let next: Scope;
@@ -291,4 +313,99 @@ export function selectSession(store: ScopeStore, ref: SessionRef): void {
   if (cur.session && cur.session.id === ref.id && cur.session.source === ref.source) return store.narrow({ session: ref });
   if (membership(store, cur)?.(ref)) store.narrow({ session: ref });
   else store.replaceContext({ session: ref });
+}
+
+// ---- pure window helpers (the shell transport reads/writes through these) ----
+
+export const liveSpanOf = (s: Pick<Scope, 'liveSpanMs'>): number =>
+  validSpan(s.liveSpanMs) ? s.liveSpanMs : DEFAULT_LIVE_SPAN_MS;
+
+export const isLive = (w: ScopeWindow): w is 'live' => w === 'live';
+
+export function presetWindow(id: PresetId, now: number): { from: number; to: number } {
+  const p = PRESETS.find((x) => x.id === id)!;
+  return { from: now - p.ms, to: now };
+}
+
+export function spanOf(w: ScopeWindow, _now: number, liveSpanMs: number = DEFAULT_LIVE_SPAN_MS): number {
+  return w === 'live' ? liveSpanMs : w.to - w.from;
+}
+
+export function resolveRange(
+  w: ScopeWindow,
+  now: number,
+  liveSpanMs: number = DEFAULT_LIVE_SPAN_MS,
+): { from: number; to: number } {
+  return w === 'live' ? { from: now - liveSpanMs, to: now } : { from: w.from, to: w.to };
+}
+
+/** Moves the window by deltaMs, clamped so it never ends after now. Returns 'live' when it is the live span ending now. */
+export function shiftWindow(
+  w: ScopeWindow,
+  deltaMs: number,
+  now: number,
+  liveSpanMs: number = DEFAULT_LIVE_SPAN_MS,
+): ScopeWindow {
+  if (!Number.isFinite(deltaMs)) return w;
+  const r = resolveRange(w, now, liveSpanMs);
+  const span = r.to - r.from;
+  const to = Math.min(r.to + deltaMs, now);
+  if (to >= now && Math.abs(span - liveSpanMs) <= 1) return 'live';
+  return { from: to - span, to };
+}
+
+export function formatSpan(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec} s`;
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h < 24) return m ? `${h} h ${m} min` : `${h} h`;
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  return hr ? `${d} d ${hr} h` : `${d} d`;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const p2 = (n: number): string => String(n).padStart(2, '0');
+
+function stamp(
+  d: Date,
+  utc: boolean,
+  year: boolean,
+  secs: boolean,
+): string {
+  const mo = utc ? d.getUTCMonth() : d.getMonth();
+  const day = utc ? d.getUTCDate() : d.getDate();
+  const y = utc ? d.getUTCFullYear() : d.getFullYear();
+  const h = utc ? d.getUTCHours() : d.getHours();
+  const mi = utc ? d.getUTCMinutes() : d.getMinutes();
+  const se = utc ? d.getUTCSeconds() : d.getSeconds();
+  return `${MONTHS[mo]} ${day},${year ? ` ${y},` : ''} ${p2(h)}:${p2(mi)}${secs ? `:${p2(se)}` : ''}`;
+}
+
+export function formatRange(
+  w: ScopeWindow,
+  now: number,
+  liveSpanMs?: number,
+  opts?: { wholeSession?: boolean },
+): { text: string; title: string } {
+  if (w === 'live' && opts?.wholeSession) {
+    const t = 'Live · whole session';
+    return { text: t, title: t };
+  }
+  const span = w === 'live' ? (validSpan(liveSpanMs) ? liveSpanMs : DEFAULT_LIVE_SPAN_MS) : w.to - w.from;
+  const r = resolveRange(w, now, span);
+  const a = new Date(r.from);
+  const b = new Date(r.to);
+  const year = a.getFullYear() !== b.getFullYear();
+  const secs = span < 15 * 60_000;
+  const local = `${stamp(a, false, year, secs)} › ${stamp(b, false, year, secs)} · ${formatSpan(span)}`;
+  const utc = `UTC ${stamp(a, true, year, secs)} › ${stamp(b, true, year, secs)}`;
+  if (w === 'live') {
+    const text = validSpan(liveSpanMs) ? `Live · last ${formatSpan(liveSpanMs)}` : 'Live';
+    return { text, title: `${text} · ${local} · ${utc}` };
+  }
+  return { text: local, title: `${local} · ${utc}` };
 }

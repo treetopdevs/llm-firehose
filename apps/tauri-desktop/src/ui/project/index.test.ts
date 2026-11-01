@@ -200,24 +200,35 @@ describe("repository choice", () => {
 });
 
 describe("window", () => {
-  test("live and explicit windows", async () => {
+  test("no private Live control", async () => {
     const { store, panel, q, keys } = setup();
     store.narrow({ project: "repoA" });
     await panel.activate();
-    const live = q("button.project-live")[0]!;
-    expect(live.getAttribute("aria-pressed")).toBe("true");
-    expect(q(".project-window")[0]!.textContent).not.toContain("2026-10-30");
+    expect(q("button.project-live")).toHaveLength(0);
+    expect(q(".project-window")).toHaveLength(0);
     const before = worktreesMock.mock.calls.length;
     store.narrow({ window: { from: NOW - D, to: NOW } });
     expect(keys()).not.toContain("wt-landed");
     expect(keys()).not.toContain("wt-gone");
     expect(keys()).toContain("wt-open");
     expect(worktreesMock.mock.calls.length).toBe(before);
-    expect(live.getAttribute("aria-pressed")).toBe("false");
-    expect(q(".project-window")[0]!.textContent).toContain("2026-10-30");
-    live.click();
-    expect(store.get().window).toBe("live");
+    store.narrow({ window: "live" });
     expect(keys()).toContain("wt-landed");
+    expect(worktreesMock.mock.calls.length).toBe(before);
+  });
+
+  test("live follows liveSpanMs", async () => {
+    const { store, panel, keys } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const all = keys();
+    const before = worktreesMock.mock.calls.length;
+    store.narrow({ liveSpanMs: D });
+    expect(keys()).not.toContain("wt-landed");
+    expect(keys()).toContain("wt-open");
+    expect(worktreesMock.mock.calls.length).toBe(before);
+    store.narrow({ liveSpanMs: 7 * D });
+    expect(keys()).toEqual(all);
   });
 });
 
@@ -630,7 +641,7 @@ describe("interaction", () => {
       expect(go).toHaveBeenCalledTimes(1);
       go.mockClear();
       key("2");
-      const btn = panel.root.querySelector("button.project-live")!;
+      const btn = panel.root.querySelector("select.project-repo")!;
       key("Enter", btn);
       expect(go).not.toHaveBeenCalled();
     });
@@ -700,7 +711,7 @@ describe("interaction", () => {
     test("drag sets the shared window", async () => {
       const { store, q } = await ready();
       const svg = q("svg.project-svg")[0]!;
-      const range = resolveWindow(store.get().window, NOW);
+      const range = resolveWindow(store.get().window, NOW, store.get().liveSpanMs);
       mouse("mousedown", 550, svg);
       mouse("mousemove", 325, document);
       expect(q(".project-brush")).toHaveLength(1);
@@ -709,10 +720,51 @@ describe("interaction", () => {
       expect(q(".project-brush")).toHaveLength(0);
       expect(store.get().window).toEqual({ from: xToTime(325, range, X0, 870), to: xToTime(550, range, X0, 870) });
       expect(q(".project-lane").length).toBeGreaterThan(0);
-      expect(q("button.project-live")[0]!.getAttribute("aria-pressed")).toBe("false");
-      q("button.project-live")[0]!.click();
+      store.narrow({ window: "live" });
       expect(store.get().window).toBe("live");
-      expect(q("button.project-live")[0]!.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    test("brush keeps liveSpanMs", async () => {
+      const { store, q } = await ready();
+      store.narrow({ liveSpanMs: 2 * H });
+      const svg = q("svg.project-svg")[0]!;
+      mouse("mousedown", 550, svg);
+      mouse("mousemove", 325, document);
+      mouse("mouseup", 325, document);
+      expect(store.get().liveSpanMs).toBe(2 * H);
+      const w = store.get().window;
+      expect(w).not.toBe("live");
+      if (w !== "live") {
+        expect(Number.isFinite(w.from) && Number.isFinite(w.to)).toBe(true);
+        expect(w.from).toBeLessThan(w.to);
+        expect(w.to).toBeLessThanOrEqual(NOW);
+      }
+    });
+
+    test("brush uses the span the user sees", async () => {
+      const { store, q } = await ready();
+      store.narrow({ liveSpanMs: 2 * H });
+      const range = { from: NOW - 2 * H, to: NOW };
+      const svg = q("svg.project-svg")[0]!;
+      mouse("mousedown", 550, svg);
+      mouse("mousemove", 325, document);
+      mouse("mouseup", 325, document);
+      expect(store.get().window).toEqual({ from: xToTime(325, range, X0, 870), to: xToTime(550, range, X0, 870) });
+    });
+
+    test("Enter and digit keys still act after a transport button blurs to body", async () => {
+      const { q, go } = await ready();
+      const stub = document.createElement("button");
+      document.body.append(stub);
+      stub.focus();
+      stub.click();
+      stub.blur();
+      expect(document.activeElement).toBe(document.body);
+      key("1");
+      expect(q(".project-lane.selected")).toHaveLength(1);
+      key("Enter");
+      expect(go).toHaveBeenCalled();
+      stub.remove();
     });
 
     test("tiny drag changes nothing", async () => {
@@ -805,7 +857,7 @@ describe("interaction", () => {
       expect(store.get().window).toEqual(win);
       panel.deactivate();
       await panel.activate();
-      expect(q(".project-window")[0]!.textContent).toContain("→");
+      expect(store.get().window).toEqual(win);
       q(".project-bead[data-session=s-o1]")[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       expect(store.get().session).toEqual({ id: "s-o1", source: "codex" });
       expect(store.get().window).toBe("live");

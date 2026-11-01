@@ -34,6 +34,11 @@ describe("window and coordinates", () => {
     expect(resolveWindow({ from: 5, to: 9 }, NOW)).toEqual({ from: 5, to: 9 });
   });
 
+  test("resolveWindow live follows the live span", () => {
+    expect(resolveWindow("live", NOW, 2 * H)).toEqual({ from: NOW - 2 * H, to: NOW });
+    expect(resolveWindow({ from: 5, to: 9 }, NOW, 2 * H)).toEqual({ from: 5, to: 9 });
+  });
+
   test("timeToX and xToTime", () => {
     expect(timeToX(NOW, live, X0, X1)).toBe(1000);
     expect(timeToX(NOW - 7 * D, live, X0, X1)).toBe(100);

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { isEscapeClaimed } from "../../escape";
-import { createScope } from "../../scope";
+import { DEFAULT_LIVE_SPAN_MS, createScope } from "../../scope";
 import type { ScopePatch, ScopeStore } from "../../scope";
 import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
 import { createFleet } from "./index";
@@ -33,7 +33,7 @@ interface Rig {
   data: { wt: WorktreeLifetimeView[]; sessions: AttentionSession[]; summaries: SessionSummary[]; events: FirehoseEvent[] };
 }
 
-function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void } = {}) {
+function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; onEncoding?: () => void } = {}) {
   const store: ScopeStore = createScope(opts.scope);
   const data: Rig["data"] = { wt: FIXTURE_ROWS, sessions: baseSessions(), summaries: [], events: [] };
   const api = {
@@ -44,7 +44,7 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const go = vi.fn((_n: string, p?: ScopePatch) => { if (opts.realGo && p) store.narrow(p); });
   const panel = createFleet({
     store, go: go as never, events: () => data.events, api: api as unknown as FleetApi,
-    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels,
+    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels, onEncoding: opts.onEncoding,
   });
   document.body.append(panel.root);
   panels.push(panel);
@@ -252,23 +252,99 @@ describe("navigation", () => {
     expect((go.mock.calls[0]![1] as ScopePatch).project).toBeUndefined();
   });
 
-  test("a window-only store change neither refetches nor re-renders rows, and updates the chip", async () => {
+  test("a window-only store change neither refetches nor re-renders rows, and draws no chip", async () => {
     const { panel, store, api, q } = setup();
     await panel.activate();
     expect(q(".fleet-window")).toHaveLength(0);
     const calls = api.worktrees.mock.calls.length;
+    const rows = q(".fleet-row");
     const seen: MutationRecord[] = [];
     const mo = new MutationObserver((r) => seen.push(...r));
     mo.observe(panel.root.querySelector(".fleet-body")!, { subtree: true, childList: true, attributes: true, characterData: true });
     store.narrow({ window: hist });
     await flush();
-    expect(q(".fleet-window")).toHaveLength(1);
-    expect(q(".fleet-window")[0]!.textContent).toContain("→");
+    expect(q(".fleet-window")).toHaveLength(0);
     expect(api.worktrees.mock.calls.length).toBe(calls);
     expect(seen.length + mo.takeRecords().length).toBe(0);
     mo.disconnect();
     store.narrow({ window: "live" });
     expect(q(".fleet-window")).toHaveLength(0);
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+    const after = q(".fleet-row");
+    expect(after).toHaveLength(rows.length);
+    after.forEach((r, i) => expect(r).toBe(rows[i]));
+  });
+
+  test("Lanes live span defaults to 5 min and follows a user-set liveSpanMs", async () => {
+    const H = 3_600_000;
+    const { panel, store, data, api, q } = setup();
+    data.events = [ev({ id: "old", session_id: "sa", time: iso(NOW - 90 * MIN) }), ev({ id: "new", session_id: "sa", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(1);
+    const calls = api.worktrees.mock.calls.length;
+    store.narrow({ liveSpanMs: 2 * H });
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(2);
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+    store.narrow({ liveSpanMs: H });
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(1);
+  });
+
+  test("effectiveLiveSpan reports what Fleet draws", async () => {
+    const { panel, store } = setup();
+    await panel.activate();
+    expect(panel.effectiveLiveSpan()).toBe(DEFAULT_LIVE_SPAN_MS);
+    store.narrow({ liveSpanMs: 2 * 3_600_000 });
+    expect(panel.effectiveLiveSpan()).toBe(DEFAULT_LIVE_SPAN_MS);
+    panel.encoding = "lanes";
+    expect(panel.effectiveLiveSpan()).toBe(2 * 3_600_000);
+    store.reset();
+    expect(panel.effectiveLiveSpan()).toBe(300_000);
+  });
+
+  test("navigation patches keep the remembered span and carry the window", async () => {
+    const { panel, store, go, byKey } = setup({ realGo: true });
+    store.narrow({ liveSpanMs: 2 * 3_600_000 });
+    await panel.activate();
+    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    const patch = go.mock.calls[0]![1] as ScopePatch;
+    expect(patch.window).toBe("live");
+    expect(Object.keys(patch).sort()).toEqual(["cell", "project", "session", "window", "worktree"]);
+    expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
+    store.narrow({ window: hist });
+    byKey(key("row", "repoA")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    expect((go.mock.calls[1]![1] as ScopePatch).window).toEqual(hist);
+    expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
+  });
+
+  test("a preset window set in the shell survives a Fleet lane click", async () => {
+    const { panel, store, data } = setup({ realGo: true });
+    data.events = [ev({ id: "e1", session_id: "sa", time: iso(NOW - 10 * MIN) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    const win = { from: NOW - 2 * 3_600_000, to: NOW };
+    store.narrow({ window: win, liveSpanMs: 2 * 3_600_000 });
+    await flush();
+    panel.root.querySelector<HTMLElement>(".fleet-lane-row")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(store.get().window).toEqual(win);
+    expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
+  });
+
+  test("digit and Enter still act after a transport button blurs to body", async () => {
+    const { panel, go } = setup();
+    await panel.activate();
+    const b = document.createElement("button");
+    document.body.append(b);
+    b.focus();
+    b.blur();
+    expect(document.activeElement).toBe(document.body);
+    press("1");
+    press("Enter");
+    expect(go).toHaveBeenCalled();
   });
 
   test("a project change updates highlight without refetching", async () => {
@@ -429,6 +505,19 @@ describe("encodings", () => {
     expect(panel.encoding).toBe("dwell");
     expect(q(".fleet-row")).toHaveLength(0);
     expect(q(".fleet-dwell-row").length).toBeGreaterThan(0);
+  });
+
+  test("an encoding change notifies the shell after effectiveLiveSpan has moved", async () => {
+    const seen: number[] = [];
+    let p: ReturnType<typeof setup>["panel"] | undefined;
+    const { panel, q } = setup({ onEncoding: () => seen.push(p!.effectiveLiveSpan()) });
+    p = panel;
+    await panel.activate();
+    const before = panel.effectiveLiveSpan();
+    q(".fleet-enc[data-enc='lanes']")[0]!.click();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(panel.effectiveLiveSpan());
+    expect(seen[0]).not.toBe(before);
   });
 
   test("dwell shows a bar per live session and opens its score", async () => {

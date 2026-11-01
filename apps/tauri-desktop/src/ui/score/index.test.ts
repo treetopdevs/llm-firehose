@@ -1279,3 +1279,20 @@ describe("score activate without a session", () => {
     expect(sessionEvents).not.toHaveBeenCalled();
   });
 });
+
+describe("score reads scope.window: liveSpanMs", () => {
+  test("liveSpanMs alone neither redraws nor writes", async () => {
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "claude-code" } });
+    const narrow = vi.spyOn(store, "narrow");
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    await panel.open(SID, "claude-code");
+    const w = () => Number(panel.root.querySelector(".score-overview .score-view")!.getAttribute("width"));
+    const before = w();
+    store.narrow({ liveSpanMs: 3_600_000 });
+    expect(w()).toBe(before);
+    expect(narrow).toHaveBeenCalledTimes(1);
+    expect(store.get().window).toBe("live");
+  });
+});
