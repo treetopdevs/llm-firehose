@@ -4,6 +4,8 @@ import {
   sharedAncestorCount,
   TimelineState,
   eventWorkspace,
+  orderBy,
+  TIMELINE_CAP,
 } from "./model";
 const nodes = [
   { key: "merge", parents: ["a", "b"] },
@@ -122,4 +124,90 @@ test("captured timeline excludes ephemeral transition frames and counts paused a
   expect(t.unreadFor({ workspace: "w1" })).toBe(1);
   t.resume();
   expect(t.unreadFor({})).toBe(0);
+});
+
+const T0 = Date.UTC(2026, 10, 1, 12);
+const at = (n: number) => new Date(T0 + n * 1000).toISOString();
+function ranged() {
+  const t = new TimelineState();
+  t.merge([1, 2, 3, 4, 5].map((n) => event(`e${n}`, "claude", "w1", at(n))));
+  return t;
+}
+test("rows honours an inclusive from/to range, newest first", () => {
+  const t = ranged();
+  const ids = (f: { from?: number; to?: number }) => t.rows(f).map((e) => e.id);
+  expect(ids({ from: T0 + 2000, to: T0 + 4000 })).toEqual(["e4", "e3", "e2"]);
+  expect(ids({ from: T0 + 4000 })).toEqual(["e5", "e4"]);
+  expect(ids({ to: T0 + 2000 })).toEqual(["e2", "e1"]);
+});
+test("unparsable time is excluded when a bound is set, included otherwise", () => {
+  const t = ranged();
+  t.merge([event("bad", "claude", "w1", "not-a-time")]);
+  expect(t.rows({}).map((e) => e.id)).toContain("bad");
+  expect(t.rows({ from: 0 }).map((e) => e.id)).not.toContain("bad");
+  expect(t.rows({ to: T0 + 9e6 }).map((e) => e.id)).not.toContain("bad");
+});
+test("older page merged after newer page stays reachable (uncapped)", () => {
+  const t = new TimelineState();
+  const e = (n: number) => event(`e${n}`, "claude", "w1", at(n));
+  t.merge([e(5), e(4)]);
+  t.merge([e(2), e(1)]);
+  expect(t.rows({ to: T0 + 2000 }).map((x) => x.id)).toEqual(["e2", "e1"]);
+  expect(t.rows({})).toHaveLength(4);
+});
+test("orderBy ranks by first index, keeps unranked after in order", () => {
+  const items = ["a", "b", "d", "c"];
+  const id = (s: string) => s;
+  expect(orderBy(["c", "a"], items, id)).toEqual(["c", "a", "b", "d"]);
+  expect(orderBy(["c", "a", "c"], items, id)).toEqual(["c", "a", "b", "d"]);
+  for (const o of [undefined, []] as const) {
+    const r = orderBy(o, items, id);
+    expect(r).toEqual(items);
+    expect(r).not.toBe(items);
+  }
+});
+
+// D110: the Events timeline is bounded. Tiny caps keep these fast; TIMELINE_CAP matches the feed ring.
+const tick = (n: number) => event(`t${n}`, "claude", "w1", at(n));
+test("TIMELINE_CAP bounds the default state at the live feed's ring size", () => {
+  expect(TIMELINE_CAP).toBe(5000);
+  const t = new TimelineState();
+  for (let n = 0; n < TIMELINE_CAP + 50; n++) t.merge([tick(n)]);
+  expect(t.all()).toHaveLength(TIMELINE_CAP);
+  expect(t.event("t0")).toBeUndefined();
+  expect(t.event(`t${TIMELINE_CAP + 49}`)).toBeDefined();
+});
+test("live appends past the cap evict the oldest, keep the newest and leave older history pageable", () => {
+  const t = new TimelineState(3);
+  expect(t.olderEvicted).toBe(false);
+  for (let n = 1; n <= 3; n++) expect(t.merge([tick(n)]).older).toBe(0);
+  expect(t.olderEvicted).toBe(false);
+  for (let n = 4; n <= 10; n++) t.merge([tick(n)]);
+  expect(t.all()).toHaveLength(3);
+  expect(t.rows({}).map((e) => e.id)).toEqual(["t10", "t9", "t8"]);
+  expect(t.event("t7")).toBeUndefined();
+  expect(t.olderEvicted).toBe(true);
+  // Exact-ID replays never count against the cap.
+  expect(t.merge([tick(10), tick(9)]).older).toBe(0);
+  expect(t.all()).toHaveLength(3);
+});
+test("eviction is by event time, not arrival order, and drops evicted associations and arrivals", () => {
+  const t = new TimelineState(2);
+  t.merge([tick(5)], { t5: { repo_id: "r", workspace_id: "w" } });
+  t.merge([tick(9)]);
+  t.pause();
+  t.merge([tick(1)]); // older than both: it is the one evicted
+  expect(t.all().map((e) => e.id).sort()).toEqual(["t5", "t9"]);
+  expect(t.unreadFor({})).toBe(0);
+  t.merge([tick(7)], { t7: { repo_id: "r", workspace_id: "w" } });
+  expect(t.all().map((e) => e.id).sort()).toEqual(["t7", "t9"]);
+  expect(t.association(tick(5)).repo_id).toBe("repo");
+});
+test("an older page at the cap evicts the newest instead, so paging back stays visible", () => {
+  const t = new TimelineState(3);
+  for (let n = 7; n <= 10; n++) t.merge([tick(n)]);
+  const r = t.merge([tick(6), tick(5)], {}, { older: true });
+  expect(r).toEqual({ older: 0, newer: 2 });
+  // Held t8..t10 (t7 evicted live); the older page keeps itself and drops the newest two.
+  expect(t.rows({}).map((e) => e.id)).toEqual(["t8", "t6", "t5"]);
 });

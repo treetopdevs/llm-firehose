@@ -3,7 +3,7 @@
 // overlay. The daemon (bundled as the firehosed sidecar) is the only data
 // source — this UI never touches spool files.
 
-import { CLIENT_SCHEMA_VERSION, health, recent, stream } from "./api";
+import { CLIENT_SCHEMA_VERSION, getConfig, health, recent, stream } from "./api";
 import type { FirehoseEvent } from "./api";
 import { checkCompat } from "./compat";
 import { createConnector } from "./connect";
@@ -27,7 +27,7 @@ import { createEcosystem } from "./ui/ecosystem";
 import { createReplay } from "./ui/replay";
 import { createStrata } from "./ui/strata";
 import { createFleet } from "./ui/fleet";
-import { createProject } from "./ui/project";
+import { createProject, splitGoPatch, type ProjectEncoding } from "./ui/project";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
 import { createWorkspaceGraph } from "./ui/graph";
@@ -91,7 +91,7 @@ function openSessionAltitude(id: string, source?: string, tab: SessionTab = "sco
   else go("session", { session: ref }, true, tab);
 }
 
-const workspacePanel = createWorkspaceGraph(openSession, scope);
+const workspacePanel = createWorkspaceGraph(openSession, scope, { hosted: true });
 
 const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
 attentionPanel.setConnected(false);
@@ -104,12 +104,22 @@ let repoCount = 0;
 let landingPending = false;
 const isUntouchedLive = (sc: Scope): boolean =>
   sc.window === "live" && !sc.project && !sc.worktree && !sc.session && !sc.cell;
+// Privacy mode for the Map encoding's names; refreshed whenever Project reloads rows.
+let privacyMode: string | undefined;
+const loadPrivacyMode = (): void => {
+  void getConfig().then((c) => { privacyMode = c.privacy_mode; }, () => {});
+};
+loadPrivacyMode();
 const projectPanel = createProject({
   store: scope,
+  graph: workspacePanel,
+  worktreeOrder: (repo) => fleetPanel.forkOrder(repo),
+  privacyMode: () => privacyMode,
   go: (name, patch): void => {
     go(name, patch);
   },
   onRows: (rows) => {
+    loadPrivacyMode();
     repoCount = new Set(rows.map((r) => r.repo_id)).size;
     if (!landingPending) return;
     landingPending = false;
@@ -178,7 +188,6 @@ const panels = {
   project: projectPanel,
   live: createFeed(feedState, showDetail),
   attention: attentionPanel,
-  workspace: workspacePanel,
   sessions: sessionsPanel,
   session: sessionPanel,
   strata: createStrata(openLoops, openScore),
@@ -200,7 +209,7 @@ const eventCount = el("span", { class: "event-count dim" }, "");
 let active: PanelName = "project";
 const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
   ["Altitudes", ["fleet", "project", "sessions", "session"]],
-  ["Lenses", ["live", "attention", "workspace", "strata", "ecosystem"]],
+  ["Lenses", ["live", "attention", "strata", "ecosystem"]],
   ["Housekeeping", ["files", "doctor", "settings"]],
 ];
 const navButtons = new Map<PanelName, HTMLButtonElement>();
@@ -214,16 +223,18 @@ const transport = createTransport({
 });
 
 /** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
-function go(name: GoName, patch?: ScopePatch, replace = false, tab?: SessionTab) {
+function go(name: GoName, rawPatch?: ScopePatch & { encoding?: ProjectEncoding }, replace = false, tab?: SessionTab) {
+  const { scopePatch: patch, encoding: patchEncoding } = splitGoPatch(rawPatch);
   if (patch) {
-    if (replace) scope.replaceContext(patch);
-    else scope.narrow(patch);
+    if (replace) scope.replaceContext(patch as ScopePatch);
+    else scope.narrow(patch as ScopePatch);
   }
+  const encoding = patchEncoding;
   if (name === "score" || name === "loops") show("session", { tab: name });
-  else show(name, tab ? { tab } : undefined);
+  else show(name, tab || encoding ? { ...(tab ? { tab } : {}), ...(encoding ? { encoding } : {}) } : undefined);
 }
 
-function show(name: PanelName, opts?: { tab?: SessionTab }) {
+function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEncoding }) {
   // Any navigation other than the boot landing decides the landing rule.
   if (name !== "project") landingPending = false;
   if (!["fleet", "project", "sessions", "session"].includes(name)) sessionsViaFleet = false;
@@ -245,13 +256,13 @@ function show(name: PanelName, opts?: { tab?: SessionTab }) {
   clear(content);
   content.append(panels[name].root);
   if (name === "fleet") void fleetPanel.activate();
-  else if (name === "project") void projectPanel.activate();
+  else if (name === "project") void projectPanel.activate(opts?.encoding ? { encoding: opts.encoding } : undefined);
   else if (name === "strata") void panels.strata.activate();
   else if (name === "session") sessionPanel.activate(opts?.tab);
   else panels[name].refresh();
 }
 
-const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "session", "workspace", "project", "fleet"]);
+const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "session", "project", "fleet"]);
 document.addEventListener(
   "keydown",
   createEscapeHandler({
@@ -308,7 +319,7 @@ function onEvent(ev: FirehoseEvent) {
   feedState.push(ev);
   received++;
   eventCount.textContent = `${received.toLocaleString()} events`;
-  workspacePanel.onEvent(ev);
+  projectPanel.onEvent(ev);
   if (active === "fleet") fleetPanel.onEvent(ev);
   if (active === "live" && !renderQueued) {
     renderQueued = true;

@@ -25,7 +25,7 @@ import {
   type AgentRow,
   type InspectorContext,
 } from "./inspector";
-import { TimelineState, eventWorkspace, type GraphNode } from "./model";
+import { TimelineState, eventWorkspace, orderBy, type GraphNode } from "./model";
 import {
   aggregateState,
   branchName,
@@ -44,7 +44,7 @@ import {
 } from "./names";
 import { createToolbar, type SearchResult, type WorkspaceTab } from "./toolbar";
 import { createActivityMap } from "../activity";
-import { createScope, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
+import { createScope, formatRange, formatSpan, liveSpanOf, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 
 /** Workspaces beyond this many on one revision collapse into a counted cluster. */
@@ -74,10 +74,39 @@ function select(
   return s;
 }
 
+export interface WorkspaceGraphOptions {
+  /**
+   * Hosted by Project: scope.project is the sole repository identity, there is no
+   * repository picker or tab strip, and nothing is requested until show().
+   */
+  hosted?: boolean;
+  now?: () => number;
+  /** Events timeline bound (D110); defaults to TIMELINE_CAP. */
+  timelineCap?: number;
+}
+export type GraphView = "graph" | "events";
+
 export function createWorkspaceGraph(
   onOpenSession: (id: string, source?: string) => void,
   store: ScopeStore = createScope(),
+  opts: WorkspaceGraphOptions = {},
 ) {
+  const hosted = !!opts.hosted;
+  const nowMs = (): number => (opts.now ?? Date.now)();
+  /** Hosted and not currently shown: nothing is fetched, polled or claimed. */
+  let shown = !hosted;
+  const hidden = () => hosted && !shown;
+  /** The host's worktree order (Fleet's fork order); undefined keeps the snapshot order. */
+  let worktreeOrder: readonly string[] | undefined;
+  /** A project change landed while hidden, or a refresh failed: the next show() refreshes. */
+  let pendingRefresh = false;
+  /** Live events delivered while hidden (not merged): the next show() restarts pagination at the head. */
+  let missedWhileHidden = 0;
+  /** Bumped by every navigation or hide; an async handler that began earlier must not apply. */
+  let navGen = 0;
+  let viewListener: ((v: GraphView) => void) | undefined;
+  /** Hosted: the scope names a project the workspace graph does not know. */
+  let unregistered = false;
   const root = el("section", { class: "workspace-graph" });
   const status = el("div", { class: "graph-status", role: "status" });
   const body = el("div", { class: "graph-body" });
@@ -114,7 +143,7 @@ export function createWorkspaceGraph(
   let timelineScrollTop = 0;
   /** Revisions whose workspace cluster the user expanded. */
   const expandedClusters = new Set<string>();
-  const timeline = new TimelineState();
+  const timeline = new TimelineState(opts.timelineCap);
 
   // Derived per snapshot / per attention poll; never touches the DOM.
   let nodesByKey = new Map<string, GraphNode>();
@@ -125,6 +154,23 @@ export function createWorkspaceGraph(
 
   const selectedWorkspace = () =>
     snapshot?.workspaces.find((w) => w.id === workspace);
+  /** Hosted: the shared scope.window as a closed-or-open range. Live is open-ended so fresh arrivals count. */
+  function windowRange(): { from?: number; to?: number } | undefined {
+    if (!hosted) return undefined;
+    const sc = store.get();
+    if (sc.window === "live") return { from: nowMs() - liveSpanOf(sc) };
+    return { from: sc.window.from, to: sc.window.to };
+  }
+  /** Hosted: whether the session's last activity falls in the window (halo, counts). Standalone: always. */
+  function inWindow(s: AttentionSession, range = windowRange()): boolean {
+    if (!range) return true;
+    const t = Date.parse(s.last?.source_time ?? s.last?.time ?? s.last_observed_at ?? "");
+    if (Number.isNaN(t)) return false;
+    return (range.from === undefined || t >= range.from) && (range.to === undefined || t <= range.to);
+  }
+  /** Snapshot workspaces in the host's shared order. Canvas tip order is NOT shared: its layout sorts by id. */
+  const orderedWorkspaces = (): Workspace[] =>
+    orderBy(worktreeOrder, snapshot?.workspaces ?? [], (w) => w.id);
   function sessionAssociation(s: AttentionSession) {
     const last = s.last?.event_id ? timeline.event(s.last.event_id) : undefined;
     if (last && (last.repo_id || last.jj_repo_id))
@@ -171,6 +217,7 @@ export function createWorkspaceGraph(
   const scopedSessions = () =>
     sessions.filter(
       (s) =>
+        inWindow(s) &&
         sessionAssociation(s).repo_id === repo &&
         (!workspace || sessionAssociation(s).workspace_id === workspace),
     );
@@ -183,11 +230,13 @@ export function createWorkspaceGraph(
     nodesByKey = new Map((snapshot?.nodes ?? []).map((n) => [n.key, n]));
   }
   function computeAgents() {
-    const now = Date.now();
+    const now = nowMs();
+    const range = windowRange();
     const known = new Set((snapshot?.workspaces ?? []).map((w) => w.id));
     agentSessions = new Map();
     unassigned = 0;
     for (const s of sessions) {
+      if (!inWindow(s, range)) continue;
       const a = sessionAssociation(s);
       if (a.repo_id !== repo) continue;
       if (!a.workspace_id || !known.has(a.workspace_id)) {
@@ -318,12 +367,12 @@ export function createWorkspaceGraph(
     openSession: (id, src) => onOpenSession(id, src),
     filterTimeline: (src, id) => {
       session = `${src}\0${id}`;
-      tab = "timeline";
+      switchTab("timeline");
       render();
       void loadHistory();
     },
     openTimeline: () => {
-      tab = "timeline";
+      switchTab("timeline");
       render();
       void loadHistory();
     },
@@ -339,7 +388,12 @@ export function createWorkspaceGraph(
     },
   });
   const graphPane = el("div", { class: "graph-pane" }, canvas.root, inspector.root);
-  const activityMap = createActivityMap();
+  const activityMap = hosted ? undefined : createActivityMap();
+  /** Every tab change the graph makes itself goes through here, so a host can follow it. */
+  function switchTab(next: WorkspaceTab) {
+    if (hosted && next !== "map") viewListener?.(next === "timeline" ? "events" : "graph");
+    tab = next;
+  }
 
   const toolbar = createToolbar({
     selectRepo: (id) => {
@@ -349,7 +403,7 @@ export function createWorkspaceGraph(
       void refresh();
     },
     setTab: (name) => {
-      tab = name;
+      switchTab(name);
       render();
       void loadHistory();
     },
@@ -358,12 +412,24 @@ export function createWorkspaceGraph(
     search: (q) => searchResults(q),
     pick: pickResult,
     register: async (rootPath, kind) => {
+      const gen = navGen;
+      const stale = () => gen !== navGen || hidden();
       try {
         const r = await graphAPI.register(rootPath, kind);
+        // The user navigated (or the view was hidden) while the daemon worked: the
+        // registration stands, but it must not take the scope or the view over.
+        if (stale()) return;
+        const list = await graphAPI.repos();
+        if (stale()) return;
         repo = r.id;
-        repos = await graphAPI.repos();
+        repos = list;
         resetForRepo();
         publish();
+        // Publishing can move the host to another encoding (hiding this one).
+        if (stale()) {
+          pendingRefresh = true;
+          return;
+        }
         await refresh();
       } catch {
         throw new Error(
@@ -372,7 +438,7 @@ export function createWorkspaceGraph(
       }
     },
     refresh: () => void refresh(true),
-  });
+  }, { hosted });
   root.append(toolbar.root, main);
 
   /** A new repository: nothing from the previous one survives, and its history requests are cancelled. */
@@ -414,9 +480,16 @@ export function createWorkspaceGraph(
   /** Publish the user's explicit choice (never a default pick or a store-driven change). */
   function publish() {
     if (applying) return;
+    if (hosted && !repo) return; // never erase scope.project on behalf of a project the graph does not know
     applying = true; // our own publication is not echoed back into the view
     try {
-      store.narrow({ project: repo || undefined, worktree: workspace || undefined, cell: undefined });
+      // The window is carried explicitly: clearing the session (a graph selection) would otherwise reset a frozen range to live.
+      store.narrow({
+        project: repo || undefined,
+        worktree: workspace || undefined,
+        cell: undefined,
+        window: store.get().window,
+      });
     } finally {
       applying = false;
     }
@@ -469,7 +542,28 @@ export function createWorkspaceGraph(
     void refresh();
   }
   store.subscribe((next: Scope, prev: Scope) => {
+    if (hosted && shown && (!sameWindow(next.window, prev.window) || next.liveSpanMs !== prev.liveSpanMs)) {
+      // The shared window drives the halo, the Events rows and their copy.
+      if (tab === "timeline") render();
+      else syncActivity();
+    }
     if (applying) return;
+    if (hosted && next.project !== prev.project) {
+      // scope.project is the sole repository identity: whatever was in flight for the
+      // previous one (snapshots, a registration) is now stale.
+      navGen++;
+      ++topologyEpoch;
+      busy = false;
+      repo = "";
+      unregistered = false;
+      source = ""; // the Events source filter belongs to the previous repository
+      discardTopology();
+      if (hidden()) {
+        pendingRefresh = true; // defer: nothing is requested until show()
+      } else void refresh();
+      return;
+    }
+    if (hidden()) return;
     applying = true;
     try {
       if (
@@ -489,11 +583,20 @@ export function createWorkspaceGraph(
           snapshot.workspaces.some((w) => w.id === next.worktree)
         )
           applyWorkspace(next.worktree);
+        else if (hosted && tab === "timeline") {
+          // A worktree the topology does not hold (a removed one) still narrows the feed.
+          cursor = "";
+          hasMore = false;
+          render();
+          void loadHistory();
+        }
       }
     } finally {
       applying = false;
     }
   });
+  const sameWindow = (a: Scope["window"], b: Scope["window"]) =>
+    a === "live" || b === "live" ? a === b : a.from === b.from && a.to === b.to;
   /**
    * After a snapshot lands: the scope may name ids the graph no longer knows (a
    * privacy-mode change replaces them, a repository or workspace vanished). Remap
@@ -503,6 +606,7 @@ export function createWorkspaceGraph(
     const sc = store.get();
     let patch: ScopePatch | undefined;
     if (
+      !hosted && // hosted: an explicit scope.project is never rewritten
       sc.project &&
       sc.project !== repo &&
       !repos.some((r) => r.id === sc.project) &&
@@ -550,16 +654,20 @@ export function createWorkspaceGraph(
     }
     return out;
   }
+  // While a hosted graph is hidden it answers nothing, so the host's fallback resolver
+  // (lifetime rows, removed worktrees included) decides membership and labels.
   store.setResolver({
-    sessions: sessionIdsFor,
+    sessions: (sc) => (hidden() ? undefined : sessionIdsFor(sc)),
     matcher(sc) {
+      if (hidden()) return undefined;
       const keys = memberKeys(sc);
       if (!keys) return undefined;
       const ids = new Set([...keys].map((k) => k.slice(k.indexOf("\0") + 1)));
       return (ref) => (ref.source !== undefined ? keys.has(`${ref.source}\0${ref.id}`) : ids.has(ref.id));
     },
-    knows: (sc) => !sc.worktree || ((sc.project ?? repo) === repo && !!snapshot?.workspaces.some((w) => w.id === sc.worktree)),
+    knows: (sc) => !hidden() && (!sc.worktree || ((sc.project ?? repo) === repo && !!snapshot?.workspaces.some((w) => w.id === sc.worktree))),
     async refresh() {
+      if (hidden()) return;
       try {
         sessions = (await attention()).sessions ?? sessions;
       } catch {
@@ -568,6 +676,7 @@ export function createWorkspaceGraph(
     },
     labels(sc) {
       const out: { project?: string; worktree?: string } = {};
+      if (hidden()) return out;
       if (sc.project) {
         const r = repos.find((x) => x.id === sc.project);
         if (r) out.project = r.label;
@@ -599,10 +708,11 @@ export function createWorkspaceGraph(
     if (!snapshot) return [];
     const needle = q.trim().toLowerCase();
     const out: SearchResult[] = [];
-    let ordered = snapshot.workspaces;
+    const base = orderedWorkspaces();
+    let ordered = base;
     if (needle) {
-      // stable sort: tier, then (for names) the shorter, closer match, then snapshot order
-      ordered = snapshot.workspaces
+      // stable sort: tier, then (for names) the shorter, closer match, then the shared (else snapshot) order
+      ordered = base
         .filter((w) => workspaceMatches(w, needle))
         .map((w, i) => ({ w, i, tier: matchTier(w, needle) }))
         .sort(
@@ -654,7 +764,7 @@ export function createWorkspaceGraph(
   }
   function pickResult(r: SearchResult) {
     if (tab !== "graph") {
-      tab = "graph";
+      switchTab("graph");
     }
     if (r.kind === "workspace") {
       selectWorkspace(r.id);
@@ -717,7 +827,9 @@ export function createWorkspaceGraph(
           { class: "dim graph-empty" },
           busy
             ? "Loading repository topology…"
-            : repos.length
+            : unregistered
+              ? "This project is not registered in the workspace graph. Register its root under More."
+              : repos.length
               ? "Repository topology unavailable. The next refresh retries automatically."
               : "Register a local repository to inspect its ancestry. Discovery stays on this machine.",
         ),
@@ -733,6 +845,7 @@ export function createWorkspaceGraph(
       }
       sync();
     } else if (tab === "map") {
+      if (!activityMap) return;
       if (body.firstElementChild !== activityMap.root || body.childElementCount !== 1) {
         clear(body);
         body.append(activityMap.root);
@@ -754,7 +867,7 @@ export function createWorkspaceGraph(
   function inspectorContext(): InspectorContext {
     const w = selectedWorkspace();
     const key = revision || w?.revision || "";
-    const now = Date.now();
+    const now = nowMs();
     const node = nodesByKey.get(key);
     let branch = "";
     let copyValue = "";
@@ -868,7 +981,7 @@ export function createWorkspaceGraph(
         "Workspace",
         [
           ["", "Whole repository"],
-          ...snapshot!.workspaces.map(
+          ...orderedWorkspaces().map(
             (w) => [w.id, caption(w)] as [string, string],
           ),
         ],
@@ -913,8 +1026,8 @@ export function createWorkspaceGraph(
                 .filter(
                   (e) =>
                     e.session_id &&
-                    (!workspace ||
-                      timeline.association(e, repo).workspace_id === workspace),
+                    (!eventsWorkspace() ||
+                      timeline.association(e, repo).workspace_id === eventsWorkspace()),
                 )
                 .map((e) => `${e.source}\0${e.session_id}`),
             ]),
@@ -955,21 +1068,35 @@ export function createWorkspaceGraph(
       clearTimeout(timeout);
       timeout = setTimeout(changed, 250);
     };
-    filters.append(
-      searchInput,
-      button(
-        timeline.paused
-          ? `Resume · ${timeline.unreadFor({ repo, workspace, source, session, category, search })} arrivals`
-          : "● Live · pause",
-        () => {
-          if (timeline.paused) {
-            timeline.resume();
-            void loadHistory();
-          } else timeline.pause();
-          render();
-        },
-      ),
-    );
+    // Hosted: the shared window decides what is followed, so there is no pause/resume.
+    if (hosted) filters.append(searchInput);
+    else
+      filters.append(
+        searchInput,
+        button(
+          timeline.paused
+            ? `Resume · ${timeline.unreadFor({ repo, workspace, source, session, category, search })} arrivals`
+            : "● Live · pause",
+          () => {
+            if (timeline.paused) {
+              timeline.resume();
+              void loadHistory();
+            } else timeline.pause();
+            render();
+          },
+        ),
+      );
+    const range = windowRange();
+    const rowsShown = timeline.rows({ repo, workspace: eventsWorkspace(), source, session, category, search, ...range });
+    if (hosted) {
+      const sc = store.get();
+      const now = nowMs();
+      const state =
+        sc.window === "live"
+          ? `Following live · last ${formatSpan(liveSpanOf(sc))}`
+          : `Frozen range ${formatRange(sc.window, now).text}`;
+      panel.append(el("p", { class: "graph-events-state", role: "status" }, `${state} · ${rowsShown.length} shown`));
+    }
     panel.append(
       filters,
       el(
@@ -1000,14 +1127,7 @@ export function createWorkspaceGraph(
       ),
     );
     const rows = el("tbody");
-    const filtered = timeline.rows({
-      repo,
-      workspace,
-      source,
-      session,
-      category,
-      search,
-    });
+    const filtered = rowsShown;
     for (const e of filtered) {
       const row = el("tr", {
         "data-key": `event:${e.id}`,
@@ -1040,7 +1160,9 @@ export function createWorkspaceGraph(
         el(
           "p",
           { class: "dim" },
-          "No captured events match this scope. Events with missing identity stay unassigned.",
+          hosted
+            ? "No captured events in this window. Load older events to look further back."
+            : "No captured events match this scope. Events with missing identity stay unassigned.",
         ),
       );
     panel.append(
@@ -1111,15 +1233,26 @@ export function createWorkspaceGraph(
     workspace = w.id;
     revision = w.revision;
     revealWorkspace(w);
-    tab = "graph";
+    switchTab("graph");
     render();
     canvas.centerOnWorkspace(w.id, 1);
     void loadHistory();
     publish();
   }
   /** Which history the current view shows: the Timeline tab's page, or a workspace's recent activity. */
+  /**
+   * The worktree the Events feed is narrowed to. Hosted, the shared scope is the
+   * authority, so a worktree the current topology no longer contains (a removed one
+   * retained from Lanes) still narrows the feed instead of silently widening it.
+   */
+  function eventsWorkspace(): string {
+    if (workspace) return workspace;
+    if (!hosted) return "";
+    const sc = store.get();
+    return sc.worktree && (!sc.project || sc.project === repo) ? sc.worktree : "";
+  }
   function historyKind(): "timeline" | "activity" | undefined {
-    if (!repo || !root.isConnected) return undefined;
+    if (!repo || !root.isConnected || hidden()) return undefined;
     if (tab === "timeline") return "timeline";
     // The Map fetches its own aggregate; it needs no event history.
     if (tab === "map") return undefined;
@@ -1138,6 +1271,7 @@ export function createWorkspaceGraph(
    */
   async function loadHistory(older = false) {
     abortHistory();
+    if (hidden()) return;
     const kind = historyKind();
     if (!kind) return;
     const controller = new AbortController();
@@ -1146,7 +1280,8 @@ export function createWorkspaceGraph(
       repo_id: repo,
       limit: kind === "timeline" ? TIMELINE_PAGE : ACTIVITY_PAGE,
     };
-    if (workspace) params.workspace_id = workspace;
+    const scoped = kind === "timeline" ? eventsWorkspace() : workspace;
+    if (scoped) params.workspace_id = scoped;
     if (kind === "timeline") {
       if (source) params.source = source;
       if (session) {
@@ -1161,12 +1296,14 @@ export function createWorkspaceGraph(
     try {
       const page = await graphAPI.timeline(params, controller.signal);
       if (historyRequest !== controller) return;
-      timeline.merge(page.events ?? [], page.associations);
+      // A cursor page is older history: at the cap it evicts the newest, not itself.
+      const evicted = timeline.merge(page.events ?? [], page.associations, { older: !!params.cursor });
       if (kind === "timeline") {
         if (older || !cursor) {
           cursor = page.next_cursor ?? "";
           hasMore = page.has_more;
-        }
+        } else if (evicted.older) olderEvicted();
+        if (!older) missedWhileHidden = 0; // the head is current again
         historyError = page.capture_gap
           ? "Capture gaps reported; this feed may be incomplete."
           : "";
@@ -1185,11 +1322,24 @@ export function createWorkspaceGraph(
       if (historyRequest === controller) historyRequest = undefined;
     }
   }
+  /**
+   * D110: the oldest events were evicted, so a held cursor points past a gap. Restart
+   * pagination at the head; "Load older" walks back with daemon cursors, deduped by ID.
+   */
+  function olderEvicted() {
+    cursor = "";
+    hasMore = true;
+  }
   /** Reconcile from a periodic refresh: only what the view needs, and never on top of a request in flight. */
   function ensureHistory() {
+    if (hidden()) return;
     if (!historyRequest && historyKind()) void loadHistory();
   }
   async function refresh(force = false, expand = "") {
+    if (hidden()) {
+      pendingRefresh = true; // a hidden encoding requests nothing; show() restarts it
+      return;
+    }
     const epoch = ++topologyEpoch;
     busy = true;
     watchLeaving();
@@ -1212,21 +1362,40 @@ export function createWorkspaceGraph(
       privacyMode = config.privacy_mode;
       repos = available;
       for (const r of repos) knownRepos.add(r.id);
-      if (repo && !repos.some((r) => r.id === repo)) {
-        repo = "";
-        discardTopology();
-        render();
-      }
-      if (!repo) {
-        const wanted = store.get().project;
-        repo = repos.some((r) => r.id === wanted) ? wanted! : (repos[0]?.id ?? "");
-      }
-      if (!repo) {
-        done();
-        render();
-        reconcileScope(privacyChanged);
-        store.touchResolver();
-        return;
+      if (hosted) {
+        // scope.project is the sole repository identity; with none, the first registered repository.
+        const project = store.get().project;
+        const target = project ?? repos[0]?.id ?? "";
+        unregistered = !!project && !repos.some((r) => r.id === project);
+        if (unregistered || repo !== target) {
+          repo = "";
+          discardTopology();
+        }
+        if (!unregistered) repo = target;
+        if (unregistered || !repo) {
+          pendingRefresh = false;
+          done();
+          render();
+          store.touchResolver();
+          return;
+        }
+      } else {
+        if (repo && !repos.some((r) => r.id === repo)) {
+          repo = "";
+          discardTopology();
+          render();
+        }
+        if (!repo) {
+          const wanted = store.get().project;
+          repo = repos.some((r) => r.id === wanted) ? wanted! : (repos[0]?.id ?? "");
+        }
+        if (!repo) {
+          done();
+          render();
+          reconcileScope(privacyChanged);
+          store.touchResolver();
+          return;
+        }
       }
       // The first view frames the active tips, so know who is active before drawing:
       // ask in parallel with the scan, and wait only briefly for a slow answer.
@@ -1267,6 +1436,7 @@ export function createWorkspaceGraph(
           cursor = "";
         }
       }
+      pendingRefresh = false; // only a refresh that landed clears the deferral
       store.touchResolver();
       if (workspace && selectedWorkspace())
         revision = selectedWorkspace()!.revision;
@@ -1297,15 +1467,17 @@ export function createWorkspaceGraph(
     }
   }
   async function refreshActivity() {
+    if (hidden()) return;
     try {
       const a = await attention();
+      if (hidden()) return;
       sessions = a.sessions ?? [];
       if (initialFitPending) {
         initialFitPending = false;
         computeAgents();
         if (canvas.autoActive()) canvas.fit(activeIds());
       }
-      if (root.isConnected) {
+      if (root.isConnected && !hidden()) {
         // The graph tab only recolors; the timeline keeps its full redraw. The
         // map follows the 15 s poll, not attention arrivals.
         if (tab === "graph") syncActivity();
@@ -1354,7 +1526,7 @@ export function createWorkspaceGraph(
   document.addEventListener(
     "keydown",
     (e) => {
-      if (!root.isConnected || !snapshot) return;
+      if (!root.isConnected || !snapshot || hidden()) return;
       if (e.key === "Escape") {
         // Clear the selection from anywhere in the graph (a button in the header, the
         // inspector...), but leave fields, selects, dialogs and the More menu their own Escape.
@@ -1371,7 +1543,7 @@ export function createWorkspaceGraph(
       if (!hotkey && !slash) return;
       e.preventDefault();
       if (tab !== "graph") {
-        tab = "graph";
+        switchTab("graph");
         render();
       }
       toolbar.focusSearch();
@@ -1379,24 +1551,73 @@ export function createWorkspaceGraph(
     true,
   );
   window.addEventListener("focus", () => {
-    if (root.isConnected && !busy) void refresh(true);
+    if (root.isConnected && !busy && !hidden()) void refresh(true);
   });
   setInterval(() => {
-    if (root.isConnected && !busy) void refresh(true);
+    if (root.isConnected && !busy && !hidden()) void refresh(true);
   }, 15000);
   let activityTimer: ReturnType<typeof setTimeout> | undefined;
   return {
     root,
-    refresh: () => refresh(),
+    refresh: () => (hidden() ? Promise.resolve() : refresh()),
+    /** Hosted only: Project shows the graph in one of its two encodings. */
+    show(view: GraphView) {
+      if (!hosted) return;
+      const wasShown = shown;
+      shown = true;
+      tab = view === "events" ? "timeline" : "graph";
+      // Events missed while hidden were not merged: restart pagination at the head so
+      // "Load older" walks contiguously from there.
+      if (missedWhileHidden > 0 || (!wasShown && cursor)) {
+        cursor = "";
+        hasMore = false;
+      }
+      if (!wasShown || pendingRefresh || !snapshot) void refresh();
+      else {
+        render();
+        void loadHistory();
+      }
+    },
+    hide() {
+      if (!hosted || !shown) return;
+      shown = false;
+      navGen++;
+      // A refresh still in flight must not carry on fetching for a hidden encoding; show() restarts it.
+      if (busy) pendingRefresh = true;
+      ++topologyEpoch;
+      busy = false;
+      abortHistory();
+      tab = "graph";
+      workspace = "";
+      revision = "";
+      session = "";
+      toolbar.closeMenu();
+    },
+    setWorktreeOrder(ids: readonly string[] | undefined) {
+      worktreeOrder = ids;
+      if (!shown || !snapshot) return;
+      if (tab === "timeline") render();
+      else toolbar.refreshOpenResults();
+    },
+    /** Hosted: called with 'graph' | 'events' whenever the graph switches views itself. */
+    onView(fn: (v: GraphView) => void) {
+      viewListener = fn;
+    },
+    currentRepo: () => repo,
+    registeredRepos: () => repos.map((r) => r.id),
     onEvent: (e: FirehoseEvent) => {
-      timeline.merge([e]);
+      if (hidden()) {
+        missedWhileHidden++;
+        return;
+      }
+      if (timeline.merge([e]).older) olderEvicted();
       if (tab === "timeline" && root.isConnected) render();
       if (!activityTimer)
         activityTimer = setTimeout(() => {
           activityTimer = undefined;
           // Live events are merged above; only the attention state is refreshed. History
           // is never fetched in response to events.
-          if (root.isConnected) void refreshActivity();
+          if (root.isConnected && !hidden()) void refreshActivity();
         }, 500);
     },
   };

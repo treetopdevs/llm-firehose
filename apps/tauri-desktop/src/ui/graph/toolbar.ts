@@ -79,7 +79,13 @@ export interface ToolbarHandlers {
 
 let listboxSeq = 0;
 
-export function createToolbar(h: ToolbarHandlers) {
+export interface ToolbarOptions {
+  /** Hosted by Project: the repository picker and the Graph/Timeline/Map tabs belong to the host. */
+  hosted?: boolean;
+}
+
+export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
+  const hosted = !!opts.hosted;
   const root = el("header", { class: "graph-toolbar" });
 
   // Repository picker: icon, name and chevron over a native select.
@@ -303,7 +309,8 @@ export function createToolbar(h: ToolbarHandlers) {
     }
   };
 
-  root.append(repoWrap, count, searchWrap, fitGroup, tabs, more);
+  if (hosted) root.append(count, searchWrap, fitGroup, more);
+  else root.append(repoWrap, count, searchWrap, fitGroup, tabs, more);
 
   let reposSig = "";
   function update(s: ToolbarState) {
@@ -344,6 +351,10 @@ export function createToolbar(h: ToolbarHandlers) {
       input.select();
     },
     input,
+    /** Closes the More menu and releases its document listeners. */
+    closeMenu,
+    /** Releases every document listener the toolbar holds. */
+    dispose: closeMenu,
   };
 }
 

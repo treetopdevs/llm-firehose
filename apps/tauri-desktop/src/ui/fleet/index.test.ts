@@ -6,6 +6,7 @@ import { isEscapeClaimed } from "../../escape";
 import { DEFAULT_LIVE_SPAN_MS, createScope } from "../../scope";
 import type { ScopePatch, ScopeStore } from "../../scope";
 import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
+import { orderLanes } from "../project/model";
 import { createFleet } from "./index";
 import type { FleetApi, FleetPanel } from "./index";
 
@@ -1150,5 +1151,35 @@ describe("adversarial review round 2", () => {
     r().querySelector<HTMLElement>(".fleet-more")!.click();
     r().querySelector<HTMLElement>(".fleet-more")!.click();
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
+  });
+});
+
+describe("forkOrder (shared with Project lanes)", () => {
+  const repoA = () => FIXTURE_ROWS.filter((r) => r.repo_id === "repoA");
+  test("undefined before the first load and for an unknown repo", async () => {
+    const { panel } = setup();
+    expect(panel.forkOrder("repoA")).toBeUndefined();
+    await panel.activate();
+    expect(panel.forkOrder("nope")).toBeUndefined();
+  });
+
+  test("equals orderLanes(undefined, rows) after load", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    expect(panel.forkOrder("repoA")).toEqual(orderLanes(undefined, repoA()));
+  });
+
+  test("stable under reversed rows; a new worktree is appended last", async () => {
+    const { panel, data } = setup();
+    await panel.activate();
+    const first = [...panel.forkOrder("repoA")!];
+    data.wt = [...FIXTURE_ROWS].reverse();
+    await panel.refresh();
+    expect(panel.forkOrder("repoA")).toEqual(first);
+    data.wt = [...FIXTURE_ROWS, { ...repoA()[0]!, worktree_id: "wt-brand-new", first_time: iso(NOW - 1000) }];
+    await panel.refresh();
+    const next = panel.forkOrder("repoA")!;
+    expect(next.slice(0, first.length)).toEqual(first);
+    expect(next[next.length - 1]).toBe("wt-brand-new");
   });
 });

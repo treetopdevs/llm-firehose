@@ -5,6 +5,7 @@
 // observed activity, never code quality.
 
 import { clear, el, keepFocus } from "../../dom";
+import { DEFAULT_LIVE_SPAN_MS, resolveRange, shiftWindow, spanOf, type ScopeWindow } from "../../scope";
 import { graphAPI, type ActivityResponse } from "../graph/api";
 import { clampView, stripControl, type View } from "../score/model";
 import { activityGroupLabel, buildTree, colour, findNode, histogram, hottest, layout, rangeTotals, trail, LABEL_H, PAD } from "./model";
@@ -12,10 +13,22 @@ import {errorRange,errorPathKey,renderErrorPaths} from "./errors";
 import type { TreeNode } from "./model";
 
 export type MapWorkspace = { id: string; name: string };
+/** Shell-owned window and worktree: the hosted map has no controls of its own for either. */
+export type ActivityHost = {
+  onWindow(w: ScopeWindow): void;
+  onPickWorktree(id: string | undefined): void;
+  /** Injected clock; the hosted map reads time from nowhere else. */
+  now?(): number;
+};
+export type ActivityView = { window: ScopeWindow; liveSpanMs?: number; worktree?: string };
 export type ActivityMap = {
   root: HTMLElement;
   /** Called on every Workspaces render and poll: refetches only when the scope changed, or when Live and stale. */
-  update(repo: string, workspaces: MapWorkspace[], privacyMode: string | undefined): void;
+  update(repo: string, workspaces: MapWorkspace[], privacyMode: string | undefined, view?: ActivityView): void;
+  /** Tears down any brush in flight and its window/document listeners. */
+  cancel(): void;
+  /** An inactive instance never commits a window; deactivating cancels. */
+  setActive(active: boolean): void;
 };
 
 export const PRESETS = [
@@ -28,6 +41,9 @@ type PresetId = (typeof PRESETS)[number]["id"];
 
 /** A Live window this old is refetched on the next update (the graph polls every 15 s). */
 const LIVE_REFRESH_MS = 10_000;
+/** The daemon refuses windows longer than this. */
+const MAX_WINDOW_MS = 31 * 86_400_000;
+const CLAMP_NOTICE = "Showing the last 31 days (the daemon limit).";
 const MAP_H = 460;
 const FALLBACK_W = 860;
 const STRIP_H = 56;
@@ -74,12 +90,15 @@ function pathLabel(node: TreeNode): string {
   return stripControl(node.entry ? node.path : node.path || node.name);
 }
 
-export function createActivityMap(): ActivityMap {
+export function createActivityMap(host?: ActivityHost): ActivityMap {
+  const hosted = host !== undefined;
+  const clock = (): number => host?.now?.() ?? Date.now();
   const presetBar = el("div", { class: "map-presets", role: "group", "aria-label": "Window" });
   const liveBtn = el("button", { type: "button", class: "map-live", "aria-pressed": "true", title: "Window ends at now and follows it" }, "Live");
   const worktreeSelect = el("select", { "aria-label": "Worktree" });
   const summary = el("span", { class: "map-summary dim" });
-  const head = el("div", { class: "map-head" }, presetBar, liveBtn, worktreeSelect, summary);
+  const head = hosted ? el("div", { class: "map-head" }, summary) : el("div", { class: "map-head" }, presetBar, liveBtn, worktreeSelect, summary);
+  const scopeNote = el("div", { class: "map-scope" });
   const notices = el("div", { class: "map-notices", role: "status" });
   const crumbs = el("nav", { class: "map-crumbs", "aria-label": "Map location" });
   const chart = el("div", { class: "map-chart" });
@@ -89,7 +108,7 @@ export function createActivityMap(): ActivityMap {
   const side = el("aside", { class: "map-side", "aria-label": "Hottest in range" }, listTitle, list);
   const stage = el("div", { class: "map-stage" }, crumbs, chart, scrub);
   const bodyEl = el("div", { class: "map-body" }, stage, side);
-  const root = el("section", { class: "activity-map" }, head, notices, bodyEl);
+  const root = el("section", { class: "activity-map" }, head, ...(hosted ? [scopeNote] : []), notices, bodyEl);
 
   let repo = "";
   let workspaces: MapWorkspace[] = [];
@@ -108,7 +127,16 @@ export function createActivityMap(): ActivityMap {
   let zoom = "";
   let request: AbortController | undefined;
   let fetchedKey = "";
+  /** The last request failed: the cached key is not an answer, so the next load() asks again. */
+  let failed = false;
   let fetchedAt = 0;
+  let view: ActivityView = { window: "live" };
+  let clamped = false;
+  let active = true;
+  let generation = 0;
+  let lastKey = "";
+  /** The brush in flight: where it started and how to tear it down. */
+  let drag: { gen: number; key: string; stop(): void } | undefined;
 
   for (const p of PRESETS) {
     const b = el("button", { type: "button", "data-preset": p.id, "aria-pressed": "false" }, p.label);
@@ -134,7 +162,16 @@ export function createActivityMap(): ActivityMap {
   const groupNames = () => new Map(workspaces.map((w) => [w.id, w.name]));
   const minimal = () => privacy === "minimal" || resp?.unavailable_reason === "minimal";
   const span = () => PRESETS.find((p) => p.id === preset)!.ms;
-  const scopeKey = () => [repo, worktree, preset, live ? "live" : String(frozenEnd)].join("\0");
+  const liveSpan = () => view.liveSpanMs ?? DEFAULT_LIVE_SPAN_MS;
+  const scopeKey = () =>
+    hosted
+      ? [repo, worktree, view.window === "live" ? `live${liveSpan()}` : `${view.window.from}-${view.window.to}`].join("\0")
+      : [repo, worktree, preset, live ? "live" : String(frozenEnd)].join("\0");
+
+  function cancelDrag() {
+    drag?.stop();
+    drag = undefined;
+  }
 
   function abort() {
     const r = request;
@@ -145,24 +182,34 @@ export function createActivityMap(): ActivityMap {
   /** Fetch when the scope changed (or forced), or when Live and the last answer is stale. */
   function load(force = false) {
     const key = scopeKey();
-    const stale = live && Date.now() - fetchedAt >= LIVE_REFRESH_MS;
+    const isLiveNow = hosted ? view.window === "live" : live;
+    const stale = isLiveNow && clock() - fetchedAt >= LIVE_REFRESH_MS;
     if (!repo || privacy === "minimal") {
       abort();
       render();
       return;
     }
-    if (!force && key === fetchedKey && (!stale || request)) {
+    if (!force && !failed && key === fetchedKey && (!stale || request)) {
       render();
       return;
     }
     abort();
     const controller = new AbortController();
     request = controller;
-    const end = live ? Date.now() : frozenEnd;
+    let from: number;
+    let to: number;
+    if (hosted) {
+      ({ from, to } = resolveRange(view.window, clock(), liveSpan()));
+      clamped = to - from > MAX_WINDOW_MS;
+      if (clamped) from = to - MAX_WINDOW_MS;
+    } else {
+      to = live ? Date.now() : frozenEnd;
+      from = to - span();
+    }
     const params: Record<string, string> = {
       repo_id: repo,
-      from: new Date(end - span()).toISOString(),
-      to: new Date(end).toISOString(),
+      from: new Date(from).toISOString(),
+      to: new Date(to).toISOString(),
     };
     if (worktree) params.workspace_id = worktree;
     if (key !== fetchedKey) {
@@ -171,6 +218,7 @@ export function createActivityMap(): ActivityMap {
       tree = undefined;
     }
     fetchedKey = key;
+    failed = false;
     loading = true;
     error = "";
     render();
@@ -179,7 +227,7 @@ export function createActivityMap(): ActivityMap {
         if (request !== controller) return;
         request = undefined;
         loading = false;
-        fetchedAt = Date.now();
+        fetchedAt = clock();
         resp = { ...next, paths: next.paths ?? [], groups: next.groups ?? [] };
         tree = buildTree(resp, groupNames());
         if (zoom && !findNode(tree, zoom)) zoom = "";
@@ -189,7 +237,8 @@ export function createActivityMap(): ActivityMap {
         if (controller.signal.aborted || request !== controller) return;
         request = undefined;
         loading = false;
-        fetchedAt = Date.now();
+        fetchedAt = clock();
+        failed = true;
         error = "Activity unavailable — the next refresh retries.";
         render();
       },
@@ -223,6 +272,10 @@ export function createActivityMap(): ActivityMap {
   // ---- render -----------------------------------------------------------------
 
   function renderHead() {
+    if (hosted) {
+      for (const b of head.querySelectorAll<HTMLButtonElement>("button")) b.disabled = minimal();
+      return;
+    }
     for (const b of presetBar.querySelectorAll<HTMLButtonElement>("button")) {
       const on = b.dataset.preset === preset;
       b.classList.toggle("active", on);
@@ -265,7 +318,15 @@ export function createActivityMap(): ActivityMap {
       restore();
       return;
     }
-    if (error) notice(error, "error");
+    if (hosted) renderScopeNote();
+    if (error) {
+      notice(error, "error");
+      if (hosted) {
+        const retry = el("button", { type: "button", class: "map-retry" }, "Retry");
+        retry.onclick = () => load(true);
+        notices.append(retry);
+      }
+    }
     if (!resp || !tree) {
       chart.append(el("p", { class: "dim map-empty" }, loading ? "Loading activity…" : repo ? "" : "Select a repository."));
       restore();
@@ -277,7 +338,14 @@ export function createActivityMap(): ActivityMap {
     if (r.truncated) notice(`Showing the 2,000 hottest paths; ${r.truncated_total.toLocaleString()} Heat on other paths is not drawn.`, "warn");
     if (r.unreadable_file_events > 0)
       notice(`${plural(r.unreadable_file_events, "file event")} carried no readable path and add no Heat.`);
-    if (r.paths.length === 0) notice("No file activity captured in this window.");
+    if (hosted && clamped) notice(CLAMP_NOTICE);
+    if (r.paths.length === 0) {
+      if (hosted && worktree) {
+        const p = el("p", { class: "map-notice" }, "No activity for this worktree in this window ");
+        p.append(clearButton());
+        notices.append(p);
+      } else notice("No file activity captured in this window.");
+    }
     summary.textContent = `${plural(r.file_events, "file event")} · ${plural(r.paths.length, "path")}`;
 
     renderCrumbs();
@@ -291,6 +359,19 @@ export function createActivityMap(): ActivityMap {
     }
     restore();
     if (focusedErrorControl && (!root.contains(document.activeElement) || (document.activeElement instanceof HTMLButtonElement && document.activeElement.disabled))) root.querySelector<HTMLElement>('[data-key="error-path-heading"]')?.focus();
+  }
+
+  function clearButton(): HTMLButtonElement {
+    const b = el("button", { type: "button", class: "map-clear" }, "Clear");
+    b.onclick = () => host?.onPickWorktree(undefined);
+    return b;
+  }
+
+  function renderScopeNote() {
+    clear(scopeNote);
+    if (!worktree) return;
+    const name = workspaces.find((w) => w.id === worktree)?.name ?? worktree;
+    scopeNote.append(el("span", { class: "map-scope-name" }, `Worktree: ${stripControl(name)}`), " ", clearButton());
   }
 
   function renderCrumbs() {
@@ -332,7 +413,12 @@ export function createActivityMap(): ActivityMap {
             svg("text", { x: x.x + PAD + 2, y: x.y + PAD + LABEL_H - 4, "clip-path": `url(#${clip})` }, `${stripControl(x.node.name)} · ${heat.toLocaleString()}`),
           );
         }
+        // Daemon group ids are the event's own worktree/JJ id and rows expose no alias,
+        // so only a group equal to a workspace id (worktree_id) can narrow the worktree;
+        // any other identity zooms as before.
+        const pick = hosted && x.node.group !== "" && x.node.path === "" && workspaces.some((w) => w.id === x.node.group);
         const zoomIn = () => {
+          if (pick) return host!.onPickWorktree(x.node.group);
           zoom = x.key;
           render();
         };
@@ -384,7 +470,7 @@ export function createActivityMap(): ActivityMap {
     counts.forEach((n, i) => {
       if (n <= 0) return;
       const h = Math.max(1, (n / peak) * (STRIP_H - 4));
-      strip.append(svg("rect", { class: i >= a && i < b ? "map-bar in" : "map-bar", x: i * bw, y: STRIP_H - h, width: Math.max(0.5, bw - 0.5), height: h }));
+      strip.append(svg("rect", { class: i >= a && i < b && (!hosted || brush) ? "map-bar in" : "map-bar", x: i * bw, y: STRIP_H - h, width: Math.max(0.5, bw - 0.5), height: h }));
     });
     strip.append(svg("rect", { class: "map-brush", x: a * bw, y: 0, width: (b - a) * bw, height: STRIP_H }));
     const from = Date.parse(r.from);
@@ -397,6 +483,26 @@ export function createActivityMap(): ActivityMap {
     strip.append(axis);
 
     strip.addEventListener("keydown", (e) => {
+      if (hosted) {
+        if (e.key === "Escape") {
+          if (!brush && !drag) return;
+          claim(e);
+          cancelDrag();
+          brush = undefined;
+          render();
+          return;
+        }
+        if (!e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          if (e.key === "ArrowRight" && view.window === "live") return;
+          if (!active) return;
+          e.preventDefault();
+          const now = clock();
+          const quarter = spanOf(view.window, now, liveSpan()) / 4;
+          host!.onWindow(shiftWindow(view.window, e.key === "ArrowLeft" ? -quarter : quarter, now, liveSpan()));
+          return;
+        }
+        if (!brush) return;
+      }
       const [x, y] = range(r);
       const w = y - x;
       let next: [number, number] | undefined;
@@ -412,6 +518,7 @@ export function createActivityMap(): ActivityMap {
       setRange(r, next[0], next[1]);
     });
     strip.addEventListener("pointerdown", (e) => {
+      if (hosted && !active) return;
       // Every brush change redraws the strip, so the drag lives on the window
       // and reads the current strip each time.
       const r0 = r;
@@ -421,28 +528,73 @@ export function createActivityMap(): ActivityMap {
         return Math.max(0, Math.min(r0.buckets - 1, Math.floor(frac * r0.buckets)));
       };
       const anchor = bucketAt(e);
+      const startKey = scopeKey();
+      const gen = generation;
+      const live0 = () => hosted && (!active || gen !== generation || scopeKey() !== startKey);
       const move = (ev: PointerEvent) => {
-        if (resp !== r0) return stop();
+        if (hosted ? live0() : resp !== r0) return hosted ? abandon() : stop();
         const at = bucketAt(ev);
         setRange(r0, Math.min(anchor, at), Math.max(anchor, at) + 1);
       };
       const stop = () => {
         window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", stop);
-        window.removeEventListener("pointercancel", stop);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", abandon);
+        document.removeEventListener("keydown", esc, true);
+        if (drag?.gen === gen && drag.stop === stop) drag = undefined;
+      };
+      // Hosted: brushing never moves a tile, so the drag only colours locally and
+      // yields to the one explicit window commit on pointerup.
+      const abandon = () => {
+        stop();
+        if (hosted && brush) {
+          brush = undefined;
+          render();
+        }
+      };
+      const up = () => {
+        stop();
+        if (!hosted) return;
+        const picked = brush;
+        brush = undefined;
+        const ok = picked && !live0();
+        render();
+        if (!ok) return;
+        const b = bounds(r0);
+        const v = clampView(picked, b);
+        if (!(v.from < v.to) || (v.from <= b.from && v.to >= b.to)) return;
+        host!.onWindow({ from: v.from, to: v.to });
+      };
+      const esc = (ev: KeyboardEvent) => {
+        if (ev.key !== "Escape") return;
+        claim(ev);
+        abandon();
       };
       window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", stop);
-      window.addEventListener("pointercancel", stop);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", abandon);
+      if (hosted) document.addEventListener("keydown", esc, true);
+      drag = { gen, key: startKey, stop };
       e.preventDefault();
       setRange(r0, anchor, anchor + 1);
     });
-    strip.addEventListener("dblclick", () => setRange(r, 0, r.buckets));
+    strip.addEventListener("dblclick", () => {
+      if (!hosted) setRange(r, 0, r.buckets);
+    });
 
+    if (hosted) {
+      scrub.append(strip, el("div", { class: "map-scrub-foot dim" }, el("span", {}, rangeText(r, a, b))));
+      return;
+    }
     const whole = el("button", { type: "button", class: "map-whole", "data-key": "map-whole" }, "Whole window");
     whole.disabled = !brush;
     whole.onclick = () => setRange(r, 0, r.buckets);
     scrub.append(strip, el("div", { class: "map-scrub-foot dim" }, el("span", {}, rangeText(r, a, b)), whole));
+  }
+
+  function claim(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   function rangeText(r: ActivityResponse, a: number, b: number): string {
@@ -479,11 +631,29 @@ export function createActivityMap(): ActivityMap {
 
   return {
     root,
-    update(nextRepo, nextWorkspaces, nextPrivacy) {
+    cancel() {
+      generation++;
+      cancelDrag();
+      if (brush) {
+        brush = undefined;
+        if (resp) render();
+      }
+    },
+    setActive(next) {
+      if (next === active) return;
+      active = next;
+      if (!next) this.cancel();
+    },
+    update(nextRepo, nextWorkspaces, nextPrivacy, nextView) {
+      if (hosted) {
+        view = nextView ?? { window: "live" };
+        if ((view.worktree ?? "") !== worktree) zoom = "";
+        worktree = view.worktree ?? "";
+      }
       if (nextRepo !== repo) {
         abort();
         repo = nextRepo;
-        worktree = "";
+        worktree = hosted ? (view.worktree ?? "") : "";
         brush = undefined;
         zoom = "";
         resp = undefined;
@@ -498,10 +668,22 @@ export function createActivityMap(): ActivityMap {
         resp = undefined;
         tree = undefined;
       }
+      const renamed = workspaces.map((w) => `${w.id}\0${w.name}`).join("\n") !== nextWorkspaces.map((w) => `${w.id}\0${w.name}`).join("\n");
       workspaces = nextWorkspaces;
-      if (worktree && !workspaces.some((w) => w.id === worktree)) {
+      // Group names come from workspaces: a cached answer is relabelled, not refetched.
+      if (renamed && resp) tree = buildTree(resp, groupNames());
+      if (!hosted && worktree && !workspaces.some((w) => w.id === worktree)) {
         worktree = "";
         fetchedKey = "";
+      }
+      if (hosted) {
+        const k = scopeKey();
+        if (k !== lastKey) {
+          lastKey = k;
+          generation++;
+          cancelDrag();
+          brush = undefined;
+        }
       }
       load();
     },

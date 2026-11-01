@@ -145,6 +145,37 @@ func workspaceID(t *testing.T, s *Server, repoID, label string) string {
 	return ""
 }
 
+// A removed worktree is a retained historical identity: the daemon observed it, its
+// captured events remain, and the Map must be able to scope to it (the snapshot no
+// longer lists it). A never-observed id is still unknown.
+func TestActivityScopesToObservedRemovedWorktree(t *testing.T) {
+	root, other := twoWorktrees(t)
+	s, engine := activityServer(t, "balanced")
+	claudeEdit(t, engine, "e1", root, filepath.Join(root, "internal/a.go"), activityBase.Add(time.Minute))
+	claudeEdit(t, engine, "e2", other, filepath.Join(other, "b.go"), activityBase.Add(2*time.Minute))
+	repoID := onlyRepo(t, s)
+	s.observeWorktrees(t.Context())
+	graphGit(t, root, "worktree", "remove", "--force", other)
+	if _, err := s.graph.service.Snapshot(t.Context(), repoID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	s.observeWorktrees(t.Context())
+	params := window(repoID)
+	params.Set("workspace_id", other)
+	code, body, w := getActivity(t, s, params)
+	if code != 200 {
+		t.Fatalf("removed worktree: %d %s", code, w.Body)
+	}
+	// The root is gone, so the path stays absolute (unresolved); only the removed worktree's edit counts.
+	if len(body.Paths) != 1 || body.Paths[0].Total != 1 || filepath.Base(body.Paths[0].Path) != "b.go" || body.FileEvents != 1 {
+		t.Fatalf("only the removed worktree's events: %+v", body)
+	}
+	params.Set("workspace_id", "never-observed")
+	if code, _, _ := getActivity(t, s, params); code != 422 {
+		t.Fatalf("unobserved workspace: %d", code)
+	}
+}
+
 func TestActivityMergesWorktreesByRelativePath(t *testing.T) {
 	root, other := twoWorktrees(t)
 	s, engine := activityServer(t, "balanced")
