@@ -80,15 +80,19 @@ snapshots when a bounded stream disconnects. The API surface
 ## The desktop app
 
 A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
-for non-terminal users: a live feed as the landing view with an attention strip
-and inbox, dwell bars (how long a session has waited on a request, or been quiet,
-against a five-minute hairline — read from the same attention snapshot as the
-inbox), a read-only workspace ancestry graph with a companion captured-event
-timeline, a workspace matrix of repos by agents,
-session lanes on a wall-clock axis, a session band with sparklines, an event
-detail that pairs a tool call's request and response, touched-file view,
-doctor with one-click adapter install, settings, a first-run onboarding
-wizard. It bundles `firehosed` as a sidecar and spawns it when no daemon is
+for non-terminal users. Views are altitudes with one shared scope (project,
+worktree, session, time window), Escape ascends one altitude: **Fleet** (one
+row per repository: forks as state glyphs, needs-you units with dwell, event
+sparkline; map, lanes, airspace and matrix encodings), **Project** (the landing
+view: worktree lanes leaving and rejoining the default branch, sessions as
+beads, commits as ticks, the window as a scrubber), **Sessions** and **Score**.
+Lenses: the live feed, the attention strip and inbox, a read-only workspace
+ancestry graph with a companion captured-event timeline, loops, strata, court,
+handoffs, loom, ecosystem, replay, and a touched-file view; plus doctor with
+one-click adapter install, settings, and a first-run onboarding wizard. An
+event detail pairs a tool call's request and response. The Project and Fleet
+views need a daemon that serves `GET /worktrees` and degrade to a notice
+against an older one. It bundles `firehosed` as a sidecar and spawns it when no daemon is
 already running — a daemon you run yourself always wins.
 
 Under **workspace**, register a local Git or JJ root or select one observed by

@@ -20,6 +20,12 @@ export interface ProjectDeps {
   store: ScopeStore;
   go(name: "sessions" | "score" | "live", patch?: ScopePatch): void;
   api?: ProjectApi;
+  /** Fires with the rows after each successful load. A throw is ignored. */
+  onRows?(rows: readonly WorktreeLifetimeView[]): void;
+  /** Fires when a current (not superseded, not aborted) load fails, including a 404. A throw is ignored. */
+  onLoadFailed?(): void;
+  /** Display label for a repository id; undefined falls back to the id. */
+  projectLabel?(id: string): string | undefined;
   now?: () => number;
   refreshMs?: number;
 }
@@ -185,11 +191,12 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   }
 
   function syncSelect(ids: string[], repo: string | undefined): void {
-    const key = ids.join("\0");
+    const nameOf = (id: string): string => deps.projectLabel?.(id) ?? id;
+    const key = ids.map((id) => `${id}\u0001${nameOf(id)}`).join("\0");
     if (key !== optionKey) {
       optionKey = key;
       clear(select);
-      for (const id of ids) select.append(el("option", { value: id }, id));
+      for (const id of ids) select.append(el("option", { value: id }, nameOf(id)));
     }
     select.disabled = ids.length === 0;
     if (repo !== undefined) select.value = repo;
@@ -358,8 +365,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       failedOffline = false;
       render();
       loadDetail();
+      try { deps.onRows?.(rows); } catch { /* a consumer must not break the panel */ }
     } catch (e) {
       if (token !== loadToken || ctl.signal.aborted || !active || isAbort(e)) return;
+      try { deps.onLoadFailed?.(); } catch { /* a consumer must not break the panel */ }
       if (e instanceof ApiError && e.status === 404) {
         rows = [];
         status = "unsupported";

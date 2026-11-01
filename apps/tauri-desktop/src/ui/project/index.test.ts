@@ -975,3 +975,40 @@ describe("review regressions", () => {
     expect(laneOf("l-mark").querySelector(".project-landgap")).not.toBeNull();
   });
 });
+
+describe("fleet hooks", () => {
+  function make(extra: Partial<Parameters<typeof createProject>[0]>) {
+    const store = createScope();
+    const panel = createProject({ store, go: vi.fn(), now: () => NOW, refreshMs: 15000, ...extra });
+    document.body.append(panel.root);
+    panels.push(panel);
+    return { store, panel };
+  }
+  test("onRows fires after each successful load, not on failure or 404", async () => {
+    const onRows = vi.fn();
+    const { panel } = make({ onRows });
+    await panel.activate();
+    expect(onRows).toHaveBeenCalledTimes(1);
+    expect(onRows).toHaveBeenLastCalledWith(FIXTURE_ROWS);
+    await panel.refresh();
+    expect(onRows).toHaveBeenCalledTimes(2);
+    worktreesMock.mockRejectedValueOnce(new Error("boom"));
+    await panel.refresh();
+    worktreesMock.mockRejectedValueOnce(new ApiError("/worktrees", 404, "not found", "GET"));
+    await panel.refresh();
+    expect(onRows).toHaveBeenCalledTimes(2);
+  });
+  test("a throwing onRows does not break the panel", async () => {
+    const { panel } = make({ onRows: () => { throw new Error("nope"); } });
+    await expect(panel.activate()).resolves.toBeUndefined();
+    expect(panel.root.querySelectorAll(".project-lane").length).toBeGreaterThan(0);
+  });
+  test("projectLabel names the repository option and falls back to the id", async () => {
+    const { panel } = make({ projectLabel: (id) => (id === "repoA" ? "Alpha" : undefined) });
+    await panel.activate();
+    const opts = [...panel.root.querySelectorAll("select.project-repo option")];
+    expect(opts.find((o) => o.getAttribute("value") === "repoA")!.textContent).toBe("Alpha");
+    const other = opts.find((o) => o.getAttribute("value") !== "repoA")!;
+    expect(other.textContent).toBe(other.getAttribute("value"));
+  });
+});

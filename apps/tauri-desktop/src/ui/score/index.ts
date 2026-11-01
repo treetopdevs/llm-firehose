@@ -137,6 +137,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let playing = false;
   let speed: number = SPEEDS[0];
   let version = 0;
+  // Set on deactivate: a response landing after the user left must not write the shared window.
+  let departed = false;
   let loadedKey: SessionRef | null = null;
   let inflight: { id: string; source: string | undefined; promise: Promise<void> } | null = null;
   /** Drawn tick per track, kind, and pixel column; the current event's node is found by its column. */
@@ -465,6 +467,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   /** The drawn view becomes the shared window, only for the session the scope names. Output only: never subscribes. */
   function publishWindow() {
+    if (departed) return;
     if (!loadedKey || !sameSession(loadedKey, store.get().session)) return;
     if (!Number.isFinite(view.from) || !Number.isFinite(view.to) || view.from > view.to) return;
     store.narrow({ window: { from: view.from, to: view.to } });
@@ -669,6 +672,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   // --- data -----------------------------------------------------------------------
 
   function open(id: string, source?: string): Promise<void> {
+    departed = false;
     if (inflight && inflight.id === id && inflight.source === source) return inflight.promise;
     const entry: { id: string; source: string | undefined; promise: Promise<void> } = { id, source, promise: undefined as unknown as Promise<void> };
     entry.promise = load(id, source).finally(() => { if (inflight === entry) inflight = null; });
@@ -762,10 +766,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   function deactivate() {
+    departed = true;
     playing = false; playBtn.setAttribute("aria-pressed", "false"); playBtn.textContent = "▶";
     sound.disable(); cancelDetail();
   }
   function activate() {
+    departed = false;
     const want = store.get().session;
     if (!want) return;
     // An explicit reopen refetches (history may have grown); open() dedups a request already in flight.

@@ -107,3 +107,12 @@ describe("worktree requests", () => {
     expect(detail.commits[0].attribution).toBe("time_join");
   });
 });
+
+test("sessions forwards an AbortSignal and still works with no argument", async () => {
+  const f = stubFetch(); const ctl = new AbortController();
+  await sessions(ctl.signal);
+  expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/sessions`);
+  expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+  await sessions();
+  expect(f.mock.calls[1][0]).toBe(`${DAEMON_URL}/sessions`);
+});
