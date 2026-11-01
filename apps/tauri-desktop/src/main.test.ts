@@ -1136,3 +1136,278 @@ test("late-event consistency: a live window shows an event after the former boun
   b.scope.narrow({ window: "live" });
   await vi.waitFor(() => expect(document.querySelectorAll("rect.lane-tick")).toHaveLength(1));
 });
+
+// ---------------------------------------------------------------------------
+// Shell-owned transport (D94-D98): one time control read by Project, Fleet, Session
+// ---------------------------------------------------------------------------
+
+import { windowLabel } from "./ui/session/context";
+
+const DAY_MS = 86_400_000;
+const tp = () => document.querySelector<HTMLElement>('[aria-label="Time window"]')!;
+const tpAll = () => document.querySelectorAll('[aria-label="Time window"]');
+// The faked Date keeps advancing with real time; pin it each time a control is fetched
+// for an action so the window arithmetic is exact.
+const pin = () => vi.setSystemTime(NOW);
+const tpPreset = (id: string) => (pin(), tp().querySelector<HTMLButtonElement>(`[data-preset="${id}"]`)!);
+const tpLive = () => (pin(), tp().querySelector<HTMLButtonElement>(".transport-live")!);
+const tpHold = () => (pin(), tp().querySelector<HTMLButtonElement>(".transport-hold")!);
+const tpTrack = () => (pin(), tp().querySelector<HTMLElement>(".transport-track")!);
+const tpRange = () => tp().querySelector<HTMLElement>(".transport-range")!.textContent;
+const tpKey = (target: Element, k: string, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(e);
+  return e;
+};
+const mouseClick = (b: HTMLElement) => b.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+const stubTrack = () => {
+  tpTrack().getBoundingClientRect = () => ({ width: 1000, height: 14, left: 0, top: 0, right: 1000, bottom: 14, x: 0, y: 0, toJSON() {} }) as DOMRect;
+};
+const tpEvent = (id: string, ago: number) => ({ ...scoreFixture[0], id, session_id: S1, source: scoreFixture[0].source, time: iso(NOW - ago) });
+const tickLabels = () => [...document.querySelectorAll(".lane-axis text, .lanes-axis text, .fleet-lanes text")].map((t) => t.textContent ?? "");
+
+test("transport: mounted once between strip and layout, same node across navigation, no boot writes", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  const seen = vi.fn();
+  b.scope.subscribe(seen);
+  expect(tpAll()).toHaveLength(1);
+  const node = tp();
+  expect(node.parentElement?.id).toBe("app");
+  expect(node.previousElementSibling?.classList.contains("attention-strip")).toBe(true);
+  expect(node.nextElementSibling?.classList.contains("layout")).toBe(true);
+  for (const n of ["live", "fleet", "session", "project"]) b.nav(n).click();
+  expect(tpAll()).toHaveLength(1);
+  expect(tp()).toBe(node);
+  expect(seen).not.toHaveBeenCalled();
+  expect(b.scope.get()).toEqual({ window: "live" });
+});
+
+test("transport: visible only where consumed; the window persists while hidden", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  const { TRANSPORT_PANELS } = await import("./main");
+  expect([...TRANSPORT_PANELS].sort()).toEqual(["fleet", "project", "session"]);
+  for (const n of ["fleet", "project", "session"]) {
+    b.nav(n).click();
+    expect(tp().hidden, n).toBe(false);
+  }
+  b.nav("project").click();
+  tpPreset("24h").click();
+  const win = b.scope.get().window;
+  for (const n of ["live", "settings"]) {
+    b.nav(n).click();
+    expect(tp().hidden, n).toBe(true);
+    expect(b.scope.get().window).toEqual(win);
+  }
+  b.nav("project").click();
+  expect(tp().hidden).toBe(false);
+  expect(b.scope.get().window).toEqual(win);
+});
+
+test("transport: a preset reaches Project and Fleet", async () => {
+  const b = await boot({
+    worktrees: twoRepos(), sessions: [sessionRow(S1, { source: S1_SOURCE })],
+    events: [tpEvent("tp-1h", 3_600_000), tpEvent("tp-36h", 36 * 3_600_000)],
+  });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  document.querySelector<HTMLElement>('[data-enc="lanes"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-lanes")).not.toBeNull());
+  tpPreset("24h").click();
+  expect(b.scope.get().window).toEqual({ from: NOW - DAY_MS, to: NOW });
+  expect(b.scope.get().liveSpanMs).toBe(DAY_MS);
+  await vi.waitFor(() => expect(document.querySelectorAll("rect.lane-tick")).toHaveLength(1));
+  b.nav("project").click();
+  expect(document.querySelector("button.project-live")).toBeNull();
+  tpLive().click();
+  expect(b.scope.get().window).toBe("live");
+  expect(tpRange()).toBe("Live · last 1 d");
+  void tickLabels;
+});
+
+test("transport: default Fleet hold uses the lanes span, not 7 d", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  document.querySelector<HTMLElement>('[data-enc="lanes"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-lanes")).not.toBeNull());
+  tpHold().click();
+  expect(b.scope.get().window).toEqual({ from: NOW - 300_000, to: NOW });
+  tpLive().click();
+  expect(b.scope.get().window).toBe("live");
+  tpKey(tpTrack(), "ArrowLeft");
+  expect(b.scope.get().window).toEqual({ from: NOW - 330_000, to: NOW - 30_000 });
+});
+
+test("transport: altitude follows the displayed panel, not scope.session", async () => {
+  const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  b.scope.set({ session: { id: S1, source: S1_SOURCE }, window: "live" });
+  b.nav("session").click();
+  expect(tpTrack().getAttribute("aria-disabled")).toBe("true");
+  expect(tpPreset("24h").getAttribute("aria-disabled")).toBe("true");
+  tpPreset("24h").click();
+  expect(b.scope.get().window).toBe("live");
+  expect(b.scope.get().liveSpanMs).toBeUndefined();
+  for (const n of ["project", "fleet"]) {
+    b.nav(n).click();
+    expect(tpTrack().getAttribute("aria-disabled"), n).toBe("false");
+    tpPreset("8h").click();
+    expect(b.scope.get().window).toEqual({ from: NOW - 8 * 3_600_000, to: NOW });
+    expect(tpRange(), n).not.toContain("whole session");
+    tpLive().click();
+  }
+  tpPreset("24h").click();
+  b.nav("session").click();
+  expect(tpTrack().getAttribute("aria-disabled")).toBe("true");
+  const before = b.scope.get().window;
+  tpPreset("2h").click();
+  expect(b.scope.get().window).toEqual(before);
+  const chip = document.querySelector<HTMLButtonElement>("#session-panel-score .session-lens-head button")!;
+  expect(chip).not.toBeNull();
+  chip.click();
+  expect(b.scope.get().window).toBe("live");
+  expect(b.scope.get().liveSpanMs).toBe(DAY_MS);
+  expect(tpRange()).toBe("Live · whole session");
+});
+
+test("transport: preset carry rules", async () => {
+  const b = await boot({
+    worktrees: twoRepos(), sessions: [sessionRow("s-n1")],
+    attentionSessions: [needy("s-n1", "repoA", { worktree_id: "wt-open" })],
+  });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());
+  tpPreset("24h").click();
+  const win = b.scope.get().window;
+  expect(win).toEqual({ from: NOW - DAY_MS, to: NOW });
+  document.querySelector<HTMLElement>(".fleet-need")!.click();
+  expect(b.active()).toBe("session");
+  expect(b.scope.get().window).toEqual(win);
+  const head = document.querySelector<HTMLElement>("#session-panel-score .session-lens-head")!;
+  expect(head.textContent).toContain(windowLabel(win));
+  expect(head.querySelector("button")).not.toBeNull();
+  const { selectSession } = await import("./scope");
+  selectSession(b.scope, { id: "s-other", source: "codex" });
+  expect(b.scope.get().window).toBe("live");
+  expect(b.scope.get().liveSpanMs).toBe(DAY_MS);
+});
+
+test("transport: keys act on the track only; Escape still ascends", async () => {
+  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+  await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
+  tpPreset("2h").click();
+  const win = b.scope.get().window;
+  const e0 = tpKey(document.body, "ArrowLeft");
+  expect(e0.defaultPrevented).toBe(false);
+  expect(b.scope.get().window).toEqual(win);
+  const hold = tpKey(tpHold(), "ArrowLeft");
+  tpKey(tpPreset("2h"), "ArrowLeft");
+  expect(hold.defaultPrevented).toBe(false);
+  expect(b.scope.get().window).toEqual(win);
+  tpKey(tpTrack(), "ArrowLeft");
+  const w = b.scope.get().window as { from: number; to: number };
+  expect(w.to - w.from).toBe(2 * 3_600_000);
+  expect(w.to).toBe(NOW - 720_000);
+  // Escape on the track with a scoped session ascends it.
+  b.scope.set({ session: { id: S1, source: S1_SOURCE }, window: "live" });
+  b.nav("session").click();
+  await loadedScore();
+  const full = viewW();
+  tpKey(document.body, "ArrowLeft");
+  expect(viewW()).toBe(full);
+  expect(b.scope.get().window).toBe("live");
+  tpKey(tpTrack(), "Escape");
+  expect(b.scope.get().session).toBeUndefined();
+  expect(b.active()).not.toBe("session");
+});
+
+test("transport: a drag Escape beats the panel Escape, then the panel clears its cursor", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  b.scope.narrow({ project: "repoA" });
+  tpPreset("24h").click();
+  const start = b.scope.get().window;
+  stubTrack();
+  tpKey(document.body, "1");
+  const picked = () => document.querySelector(".project-lane.selected");
+  expect(picked()).not.toBeNull();
+  const ptr = (target: EventTarget, type: string, x: number) =>
+    target.dispatchEvent(new MouseEvent(type, { clientX: x, bubbles: true, button: 0 }));
+  ptr(tpTrack(), "pointerdown", 500);
+  ptr(tpTrack(), "pointermove", 400);
+  await vi.waitFor(() => expect(b.scope.get().window).not.toEqual(start));
+  const e = esc(document.body);
+  expect(b.scope.get().window).toEqual(start);
+  expect(picked()).not.toBeNull();
+  expect(b.scope.get().project).toBe("repoA");
+  expect(e.defaultPrevented).toBe(false);
+  esc(document.body);
+  expect(picked()).toBeNull();
+  expect(b.scope.get().project).toBe("repoA");
+});
+
+test("transport: Escape and ArrowLeft in body-appended inputs leave scope unchanged", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
+  tpPreset("8h").click();
+  b.scope.narrow({ project: "repoA" });
+  const before = b.scope.get();
+  const input = document.createElement("input");
+  const select = document.createElement("select");
+  document.body.append(input, select);
+  for (const t of [input, select]) {
+    esc(t);
+    tpKey(t, "ArrowLeft");
+  }
+  expect(b.scope.get()).toEqual(before);
+});
+
+test("transport: a mouse click blurs the button so Project and Fleet keys still act", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+  tpPreset("8h").focus();
+  mouseClick(tpPreset("8h"));
+  expect(document.activeElement).not.toBe(tpPreset("8h"));
+  expect(b.scope.get().liveSpanMs).toBe(8 * 3_600_000);
+  tpKey(document.body, "1");
+  expect(document.querySelector(".fleet-row.selected, .fleet-row[aria-selected='true'], .fleet-row.sel")).not.toBeNull();
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  tpPreset("2h").focus();
+  mouseClick(tpPreset("2h"));
+  tpKey(document.body, "1");
+  expect(document.querySelector(".project-lane.selected")).not.toBeNull();
+});
+
+test("transport: older daemon (404) mounts, presets work, no extra /worktrees requests", async () => {
+  const b = await boot({ worktreesStatus: 404, attentionSessions: [needy("s-f1", "repoZ")] });
+  b.nav("fleet").click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-row-label")).not.toBeNull());
+  expect(document.querySelector(".fleet-unsupported")).not.toBeNull();
+  const n = b.urls.filter((u) => u.includes("/worktrees")).length;
+  const sets = vi.fn();
+  b.scope.subscribe(sets);
+  tpPreset("24h").click();
+  expect(sets).toHaveBeenCalledTimes(1);
+  expect(tpRange()).toContain("1 d");
+  expect(b.scope.get().window).toEqual({ from: NOW - DAY_MS, to: NOW });
+  expect(document.querySelector(".fleet-row-label")!.textContent).toBe("name-repoZ");
+  expect(document.querySelector(".fleet-unsupported")).not.toBeNull();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.urls.filter((u) => u.includes("/worktrees")).length).toBe(n);
+});
+
+test("transport: a window change does not restart the cold-start retry", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const b = await boot({ worktrees: [wtRow()], worktreesFailFirst: true, healthGate: gate });
+  await vi.waitFor(() => expect(document.querySelector(".project-connecting")).not.toBeNull());
+  const n = b.worktreeSignals.length;
+  const sets = vi.fn();
+  b.scope.subscribe(sets);
+  tpPreset("8h").click();
+  expect(sets).toHaveBeenCalledTimes(1);
+  expect(document.querySelector(".project-connecting")).not.toBeNull();
+  expect(b.worktreeSignals.length).toBe(n);
+  release();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+});

@@ -61,7 +61,6 @@ function svg(tag: string, attrs: Record<string, string | number> = {}, ...childr
 }
 
 const isAbort = (e: unknown): boolean => e instanceof Error && e.name === "AbortError";
-const day = (t: number): string => new Date(t).toISOString().slice(0, 16).replace("T", " ");
 const outcomeText = (o: string | undefined): string =>
   o === "landed" ? "landed" : o === "abandoned" ? "abandoned" : o === "never_diverged" ? "never diverged" : o === "unknown" ? "outcome unknown" : "removed";
 const MAX_LABEL_CHARS = labelMaxChars(X0);
@@ -106,15 +105,13 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
 
   // Header is built once; only its state is refreshed.
   const select = el("select", { class: "project-repo", "aria-label": "Repository" });
-  const liveBtn = el("button", { class: "project-live", type: "button", "aria-pressed": "true" }, "Live");
-  const windowLine = el("span", { class: "project-window" });
   const statusBox = el("div", { class: "project-status", role: "status" });
   const chart = el("div", { class: "project-chart" });
-  const hint = el("p", { class: "project-hint" }, "Click a lane to open its sessions, a bead to open its score. Arrow keys or 1-9 pick a lane, Enter opens it. Drag on the time axis to set the window.");
+  const hint = el("p", { class: "project-hint" }, "Click a lane to open its sessions, a bead to open its score. Arrow keys or 1-9 pick a lane, Enter opens it. Drag on the time axis to narrow the window; the time bar above sets the span.");
   const root = el(
     "section",
     { class: "project", "aria-label": "Project" },
-    el("header", { class: "project-header" }, el("h2", {}, "Project"), select, liveBtn, windowLine),
+    el("header", { class: "project-header" }, el("h2", {}, "Project"), select),
     statusBox,
     chart,
     hint,
@@ -174,7 +171,6 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   select.addEventListener("change", () => {
     if (select.value) store.narrow({ project: select.value, cell: undefined });
   });
-  liveBtn.addEventListener("click", () => store.narrow({ window: "live" }));
 
   function pickedRepo(): string | undefined {
     return pickRepo(rows, store.get().project);
@@ -296,12 +292,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   function render(): void {
     const sc: Scope = store.get();
     const now = nowFn();
-    const range = resolveWindow(sc.window, now);
+    const range = resolveWindow(sc.window, now, sc.liveSpanMs);
     const ids = repoIds(rows);
     const repo = pickRepo(rows, sc.project);
     syncSelect(ids, repo);
-    liveBtn.setAttribute("aria-pressed", sc.window === "live" ? "true" : "false");
-    windowLine.textContent = sc.window === "live" ? "Live: last 7 days" : `${day(range.from)} → ${day(range.to)} UTC`;
 
     const repoRows = repo === undefined ? [] : rows.filter((r) => r.repo_id === repo);
     let lanes: LaneGeom[] = [];
@@ -463,7 +457,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (t?.closest?.(".project-bead")) return;
     const x = plotX(e.clientX);
     if (x < X0 || x > X1) return;
-    drag = { startX: x, curX: x, range: resolveWindow(store.get().window, nowFn()) };
+    drag = { startX: x, curX: x, range: resolveWindow(store.get().window, nowFn(), store.get().liveSpanMs) };
     document.addEventListener("mousemove", onBrushMove);
     document.addEventListener("mouseup", onBrushUp);
   }

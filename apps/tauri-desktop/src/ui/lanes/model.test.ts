@@ -136,4 +136,34 @@ describe("axisTicks", () => {
     const ticks = axisTicks(now, 5 * MIN, 200); // 40px per minute is too tight → 5m step
     expect(ticks.map((t) => t.at)).toEqual([now - 5 * MIN]);
   });
+
+  test.each([
+    ["2h", 2 * 3_600_000],
+    ["8h", 8 * 3_600_000],
+    ["24h", 24 * 3_600_000],
+    ["7d", 7 * 24 * 3_600_000],
+  ])("%s window: ticks are bounded and spaced", (_id, windowMs) => {
+    const plot = 644;
+    const ticks = axisTicks(now, windowMs, plot);
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(ticks.length).toBeLessThanOrEqual(plot / 80);
+    const px = plot / windowMs;
+    for (let i = 1; i < ticks.length; i++) expect((ticks[i]!.at - ticks[i - 1]!.at) * px).toBeGreaterThanOrEqual(80 - 1e-6);
+  });
+
+  test("windows over a day carry dates; shorter ones stay clock-only", () => {
+    for (const ms of [24 * 3_600_000, 7 * 24 * 3_600_000]) {
+      for (const t of axisTicks(now, ms, 644)) expect(t.label).toMatch(/^[A-Z][a-z]{2} \d{1,2}( \d{2}:\d{2})?$/);
+    }
+    for (const ms of [2 * 3_600_000, 8 * 3_600_000]) {
+      for (const t of axisTicks(now, ms, 644)) expect(t.label).toMatch(/^\d{2}:\d{2}$/);
+    }
+  });
+
+  test("steps of a day or more align to local midnight", () => {
+    for (const t of axisTicks(now, 7 * 24 * 3_600_000, 644)) {
+      const d = new Date(t.at);
+      expect([d.getHours(), d.getMinutes()]).toEqual([0, 0]);
+    }
+  });
 });

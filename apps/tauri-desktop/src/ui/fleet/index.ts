@@ -6,6 +6,7 @@ import { ApiError, attention as fetchAttention, sessions as fetchSessions, workt
 import type { AttentionSession, AttentionSnapshot, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { claimEscape, isEscapeEligible } from "../../escape";
+import { DEFAULT_LIVE_SPAN_MS, isLive } from "../../scope";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import type { CellScope } from "../workspace/model";
 import { formatAge } from "../../spark";
@@ -37,6 +38,8 @@ export interface FleetDeps {
   loadTimeoutMs?: number;
   /** Repo id to display label, whenever the set changes. */
   onLabels?: (labels: Record<string, string>) => void;
+  /** The encoding changed, so effectiveLiveSpan may have too. */
+  onEncoding?: () => void;
 }
 
 export interface FleetPanel {
@@ -47,6 +50,8 @@ export interface FleetPanel {
   setConnected(connected: boolean): void;
   onEvent(ev: FirehoseEvent): void;
   encoding: Encoding;
+  /** The trailing span the live view draws now: the user-set span for Lanes, else the default. */
+  effectiveLiveSpan(): number;
 }
 
 const SEP = "\u0000"; // matches qualifyLaneInput
@@ -70,7 +75,6 @@ const setAttr = (n: Element, k: string, v: string | null): void => {
   else n.setAttribute(k, v);
 };
 const setClass = (n: Element, c: string, on: boolean): void => { if (n.classList.contains(c) !== on) n.classList.toggle(c, on); };
-const day = (t: number): string => new Date(t).toISOString().slice(0, 16).replace("T", " ");
 const sparkText = (counts: number[]): string => {
   const max = Math.max(...counts, 0);
   return counts.map((c) => BLOCKS[max === 0 ? 0 : Math.min(BLOCKS.length - 1, Math.ceil((c / max) * (BLOCKS.length - 1)))]).join("");
@@ -171,7 +175,6 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     b.addEventListener("click", () => setEncoding(enc));
     return b;
   });
-  const windowChip = el("span", { class: "fleet-window", title: "Scope window; kept when you open a project, fork or session" });
   const staleChip = el("span", { class: "fleet-stale", title: "Showing the last data received; a refresh is overdue" }, "stale");
   const flags = el("span", { class: "fleet-flags" });
   const statusBox = el("div", { class: "fleet-status", role: "status" });
@@ -200,7 +203,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   const windowPatch = (): ScopePatch["window"] => {
     const w = store.get().window;
-    return w === "live" ? "live" : { from: w.from, to: w.to };
+    return isLive(w) ? "live" : { from: w.from, to: w.to };
   };
   function nav(name: "project" | "sessions" | "score", p: { project?: string; worktree?: string; session?: { id: string; source?: string }; cell?: CellScope }): void {
     go(name, { project: p.project, worktree: p.worktree, session: p.session, cell: p.cell, window: windowPatch() });
@@ -277,12 +280,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   }
 
   function syncFlags(): void {
-    const w = store.get().window;
-    if (w !== "live") setText(windowChip, `window ${day(w.from)} → ${day(w.to)} UTC`);
     const hasData = wt !== undefined || att !== undefined;
     const stale = hasData && (wtStale || attStale || sessStale);
     const wanted: Element[] = [];
-    if (w !== "live") wanted.push(windowChip);
     if (stale) wanted.push(staleChip);
     reconcile(flags, wanted);
   }
@@ -574,10 +574,11 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     nodes.clear();
     // The shared scope window bounds the lanes; live keeps the trailing five minutes.
     const w = store.get().window;
-    const end = w === "live" ? now : w.to;
-    const windowMs = w === "live" ? LANE_WINDOWS_MS[1] : Math.max(w.to - w.from, 1);
+    const live = isLive(w);
+    const end = live ? now : w.to;
+    const windowMs = live ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : Math.max(w.to - w.from, 1);
     const qualified = summaries.map((s) => ({ ...s, id: `${s.source}${SEP}${s.id}` }));
-    const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => w === "live" || !(Date.parse(e.time) > end))), qualified, end, windowMs);
+    const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => live || !(Date.parse(e.time) > end))), qualified, end, windowMs);
     body.append(lanesStrip(lanes, end, windowMs, body.clientWidth || FALLBACK_W, (id, source) => openSession(id, source)));
     restore();
   }
@@ -598,6 +599,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (next === encoding || !ENCODINGS.includes(next)) return;
     const wasLanes = encoding === "lanes";
     encoding = next;
+    try { deps.onEncoding?.(); } catch { /* a sink must not break the view */ }
     if (wasLanes) stopSessions();
     clear(body);
     nodes.clear();
@@ -706,15 +708,16 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   // ---- scope / keys / events -------------------------------------------
 
+  const windowKey = (s: Scope): string => JSON.stringify([s.window, s.liveSpanMs ?? null]);
   let seenWindow = "";
   function onScope(next: Scope, prev: Scope): void {
     const ctx = (s: Scope) => scopeKey(s);
     if (ctx(next) !== ctx(prev)) recompute();
     else {
-      const w = JSON.stringify(next.window);
+      const w = windowKey(next);
       if (w !== seenWindow) { syncFlags(); if (encoding === "lanes") recompute(); }
     }
-    seenWindow = JSON.stringify(next.window);
+    seenWindow = windowKey(next);
   }
 
   /** Needs the active encoding actually draws; Dwell caps its list. */
@@ -806,12 +809,13 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   return {
     root,
     get encoding() { return encoding; },
+    effectiveLiveSpan: (): number => (encoding === "lanes" ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : DEFAULT_LIVE_SPAN_MS),
     set encoding(e: Encoding) { setEncoding(e); },
     refresh: () => (active ? load() : Promise.resolve()),
     activate() {
       if (!active) {
         active = true;
-        seenWindow = JSON.stringify(store.get().window);
+        seenWindow = windowKey(store.get());
         unsub = store.subscribe(onScope);
         unsubResolver = store.onResolver(() => { if (active) recompute(); });
         document.addEventListener("keydown", onDocKey);
