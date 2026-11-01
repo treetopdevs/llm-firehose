@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   BADGE, CLIP, DASH, HATCH, rejoinPath, ERROR_MARK, FORK_GLYPH, GLYPH_GROUPS, GONE_MARK, IDLE_BANG, IDLE_MARK, LANDED_UNKNOWN, LANE_MARK_SHAPES, NEEDS_MARK,
@@ -268,7 +268,7 @@ describe("no stray vocabulary literals", () => {
     const re = new RegExp(`(["'\`])([${MARKS}])\\1`, "g");
     const hits: string[] = [];
     for (const f of walk(SRC)) {
-      const rel = relative(SRC, f);
+      const rel = relative(SRC, f).split(sep).join("/");
       if (rel === "glyphs.ts") continue;
       const text = readFileSync(f, "utf8");
       for (const m of text.matchAll(re)) {

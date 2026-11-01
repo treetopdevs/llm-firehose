@@ -4,7 +4,7 @@
 // holds interactive descendants use { self: true }. Runtime half: mount the panels and press
 // Enter on everything that is not a native control.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -91,7 +91,7 @@ function callText(src: string, at: number): string {
 describe("onActivate callers", () => {
   const found = new Map<string, string>();
   for (const file of walk(SRC)) {
-    const rel = relative(SRC, file);
+    const rel = relative(SRC, file).split(sep).join("/");
     if (rel === "dom.ts") continue;
     const src = readFileSync(file, "utf8");
     const seen = new Map<string, number>();
