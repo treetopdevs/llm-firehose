@@ -417,11 +417,15 @@
       },
       "title": {
         "displayName": "Title",
-        "purpose": "Panel h2 and session title; the largest shell text."
+        "purpose": "Panel h2 at 1rem, browser-default 700; the Session altitude title is 600."
       },
       "subtitle": {
         "displayName": "Subtitle",
-        "purpose": "Session heading in the Sessions list."
+        "purpose": "Session heading in the Sessions list, 15px 600."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "h3 inside content panels, 0.9rem, dimmed rather than enlarged."
       },
       "meta": {
         "displayName": "Meta",
@@ -543,8 +547,8 @@
       "kind": "card",
       "refersTo": "unit-row",
       "description": "A bordered row per worktree; border style encodes state, ember outline marks selection.",
-      "html": "<div class=\"ds-row ds-current\" aria-selected=\"true\"><span class=\"ds-row-label\">llm-firehose · feat/shell-transport</span><span class=\"ds-dim\">claude-code · 2 min ago</span><span class=\"ds-badge ds-needs\">needs you</span></div><div class=\"ds-row ds-fog\"><span class=\"ds-row-label\">lorain-data · main</span><span class=\"ds-dim\">no evidence 3h</span></div>",
-      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;border:1px solid var(--border,#30363d);border-radius:6px;background:var(--bg-panel,#161b22);padding:4px 10px;margin:4px 0;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#e6edf3)}.ds-row:hover{background:var(--bg-hover,#1f2630)}.ds-row.ds-current{border-color:var(--accent,#ff6a00)}.ds-row[aria-selected=true]{outline:1px solid var(--accent,#ff6a00);outline-offset:1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#8b949e)}.ds-row-label{flex:0 0 22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-dim{color:var(--text-dim,#8b949e);font-size:12px}.ds-badge{font:700 10px ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#30363d)}.ds-needs{color:#000;background:#ff9f43;border-color:#ff9f43}"
+      "html": "<div class=\"ds-row ds-current\" aria-selected=\"true\"><span class=\"ds-row-label\">llm-firehose · feat/shell-transport</span><span class=\"ds-row-dim\">claude-code · 2 min ago</span><span class=\"ds-row-badge ds-row-needs\">needs you</span></div><div class=\"ds-row ds-fog\"><span class=\"ds-row-label\">lorain-data · main</span><span class=\"ds-row-dim\">no evidence 3h</span></div>",
+      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;border:1px solid var(--border,#30363d);border-radius:6px;background:var(--bg-panel,#161b22);padding:4px 10px;margin:4px 0;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#e6edf3)}.ds-row:hover{background:var(--bg-hover,#1f2630)}.ds-row.ds-current{border-color:var(--accent,#ff6a00)}.ds-row[aria-selected=true]{outline:1px solid var(--accent,#ff6a00);outline-offset:1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#8b949e)}.ds-row-label{flex:0 0 22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-dim{color:var(--text-dim,#8b949e);font-size:12px}.ds-row-badge{font:700 10px ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#30363d)}.ds-row-needs{color:#000;background:#ff9f43;border-color:#ff9f43}"
     },
     {
       "name": "Transport",
@@ -564,7 +568,7 @@
       "One accent (ember) at well under 10% of any screen; state hues each carry one meaning and always sit next to a word.",
       "Density first: 12px and 11px are the working sizes, 13px is body, 1rem is a title.",
       "Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.",
-      "Keyboard parity is a requirement, not a feature: every clickable row has a focus-visible treatment or a 2px ember outline."
+      "Keyboard parity is a requirement, not a feature: every clickable row must have a keyboard path and a focus-visible treatment (today five SVG rows and the session and feed openers still fall short; see the inventory)."
     ],
     "rules": [
       {
