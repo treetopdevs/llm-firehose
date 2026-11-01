@@ -2,7 +2,7 @@
 // through store.narrow; panels read the window from scope. Altitude (session or
 // not) comes from the displayed panel via setPanel, never from scope.session.
 import { el } from './dom';
-import { claimEscape } from './escape';
+import { claimEscape, yieldsToModal } from './escape';
 import {
   PRESETS,
   formatRange,
@@ -17,6 +17,7 @@ import {
   type ScopeStore,
   type ScopeWindow,
 } from './scope';
+import { LOCAL } from './keys';
 
 export interface TransportDeps {
   store: ScopeStore;
@@ -192,7 +193,8 @@ export function createTransport(deps: TransportDeps): Transport {
   const abortDrag = (): void => endDrag();
 
   function onDragKey(e: KeyboardEvent): void {
-    if (e.key !== 'Escape' || !drag) return;
+    if (!LOCAL.transportCancel.matches(e) || !drag) return;
+    if (yieldsToModal(e, track)) return;
     const d = drag;
     claimEscape(e);
     endDrag();
@@ -295,10 +297,10 @@ export function createTransport(deps: TransportDeps): Transport {
   on(track, 'keydown', (e) => {
     if (session || e.defaultPrevented || e.isComposing) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home') return;
+    if (!LOCAL.transportShift.matches(e) && !LOCAL.transportLive.matches(e)) return;
     if (document.querySelector(OVERLAYS)) return;
     abortDrag();
-    if (e.key === 'Home') {
+    if (LOCAL.transportLive.matches(e)) {
       write({ window: 'live' });
     } else {
       const s = store.get();

@@ -1,9 +1,10 @@
 import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary } from "../api";
-import { clear, el } from "../dom";
+import { clear, el, onActivate } from "../dom";
 import { formatClock, sessionName, sessionRefLabel, sessionWhere, shortId, workspaceKey } from "../format";
 import type { SessionLike } from "../format";
 import type { SessionDirectory } from "../session-directory";
+import { ERROR_MARK } from "../glyphs";
 import { idChip } from "./session-id";
 import { evidenceTime, needsLabel, pendingNow, stateWord } from "../needs";
 import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
@@ -57,8 +58,10 @@ export function createSessions(
   onOpenLoops?: (id: string, source?: string) => void,
   store: ScopeStore = createScope(),
   directory?: SessionDirectory,
+  /** Records the activated session in scope; called before its history opens. */
+  onSelectSession: (ref: SessionRef) => void = () => {},
 ): SessionsPanel {
-  const listBox = el("div", { class: "sessions-list" });
+  const listBox = el("div", { class: "sessions-list", tabindex: "-1", "aria-label": "Sessions" });
   const eventsBox = el("div", { class: "sessions-events" });
   const root = el("section", { class: "sessions" }, el("h2", {}, "Sessions"), listBox, eventsBox);
   let historyVersion = 0;
@@ -178,7 +181,7 @@ export function createSessions(
         s.has_error
           ? { class: "cell err", role: "img", "aria-label": "error captured", title: "an error was captured in this session" }
           : { class: "cell err", title: "" },
-        s.has_error ? "!" : "",
+        s.has_error ? ERROR_MARK : "",
       ),
     );
     const facts = [s.agent || s.source, where.label, s.first_time ? `started ${formatClock(s.first_time)}` : "", `${s.events} events`].filter(Boolean);
@@ -199,17 +202,81 @@ export function createSessions(
     }
     const item = el(
       "div",
-      { class: "session-item", tabindex: "0", "data-id": s.id, ...(s.source ? { "data-source": s.source } : {}) },
+      {
+        class: "session-item",
+        tabindex: "0",
+        // A group, not a button: it holds the Score, Loops and id controls, and a button's children are presentational.
+        role: "group",
+        "aria-label": `open ${sessionName(s)}, ${status.label}`,
+        "data-id": s.id,
+        ...(s.source ? { "data-source": s.source } : {}),
+      },
       row,
       el("div", { class: "session-last", title: summary }, summary),
       subRow,
       idChip(s.id),
     );
-    item.addEventListener("click", () => openSession(s.id));
+    // Choosing a row narrows the scope first, then opens its history. Its own
+    // controls (score, loops, id chip) are not the row.
+    onActivate(
+      item,
+      () => {
+        onSelectSession(s.source ? { id: s.id, source: s.source } : { id: s.id });
+        void openSession(s.id);
+      },
+      { self: true },
+    );
     return item;
   }
 
+  const itemKey = (n: Element): string => `${n.getAttribute("data-source") ?? ""}\0${n.getAttribute("data-id") ?? ""}`;
+  const CONTROLS = ["score-open", "loops-open", "session-id"];
+
+  /**
+   * Remembers what has focus in the list so a rebuild can give it back: the same
+   * item or nested control, else the nearest surviving item, else the list itself.
+   */
+  function captureFocus(): () => void {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !listBox.contains(a)) return () => {};
+    const order = [...listBox.querySelectorAll(".session-item")].map(itemKey);
+    const item = a.closest(".session-item");
+    const key = item ? itemKey(item) : undefined;
+    const control = item && a !== item ? CONTROLS.find((c) => a.classList.contains(c)) : undefined;
+    const onChip = !item && !!a.closest(".sessions-scope");
+    return () => {
+      const fresh = [...listBox.querySelectorAll<HTMLElement>(".session-item")];
+      if (onChip) {
+        const btn = listBox.querySelector<HTMLElement>(".sessions-scope button");
+        if (btn) { btn.focus(); return; }
+      }
+      if (key !== undefined) {
+        const same = fresh.find((n) => itemKey(n) === key);
+        if (same) {
+          (control ? same.querySelector<HTMLElement>(`.${control}`) ?? same : same).focus();
+          return;
+        }
+        const at = order.indexOf(key);
+        const alive = new Map(fresh.map((n) => [itemKey(n), n]));
+        for (const k of [...order.slice(at + 1), ...order.slice(0, at).reverse()]) {
+          const n = alive.get(k);
+          if (n) { n.focus(); return; }
+        }
+      }
+      listBox.focus();
+    };
+  }
+
   async function refresh() {
+    let restoreFocus: (() => void) | undefined;
+    try {
+      await rebuild((fn) => { restoreFocus = fn; });
+    } finally {
+      restoreFocus?.();
+    }
+  }
+
+  async function rebuild(willClear: (restore: () => void) => void) {
     if (!listBox.firstChild) {
       listBox.append(el("p", { class: "dim" }, "loading sessions…"));
     }
@@ -245,6 +312,7 @@ export function createSessions(
           if (Number.isFinite(d) && d !== 0) return d;
           return a.s.id < b.s.id ? -1 : a.s.id > b.s.id ? 1 : 0;
         });
+      willClear(captureFocus());
       clear(listBox);
       if (scope) {
         listBox.append(scopeChip(scope));
@@ -267,6 +335,7 @@ export function createSessions(
         listBox.append(sessionItem(s, status, counts.get(s.id) ?? [], scale, now));
       }
     } catch (err) {
+      willClear(captureFocus());
       clear(listBox);
       listBox.append(el("p", { class: "error" }, String(err)));
     }

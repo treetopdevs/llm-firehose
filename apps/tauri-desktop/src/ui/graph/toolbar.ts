@@ -3,8 +3,9 @@
 // updated in place, so typing in search is never interrupted by a refresh.
 
 import { clear, el } from "../../dom";
-import { claimEscape, isEscapeClaimed } from "../../escape";
+import { claimEscape, isEscapeClaimed, yieldsToModal } from "../../escape";
 import { stateDescription, type AgentState } from "./names";
+import { LOCAL } from "../../keys";
 
 const svgNS = "http://www.w3.org/2000/svg";
 
@@ -182,6 +183,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
     if (!input.value) h.search("");
   });
   input.addEventListener("keydown", (e) => {
+    if (!LOCAL.graphSearch.matches(e)) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (!open) show();
@@ -256,7 +258,8 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
   };
   // An open menu owns Escape wherever focus is; closes it before anything else reacts.
   const closeOnEscape = (e: KeyboardEvent) => {
-    if (e.key !== "Escape" || menu.hidden || e.isComposing || isEscapeClaimed(e)) return;
+    if (!LOCAL.graphMenu.matches(e) || menu.hidden || e.isComposing || isEscapeClaimed(e)) return;
+    if (yieldsToModal(e, more)) return;
     claimEscape(e);
     e.preventDefault();
     const hadFocus = more.contains(document.activeElement);
@@ -278,7 +281,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
   }
   moreBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
   more.onkeydown = (e) => {
-    if (e.key === "Escape" && !menu.hidden) {
+    if (LOCAL.graphMenu.matches(e) && !menu.hidden) {
       if (e.isComposing || isEscapeClaimed(e)) return;
       claimEscape(e);
       e.preventDefault();

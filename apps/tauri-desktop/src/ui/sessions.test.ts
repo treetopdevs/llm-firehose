@@ -673,3 +673,98 @@ test("score and loops buttons name the session by its title, not its id", async 
   expect(panel.root.querySelector(".score-open")!.getAttribute("aria-label")).toBe("open score for Fix login bug");
   expect(panel.root.querySelector(".loops-open")!.getAttribute("aria-label")).toBe("open loops for Fix login bug");
 });
+
+describe("session cards are keyboard operable", () => {
+  const press = (n: Element, key: string) => n.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  const item = (panel: { root: HTMLElement }, id: string) => panel.root.querySelector<HTMLElement>(`.session-item[data-id='${id}']`)!;
+
+  test.each(["click", "Enter", " "])("%s on a card selects the session, then opens its history exactly once", async (how) => {
+    sessions.mockResolvedValue([summary({ id: "s1", source: "codex", agent: "codex" })]);
+    sessionEvents.mockResolvedValue([]);
+    const order: string[] = [];
+    const onSelectSession = vi.fn(() => order.push("select"));
+    sessionEvents.mockImplementation(async () => { order.push("history"); return []; });
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), undefined, onSelectSession);
+    await panel.refresh();
+    const card = item(panel, "s1");
+    expect(card.getAttribute("role")).toBe("group");
+    for (const c of ["score-open", "loops-open", "session-id"]) { const n = card.querySelector(`.${c}`); if (n) expect(n.closest('[role="button"]'), c).toBeNull(); }
+    expect(card.getAttribute("aria-label")).toMatch(/^open .+/);
+    if (how === "click") card.click();
+    else press(card, how);
+    await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledTimes(1));
+    expect(onSelectSession).toHaveBeenCalledTimes(1);
+    expect(onSelectSession).toHaveBeenCalledWith({ id: "s1", source: "codex" });
+    expect(order).toEqual(["select", "history"]);
+  });
+
+  test("Enter on a nested score button or id chip does not select or open", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    sessionEvents.mockResolvedValue([]);
+    const onSelectSession = vi.fn();
+    const onOpenScore = vi.fn();
+    const panel = createSessions(() => {}, () => [], onOpenScore, undefined, createScope(), undefined, onSelectSession);
+    await panel.refresh();
+    const score = panel.root.querySelector<HTMLElement>(".score-open")!;
+    const chip = panel.root.querySelector<HTMLElement>(".session-id")!;
+    for (const n of [score, chip]) {
+      expect(press(n, "Enter") && true).toBe(true);
+      expect(press(n, " ") && true).toBe(true);
+    }
+    expect(onSelectSession).not.toHaveBeenCalled();
+    expect(sessionEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe("session list focus survives the periodic refresh", () => {
+  const mount = async (ids: string[]) => {
+    sessions.mockResolvedValue(ids.map((id) => summary({ id })));
+    sessionEvents.mockResolvedValue([]);
+    const panel = createSessions(() => {}, () => [], () => {});
+    document.body.append(panel.root);
+    await panel.refresh();
+    return panel;
+  };
+  const q = (panel: { root: HTMLElement }, sel: string) => panel.root.querySelector<HTMLElement>(sel)!;
+
+  test("a focused card is the same session's card after a refresh", async () => {
+    const panel = await mount(["s1", "s2"]);
+    q(panel, ".session-item[data-id='s2']").focus();
+    expect(document.activeElement?.getAttribute("data-id")).toBe("s2");
+    await panel.refresh();
+    expect(document.activeElement).toBe(q(panel, ".session-item[data-id='s2']"));
+    panel.root.remove();
+  });
+
+  test("a focused nested control stays on the same session's control", async () => {
+    const panel = await mount(["s1", "s2"]);
+    q(panel, ".session-item[data-id='s2'] .score-open").focus();
+    await panel.refresh();
+    expect(document.activeElement).toBe(q(panel, ".session-item[data-id='s2'] .score-open"));
+    q(panel, ".session-item[data-id='s1'] .session-id").focus();
+    await panel.refresh();
+    expect(document.activeElement).toBe(q(panel, ".session-item[data-id='s1'] .session-id"));
+    panel.root.remove();
+  });
+
+  test("a removed focused session hands focus to the nearest survivor, then the list, never body", async () => {
+    const panel = await mount(["s1", "s2", "s3"]);
+    const order = [...panel.root.querySelectorAll(".session-item")].map((n) => n.getAttribute("data-id"));
+    const mid = order[1]!;
+    q(panel, `.session-item[data-id='${mid}']`).focus();
+    sessions.mockResolvedValue(order.filter((id) => id !== mid).map((id) => summary({ id: id! })));
+    await panel.refresh();
+    expect(document.activeElement).toBe(q(panel, `.session-item[data-id='${order[2]}']`));
+    q(panel, `.session-item[data-id='${order[2]}']`).focus();
+    sessions.mockResolvedValue([summary({ id: "other" })]);
+    await panel.refresh();
+    // Nothing focused survives: the list container, not body.
+    expect(document.activeElement).toBe(q(panel, ".sessions-list"));
+    q(panel, ".session-item[data-id='other']").focus();
+    sessions.mockResolvedValue([]);
+    await panel.refresh();
+    expect(document.activeElement).toBe(q(panel, ".sessions-list"));
+    expect(document.activeElement).not.toBe(document.body);
+    panel.root.remove();
+  });
+});

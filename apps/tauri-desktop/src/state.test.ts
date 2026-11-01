@@ -184,3 +184,26 @@ describe("FeedState", () => {
     expect(feed.sources()).toEqual(["claude-code", "codex"]);
   });
 });
+
+describe("row keys", () => {
+  const call = (id: string, time: string) =>
+    ev({ id, time, session_id: "s1", turn_id: "t1", call_id: "c1", payload: { phase: "post", tool_name: "Bash" } });
+
+  test("a coalesced row keeps the id of its first event as its key while row.event changes", () => {
+    const rows = coalesce([call("hook-id", "2026-07-02T10:00:00Z"), call("rollout-id", "2026-07-02T10:00:01Z")]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].event.id).toBe("rollout-id");
+    expect(rows[0].count).toBe(2);
+    expect(rows[0].key).toBe("hook-id");
+  });
+
+  test("distinct rows have distinct keys, including outside the correlation window", () => {
+    const rows = coalesce([call("a", "2026-07-02T10:00:00Z"), call("b", "2026-07-02T10:01:00Z"), ev({ id: "c" })]);
+    expect(rows.map((r) => r.key)).toEqual(["a", "b", "c"]);
+  });
+
+  test("events without ids still get unique keys", () => {
+    const rows = coalesce([ev({ id: "" }), ev({ id: "" })]);
+    expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+  });
+});

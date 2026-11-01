@@ -1956,3 +1956,183 @@ test("names not ids: a same-id pair under two sources leaves a source-less ref a
   expect(crumb.textContent).toBe("2385e3bc");
   expect(crumb.querySelector(".unresolved")).not.toBeNull();
 });
+
+test("session activation by click, Enter and Space each scope, crumb and load history exactly once; no delegated listener", async () => {
+  const b = await boot({ sessions: [sessionRow("r1", { title: "First task" }), sessionRow("r2", { title: "Second task" })] });
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
+  const histCalls = (id: string) => b.urls.filter((u) => new URL(u).pathname === `/sessions/${id}`).length;
+  const press = (n: Element, key: string) => n.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  const sessionsRoot = document.querySelector(".sessions")!;
+  const add = vi.spyOn(sessionsRoot, "addEventListener");
+  expect(add).not.toHaveBeenCalled();
+  const cases: Array<[string, (n: HTMLElement) => void]> = [
+    ["click", (n) => n.click()],
+    ["Enter", (n) => void press(n, "Enter")],
+    ["Space", (n) => void press(n, " ")],
+  ];
+  for (const [i, [, act]] of cases.entries()) {
+    const id = i % 2 === 0 ? "r1" : "r2";
+    const other = id === "r1" ? "r2" : "r1";
+    // Reset to the other session first so each case is a real change.
+    b.scope.set({ session: { id: other, source: "codex" }, window: "live" });
+    const before = histCalls(id);
+    act(document.querySelector<HTMLElement>(`.session-item[data-id='${id}']`)!);
+    await vi.waitFor(() => expect(histCalls(id)).toBe(before + 1));
+    expect(b.scope.get().session).toEqual({ id, source: "codex" });
+    expect(document.querySelector(".scope-crumb")?.textContent).toContain(id === "r1" ? "First task" : "Second task");
+    await Promise.resolve();
+    expect(histCalls(id)).toBe(before + 1);
+  }
+});
+
+test("Enter on a nested score button or id chip does not change scope or open the list", async () => {
+  const b = await boot({ sessions: [sessionRow("r1")] });
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
+  const before = b.scope.get();
+  const calls = () => b.urls.filter((u) => new URL(u).pathname === "/sessions/r1").length;
+  for (const sel of [".session-item .score-open", ".session-item .session-id"]) {
+    document.querySelector(sel)!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  }
+  expect(b.scope.get()).toEqual(before);
+  expect(calls()).toBe(0);
+  expect(document.querySelector(".session-events-list")).toBeNull();
+});
+
+test("Escape with a modifier held still ascends (the global binding takes modifiers: any)", async () => {
+  const b = await boot({ sessions: [sessionRow(S1)] });
+  b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
+  openTab(b, "score");
+  await vi.waitFor(() => expect(b.urls.some((u) => u.includes("?view=timeline"))).toBe(true));
+  const e = esc(document.body, { ctrlKey: true });
+  expect(e.defaultPrevented).toBe(true);
+  expect(b.scope.get().session).toBeUndefined();
+  expect(b.active()).toBe("sessions");
+});
+
+test("Fleet keys are listed and live only while Fleet is the active view", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  const { listKeys } = await import("./keys");
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-row")).not.toBeNull());
+  expect(listKeys().some((r) => r.scope === "fleet")).toBe(true);
+  const onFleet = new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true });
+  document.body.dispatchEvent(onFleet);
+  expect(onFleet.defaultPrevented).toBe(true);
+  b.nav("live").click();
+  expect(listKeys().some((r) => r.scope === "fleet")).toBe(false);
+  const off = new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true });
+  document.body.dispatchEvent(off);
+  expect(off.defaultPrevented).toBe(false);
+  const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+  document.body.dispatchEvent(space);
+  expect(space.defaultPrevented).toBe(true); // Live's own Space (pause) owns it now, not Fleet's jump
+  expect(b.active()).toBe("live");
+  expect(listKeys().filter((r) => r.scope === "global").map((r) => r.display)).toContain("Esc");
+});
+
+test("Project keys are listed only in the lanes encoding", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  const { listKeys } = await import("./keys");
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  expect(b.active()).toBe("project");
+  expect(listKeys().filter((r) => r.scope === "project").map((r) => r.display)).toEqual(["Enter", "1–9", "↑ / ↓"]);
+  chip("graph").click();
+  expect(listKeys().filter((r) => r.scope === "project")).toEqual([]);
+  chip("lanes").click();
+  expect(listKeys().filter((r) => r.scope === "project")).toHaveLength(3);
+});
+
+// ---- the ? legend ----------------------------------------------------------------------------
+const q = (c: string) => document.querySelector<HTMLElement>(c);
+const legendOpen = () => document.querySelectorAll('[role="dialog"][aria-modal="true"]').length;
+const press = (k: string, target: EventTarget = document.body, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(e);
+  return e;
+};
+const closeLegend = async () => (await import("./ui/legend")).isLegendOpen() && press("Escape");
+
+test("? opens the legend with Project lane keys, then Fleet keys after navigating to Fleet", async () => {
+  const b = await boot({ worktrees: [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b", label: "/w/beta" })] });
+  await vi.waitFor(() => expect(["fleet", "project"]).toContain(b.active()));
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  press("?");
+  expect(legendOpen()).toBe(1);
+  const here = () => [...document.querySelectorAll(".legend-part")].find((p) => p.querySelector("h3")?.textContent === "This panel")!.textContent ?? "";
+  expect(here()).toContain("select a lane by number");
+  expect(here()).not.toContain("select a project row by number");
+  press("?");
+  expect(legendOpen()).toBe(0);
+  b.nav("fleet").click();
+  await vi.waitFor(() => expect(document.querySelector(".fleet-row")).not.toBeNull());
+  press("?");
+  expect(here()).toContain("select a project row by number");
+  expect(here()).not.toContain("select a lane by number");
+  press("Escape");
+  expect(legendOpen()).toBe(0);
+});
+
+test("the footer Keys and symbols button opens the legend and Escape returns focus to it", async () => {
+  await boot();
+  const btn = q(".status-bar .legend-btn") as HTMLButtonElement;
+  expect(btn.textContent).toBe("Keys and symbols");
+  expect(btn.getAttribute("aria-haspopup")).toBe("dialog");
+  btn.focus();
+  btn.click();
+  expect(legendOpen()).toBe(1);
+  press("Escape", document.activeElement!);
+  expect(legendOpen()).toBe(0);
+  expect(document.activeElement).toBe(btn);
+});
+
+test("Escape closes the legend and restores focus to an SVG opener", async () => {
+  await boot();
+  const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "rect") as SVGElement;
+  svgEl.setAttribute("tabindex", "0");
+  document.body.append(svgEl);
+  svgEl.focus();
+  expect(document.activeElement).toBe(svgEl);
+  press("?", svgEl);
+  expect(legendOpen()).toBe(1);
+  press("Escape", document.activeElement!);
+  expect(legendOpen()).toBe(0);
+  expect(document.activeElement).toBe(svgEl);
+  svgEl.remove();
+});
+
+test("Escape with the legend open does not ascend scope; keys 1, n and Space do not reach the panel", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-row")).not.toBeNull());
+  b.nav("project").click();
+  b.scope.narrow({ project: "repoA" });
+  press("?");
+  expect(legendOpen()).toBe(1);
+  const before = b.scope.get();
+  for (const k of ["1", "n", " "]) {
+    const e = press(k, document.activeElement ?? document.body);
+    expect(e.defaultPrevented, k).toBe(false);
+  }
+  expect(b.scope.get()).toEqual(before);
+  const e = press("Escape", document.activeElement ?? document.body);
+  expect(e.defaultPrevented).toBe(true);
+  expect(legendOpen()).toBe(0);
+  expect(b.scope.get()).toEqual(before);
+  expect(b.active()).toBe("project");
+  press("Escape");
+  expect(b.scope.get().project).toBeUndefined();
+});
+
+test("? typed in a search input does not open the legend", async () => {
+  await boot();
+  const input = document.createElement("input");
+  document.body.append(input);
+  input.focus();
+  const e = press("?", input);
+  expect(e.defaultPrevented).toBe(false);
+  expect(legendOpen()).toBe(0);
+  await closeLegend();
+});

@@ -72,6 +72,13 @@
   box-sizing: border-box;
 }
 
+/* Global keyboard focus ring. Elements that suppress the outline must draw their own --focus
+   (or, in the graph, --selected) indicator; focus.test.ts enforces it. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -172,6 +179,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
   white-space: nowrap;
 }
 .feed-row:hover { background: var(--bg-hover); }
+.feed-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; background: var(--bg-hover); }
 .cell.time { color: var(--text-dim); flex-shrink: 0; }
 .cell.source { color: var(--text); flex-shrink: 0; min-width: 9ch; }
 .cell.category { color: var(--text-dim); flex-shrink: 0; min-width: 12ch; }
@@ -232,12 +240,14 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
   cursor: pointer;
 }
 .session-item:hover { background: var(--bg-hover); }
+.session-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; background: var(--bg-hover); }
 .session-title { font-weight: 600; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .session-sub { color: var(--text-dim); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-reason { color: var(--warn); font-size: var(--fs-sm); margin-top: 0.2rem; }
 /* the native id is a copyable detail under the name, never the name */
 .session-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding: 0 0.3rem; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--text-dim); line-height: 1.5; cursor: copy; text-align: left; }
-.session-id:hover, .session-id:focus { border-color: var(--border); color: var(--text); }
+.session-id:hover { border-color: var(--border); color: var(--text); }
+.session-id:focus-visible { border-color: var(--focus); color: var(--text); }
 .session-id.copied { color: var(--ok); }
 .session-last { color: var(--text-dim); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.15rem; padding-left: calc(0.5rem + 3px); }
 .session-heading { margin-bottom: 0.6rem; }
@@ -279,7 +289,8 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .session-item .session-facts { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .session-item > .session-id { display: block; margin-top: 0.15rem; margin-left: calc(0.5rem + 3px); max-width: calc(100% - 0.5rem - 3px); }
 .session-item .score-open { padding: 0 0.4rem; font-size: var(--fs-xs); line-height: 1.4; color: var(--text-dim); }
-.session-item .score-open:hover, .session-item .score-open:focus { color: var(--text); border-color: var(--text); }
+.session-item .score-open:hover { color: var(--text); border-color: var(--text); }
+.session-item .score-open:focus-visible { color: var(--text); border-color: var(--focus); }
 
 /* workspace: one row per workspace, one column per agent */
 .workspace { flex: 1; min-height: 0; overflow: auto; }
@@ -397,6 +408,47 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .status-dot.warn { background: var(--warn); }
 .status-dot.err { background: var(--err); }
 .event-count { margin-left: auto; }
+.legend-btn { padding: 0.1rem 0.5rem; font-size: var(--fs-xs); }
+
+/* Keys and symbols dialog (ui/legend.ts). */
+.legend-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.legend {
+  display: flex;
+  flex-direction: column;
+  width: min(44rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.legend-head { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); }
+.legend-head h2 { margin: 0; font-size: var(--fs-md); }
+.legend-body { overflow-y: auto; padding: 0.4rem 1rem 1rem; }
+.legend-part h3 { margin: 1rem 0 0.3rem; font-size: var(--fs-sm); color: var(--text-dim); }
+.legend-rows, .legend-notes { list-style: none; margin: 0; padding: 0; }
+.legend-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0; }
+.legend-notes li { padding: 0.15rem 0; }
+.legend-glyph { display: inline-flex; align-items: center; justify-content: center; min-width: 1.6rem; }
+.legend kbd {
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  min-width: 1.6rem;
+  padding: 0.05rem 0.4rem;
+  text-align: center;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.legend-row kbd { flex-shrink: 0; }
 
 /* compat banner */
 .compat-banner {
@@ -450,7 +502,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .attention-row h3 { margin:0 0 .5rem; font-size: var(--fs-base); }
 .attention-row p, .capture-warning p { margin:.35rem 0; line-height:1.5; }
 .capture-warning { border-left:3px solid var(--warn); }
-.attention-inbox button:focus-visible, .attention-strip button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.attention-inbox button:focus-visible, .attention-strip button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 .attention-kind { color:var(--text-dim); font-weight:600; }
 
 /* workspace graph */
@@ -583,8 +635,9 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .workspace-label.muted, .workspace-cluster.muted { opacity: 0.3; }
 /* The pill or chip stroke is the focus indicator; a browser outline would box the whole group, leader included. */
 .workspace-graph .workspace-label:focus-visible, .workspace-graph .workspace-cluster:focus-visible, .workspace-graph .revision-node:focus-visible { outline: none; }
-.workspace-label:focus-visible .pill, .workspace-cluster:focus-visible .chip { stroke: var(--text); stroke-width: 2; }
-.workspace-graph .revision-node:focus-visible { stroke: var(--text); stroke-opacity: 1; stroke-width: 3; }
+.workspace-label:focus-visible .pill, .workspace-cluster:focus-visible .chip,
+.workspace-graph .workspace-label:focus-visible .pill, .workspace-graph .workspace-cluster:focus-visible .chip { stroke: var(--selected); stroke-width: 3; }
+.workspace-graph .revision-node:focus-visible { stroke: var(--selected); stroke-opacity: 1; stroke-width: 3; }
 .pill-text { overflow: hidden; pointer-events: none; }
 .graph-viewport.has-selection .workspace-label:not(.related):not(.selected), .graph-viewport.has-selection .workspace-cluster:not(.related):not(.selected) { opacity: 0.5; }
 .workspace-cluster .chip { fill: var(--bg-hover); stroke: var(--observed); stroke-width: 1.4; stroke-dasharray: 4 3; }
@@ -752,14 +805,15 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .map-svg { display: block; width: 100%; height: auto; font-family: var(--font-sans); }
 .map-dir > rect { fill: var(--bg-panel); stroke: color-mix(in srgb, var(--border) 50%, transparent); stroke-width: 1; }
 .map-dir { cursor: zoom-in; outline: none; }
-.map-dir:hover > rect, .map-dir:focus-visible > rect { stroke: var(--text); }
+.map-dir:hover > rect { stroke: var(--text); }
+.map-dir:focus-visible > rect { stroke: var(--focus); stroke-width: 2; }
 .map-dir > text { fill: var(--text-dim); font-size: var(--fs-xs); pointer-events: none; }
 .map-tile > rect { stroke: var(--bg); stroke-width: 0.5; }
 .map-tile > text { fill: var(--on-fill); font-size: var(--fs-xs); pointer-events: none; }
 .map-tile.cold > text { fill: var(--text-dim); }
 .map-scrub { display: flex; flex-direction: column; gap: 4px; }
 .map-strip { display: block; width: 100%; height: auto; cursor: crosshair; outline: none; touch-action: none; border-radius: 4px; background: var(--bg-panel); }
-.map-strip:focus-visible { box-shadow: 0 0 0 2px var(--selected); }
+.map-strip:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
 .map-bar { fill: var(--none); opacity: 0.45; }
 .map-bar.in { fill: var(--map-heat); opacity: 0.9; }
 .map-brush { fill: var(--map-heat); fill-opacity: 0.08; stroke: var(--map-heat); stroke-width: 1; pointer-events: none; }
@@ -779,7 +833,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 /* end workspace graph */
 
 /* session score */
-.score { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0.4rem; outline: none; }
+.score { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0.4rem; }
 .score-head { font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .score-bar { display: flex; gap: 0.3rem; align-items: center; }
 .score-bar .score-gap { flex: 1; }
@@ -791,7 +845,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .score-axis text { fill: var(--text-dim); font-size: var(--fs-xs); }
 .score-axis line { stroke: var(--border); stroke-dasharray: 1 3; }
 .score-track { cursor: pointer; }
-.score-track:focus { outline: none; }
+.score-track:focus-visible { outline: none; }
 .score-hit { fill: transparent; }
 .score-track:hover .score-hit, .score-track:focus .score-hit { fill: var(--bg-hover); }
 .score-track:focus-visible .score-hit { stroke: var(--focus); stroke-width: 2; }
@@ -831,7 +885,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .loops h3, .loops p { overflow-wrap: anywhere; }
 .loops-detail:not(:empty) { border-top: 1px solid currentColor; margin-top: 24px; padding-top: 12px; }
 .loops-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; }
-.loops button:focus-visible, .loops select:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.loops button:focus-visible, .loops select:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
 /* Session Stratigraphy keeps each session equal-height; width encodes time only. */
 .strata { padding: 20px; max-width: 1200px; margin: auto; }
@@ -995,7 +1049,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
   background: var(--bg-panel);
   border-color: var(--accent);
 }
-.project-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.project-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .project-lanes-body,
 .project-encoding-body {
   display: flex;
@@ -1035,18 +1089,18 @@ span.agent-dot.big { width: 14px; height: 14px; }
   fill-opacity: 0.08;
 }
 .project-lane:focus-visible .project-hit {
-  stroke: var(--accent);
-  stroke-width: 1;
+  stroke: var(--focus);
+  stroke-width: 2;
 }
 .project-lane.state-landed { color: var(--ok); }
 .project-lane.state-open { color: var(--text); }
 .project-lane.state-gone { color: var(--err); }
 .project-lane.flat,
 .project-lane.hatched { color: var(--text-dim); }
-.project-lane.flat .project-run { stroke-dasharray: 2 3; }
 .project-tail { stroke-opacity: 0.6; }
 .project-bead { fill-opacity: 0.85; cursor: pointer; }
 .project-bead:hover { fill-opacity: 1; stroke: var(--text); }
+.project-bead:focus-visible { outline: none; stroke: var(--focus); stroke-width: 2; }
 .project-tick { stroke-opacity: 0.7; }
 .project-idle { fill: var(--warn); font-weight: bold; }
 .project-label,
@@ -1264,3 +1318,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
     transition: none;
   }
 }
+
+/* Lane hooks the glyph legend names (see glyphs.ts). Butt caps are the default; this pins them so dashes read crisply. */
+.project-rejoin,
+.project-landgap { stroke-linecap: butt; }

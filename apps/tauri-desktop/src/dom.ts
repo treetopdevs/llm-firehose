@@ -1,6 +1,8 @@
 // Minimal DOM builders. Everything event-derived goes through textContent —
 // no innerHTML with untrusted data, ever.
 
+import { LOCAL } from "./keys";
+
 type Child = Node | string | null | undefined;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
@@ -29,13 +31,37 @@ export function clear(node: HTMLElement): void {
   }
 }
 
-/** Wires a node that acts as a button: click, and Enter or Space from the keyboard. */
-export function onActivate(node: Element, handler: () => void): void {
-  node.addEventListener("click", handler);
+const INTERACTIVE = 'button, a[href], input, select, textarea, summary, [tabindex], [role="button"], [contenteditable=""], [contenteditable="true"]';
+
+export interface ActivateOptions {
+  /** Ignore events that originate in an interactive descendant (a nested button or focusable). */
+  self?: boolean;
+  /** Stop a handled click or key from reaching ancestor listeners. */
+  stop?: boolean;
+}
+
+/**
+ * Wires a node that acts as a button: click, and Enter or Space from the keyboard.
+ * Use `{ self: true }` when the node contains its own controls, so their clicks
+ * and keys do not also activate the container.
+ */
+export function onActivate(node: Element, handler: () => void, opts: ActivateOptions = {}): void {
+  const fromDescendantControl = (e: Event): boolean => {
+    if (!opts.self) return false;
+    const t = e.target as Element | null;
+    const hit = t?.closest?.(INTERACTIVE) ?? null;
+    return hit !== null && hit !== node && node.contains(hit);
+  };
+  node.addEventListener("click", (e) => {
+    if (fromDescendantControl(e)) return;
+    if (opts.stop) e.stopPropagation();
+    handler();
+  });
   node.addEventListener("keydown", (e) => {
-    const key = (e as KeyboardEvent).key;
-    if (key !== "Enter" && key !== " ") return;
+    if (!LOCAL.activate.matches(e as KeyboardEvent)) return;
+    if (fromDescendantControl(e)) return;
     e.preventDefault();
+    if (opts.stop) e.stopPropagation();
     handler();
   });
 }

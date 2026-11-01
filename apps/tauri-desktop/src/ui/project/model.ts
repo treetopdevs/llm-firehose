@@ -5,6 +5,7 @@ import type { WorktreeCommit, WorktreeLifetimeView, WorktreeMark, WorktreeOutcom
 import { DEFAULT_LIVE_SPAN_MS, resolveRange } from "../../scope";
 import type { ScopeWindow } from "../../scope";
 import { idLabel } from "../../format";
+import { BADGE } from "../../glyphs";
 
 export const LIVE_SPAN_MS = DEFAULT_LIVE_SPAN_MS;
 export const IDLE_AFTER_MS = 4 * 3_600_000;
@@ -147,12 +148,7 @@ export function axisTicks(range: TimeRange, x0: number, x1: number, n = 6): Arra
 const END: Record<WorktreeState, LaneEnd> = { landed: "rejoin", open: "open", gone: "gone", never_diverged: "flat", unknown: "hatched" };
 
 function badgeOf(r: WorktreeLifetimeView): string {
-  if (r.state !== "open") return r.dirty ? "±" : "";
-  const parts: string[] = [];
-  if ((r.ahead ?? 0) > 0) parts.push(`↑${r.ahead}`);
-  if ((r.behind ?? 0) > 0) parts.push(`↓${r.behind}`);
-  if (r.dirty) parts.push("±");
-  return parts.join(" ");
+  return BADGE.format(r.state === "open", r.ahead, r.behind, r.dirty);
 }
 
 function tooltipOf(r: WorktreeLifetimeView, label: string, extra: string[]): string {

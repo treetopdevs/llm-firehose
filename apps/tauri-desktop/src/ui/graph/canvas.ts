@@ -18,6 +18,7 @@ import {
 } from "./layout";
 import { relatives, type GraphNode, type Point } from "./model";
 import { aggregateState, displayText, stateDescription, type AgentState } from "./names";
+import { LOCAL } from "../../keys";
 
 const svgNS = "http://www.w3.org/2000/svg";
 export function svg<K extends keyof SVGElementTagNameMap>(
@@ -1135,7 +1136,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     (e) => {
       const ev = e as KeyboardEvent;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      if (ev.key === "Escape") {
+      if (LOCAL.canvasClear.matches(ev)) {
         if (isEscapeEligible(ev) && handlers.clearSelection()) {
           claimEscape(ev);
           ev.preventDefault();
@@ -1144,7 +1145,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       }
       const key = keyOf(ev.target);
       if (key !== null) {
-        if (ev.key === "Enter" || ev.key === " ") {
+        if (LOCAL.canvasOpen.matches(ev)) {
           ev.preventDefault();
           (ev.target as Element).dispatchEvent(new MouseEvent("click", { bubbles: true }));
           return;
@@ -1155,7 +1156,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
           ArrowLeft: "left",
           ArrowRight: "right",
         };
-        const dir = dirs[ev.key];
+        const dir = LOCAL.canvasPan.matches(ev) ? dirs[ev.key] : undefined;
         if (dir) {
           ev.preventDefault();
           moveFocus(key, dir);
@@ -1165,13 +1166,13 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       if (ev.target !== canvas) return;
       const step = 48;
       let handled = true;
+      if (!LOCAL.canvasPan.matches(ev) && !LOCAL.canvasZoom.matches(ev) && !LOCAL.canvasFit.matches(ev)) return;
       if (ev.key === "ArrowLeft") setView({ ...view, x: view.x + step });
       else if (ev.key === "ArrowRight") setView({ ...view, x: view.x - step });
       else if (ev.key === "ArrowUp") setView({ ...view, y: view.y + step });
       else if (ev.key === "ArrowDown") setView({ ...view, y: view.y - step });
-      else if (ev.key === "+" || ev.key === "=") zoomAt(1.2);
-      else if (ev.key === "-" || ev.key === "_") zoomAt(1 / 1.2);
-      else if (ev.key === "0") handlers.fit();
+      else if (LOCAL.canvasZoom.matches(ev)) zoomAt(ev.key === "+" || ev.key === "=" ? 1.2 : 1 / 1.2);
+      else if (LOCAL.canvasFit.matches(ev)) handlers.fit();
       else handled = false;
       if (handled) ev.preventDefault();
     },

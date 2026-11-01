@@ -3,6 +3,7 @@
 
 import type { FirehoseEvent } from "../../api";
 import { clear, el, onActivate } from "../../dom";
+import { FORK_GLYPH } from "../../glyphs";
 import { stateWord } from "../../needs";
 import { isTransition, sessionHue } from "../../spark";
 import { axisTicks } from "../lanes/model";
@@ -95,7 +96,7 @@ export function lanesStrip(
     const g = svg("g", { class: "fleet-lane-row", tabindex: 0, role: "button", "aria-label": `open session ${lane.label}${needs ? `, ${stateWord(lane.state)}` : ""}`, "data-key": lane.id });
     onActivate(g, () => onOpen(id, source));
     g.append(
-      svg("title", {}, `${lane.label} · ${lane.state ? stateWord(lane.state) : "?"}${lane.reason ? ` · ${lane.reason}` : ""}`),
+      svg("title", {}, `${lane.label} · ${lane.state ? stateWord(lane.state) : FORK_GLYPH.unknown}${lane.reason ? ` · ${lane.reason}` : ""}`),
       svg("rect", { class: "lane-hit", x: 0, y, width: w, height: ROW_H }),
       svg("rect", { x: 0, y: y + 4, width: 3, height: ROW_H - 8, fill: `hsl(${sessionHue(lane.id)} 55% 55%)` }),
       svg("text", { class: `lane-label${needs ? " needs" : ""}`, x: 8, y: mid + 4 }, cut(lane.label)),

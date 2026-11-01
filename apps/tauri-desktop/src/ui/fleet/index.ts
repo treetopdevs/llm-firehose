@@ -6,6 +6,8 @@ import { ApiError, attention as fetchAttention, sessions as fetchSessions, workt
 import type { AttentionSession, AttentionSnapshot, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { claimEscape, isEscapeEligible } from "../../escape";
+import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
+import type { KeyBinding } from "../../keys";
 import { DEFAULT_LIVE_SPAN_MS, isLive } from "../../scope";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import type { CellScope } from "../workspace/model";
@@ -17,7 +19,8 @@ import { LANE_WINDOWS_MS, SEP, buildLanes } from "../lanes/model";
 import type { SessionDirectory } from "../../session-directory";
 import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
-import { ENCODINGS, IDLE_MARK, NOREPO_KEY, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
+import { FORK_GLYPH, IDLE_MARK, NEEDS_MARK, NO_DATA_MARK, NO_PROJECT_MARK } from "../../glyphs";
+import { ENCODINGS, NOREPO_KEY, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
 import type { Encoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
 export type { Encoding } from "./model";
@@ -112,6 +115,8 @@ interface NeedRefs { label: HTMLElement; dwell: HTMLElement; summary: HTMLElemen
 
 type StatusKind = "" | "loading" | "error" | "connecting" | "unsupported" | "empty";
 
+let activeFleetKeys: (() => void) | undefined;
+
 export function createFleet(deps: FleetDeps): FleetPanel {
   const { store, go } = deps;
   const api: FleetApi = deps.api ?? {
@@ -159,6 +164,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let sessToken = 0;
   let sessInflight = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let unregisterOwnKeys: (() => void) | undefined;
   let eventTimer: ReturnType<typeof setTimeout> | undefined;
   let lanesTimer: ReturnType<typeof setTimeout> | undefined;
   let unsub: (() => void) | undefined;
@@ -187,7 +193,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const toast = el("div", { class: "fleet-toast", role: "status" });
   const body = el("div", { class: "fleet-body" });
   const foot = el("div", { class: "fleet-foot" });
-  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a worktree glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick.");
+  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a worktree glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick. Press ? for all keys and symbols.");
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
@@ -233,7 +239,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     return [sc.project ?? "", sc.worktree ?? "", sc.session?.source ?? "", sc.session?.id ?? ""].join(SEP);
   }
 
-  const lastText = (r: FleetRow, now: number): string => (r.lastMs > 0 ? formatAge(Math.max(0, now - r.lastMs)) : "–");
+  const lastText = (r: FleetRow, now: number): string => (r.lastMs > 0 ? formatAge(Math.max(0, now - r.lastMs)) : NO_DATA_MARK);
 
   function encodingKey(now: number): string {
     if (encoding === "matrix") return JSON.stringify(result.rows.map((r) => [r.id, lastText(r, now)]));
@@ -386,10 +392,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setClass(node, "unregistered", row.digest);
     const base = row.noRepo ? "Sessions waiting on you that carry no project" : row.known ? `${row.forks.length} worktrees` : "Seen in the needs-you snapshot only: no worktree data captured for this project";
     setAttr(refs.head, "title", row.digest ? `${base}\nunregistered: only a digest was recorded (balanced/minimal privacy, or the project is not registered)` : base);
-    setText(refs.glyph, row.noRepo ? "–" : row.known ? "●" : "?");
+    setText(refs.glyph, row.noRepo ? NO_PROJECT_MARK : row.known ? FORK_GLYPH.open : FORK_GLYPH.unknown);
     setText(refs.label, row.label);
     setText(refs.needs, row.needsCount > 0 ? `${row.needsCount}?` : "");
-    setText(refs.counts, row.known ? `${row.openForks}● ${row.idleForks}${IDLE_MARK}` : "");
+    setText(refs.counts, row.known ? `${row.openForks}${FORK_GLYPH.open} ${row.idleForks}${IDLE_MARK}` : "");
     setAttr(refs.counts, "title", "open worktrees, idle worktrees (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
@@ -445,7 +451,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       let nr = needRefs.get(k.node);
       if (k.fresh || !nr) {
         nr = { label: el("span", { class: "fleet-need-label" }), dwell: el("span", { class: "fleet-need-dwell" }), summary: el("span", { class: "fleet-need-summary" }) };
-        k.node.append(el("span", { class: "fleet-need-mark", "aria-hidden": "true" }, "?"), nr.label, nr.dwell, nr.summary);
+        k.node.append(el("span", { class: "fleet-need-mark", "aria-hidden": "true" }, NEEDS_MARK), nr.label, nr.dwell, nr.summary);
         needRefs.set(k.node, nr);
         onActivate(k.node, () => { const cur = result.needs.find((x) => x.key === n.key); if (cur) openNeed(cur); });
       }
@@ -541,7 +547,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       const count = (n: number): HTMLElement => el("td", { class: n === 0 ? "zero" : "" }, String(n));
       // Fork counts come from /worktrees only; without a row there they are unknown, not zero.
       const forkCount = (n: number, title?: string): HTMLElement => {
-        if (!r.known || r.noRepo) return el("td", { class: "zero unknown", title: NO_WORKTREE_DATA }, "–");
+        if (!r.known || r.noRepo) return el("td", { class: "zero unknown", title: NO_WORKTREE_DATA }, NO_DATA_MARK);
         const c = count(n);
         if (title) c.setAttribute("title", title);
         return c;
@@ -750,53 +756,69 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     return t;
   }
 
-  function onDocKey(e: KeyboardEvent): void {
-    if (e.key === "Escape" || e.key === "Tab") return;
+  /** Each handler returns false when the key is not Fleet's to act on, so dispatch can fall through. */
+  function onEnter(e: KeyboardEvent): boolean {
     const t = inScope(e);
-    if (t === false) return;
-    const onControl = !!t?.closest?.('button, a, select, [role="button"]');
-    const inside = t !== document.body;
+    if (t === false) return false;
+    if (t?.closest?.('button, a, select, [role="button"]')) return false;
     const selectable = encoding === "map" || encoding === "dwell";
-    if (e.key === "Enter") {
-      if (onControl) return;
-      const need = selNeed !== undefined && selectable ? result.needs.find((n) => n.key === selNeed) : undefined;
-      const row = selRow !== undefined && encoding === "map" ? result.rows.find((r) => r.id === selRow) : undefined;
-      if (need) { e.preventDefault(); openNeed(need); }
-      else if (row && row.known && !row.noRepo) { e.preventDefault(); openRow(row); }
-      return;
-    }
-    if (/^[1-9]$/.test(e.key)) {
-      if (encoding !== "map") return;
-      const row = result.rows[Number(e.key) - 1];
-      if (!row) return;
-      e.preventDefault();
-      selRow = row.id; selNeed = undefined;
-      recompute();
-      if (inside) focusKey("row:" + row.id);
-      return;
-    }
-    if (e.key === "n" || e.key === "N") {
-      if (!selectable) return;
-      const n = nextNeed(visibleNeeds(nowFn()), selNeed, e.key === "n" ? 1 : -1);
-      if (!n) { e.preventDefault(); notify(NO_NEEDS); return; }
-      e.preventDefault();
-      selNeed = n.key; selRow = undefined;
-      recompute();
-      if (inside) focusKey(needNodeKey(n.key));
-      return;
-    }
-    if (e.key === " ") {
-      if (onControl) return;
-      const n = longestWaiting(result.needs);
-      if (!n) { e.preventDefault(); notify(NO_NEEDS); return; }
-      e.preventDefault();
-      openNeed(n);
-    }
+    const need = selNeed !== undefined && selectable ? result.needs.find((n) => n.key === selNeed) : undefined;
+    const row = selRow !== undefined && encoding === "map" ? result.rows.find((r) => r.id === selRow) : undefined;
+    if (need) { e.preventDefault(); openNeed(need); return true; }
+    if (row && row.known && !row.noRepo) { e.preventDefault(); openRow(row); return true; }
+    return false;
   }
+
+  function onPick(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false || encoding !== "map") return false;
+    const row = result.rows[Number(e.key) - 1];
+    if (!row) return false;
+    e.preventDefault();
+    selRow = row.id; selNeed = undefined;
+    recompute();
+    if (t !== document.body) focusKey("row:" + row.id);
+    return true;
+  }
+
+  function onWalk(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false || !(encoding === "map" || encoding === "dwell")) return false;
+    const n = nextNeed(visibleNeeds(nowFn()), selNeed, e.key === "n" ? 1 : -1);
+    e.preventDefault();
+    if (!n) { notify(NO_NEEDS); return true; }
+    selNeed = n.key; selRow = undefined;
+    recompute();
+    if (t !== document.body) focusKey(needNodeKey(n.key));
+    return true;
+  }
+
+  function onJump(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false || t?.closest?.('button, a, select, [role="button"]')) return false;
+    const n = longestWaiting(result.needs);
+    e.preventDefault();
+    if (!n) { notify(NO_NEEDS); return true; }
+    openNeed(n);
+    return true;
+  }
+
+  const fleetKeys = (): KeyBinding[] => {
+    const enabled = (): boolean => active && root.isConnected;
+    // Each predicate mirrors its handler's encoding gate, so the legend lists only live commands.
+    const inMapOrDwell = (): boolean => enabled() && (encoding === "map" || encoding === "dwell");
+    const inMap = (): boolean => enabled() && encoding === "map";
+    return [
+      { scope: "fleet", ...QUEUE_KEYS.open, label: "open the selected session or lane", handler: onEnter, enabled: inMapOrDwell },
+      { scope: "fleet", ...QUEUE_KEYS.pick, label: "select a project row by number", handler: onPick, enabled: inMap },
+      { scope: "fleet", ...QUEUE_KEYS.walk, label: "next / previous need", handler: onWalk, enabled: inMapOrDwell },
+      { scope: "fleet", ...QUEUE_KEYS.jump, label: "open the longest-waiting need", handler: onJump, enabled },
+    ];
+  };
 
   // Capture phase so the claim lands before the shared bubble-phase ascent handler.
   function onEscapeCapture(e: KeyboardEvent): void {
-    if (e.key !== "Escape" || !active || !root.isConnected || !isEscapeEligible(e)) return;
+    if (!LOCAL.fleetClear.matches(e) || !active || !root.isConnected || !isEscapeEligible(e)) return;
     if (selRow === undefined && selNeed === undefined) return;
     selRow = undefined; selNeed = undefined;
     recompute();
@@ -827,7 +849,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         unsubResolver = store.onResolver(() => { if (active) recompute(); });
         // A session named late relabels the lanes in place; nothing is refetched.
         unsubDirectory = deps.directory?.subscribe(() => { if (active && encoding === "lanes") renderLanes(nowFn()); });
-        document.addEventListener("keydown", onDocKey);
+        // One Fleet owns the "fleet" scope at a time; a stale instance is displaced.
+        activeFleetKeys?.();
+        unregisterOwnKeys = activeFleetKeys = registerKeys(fleetKeys());
         document.addEventListener("keydown", onEscapeCapture, true);
         timer = setInterval(() => { void load(true); void loadSessions(true); }, refreshMs);
       }
@@ -843,7 +867,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       unsubResolver = undefined;
       unsubDirectory?.();
       unsubDirectory = undefined;
-      document.removeEventListener("keydown", onDocKey);
+      unregisterOwnKeys?.();
+      unregisterOwnKeys = undefined;
       document.removeEventListener("keydown", onEscapeCapture, true);
       if (timer !== undefined) clearInterval(timer);
       timer = undefined;

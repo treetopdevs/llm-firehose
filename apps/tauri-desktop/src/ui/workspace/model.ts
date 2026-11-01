@@ -1,4 +1,5 @@
 import type { FirehoseEvent, SessionSummary } from "../../api";
+import { SESSION_STATE_MARKS } from "../../glyphs";
 import { workspaceKey, workspaceLabel } from "../../format";
 import { BAND_BUCKETS, bucketCountsBySession, lastReported, stateFresh } from "../../spark";
 
@@ -91,11 +92,11 @@ export function buildMatrix(summaries: readonly SessionSummary[], events: readon
 export function stateGlyph(state: string): string {
   switch (state) {
     case "needs_input":
-      return "?";
+      return SESSION_STATE_MARKS.needs_input;
     case "working":
-      return "●";
+      return SESSION_STATE_MARKS.working;
     case "idle":
-      return "·";
+      return SESSION_STATE_MARKS.idle;
     default:
       return "";
   }

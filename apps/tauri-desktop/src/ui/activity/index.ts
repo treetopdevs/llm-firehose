@@ -11,6 +11,8 @@ import { clampView, stripControl, type View } from "../score/model";
 import { activityGroupLabel, buildTree, colour, findNode, histogram, hottest, layout, rangeTotals, trail, LABEL_H, PAD } from "./model";
 import {errorRange,errorPathKey,renderErrorPaths} from "./errors";
 import type { TreeNode } from "./model";
+import { LOCAL } from "../../keys";
+import { yieldsToModal } from "../../escape";
 
 export type MapWorkspace = { id: string; name: string };
 /** Shell-owned window and worktree: the hosted map has no controls of its own for either. */
@@ -424,7 +426,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
         };
         g.addEventListener("click", zoomIn);
         g.addEventListener("keydown", (e) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (LOCAL.mapDir.matches(e)) {
             e.preventDefault();
             zoomIn();
           }
@@ -483,8 +485,9 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
     strip.append(axis);
 
     strip.addEventListener("keydown", (e) => {
+      if (!LOCAL.mapStrip.matches(e) && !LOCAL.mapStripReset.matches(e)) return;
       if (hosted) {
-        if (e.key === "Escape") {
+        if (LOCAL.mapStripReset.matches(e)) {
           if (!brush && !drag) return;
           claim(e);
           cancelDrag();
@@ -512,7 +515,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
       else if (e.key === "ArrowRight") next = [Math.min(r.buckets - w, x + 1), Math.min(r.buckets - w, x + 1) + w];
       else if (e.key === "Home") next = [0, w];
       else if (e.key === "End") next = [r.buckets - w, r.buckets];
-      else if (e.key === "Escape") next = [0, r.buckets];
+      else if (LOCAL.mapStripReset.matches(e)) next = [0, r.buckets];
       if (!next) return;
       e.preventDefault();
       setRange(r, next[0], next[1]);
@@ -566,7 +569,8 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
         host!.onWindow({ from: v.from, to: v.to });
       };
       const esc = (ev: KeyboardEvent) => {
-        if (ev.key !== "Escape") return;
+        if (!LOCAL.mapStripReset.matches(ev)) return;
+        if (yieldsToModal(ev, strip)) return;
         claim(ev);
         abandon();
       };

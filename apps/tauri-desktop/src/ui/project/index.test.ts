@@ -8,6 +8,7 @@ import { shortId } from "../../format";
 import { FIXTURE_ROWS, NOW, iso, row } from "./model.fixtures";
 import { layoutLanes, orderLanes, resolveWindow, xToTime } from "./model";
 import { isEscapeClaimed } from "../../escape";
+import { __resetKeysForTests, listKeys, registerKeys } from "../../keys";
 import { createProject } from "./index";
 import type { ProjectPanel } from "./index";
 
@@ -54,11 +55,13 @@ function setup(goImpl?: (store: ScopeStore, getPanel: () => ProjectPanel) => (n:
 }
 
 beforeEach(() => {
+  __resetKeysForTests();
   worktreesMock.mockReset().mockImplementation(() => Promise.resolve(FIXTURE_ROWS));
   worktreeMock.mockReset().mockImplementation((id: string) => Promise.resolve(detail(id)));
 });
 afterEach(() => {
   for (const p of panels.splice(0)) p.deactivate();
+  __resetKeysForTests();
   document.body.replaceChildren();
   vi.useRealTimers();
   for (const s of spies.splice(0)) s.mockRestore();
@@ -670,6 +673,26 @@ describe("interaction", () => {
       expect(key("2").defaultPrevented).toBe(false);
     });
 
+    test("when the shared dispatcher already exists Project adds and removes one capture listener", async () => {
+      registerKeys([{ scope: "global", keys: ["F9"], display: "F9", label: "other", handler: () => {} }]);
+      const add = vi.spyOn(document, "addEventListener");
+      const remove = vi.spyOn(document, "removeEventListener");
+      spies.push(add, remove);
+      const { panel } = await ready();
+      expect(add.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+      panel.deactivate();
+      expect(remove.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+    });
+
+    test("Project keys are listed while the lanes encoding is active", async () => {
+      const { panel, q } = await ready();
+      document.body.append(panel.root);
+      expect(listKeys().filter((r) => r.scope === "project").map((r) => r.display)).toEqual(["Enter", "1–9", "↑ / ↓"]);
+      expect(q(".project-chip")).toHaveLength(0); // no graph here, so no other encoding to switch to (see main.test.ts)
+      panel.deactivate();
+      expect(listKeys().filter((r) => r.scope === "project")).toEqual([]);
+    });
+
     test("a second panel does not react after the first is deactivated", async () => {
       const a = await ready();
       a.panel.deactivate();
@@ -1130,5 +1153,63 @@ describe("picker names and idle semantics", () => {
     expect(mark[0]!.getAttribute("aria-label")).toBe("idle");
     expect(mark[0]!.querySelector("title")!.textContent).toBe("idle: ahead of the default branch and quiet for hours");
     expect(q(".project-lane.idle")[0]!.getAttribute("aria-label")!.endsWith(", idle")).toBe(true);
+  });
+});
+
+describe("beads are keyboard operable", () => {
+  const press = (target: Element, k: string): KeyboardEvent => {
+    const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  };
+
+  test("each bead is a focusable button naming its session and the lane state", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const beads = q(".project-bead");
+    expect(beads.length).toBeGreaterThan(0);
+    for (const b of beads) {
+      expect(b.getAttribute("tabindex")).toBe("0");
+      expect(b.getAttribute("role")).toBe("button");
+      const lane = b.closest(".project-lane")!;
+      const state = [...lane.classList].find((c) => c.startsWith("state-"))!.slice("state-".length);
+      expect(b.getAttribute("aria-label")).toContain(shortId(b.getAttribute("data-session")!));
+      expect(b.getAttribute("aria-label")).toContain(state);
+    }
+  });
+
+  test.each(["Enter", " "])("%j on a bead goes to score once and never to sessions", async (k) => {
+    const { store, panel, q, go } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const bead = q(".project-bead[data-session=s-o1]")[0]!;
+    bead.focus();
+    expect(press(bead, k).defaultPrevented).toBe(true);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith("score", { project: "repoA", worktree: "wt-open", session: { id: "s-o1", source: "codex" }, cell: undefined });
+    expect(go.mock.calls.some((c) => c[0] === "sessions")).toBe(false);
+  });
+
+  test("a focused bead keeps focus across a redraw (the same bead, rebuilt)", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const bead = q(".project-bead[data-session=s-o1]")[0]!;
+    bead.focus();
+    expect(document.activeElement).toBe(bead);
+    await panel.refresh();
+    const fresh = q(".project-bead[data-session=s-o1]")[0]!;
+    expect(fresh).not.toBe(bead);
+    expect(document.activeElement).toBe(fresh);
+  });
+
+  test("Enter on the lane itself still goes to sessions once", async () => {
+    const { store, panel, q, go } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    press(q(".project-lane[data-key=wt-open]")[0]!, "Enter");
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith("sessions", { project: "repoA", worktree: "wt-open", cell: undefined });
   });
 });

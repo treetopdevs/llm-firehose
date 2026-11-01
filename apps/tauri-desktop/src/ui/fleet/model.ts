@@ -5,6 +5,7 @@
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
 import { idLabel, sessionName } from "../../format";
+import { FORK_GLYPH, IDLE_MARK } from "../../glyphs";
 import { isFailure, needYouCount } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
 import { IDLE_AFTER_MS, isIdleWorker, orderLanes } from "../project/model";
@@ -13,9 +14,8 @@ export type Encoding = "map" | "dwell" | "matrix" | "lanes" | "airspace";
 export const ENCODINGS: readonly Encoding[] = ["map", "dwell", "matrix", "lanes", "airspace"];
 
 /** One glyph per worktree state; Project and Fleet share the vocabulary. */
-export const FORK_GLYPH: Record<WorktreeState, string> = { open: "●", landed: "✓", gone: "×", never_diverged: "·", unknown: "?" };
+export { FORK_GLYPH, IDLE_MARK };
 /** Appended to an open fork that is ahead of main with nothing recent. */
-export const IDLE_MARK = "…";
 /** Row id for sessions waiting on you that carry no repo_id. */
 export const NOREPO_KEY = "__no_repo__";
 

@@ -35,6 +35,8 @@ import { liveSpanOf, membership, scope, selectSession } from "./scope";
 import { createTransport } from "./transport";
 import type { Scope, ScopePatch, SessionRef } from "./scope";
 import { createEscapeHandler } from "./escape";
+import { QUEUE_KEYS, registerKeys } from "./keys";
+import { toggleLegend, openLegend } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
 import { createSessionDirectory } from "./session-directory";
 
@@ -70,7 +72,7 @@ function openLoops(id: string, source?: string) {
 
 // The one place sessions are named: /sessions and /attention feed it, the lens head and crumb read it.
 const sessionDirectory = createSessionDirectory(() => sessions());
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory);
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref));
 
 // Opening a session from elsewhere keeps the project/worktree parents only
 // when the graph resolver says the session belongs to them; otherwise the
@@ -287,34 +289,44 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
 }
 
 const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "session", "project", "fleet"]);
-document.addEventListener(
-  "keydown",
-  createEscapeHandler({
-    store: scope,
-    // Only the Score and Loops tabs are scope lenses; the notebook tabs own Escape.
-    activePanel: () => (active === "session" && !sessionPanel.escapes() ? "session-nonscope" : active),
-    scopePanels: SCOPE_PANELS,
-    afterAscend: (alt, from) => {
-      if (from === "session" && alt !== "session") show("sessions");
-      else if (from === "sessions" && sessionsViaFleet && alt === "project") show("project");
-      else if (from === "sessions" && sessionsViaFleet && alt === "fleet") {
-        sessionsViaFleet = false;
-        show(repoCount > 1 ? "fleet" : "live");
-      } else if (from === "sessions") void sessionsPanel.refresh();
-      else if (from === "project" && alt === "fleet") {
-        sessionsViaFleet = false;
-        show(repoCount > 1 ? "fleet" : "live");
-      }
-    },
-  }),
-);
-
-// A row click is a context-narrowing action: it records the session in scope.
-sessionsPanel.root.addEventListener("click", (e) => {
-  const item = (e.target as Element | null)?.closest?.<HTMLElement>(".session-item");
-  const id = item?.dataset.id;
-  if (id) selectSession(scope, refOf(id, item?.dataset.source));
+const ascendOnEscape = createEscapeHandler({
+  store: scope,
+  // Only the Score and Loops tabs are scope lenses; the notebook tabs own Escape.
+  activePanel: () => (active === "session" && !sessionPanel.escapes() ? "session-nonscope" : active),
+  scopePanels: SCOPE_PANELS,
+  afterAscend: (alt, from) => {
+    if (from === "session" && alt !== "session") show("sessions");
+    else if (from === "sessions" && sessionsViaFleet && alt === "project") show("project");
+    else if (from === "sessions" && sessionsViaFleet && alt === "fleet") {
+      sessionsViaFleet = false;
+      show(repoCount > 1 ? "fleet" : "live");
+    } else if (from === "sessions") void sessionsPanel.refresh();
+    else if (from === "project" && alt === "fleet") {
+      sessionsViaFleet = false;
+      show(repoCount > 1 ? "fleet" : "live");
+    }
+  },
 });
+registerKeys([
+  {
+    scope: "global",
+    ...QUEUE_KEYS.escape,
+    label: "go up one level (clear a selection, then leave the view)",
+    modifiers: "any",
+    handler: (e) => {
+      ascendOnEscape(e);
+    },
+  },
+  {
+    scope: "global",
+    ...QUEUE_KEYS.legend,
+    label: "show keys and symbols",
+    enabled: () => app.isConnected,
+    handler: () => {
+      toggleLegend({ opener: document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : undefined, fallbackFocus: legendBtn });
+    },
+  },
+]);
 
 const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT", el("br"), "FIREHOSE"));
 for (const [heading, names] of NAV_GROUPS) {
@@ -331,7 +343,11 @@ for (const [heading, names] of NAV_GROUPS) {
 }
 
 const crumb = createBreadcrumb(scope, { directory: sessionDirectory });
-const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount);
+const legendBtn = el("button", { type: "button", class: "legend-btn", "aria-haspopup": "dialog" }, "Keys and symbols");
+legendBtn.addEventListener("click", () => {
+  openLegend({ opener: legendBtn, fallbackFocus: legendBtn });
+});
+const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount, legendBtn);
 app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
 
 // --- live data -------------------------------------------------------------
