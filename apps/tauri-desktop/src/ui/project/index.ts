@@ -10,6 +10,10 @@ import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
 import type { LaneGeom, TimeRange } from "./model";
+import type { ActionsUi } from "../actions";
+import { actionsForRepo, actionsForSession, actionsForWorktree } from "../actions/model";
+import type { UnitAction } from "../actions/model";
+import type { Roots } from "../actions/roots";
 
 export interface ProjectApi {
   worktrees(signal?: AbortSignal): Promise<WorktreeLifetimeView[]>;
@@ -28,6 +32,10 @@ export interface ProjectDeps {
   projectLabel?(id: string): string | undefined;
   now?: () => number;
   refreshMs?: number;
+  /** The app-owned actions controller; without it the view offers no actions. */
+  actions?: ActionsUi;
+  /** The app-owned repo-roots store (graph resolver raw labels). */
+  roots?: Roots;
 }
 
 export interface ProjectPanel {
@@ -111,10 +119,13 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   const statusBox = el("div", { class: "project-status", role: "status" });
   const chart = el("div", { class: "project-chart" });
   const hint = el("p", { class: "project-hint" }, "Click a lane to open its sessions, a bead to open its score. Arrow keys or 1-9 pick a lane, Enter opens it. Drag on the time axis to set the window.");
+  const actionsBtn = deps.actions
+    ? el("button", { class: "unit-actions", type: "button", "aria-haspopup": "menu", title: "Repository actions" }, "Actions")
+    : null;
   const root = el(
     "section",
     { class: "project", "aria-label": "Project" },
-    el("header", { class: "project-header" }, el("h2", {}, "Project"), select, liveBtn, windowLine),
+    el("header", { class: "project-header" }, el("h2", {}, "Project"), select, liveBtn, windowLine, actionsBtn),
     statusBox,
     chart,
     hint,
@@ -175,6 +186,61 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (select.value) store.narrow({ project: select.value, cell: undefined });
   });
   liveBtn.addEventListener("click", () => store.narrow({ window: "live" }));
+
+  // ---- actions ----------------------------------------------------------
+
+  /** Actions are built only from the last successful GET /worktrees and the roots store. */
+  function repoActions(repoId: string): UnitAction[] {
+    const { roots } = deps;
+    return actionsForRepo({
+      repoId,
+      rawLabel: roots?.rawLabel(repoId),
+      registered: roots ? !roots.loaded() || roots.resolved(repoId) : true,
+      forks: rows.filter((r) => r.repo_id === repoId),
+    });
+  }
+
+  function actionsOfUnit(u: Element): UnitAction[] {
+    const d = (u as HTMLElement).dataset;
+    if (d.unit === "lane") {
+      const view = rows.find((r) => r.repo_id === d.repo && r.worktree_id === d.wt);
+      return view ? actionsForWorktree(view) : [];
+    }
+    if (d.unit === "bead") return actionsForSession({ source: d.source, id: d.session });
+    return [];
+  }
+
+  chart.addEventListener("contextmenu", (e) => {
+    const ui = deps.actions;
+    const t = e.target as Element | null;
+    if (!ui || !t || typeof t.closest !== "function") return;
+    const u = t.closest("[data-unit]");
+    if (!u || !chart.contains(u)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ui.openMenu(actionsOfUnit(u), { x: e.clientX, y: e.clientY }, { returnFocus: u.closest<HTMLElement>(".project-lane") });
+  });
+
+  actionsBtn?.addEventListener("click", () => {
+    const repo = pickedRepo();
+    if (repo === undefined) return;
+    deps.actions?.openMenu(repoActions(repo), actionsBtn, { returnFocus: actionsBtn });
+  });
+
+  function onActionKey(e: KeyboardEvent, t: Element | null): void {
+    const ui = deps.actions;
+    if (!ui || e.repeat) return;
+    const repo = pickedRepo();
+    const laneEl = t?.closest?.<SVGElement>(".project-lane[data-wt]") ?? null;
+    const id = laneEl?.getAttribute("data-wt") ?? selection();
+    if (repo === undefined || id === undefined || id === null) return;
+    const view = rows.find((r) => r.repo_id === repo && r.worktree_id === id);
+    const node = laneEl ?? [...chart.querySelectorAll<SVGElement>(".project-lane[data-wt]")].find((n) => n.getAttribute("data-wt") === id) ?? null;
+    if (!node) return;
+    e.preventDefault();
+    const r = node.getBoundingClientRect();
+    ui.openMenu(view ? actionsForWorktree(view) : [], { x: r.left, y: r.bottom }, { returnFocus: node as unknown as HTMLElement });
+  }
 
   function pickedRepo(): string | undefined {
     return pickRepo(rows, store.get().project);
@@ -238,7 +304,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (l.end === "hatched") cls.push("hatched");
     if (selected) cls.push("selected");
     if (l.idle) cls.push("idle");
-    const g = svg("g", { class: cls.join(" "), "data-key": l.id, tabindex: 0, role: "button", "aria-label": l.ariaLabel }, svg("title", {}, l.tooltip));
+    const g = svg("g", { class: cls.join(" "), "data-key": l.id, "data-unit": "lane", "data-repo": repoId, "data-wt": l.id, tabindex: 0, role: "button", "aria-label": l.ariaLabel }, svg("title", {}, l.tooltip));
     g.append(svg("rect", { class: "project-hit", x: 0, y: y - ROW_H / 2, width: VIEW_W, height: ROW_H, fill: "transparent" }));
     g.append(svg("text", { class: "project-label", x: LABEL_X, y: y + 4, "font-size": 11, fill: "currentColor" }, shortLabel(l.label)));
     const stroke = { stroke: "currentColor", fill: "none" };
@@ -268,7 +334,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       g.append(svg("text", { class: "project-outcome", x: l.endX + 10, y: y + 4, "font-size": 10, fill: "currentColor" }, outcomeText(l.outcome)));
     }
     for (const b of l.beads) {
-      const bead = svg("rect", { class: "project-bead", x: b.x, y: y - 5, width: b.w, height: 10, rx: 2, "data-session": b.session, "data-source": b.source, fill: "currentColor" });
+      const bead = svg("rect", { class: "project-bead", "data-unit": "bead", "data-repo": repoId, "data-wt": l.id, x: b.x, y: y - 5, width: b.w, height: 10, rx: 2, "data-session": b.session, "data-source": b.source, fill: "currentColor" });
       bead.addEventListener("click", (e) => {
         e.stopPropagation();
         if (consumeSuppress()) return;
@@ -458,7 +524,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   }
 
   function onBrushDown(e: MouseEvent): void {
-    if (!active || e.button !== 0 || drag) return;
+    if (!active || e.button !== 0 || e.ctrlKey || drag) return;
     const t = e.target as Element | null;
     if (t?.closest?.(".project-bead")) return;
     const x = plotX(e.clientX);
@@ -521,6 +587,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (!isEscapeEligible(e)) return;
     const t = e.target as Element | null;
     if (t !== document.body && !(t && typeof t.closest === "function" && root.contains(t))) return;
+    if (e.key === "." || e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      onActionKey(e, t);
+      return;
+    }
     if (e.key === "Enter") {
       if (t?.closest?.('button, a, select, [role="button"]')) return;
       const id = selection();

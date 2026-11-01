@@ -1109,3 +1109,23 @@ span.agent-dot.big { width: 14px; height: 14px; }
 @media (prefers-reduced-motion: reduce) {
   .fleet .changed { animation: none; }
 }
+
+/* actions controller (menu, prune dialog, toast) */
+.actions-host { position: static; }
+.action-menu { position: fixed; z-index: 60; min-width: 200px; display: flex; flex-direction: column; gap: 2px; padding: 4px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); }
+.action-menu > button { text-align: left; border: 0; background: transparent; color: var(--text); font: inherit; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+.action-menu > button:hover, .action-menu > button:focus-visible { background: var(--bg-hover); outline: 1px solid var(--accent); }
+.action-dialog { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); }
+.action-dialog-card { max-width: min(640px, 90vw); max-height: 85vh; overflow: auto; padding: 16px 18px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; }
+.action-dialog-card h2 { margin: 0 0 8px; font-size: 14px; }
+.action-dialog-entries { margin: 8px 0; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; white-space: pre-wrap; word-break: break-all; max-height: 30vh; overflow: auto; }
+.action-dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.action-dialog-buttons button { font: inherit; color: var(--text); background: var(--bg-hover); border: 1px solid var(--border); border-radius: 4px; padding: 5px 12px; cursor: pointer; }
+.action-dialog-ok { border-color: var(--err); }
+.action-dialog-buttons button:focus-visible { outline: 1px solid var(--accent); }
+.action-toast { position: fixed; z-index: 80; right: 16px; bottom: 36px; max-width: min(520px, 80vw); padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); font-size: 12px; }
+.action-toast:empty { display: none; }
+.action-toast.ok { color: var(--ok); }
+.action-toast.warn { color: var(--warn); }
+.action-toast.error { color: var(--err); border-color: var(--err); }
+.action-toast.info { color: var(--text-dim); }
