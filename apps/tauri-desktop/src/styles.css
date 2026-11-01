@@ -1109,3 +1109,17 @@ span.agent-dot.big { width: 14px; height: 14px; }
 @media (prefers-reduced-motion: reduce) {
   .fleet .changed { animation: none; }
 }
+
+/* Session altitude: six lenses as tabs over one session. */
+.session-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0.4rem; }
+.session-title { margin: 0; font-size: 1rem; }
+.session-tabs { display: inline-flex; align-self: flex-start; margin-left: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.session-tabs button { border: 0; border-radius: 0; background: transparent; color: var(--text-dim); padding: 7px 16px; cursor: pointer; }
+.session-tabs button + button { border-left: 1px solid var(--border); }
+.session-tabs button[aria-selected="true"] { background: rgba(255, 106, 0, 0.14); color: var(--text); }
+.session-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.session-panel [role="tabpanel"] { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0.4rem; overflow: auto; }
+.session-panel [role="tabpanel"][hidden] { display: none; }
+.session-lens-head { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; }
+.session-lens-head button { border: 1px solid var(--border); border-radius: 999px; background: transparent; color: inherit; padding: 1px 10px; cursor: pointer; font-size: 0.75rem; }
+.session-lens-head button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

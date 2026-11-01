@@ -954,19 +954,19 @@ describe("score scope integration", () => {
   const defer = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
   const win = (st: ReturnType<typeof createScope>) => st.get().window;
 
-  test("a successful open publishes the full bounds; zoom and fit publish the drawn view", async () => {
+  test("a successful open leaves the window live; zoom and fit publish the drawn view", async () => {
     const store = createScope();
     store.narrow({ session: { id: SID, source: "claude-code" } });
     const panel = createScore(() => {}, store);
     document.body.append(panel.root);
     await panel.open(SID, "claude-code");
     const all = buildScore(session);
-    expect(win(store)).toEqual({ from: all.start, to: all.end });
+    expect(win(store)).toBe("live"); // a load never publishes
     button(panel.root, "zoom in").click();
     const w = win(store) as { from: number; to: number };
     expect(w.to - w.from).toBeLessThan(all.end - all.start);
     button(panel.root, "fit").click();
-    expect(win(store)).toEqual({ from: all.start, to: all.end });
+    expect(win(store)).toBe("live"); // the whole session is published as 'live', not as bounds
   });
 
   test("F2: different source in flight is not deduped, the first result is discarded, only the second publishes", async () => {
@@ -984,7 +984,7 @@ describe("score scope integration", () => {
     expect(win(store)).toBe("live");
     b.resolve(session.map((e) => ({ ...e, source: "opencode" }))); await p2;
     expect(panel.loadedSession()).toEqual({ id: SID, source: "opencode" });
-    expect(win(store)).not.toBe("live");
+    expect(win(store)).toBe("live"); // loads no longer publish
   });
 
   test("undefined source and explicit source are different keys; the same key in flight dedups; retry after failure refetches", async () => {
@@ -1045,11 +1045,16 @@ describe("score scope integration", () => {
     late.resolve(session); await p;
     expect(store.get().window).toBe("live");
     panel.activate();
-    await vi.waitFor(() => expect(store.get().window).not.toBe("live"));
+    await vi.waitFor(() => expect(panel.loadedSession()).toEqual({ id: SID, source: "claude-code" }));
+    button(panel.root, "zoom in").click();
+    expect(store.get().window).not.toBe("live"); // activate re-enables publishing
     store.narrow({ window: "live" });
     panel.deactivate();
+    button(panel.root, "zoom in").click();
+    expect(store.get().window).toBe("live"); // departed: no write
     await panel.open(SID, "claude-code");
-    expect(store.get().window).not.toBe("live");
+    button(panel.root, "zoom in").click();
+    expect(store.get().window).not.toBe("live"); // open re-enables it
   });
 
   test("activate opens scope.session when it differs, no-ops when equal, keeps the cache when unset", async () => {
@@ -1085,5 +1090,192 @@ describe("score scope integration", () => {
     const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     panel.root.dispatchEvent(e);
     expect(e.defaultPrevented).toBe(false);
+  });
+});
+
+describe("score reads scope.window", () => {
+  const view = (root: HTMLElement) => root.querySelector(".score-overview .score-view")!;
+  const viewW = (root: HTMLElement) => Number(view(root).getAttribute("width"));
+  const END = buildScore(session).end;
+  const mount = async (win?: { from: number; to: number }) => {
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "claude-code" } });
+    if (win) store.narrow({ window: win });
+    const narrow = vi.spyOn(store, "narrow");
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    await panel.open(SID, "claude-code");
+    return { store, panel, narrow };
+  };
+  const full = async () => { const m = await mount(); return viewW(m.panel.root); };
+
+  test("an explicit scope.window for the same session is the view after load", async () => {
+    const w = { from: START + 1000, to: START + 5000 };
+    const { store, panel, narrow } = await mount(w);
+    expect(viewW(panel.root)).toBeLessThan(await full());
+    expect(store.get().window).toEqual(w);
+    expect(narrow).not.toHaveBeenCalled();
+  });
+
+  test("window store changes move the view with no refetch", async () => {
+    const { store, panel, narrow } = await mount();
+    const whole = viewW(panel.root);
+    sessionEvents.mockClear();
+    const a = { from: START + 2000, to: START + 4000 };
+    store.narrow({ window: a });
+    expect(narrow).toHaveBeenCalledTimes(1); // only my call: Score wrote nothing
+    const w1 = viewW(panel.root);
+    expect(w1).toBeLessThan(whole);
+    expect(sessionEvents).not.toHaveBeenCalled();
+    const b = { from: START, to: START + 60000 };
+    store.narrow({ window: b });
+    expect(viewW(panel.root)).toBeGreaterThan(w1);
+    expect(store.get().window).toEqual(b);
+    expect(narrow).toHaveBeenCalledTimes(2);
+    expect(sessionEvents).not.toHaveBeenCalled();
+  });
+
+  test("disjoint window is preserved; partial overlap draws the clamped viewport", async () => {
+    const w = { from: END + 60_000, to: END + 120_000 };
+    const { store, panel, narrow } = await mount(w);
+    expect(panel.root.textContent).toContain("window outside this session's span");
+    const vw = viewW(panel.root);
+    expect(vw).toBeGreaterThan(0);
+    expect(vw).toBeLessThanOrEqual(await full() + 0.001);
+    expect(store.get().window).toEqual(w);
+    expect(narrow).not.toHaveBeenCalled();
+
+    const p = { from: END - 20_000, to: END + 60_000 };
+    store.narrow({ window: p });
+    expect(store.get().window).toEqual(p);
+    expect(narrow).toHaveBeenCalledTimes(1); // only my call
+    expect(panel.root.textContent).not.toContain("window outside this session's span");
+  });
+
+  test("full-bounds view publishes 'live'; a late event extends the whole-session view on refetch", async () => {
+    const { store, panel } = await mount({ from: START + 1000, to: START + 5000 });
+    button(panel.root, "fit").click();
+    expect(store.get().window).toBe("live");
+    const last = session[session.length - 1];
+    const late = { ...last, id: "late-event", time: new Date(END + 120_000).toISOString() };
+    const whole = viewW(panel.root);
+    sessionEvents.mockResolvedValue([...session, late]);
+    panel.activate();
+    await vi.waitFor(() => expect(panel.root.textContent).toContain("102 events"));
+    expect(viewW(panel.root)).toBeGreaterThanOrEqual(whole - 1);
+    expect(store.get().window).toBe("live");
+  });
+
+  test("window returning to live resets the view to bounds with no fetch", async () => {
+    const { store, panel } = await mount();
+    const whole = viewW(panel.root);
+    button(panel.root, "zoom in").click();
+    expect(viewW(panel.root)).toBeLessThan(whole);
+    sessionEvents.mockClear();
+    store.narrow({ window: "live" });
+    expect(viewW(panel.root)).toBeCloseTo(whole, 3);
+    expect(sessionEvents).not.toHaveBeenCalled();
+    expect(store.get().window).toBe("live");
+  });
+
+  test("a departed Score ignores window changes; followWindow() re-syncs", async () => {
+    const { store, panel } = await mount();
+    const whole = viewW(panel.root);
+    panel.deactivate();
+    store.narrow({ window: { from: START + 2000, to: START + 4000 } });
+    expect(viewW(panel.root)).toBeCloseTo(whole, 3);
+    panel.followWindow();
+    expect(viewW(panel.root)).toBeLessThan(whole);
+  });
+
+  test("window/session change for another session is ignored", async () => {
+    const { store, panel } = await mount();
+    const whole = viewW(panel.root);
+    store.narrow({ session: { id: "other" } });
+    store.narrow({ window: { from: START + 2000, to: START + 4000 } });
+    expect(viewW(panel.root)).toBeCloseTo(whole, 3);
+  });
+
+  test("activate() with the same session refetches and keeps the selected window", async () => {
+    const w = { from: START + 1000, to: START + 5000 };
+    const { store, panel } = await mount(w);
+    const last = session[session.length - 1];
+    sessionEvents.mockResolvedValue([...session, { ...last, id: "more-1", time: new Date(START + 3000).toISOString() }]);
+    panel.activate();
+    await vi.waitFor(() => expect(panel.root.textContent).toContain("102 events"));
+    expect(store.get().window).toEqual(w);
+    expect(viewW(panel.root)).toBeLessThan(await full());
+  });
+});
+
+describe("score playback and hosted-empty (review findings 1 and 4)", () => {
+  const wnd = { from: START + 20_000, to: START + 40_000 };
+  const mountScoped = async () => {
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "claude-code" } });
+    store.narrow({ window: wnd });
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    await panel.open(SID, "claude-code");
+    return { store, panel };
+  };
+
+  test("F1: Play after load/reactivation starts inside the preserved window and never rewrites it", async () => {
+    const { store, panel } = await mountScoped();
+    expect(panel.playhead()).toBeGreaterThanOrEqual(wnd.from);
+    expect(panel.playhead()).toBeLessThanOrEqual(wnd.to);
+    button(panel.root, "play").click();
+    panel.tick(100);
+    expect(store.get().window).toEqual(wnd);
+    panel.deactivate();
+    panel.activate(); // switch-away-and-back: refetch keeps the window
+    await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(panel.playhead()).toBeGreaterThanOrEqual(wnd.from);
+    expect(panel.playhead()).toBeLessThanOrEqual(wnd.to);
+    button(panel.root, "play").click();
+    panel.tick(100);
+    expect(store.get().window).toEqual(wnd);
+  });
+
+  test("F4: a loaded Score shows the empty state once the hosted context is empty", async () => {
+    const { store, panel } = await mountScoped();
+    store.narrow({ session: undefined });
+    panel.showEmpty();
+    expect(panel.loadedSession()).toBeNull();
+    expect(panel.root.textContent).toContain("open a session");
+    expect(panel.root.querySelector(".score-playhead")).toBeNull();
+    button(panel.root, "play").click();
+    panel.tick(100);
+    expect(panel.root.querySelector(".score-playhead")).toBeNull();
+    expect(store.get().window).toBe("live");
+  });
+
+  test("F4: a load pending when the context empties cannot populate it", async () => {
+    const store = createScope();
+    store.narrow({ session: { id: SID, source: "claude-code" } });
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    let resolve!: (v: FirehoseEvent[]) => void;
+    sessionEvents.mockReturnValueOnce(new Promise<FirehoseEvent[]>((r) => (resolve = r)));
+    const p = panel.open(SID, "claude-code");
+    store.narrow({ session: undefined });
+    panel.showEmpty();
+    resolve(session); await p;
+    expect(panel.loadedSession()).toBeNull();
+    expect(panel.root.textContent).toContain("open a session");
+  });
+});
+
+describe("score activate without a session", () => {
+  test("shows the empty state and does not fetch", () => {
+    const store = createScope();
+    const panel = createScore(() => {}, store);
+    document.body.append(panel.root);
+    sessionEvents.mockClear();
+    panel.followWindow();
+    panel.activate();
+    expect(panel.root.textContent).toContain("open a session");
+    expect(sessionEvents).not.toHaveBeenCalled();
   });
 });
