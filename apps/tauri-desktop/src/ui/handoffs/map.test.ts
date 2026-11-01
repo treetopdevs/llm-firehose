@@ -36,3 +36,13 @@ test("names session lanes and station labels but never renames event ids", () =>
     expect(labels.some(l => l!.includes('from-other'))).toBe(true);
     expect([...root.querySelectorAll('button')].map(b => b.textContent)).toContain('from-0');
 });
+test('series colours are tokens declared on :root', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { parseTokens } = await import('../../tokens-helpers');
+    const declared = Object.keys(parseTokens(readFileSync("src/styles.css", 'utf8')).base);
+    const root = renderHandoffMap(links, vi.fn());
+    const used = [...root.innerHTML.matchAll(/var\(\s*(--[\w-]+)/g)].map(m => m[1]);
+    expect(used.length).toBeGreaterThan(0);
+    expect(used.filter(n => !declared.includes(n))).toEqual([]);
+    expect(root.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+});

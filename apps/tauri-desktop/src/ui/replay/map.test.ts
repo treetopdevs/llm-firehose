@@ -21,3 +21,12 @@ test("the observation label names the session but keeps the event id", () => {
     const bare = renderReplayMap([e], undefined, [], vi.fn());
     expect(bare.querySelector("button")!.getAttribute("aria-label")).toBe("Captured observation codex / 2385e3bc-1111 / ev-1");
 });
+test('replay styles reference only tokens declared on :root, no hex',async()=>{
+ const {readFileSync}=await import("node:fs");const {parseTokens}=await import("../../tokens-helpers");
+ const declared=Object.keys(parseTokens(readFileSync("src/styles.css","utf8")).base);
+ const root=renderReplayMap(events,'30',['a'],()=>{});
+ const used=[...root.innerHTML.matchAll(/var\(\s*(--[\w-]+)/g)].map(m=>m[1]);
+ expect(used).toEqual(expect.arrayContaining(['--observed','--replay-alt','--replay-alt-bg']));
+ expect(used.filter(n=>!declared.includes(n))).toEqual([]);
+ expect(root.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+});
