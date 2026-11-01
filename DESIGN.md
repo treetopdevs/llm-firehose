@@ -34,12 +34,15 @@ typography:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "13px"
     fontWeight: 400
-    lineHeight: 1.4
   title:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "1rem"
-    fontWeight: 600
+    fontWeight: 700
   subtitle:
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    fontSize: "15px"
+    fontWeight: 600
+  section:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "0.9rem"
     fontWeight: 400
@@ -167,14 +170,14 @@ This system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI t
 - One accent (ember) at well under 10% of any screen; state hues each carry one meaning and always sit next to a word.
 - Density first: 12px and 11px are the working sizes, 13px is body, 1rem is a title.
 - Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.
-- Keyboard parity is a requirement, not a feature: every clickable row has a focus-visible treatment or a 2px ember outline.
+- Keyboard parity is a requirement, not a feature: every clickable row must have a keyboard path and a focus-visible treatment (today five SVG rows and the session and feed openers still fall short; see the inventory).
 
 ## 2. Colors
 
 A near-black ink with a cool grey cast, two steps of slate for panels and hover, paper-white text in two strengths, and a single hot ember accent; four state hues complete the vocabulary.
 
 ### Primary
-- **Ember** (`#ff6a00`): the brand mark in the sidebar, the active nav item, pressed presets and Live on the transport, the selected fleet row's outline, the open span on a lane, the current repository's border, every focus ring. It is the only colour that means "you are here" or "this is active". Used as a 14% wash (`#ff6a0024`) behind the selected session tab.
+- **Ember** (`#ff6a00`): the brand mark in the sidebar, the active nav item, pressed presets and Live on the transport, the selected fleet row's outline, the open span on a lane, the current repository's border, and the shell's focus rings (the graph rings in teal and Loops in `currentColor`, both debt). It is the only colour that means "you are here" or "this is active". Used as a 14% wash (`#ff6a0024`) behind the selected session tab.
 
 ### Secondary
 - **Needs-you Amber** (`#ff9f43`): the "needs you" badge (black text on amber), bold lane labels and ticks for sessions waiting on the operator, the strip count. Warmer and lighter than Ember so the two read as kin: Ember is where you are, Amber is where you should go. Today it is a bare literal in eleven places; it should become a token.
@@ -212,7 +215,7 @@ Defined on `.workspace-graph` only and not visible elsewhere. **Graph Abyss** (`
 **Character:** A terminal that learned to align. Everything is set in the platform's monospace at 13px, so identifiers, paths, clocks and prose share one rhythm and columns line up without a table. Weight (400 against 600 and 700) and dimming do the work that size does elsewhere.
 
 ### Hierarchy
-- **Title** (600, 1rem, default line height): panel headings (`h2`) such as "Project" and the session title; the largest text in the shell apart from the onboarding sheet's 20px heading.
+- **Title** (700 by browser default, 1rem): panel headings (`h2`) such as "Project"; the Session altitude title is the same size at 600. The largest text in the shell apart from the onboarding sheet's 20px heading.
 - **Subtitle** (600, 15px): the session heading inside the Sessions list.
 - **Section** (400, 0.9rem, paper-dim): `h3` inside content panels; dimmed rather than enlarged.
 - **Body** (400, 13px): rows, cells, controls, detail text. Prose blocks in attention rows run at 1.5 line height and are capped by the inbox's 1100px column; keep paragraphs under 75ch where layout allows.
