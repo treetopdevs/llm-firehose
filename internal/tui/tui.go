@@ -60,6 +60,7 @@ type altitude int
 const (
 	altSession altitude = iota
 	altWorkspace
+	altWorktree
 )
 
 // cellScope narrows the session altitude to one workspace × agent cell.
@@ -115,6 +116,20 @@ type Model struct {
 	scope     *cellScope
 	cellIdx   int // selected cell at the workspace altitude, reading order
 	now       func() time.Time
+
+	// Worktree rung: the list altitude between workspace and session.
+	wsrc          WorktreeSource
+	worktrees     []WorktreeRow
+	wtKnown       bool
+	wtSel         string // wtKey of the selected row, so refreshes keep it
+	wtLost        bool   // the selected row vanished in a refresh; cleared on the next key
+	wtIdx         int
+	wtTop         int
+	wtUnavailable bool
+	wtErr         error
+	wtInflight    bool
+	wtFetchedAt   time.Time // last successful fetch only
+	wscope        *worktreeScope
 }
 
 var categoryCycle = []event.Category{
@@ -189,12 +204,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.syncWorktreeSelection()
 		return m, nil
+	case WorktreesMsg:
+		return m.applyWorktrees(msg), nil
 	case EventMsg:
 		m.noteAttention(msg.Event)
 		if isReconciledTransition(msg.Event) {
 			return m, m.wait()
 		}
+		m.noteWorktreeScope(msg.Event)
 		m.events = append(m.events, msg.Event)
 		m.total++
 		if len(m.events) > maxEvents {
@@ -214,6 +233,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tickMsg:
+		if m.shouldRefreshWorktrees(m.now()) {
+			m.wtInflight = true
+			return m, tea.Batch(tick(), fetchWorktrees(m.wsrc))
+		}
 		return m, tick()
 	}
 	return m, nil
@@ -278,10 +301,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.alt == altWorkspace {
 		return m.handleWorkspaceKey(msg)
 	}
+	if m.alt == altWorktree {
+		return m.handleWorktreeKey(msg)
+	}
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "w":
+		return m.enterWorktrees()
 	case "esc":
+		if m.wscope != nil {
+			// Ascend to the worktree list, selection unchanged.
+			m.alt, m.wscope, m.cursor = altWorktree, nil, -1
+			return m, nil
+		}
 		// Ascend: the workspace shows everything, with the cursor left on
 		// the cell we came from.
 		m.alt, m.scope, m.cursor = altWorkspace, nil, -1
@@ -362,6 +395,8 @@ func (m Model) handleWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.help = true
+	case "w":
+		return m.enterWorktrees()
 	case "up", "k", "left", "h":
 		m.cellIdx = max(m.cellIdx-1, 0)
 	case "down", "j", "right":
@@ -399,6 +434,16 @@ func (m Model) filteredEvents() []event.Event {
 // member through its engine attention or through any one of its events, so
 // transitions and events without a workspace stay with their session.
 func (m Model) scoped(evs []event.Event) []event.Event {
+	if m.wscope != nil {
+		ix := m.wscopeIndex()
+		out := make([]event.Event, 0, len(evs))
+		for _, ev := range evs {
+			if ix.has(m.wscope, ev) {
+				out = append(out, ev)
+			}
+		}
+		return out
+	}
 	if m.scope == nil {
 		return evs
 	}

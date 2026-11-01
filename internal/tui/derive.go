@@ -52,6 +52,7 @@ var sparkGlyphs = []rune("▁▂▃▄▅▆▇█")
 // sessionInfo is one session as the band and lane views see it.
 type sessionInfo struct {
 	ID      string
+	Source  string // capture source of the first event seen; empty for attention-only entries
 	Label   string // agent, falling back to source family
 	Where   string // workspace identity: repo, else cwd (a digest under balanced privacy)
 	Last    time.Time
@@ -91,13 +92,17 @@ func agentLabel(agent, source string) string {
 // session: needs-you first (longest wait first), then most recent activity.
 func (m Model) liveSessions(now time.Time) []sessionInfo {
 	byID := map[string]*sessionInfo{}
+	ix := m.wscopeIndex()
 	for _, ev := range m.events {
 		if ev.SessionID == "" || isTransition(ev) {
 			continue
 		}
+		if ix != nil && !ix.has(m.wscope, ev) {
+			continue
+		}
 		s := byID[ev.SessionID]
 		if s == nil {
-			s = &sessionInfo{ID: ev.SessionID, Label: agentLabel(ev.Agent, ev.Source)}
+			s = &sessionInfo{ID: ev.SessionID, Source: ev.Source, Label: agentLabel(ev.Agent, ev.Source)}
 			byID[ev.SessionID] = s
 		}
 		if !ev.Time.Before(s.Last) {
@@ -116,9 +121,12 @@ func (m Model) liveSessions(now time.Time) []sessionInfo {
 		}
 	}
 	for id, a := range m.attention {
+		if ix != nil && !ix.hasAttention(id, a) {
+			continue
+		}
 		s := byID[id]
 		if s == nil {
-			s = &sessionInfo{ID: id, Label: agentLabel(a.Agent, a.Source)}
+			s = &sessionInfo{ID: id, Source: a.Source, Label: agentLabel(a.Agent, a.Source)}
 			byID[id] = s
 		}
 		s.State, s.Since, s.Reason, s.HasError = a.State, a.Since, a.Reason, a.HasError
@@ -384,7 +392,7 @@ func buildLanes(events []event.Event, sessions []sessionInfo, now time.Time, win
 		index[s.ID] = i
 	}
 
-	type spanKey struct{ session, call string }
+	type spanKey struct{ source, session, call string }
 	type span struct {
 		start, end     time.Time
 		started, ended bool
@@ -418,7 +426,7 @@ func buildLanes(events []event.Event, sessions []sessionInfo, now time.Time, win
 		if phase != "start" && phase != "end" {
 			continue
 		}
-		key := spanKey{ev.SessionID, ev.CallID}
+		key := spanKey{ev.Source, ev.SessionID, ev.CallID}
 		sp := spans[key]
 		if sp == nil {
 			sp = &span{}

@@ -148,11 +148,19 @@ visible across the existing activity views.
   category (`?` shows the legend), and reserve color for warn, error, and
   needs-you; under the default privacy mode a workspace prints as the first
   eight digits of its digest
-- three **altitudes**, one glyph grammar: `esc` ascends to the **workspace**
+- four **altitudes** (workspace › worktree › session › call), one glyph grammar: `esc` ascends to the **workspace**
   matrix (one row per workspace, one column per agent, each cell a sparkline,
   state glyph, and session count); `enter` on a cell descends into a session
   view scoped to it, with the scope kept in the header as a breadcrumb;
   `enter` on a row descends to the **call**
+- `w` opens the **worktree** list from the session or workspace view: one row
+  per worktree with columns REPO, PATH, BRANCH, SESS, LIVE, LAST and STATE, in
+  a stable repo-then-path order; `enter` narrows the session view to that
+  worktree's sessions among the **loaded** events (the recent history window,
+  not the full spool); `esc` ascends one rung (session, worktree list,
+  workspace). Without a daemon STATE shows `–` (ahead/behind/landed
+  classification lives in the daemon); an older daemon without `/worktrees`
+  shows an explicit unavailable line; BRANCH is not captured yet and shows `–`
 - `l` switches the strip above the rows between the band and **lanes**: wall
   time across with now at the right edge, one lane per session, tool calls
   drawn as spans, and gaps left blank as the idle signal; `-` and `+` zoom the
