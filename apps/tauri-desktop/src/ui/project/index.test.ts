@@ -1064,3 +1064,71 @@ describe("fleet hooks", () => {
     expect(other.textContent).toBe(other.getAttribute("value"));
   });
 });
+
+describe("picker names and idle semantics", () => {
+  const optionsOf = (panel: ProjectPanel) => [...panel.root.querySelectorAll<HTMLOptionElement>(".project-header select option")];
+  const DIGEST = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  function setupWith(rows: WorktreeLifetimeView[], over: Partial<Parameters<typeof createProject>[0]> = {}) {
+    worktreesMock.mockImplementation(() => Promise.resolve(rows));
+    const store = createScope();
+    const panel = createProject({ store, go: vi.fn(), now: () => NOW, refreshMs: 15000, ...over });
+    document.body.append(panel.root);
+    panels.push(panel);
+    return { store, panel };
+  }
+
+  test("option text is never a raw repo id; value is always the raw id", async () => {
+    const gitDir = "/Users/n/develop/llm-firehose/.git";
+    const { store, panel } = setupWith([row({ repo_id: gitDir, worktree_id: "w1" }), row({ repo_id: DIGEST, worktree_id: "w2" })]);
+    store.narrow({ project: gitDir });
+    await panel.activate();
+    const opts = optionsOf(panel);
+    expect(opts.map((o) => o.value).sort()).toEqual([DIGEST, gitDir].sort());
+    expect(opts.find((o) => o.value === gitDir)!.textContent).toBe("llm-firehose");
+    expect(opts.find((o) => o.value === DIGEST)!.textContent).toBe(DIGEST.slice(0, 8));
+  });
+
+  test("a resolved name outranks a fallback-form projectLabel and follows the resolver without a scope change", async () => {
+    const stale = DIGEST.slice(0, 8);
+    let name: string | undefined;
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })], { projectLabel: () => stale });
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === DIGEST && name ? { project: name } : {}) });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe(stale);
+    name = "llm-firehose";
+    store.touchResolver();
+    expect(optionsOf(panel)[0]!.textContent).toBe("llm-firehose");
+    expect(optionsOf(panel)[0]!.value).toBe(DIGEST);
+  });
+
+  test("the resolver's '(unknown)' placeholder does not outrank the host's real name", async () => {
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })], { projectLabel: () => "llm-firehose" });
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === DIGEST ? { project: `${DIGEST.slice(0, 8)} (unknown)` } : {}) });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe("llm-firehose");
+  });
+
+  test("a throwing resolver falls back instead of breaking the picker", async () => {
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })]);
+    store.setResolver({ sessions: () => undefined, labels: () => { throw new Error("boom"); } });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe(DIGEST.slice(0, 8));
+  });
+
+  test("the idle mark is an image named idle with a titled reason, and the lane says idle", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const mark = q(".project-idle");
+    expect(mark).toHaveLength(1);
+    expect([...mark[0]!.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("")).toBe("!");
+    expect(mark[0]!.getAttribute("role")).toBe("img");
+    expect(mark[0]!.getAttribute("aria-label")).toBe("idle");
+    expect(mark[0]!.querySelector("title")!.textContent).toBe("idle: ahead of the default branch and quiet for hours");
+    expect(q(".project-lane.idle")[0]!.getAttribute("aria-label")!.endsWith(", idle")).toBe(true);
+  });
+});

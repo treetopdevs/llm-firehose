@@ -22,7 +22,7 @@ test('loads only explicitly and shows complete paths, historical limits and veri
   expect(p.root.textContent).toContain('1 shared file');
   expect(p.root.textContent).toContain('src/main.ts');
   expect(p.root.textContent).toContain('not simultaneous');
-  const opener = button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id}`); opener.focus(); opener.click(); await settle();
+  const opener = button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id.slice(0, 8)}`); opener.focus(); opener.click(); await settle();
   expect(p.root.querySelector('pre')?.textContent).toContain(event.id);
   button(p.root, 'Close file receipt').click(); expect(document.activeElement).toBe(opener);
 });
@@ -38,7 +38,7 @@ test('keeps stale rows and Retry after errors and filter updates', async () => {
 test('filter changes cancel pending receipts and omit no-longer-shared lanes', async () => {
   const p = mount(); button(p.root, 'Load shared files').click(); await settle();
   let done!: (e: FirehoseEvent) => void; api.capturedEvent.mockReturnValue(new Promise(r => done = r));
-  button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id}`).click();
+  button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id.slice(0, 8)}`).click();
   const signal = api.capturedEvent.mock.calls[0][1];
   p.setSessions([session(row.session_id)], false); done(event); await settle();
   expect(signal.aborted).toBe(true); expect(p.root.querySelector('pre')).toBeNull(); expect(p.root.textContent).toContain('No shared recorded files');
@@ -53,7 +53,7 @@ test.each([
   { id: 'wrong' }, { source: 'wrong' }, { session_id: 'wrong' }, { worktree_id: '/wrong' }, { payload: { file_path: 'other' } },
 ])('rejects mismatched receipt %j', async mutation => {
   const p = mount(); button(p.root, 'Load shared files').click(); await settle(); api.capturedEvent.mockResolvedValue({ ...event, ...mutation });
-  button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id}`).click(); await settle();
+  button(p.root, `Inspect latest file observation: ${row.source} / ${row.session_id.slice(0, 8)}`).click(); await settle();
   expect(p.root.querySelector('pre')).toBeNull(); expect(p.root.textContent).toContain('Receipt unavailable');
 });
 test('paginates all participants, disables missing receipts, and safely renders full paths', async () => {
@@ -69,10 +69,10 @@ test('paginates all participants, disables missing receipts, and safely renders 
 test('retains files before attention exists and regroups when attention membership changes', async () => {
   const p = createSharedFiles(); document.body.append(p.root);
   button(p.root, 'Load shared files').click(); await settle();
-  expect(p.root.textContent).toContain('Waiting for an attention snapshot');
+  expect(p.root.textContent).toContain('Waiting for the needs-you snapshot');
   p.setSessions([session(row.session_id), session('second')], true, Date.parse(event.time));
   expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(2);
-  expect(p.root.textContent).toContain('Attention stale');
+  expect(p.root.textContent).toContain('Needs-you snapshot stale');
   p.setSessions([session('second')], false, Date.parse(event.time));
   expect(p.root.querySelectorAll('[data-file-participant]')).toHaveLength(0);
   expect(api.fileSessions).toHaveBeenCalledTimes(1);
@@ -143,4 +143,13 @@ test('shared pagination rejects a late receipt response', async () => {
   button(p.root, `Inspect latest file observation: ${row.source} / 000`).click(); const signal = api.capturedEvent.mock.calls[0][1];
   button(p.root, 'Next file participants').click(); done({ ...event, session_id: '000' }); await settle();
   expect(signal.aborted).toBe(true); expect(p.root.querySelector('pre')).toBeNull();
+});
+test('participants are named by the needs-you snapshot, falling back to the short id', async () => {
+  const p = mount();
+  p.setSessions([{ ...session(row.session_id), title: 'Fix login bug' }, session('second')], false);
+  button(p.root, 'Load shared files').click(); await settle();
+  const labels = [...p.root.querySelectorAll('li strong')].map(n => n.textContent);
+  expect(labels).toContain(`${row.source} / Fix login bug`);
+  expect(labels).toContain(`${row.source} / second`);
+  expect(p.root.textContent).not.toContain(row.session_id);
 });

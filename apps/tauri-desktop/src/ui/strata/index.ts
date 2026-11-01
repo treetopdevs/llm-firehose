@@ -1,12 +1,14 @@
 import { capturedEvent, errorSignatures, errorSignatureSessions } from "../../api";
 import type { ErrorSignature, ErrorSignatureSession, ErrorSignatureSessions } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
+import { disambiguateSessionLabel, sessionRefLabel } from "../../format";
+import type { SessionDirectory } from "../../session-directory";
 
 const PAGE_SIZE = 50;
 type Navigate = (session: string, source: string) => void;
 
 /** Historical cross-session evidence. No live history scans or inferred retries. */
-export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate = () => {}) {
+export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate = () => {}, directory?: SessionDirectory) {
   const search = el("input", {type: "search", "aria-label": "Search Error Signatures", placeholder: "Search signatures"});
   const source = el("select", {"aria-label": "Signature source"});
   const status = el("p", {role: "status", class: "dim"});
@@ -14,11 +16,13 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
   const signaturePager = el("div");
   const history = el("section", {"aria-label": "Matching sessions", class: "strata-history"});
   const detail = el("section", {"aria-label": "Captured event evidence", class: "strata-detail"});
-  const root = el("section", {class: "strata"}, el("h2", {}, "Session Stratigraphy"),
+  const root = el("section", {class: "strata"}, el("h2", {}, "Session stratigraphy"),
     el("p", {class: "dim"}, "Find earlier sessions sharing an Error Signature. Matching observations do not prove retries, a shared strategy, or a fix."),
     el("div", {class: "strata-controls"}, el("label", {}, "Search ", search), el("label", {}, "Source ", source), button("Refresh signatures", () => void refresh())),
     status, signatures, signaturePager, history, detail);
   let items: ErrorSignature[] = [];
+  let shown: { row: ErrorSignatureSession; name: HTMLElement }[] = [];
+  let unsubscribe: (() => void) | undefined;
   let initialized = false;
   let signaturePage = 0;
   let active: ErrorSignature | undefined;
@@ -63,8 +67,16 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
       clear(detail); detail.append(el("p", {role: "alert"}, "Evidence unavailable. The captured event could not be loaded or did not match this session."), button("Retry evidence", () => void showEvidence(row)));
     }
   }
+  /** Names the rows on screen in place; the page, selection and scroll are untouched. */
+  function relabel() {
+    const names = shown.map(({row}) => [`${row.source}\0${row.session_id}`, sessionRefLabel({id: row.session_id, source: row.source}, directory?.lookup({id: row.session_id, source: row.source})).label] as const);
+    shown.forEach(({name}, i) => {
+      const label = disambiguateSessionLabel(names[i]![0], names[i]![1], names);
+      if (name.textContent !== label) name.textContent = label;
+    });
+  }
   function drawSessions(page: ErrorSignatureSessions, signature: ErrorSignature) {
-    clear(history);
+    clear(history); shown = [];
     history.append(el("h3", {}, signature.sample || signature.class || signature.key), el("p", {class: "dim"}, signature.key),
       el("p", {class: "dim", role: "status"}, `Snapshot loaded ${new Date().toLocaleTimeString()}. Each page is a fresh snapshot; new arrivals can move rows between pages.`),
       button("Refresh sessions", () => void loadSessions(0)),
@@ -81,12 +93,14 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
         const span = Math.max(1, end - start);
         strip.append(el("span", {style: `left:${(first-start)/span*100}%;width:${(last-first)/span*100}%`}));
       }
+      const name = el("strong", {title: row.session_id}, row.session_id);
+      shown.push({row, name}); directory?.ensure({id: row.session_id, source: row.source});
       list.append(el("li", {class: "strata-row"},
-        el("div", {class: "strata-row-heading"}, el("strong", {title: row.session_id}, row.session_id), el("span", {}, `${row.source} · ${row.count} matching observations`)),
+        el("div", {class: "strata-row-heading"}, name, el("span", {}, `${row.source} · ${row.count} matching observations`)),
         strip, el("div", {class: "strata-times"}, el("time", {datetime: row.first_time}, `First ${row.first_time}`), el("time", {datetime: row.last_time}, `Last ${row.last_time}`)),
         el("div", {class: "strata-actions"}, button("View evidence", () => void showEvidence(row), `evidence:${row.session_id}`), button("Open Loops", () => openLoops(row.session_id, row.source), `loops:${row.session_id}`), button("Open Score", () => openScore(row.session_id, row.source), `score:${row.session_id}`))));
     }
-    history.append(list);
+    history.append(list); relabel();
     if (page.total > PAGE_SIZE || page.offset) pager(history, page.offset, page.total, "sessions", offset => void loadSessions(offset));
   }
   async function loadSessions(offset: number) {
@@ -127,6 +141,11 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
   source.append(el("option", {value: ""}, "All sources"));
   // Navigation retains the historical snapshot and its selected page. Explicit
   // refresh controls intentionally discard that scope and cancel pending work.
-  async function activate() { if (!initialized) await refresh(); }
-  return {root, refresh, activate};
+  async function activate() {
+    if (!unsubscribe) { unsubscribe = directory?.subscribe(relabel); relabel(); }
+    if (!initialized) await refresh();
+  }
+  /** Stops following the directory; the page and selection stay for the next visit. */
+  function deactivate() { unsubscribe?.(); unsubscribe = undefined; }
+  return {root, refresh, activate, deactivate};
 }

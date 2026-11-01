@@ -466,3 +466,36 @@ test("F3: intervals reaching outside the window are neither offered nor accepted
   expect(panel.root.querySelector(".loops-sequence-caption")).toBeNull();
   expect(panel.root.textContent).toContain("outside the current window");
 });
+import { createSessionDirectory } from "../../session-directory";
+test("names the opened session, relabels late keeping page state, and stops after deactivate", async () => {
+  const dir = createSessionDirectory(); const panel = createLoops(createScope(), dir); document.body.append(panel.root);
+  await panel.refresh(); await panel.open(sid, "codex"); await settle();
+  const option = () => [...panel.root.querySelectorAll("option")].find(o => o.value === sid)!;
+  expect(option().textContent).toBe(sid.slice(0, 8));
+  expect(panel.root.textContent).toContain(`Session ${sid.slice(0, 8)} ·`);
+  click(panel.root, "Compare interval 1"); const compared = panel.root.textContent;
+  dir.remember([{id: sid, source: "codex", agent: "codex", title: "Fix login bug"}]);
+  expect(option().textContent).toBe("codex · Fix login bug");
+  expect(panel.root.textContent).toContain("Session Fix login bug ·");
+  expect(panel.root.textContent).toContain("shell: 1"); expect(compared).toContain("shell: 1");
+  expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+  panel.deactivate();
+  dir.remember([{id: sid, source: "codex", agent: "codex", title: "Renamed later"}]);
+  expect(option().textContent).toBe("codex · Fix login bug");
+});
+test("a listed session is named from the list and remembered", async () => {
+  const dir = createSessionDirectory(); api.sessions.mockResolvedValue([{id: sid, source: "codex", agent: "codex", title: "Fix login bug"}]);
+  const panel = createLoops(createScope(), dir); await panel.refresh(); await settle();
+  expect([...panel.root.querySelectorAll("option")].map(o => o.textContent)).toContain("codex · Fix login bug");
+  expect(dir.lookup({id: sid, source: "codex"})?.title).toBe("Fix login bug");
+});
+test("the open option is named by its exact source, and later renames beat the cached list", async () => {
+  const dir = createSessionDirectory();
+  api.sessions.mockResolvedValue([{id: sid, source: "codex", agent: "codex", title: "Codex task"}, {id: sid, source: "claude-code", agent: "claude", title: "Claude task"}]);
+  const panel = createLoops(createScope(), dir); document.body.append(panel.root);
+  await panel.refresh(); await panel.open(sid, "claude-code"); await settle();
+  const option = () => [...panel.root.querySelectorAll("option")].find(o => o.value === sid)!;
+  expect(option().textContent).toBe("claude · Claude task");
+  dir.remember([{id: sid, source: "claude-code", agent: "claude", title: "Claude renamed"}]);
+  expect(option().textContent).toBe("claude · Claude renamed");
+});

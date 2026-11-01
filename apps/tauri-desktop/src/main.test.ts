@@ -37,16 +37,16 @@ test("Project is the landing view; live and the attention strip remain available
     ),
   );
   await import("./main");
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("project");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("project");
   expect(document.querySelector(".content .project")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
   const btn = (n: string) =>
-    [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === n)!;
+    document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${n}]`)!;
   btn("attention").click();
   expect(document.querySelector(".attention-inbox")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
   btn("live").click();
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("live");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("live");
   expect(document.querySelector(".content .project")).toBeNull();
   expect(document.querySelector(".content")?.children.length).toBeGreaterThan(0);
 });
@@ -80,10 +80,10 @@ test("the score view is reachable from the sidebar and starts empty", async () =
     ),
   );
   await import("./main");
-  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "session")!;
+  const btn = document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=session]")!;
   btn.click();
   document.querySelector<HTMLElement>("#session-tab-score")!.click();
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
   expect(document.querySelector(".score")).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("open a session");
   const close=vi.fn().mockResolvedValue(undefined);
@@ -92,7 +92,7 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   await Promise.resolve();
   expect(document.querySelector('[aria-label="Disable replay sound"]')).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("Replay sound on");
-  [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b=>b.textContent==="live")!.click();
+  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=live]")!.click();
   expect(close).toHaveBeenCalledOnce();
   btn.click();
   expect(document.querySelector("#session-tab-score")?.getAttribute("aria-selected")).toBe("true");
@@ -128,10 +128,10 @@ test("the loops view is reachable from the sidebar and starts empty", async () =
     ),
   );
   await import("./main");
-  const btn = [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === "session")!;
+  const btn = document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=session]")!;
   btn.click();
   document.querySelector<HTMLElement>("#session-tab-loops")!.click();
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
   expect(document.querySelector(".loops")).not.toBeNull();
   expect(document.querySelector(".loops")?.textContent).toContain("Choose a session");
 });
@@ -152,12 +152,12 @@ test("entering Loom closes and empties the open shared detail pane", async () =>
   renderDetail(pane, fixture[0], () => {});
   expect(pane.classList.contains("open")).toBe(true);
   expect(pane.childElementCount).toBeGreaterThan(0);
-  [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(b => b.textContent === "session")!.click();
+  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=session]")!.click();
   document.querySelector<HTMLElement>("#session-tab-loom")!.click();
   expect(pane.classList.contains("open")).toBe(false);
   expect(pane.childElementCount).toBe(0);
   expect(document.querySelector(".loom")).not.toBeNull();
-  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("session");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
   expect(document.querySelector("#session-tab-loom")?.getAttribute("aria-selected")).toBe("true");
 });
 
@@ -195,9 +195,7 @@ test("leaving Files aborts its pending history request", async () => {
   );
   await import("./main");
   const nav = (name: string) =>
-    [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find(
-      (b) => b.textContent === name,
-    )!;
+    document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${name}]`)!;
   nav("files").click();
   expect(fileSignal).toBeDefined();
   expect(fileSignal?.aborted).toBe(false);
@@ -318,8 +316,8 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
   const { scope } = await import("./scope");
   expect(scope.get()).toEqual({ window: "live" });
   const nav = (name: string) =>
-    [...document.querySelectorAll<HTMLButtonElement>(".nav-btn")].find((b) => b.textContent === name)!;
-  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, active: () => document.querySelector(".nav-btn.active")?.textContent };
+    document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${name}]`)!;
+  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, active: () => document.querySelector(".nav-btn.active")?.getAttribute("data-panel") };
 }
 
 // The workspace graph is the Graph chip of Project (it has no sidebar entry any more).
@@ -649,13 +647,13 @@ const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty"
 test("sidebar groups altitudes, lenses and housekeeping; the folded panels are gone", async () => {
   const b = await boot();
   const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
-  expect(names).toEqual(["fleet", "project", "sessions", "session", "live", "attention", "strata", "ecosystem", "files", "doctor", "settings"]);
+  expect(names).toEqual(["Fleet", "Project", "Sessions", "Session", "Live", "Needs you", "Session stratigraphy", "Patch ecosystem", "Files", "Doctor", "Settings"]);
   const heads = [...document.querySelectorAll(".sidebar .nav-heading")];
   expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Lenses", "Housekeeping"]);
   const first = ["fleet", "live", "files"];
   heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
-  expect(b.nav("workspace")).toBeUndefined();
-  for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeUndefined();
+  expect(b.nav("workspace")).toBeNull();
+  for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeNull();
   expect(b.active()).toBe("project");
 });
 
@@ -1664,7 +1662,7 @@ test("Escape from inputs, menus and dialogs never changes scope; the body Escape
   chip("events").click();
   await vi.waitFor(() => expect(document.querySelector('input[aria-label="Search captured events"]')).not.toBeNull());
   stays(document.querySelector('input[aria-label="Search captured events"]')!);
-  const wsSelect = document.querySelector<HTMLSelectElement>('.workspace-graph select[aria-label="Workspace"]');
+  const wsSelect = document.querySelector<HTMLSelectElement>('.workspace-graph select[aria-label="Worktree"]');
   expect(wsSelect).not.toBeNull();
   stays(wsSelect!);
   stays(document.querySelector("select.project-repo")!);
@@ -1850,4 +1848,111 @@ test("older daemon: /worktrees 404 still renders the graph for repos[0], and Map
   chip("map").click();
   await vi.waitFor(() => expect(hits(b, "/workspace-graph/activity").some((u) => param(u, "repo_id") === "r1")).toBe(true));
   expect(document.querySelector(".map-strip, .map-summary, .map-notice")).not.toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// Slice 11: sentence-case nav, aria-current, matching h2
+// ---------------------------------------------------------------------------
+const sidebarCurrent = () => [...document.querySelectorAll<HTMLElement>(".sidebar [aria-current]")];
+const expectOneCurrent = (where: string) => {
+  const cur = sidebarCurrent();
+  expect(cur, where).toHaveLength(1);
+  expect(cur[0]!.getAttribute("aria-current"), where).toBe("page");
+  expect(cur[0]!.getAttribute("data-panel"), where).toBe(document.querySelector(".nav-btn.active")?.getAttribute("data-panel"));
+};
+
+test("exactly one sidebar button carries aria-current=page after every show() path", async () => {
+  const b = await boot({
+    worktrees: [wtRow({ repo_id: "r1", worktree_id: "a" }), wtRow({ repo_id: "r2", worktree_id: "b" })],
+    sessions: [sessionRow(S1)],
+    attentionSessions: [attn(S1)],
+  });
+  expectOneCurrent("boot");
+  // Boot landing redirect to Fleet (two repositories).
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  expectOneCurrent("landing redirect");
+  for (const name of ["live", "attention", "settings", "fleet", "session", "sessions", "project", "doctor"]) {
+    b.nav(name).click();
+    expectOneCurrent(`click ${name}`);
+    expect(b.active()).toBe(name);
+  }
+  // Attention strip actions.
+  b.nav("live").click();
+  await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
+  document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!.click();
+  expect(b.active()).toBe("attention");
+  expectOneCurrent("onOpenInbox");
+  document.querySelector<HTMLButtonElement>(".attention-strip [data-key=doctor]")!.click();
+  expect(b.active()).toBe("doctor");
+  expectOneCurrent("onDoctor");
+  // Escape ascent session -> sessions.
+  b.scope.set({ project: "r1", window: "live" });
+  b.nav("sessions").click();
+  b.scope.narrow({ session: { id: S1, source: "codex" } });
+  b.nav("session").click();
+  esc();
+  expect(b.active()).toBe("sessions");
+  expectOneCurrent("escape ascent");
+  // Lens tabs inside Session (score/loops) keep Session current.
+  b.nav("session").click();
+  tabBtn("score").click();
+  expectOneCurrent("score tab");
+  tabBtn("loops").click();
+  expectOneCurrent("loops tab");
+});
+
+test("every panel opens with a visible h2 equal to its nav label", async () => {
+  const b = await boot();
+  const panels = ["fleet", "project", "sessions", "session", "live", "attention", "strata", "ecosystem", "files", "doctor", "settings"];
+  for (const name of panels) {
+    b.nav(name).click();
+    const h2 = document.querySelector(".content h2");
+    expect(h2, name).not.toBeNull();
+    expect(h2!.textContent, name).toBe(b.nav(name).textContent);
+    expect(h2!.hasAttribute("hidden"), name).toBe(false);
+  }
+  b.nav("files").click();
+  expect(document.querySelector(".content h2")!.getAttribute("tabindex")).toBe("-1");
+});
+
+const TITLED = "2385e3bc-aaaa-bbbb-cccc-111122223333";
+const UNTITLED = "bbbbbbbb-aaaa-bbbb-cccc-111122223333";
+const namedRows = () => [
+  sessionRow(TITLED, { title: "Fix login bug" }),
+  sessionRow(UNTITLED, { cwd: "/Users/n/develop/llm-firehose", repo: undefined }),
+];
+
+test("names not ids: the scope crumb names a session the sessions list has loaded", async () => {
+  const b = await boot({ sessions: namedRows() });
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(2));
+  b.scope.narrow({ session: { id: TITLED, source: "codex" } });
+  const crumb = document.querySelector(".scope-crumb")!;
+  expect(crumb.textContent).toBe("Fix login bug");
+  expect(crumb.querySelector(".unresolved")).toBeNull();
+  expect(crumb.querySelector("[title]")!.getAttribute("title")).toBe(TITLED);
+});
+
+test("names not ids: the attention inbox feeds the directory, so the lens head is named", async () => {
+  const attn = (id: string, extra: Record<string, unknown>) => ({
+    id, source: "codex", agent: "codex", events: 1, state: "working",
+    last: { event_id: "e", source: "codex", kind: "activity", summary: "", time: iso(NOW - 1000), observed_at: iso(NOW - 1000) },
+    ...extra,
+  });
+  const b = await boot({ attentionSessions: [attn(TITLED, { title: "Fix login bug" })] });
+  b.nav("attention").click();
+  await vi.waitFor(() => expect(document.querySelector(".attention-row h3")?.textContent).toBe("Fix login bug"));
+  b.scope.narrow({ session: { id: TITLED, source: "codex" } });
+  b.nav("session").click();
+  expect(document.querySelector(".session-lens-head .session-lens-name")?.textContent).toBe("Fix login bug");
+});
+
+test("names not ids: a same-id pair under two sources leaves a source-less ref a short id", async () => {
+  const b = await boot({ sessions: [sessionRow(TITLED, { title: "A" }), sessionRow(TITLED, { title: "B", source: "claude-code", agent: "claude" })] });
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(2));
+  b.scope.narrow({ session: { id: TITLED } });
+  const crumb = document.querySelector(".scope-crumb")!;
+  expect(crumb.textContent).toBe("2385e3bc");
+  expect(crumb.querySelector(".unresolved")).not.toBeNull();
 });

@@ -629,7 +629,7 @@ export function layoutWorkspaceGraph(
   for (const g of groups.values())
     g.sort((a, b) => cmp(a.name, b.name) || cmp(a.id, b.id));
   // exactly what the view draws, including the expand arrow
-  const chipText = (n: number) => `${n} workspaces ▸`;
+  const chipText = (n: number) => `${n} worktrees ▸`;
   for (const [n, g] of groups) {
     const c = chains[chainOf[n]];
     // only a chain's tip reserves label room; interior anchors rely on placement

@@ -243,3 +243,19 @@ test("window-only change resets the route page without refetch; manual session s
     expect(api.sessionEvents).toHaveBeenCalledTimes(1);
     expect(subscribe).not.toHaveBeenCalled();
 });
+import { createSessionDirectory } from "../../session-directory";
+test("names the loaded session late, keeps the route page and receipt, and stops after deactivate", async () => {
+    const dir = createSessionDirectory(), panel = createReplay(() => { }, dir);
+    await panel.refresh();
+    await route(panel);
+    const label = () => panel.root.querySelector(".replay-observation button")!.getAttribute("aria-label")!;
+    expect(label()).toContain(`${event.source} / ${event.session_id!.slice(0, 8)} / ${event.id}`);
+    const loads = api.sessionEvents.mock.calls.length;
+    dir.remember([{ id: event.session_id!, source: event.source, title: "Fix login bug" }]);
+    expect(label()).toBe(`Select observation ${event.source} / Fix login bug / ${event.id}`);
+    expect(panel.root.querySelector(".replay-map button")!.getAttribute("aria-label")).toContain("Fix login bug / " + event.id);
+    expect(api.sessionEvents.mock.calls.length).toBe(loads);
+    panel.deactivate();
+    dir.remember([{ id: event.session_id!, source: event.source, title: "Renamed later" }]);
+    expect(label()).toContain("Fix login bug");
+});

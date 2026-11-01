@@ -573,10 +573,10 @@ test("setWorktreeOrder orders search results and the Events workspace select; un
   expect(titles()).toEqual(["w2", "w1"]);
   graph.show("events");
   await flush();
-  const options = () => qa(root, 'select[aria-label="Workspace"] option').map((o) => o.textContent);
-  expect(options()).toEqual(["Whole repository", "w2", "w1"]);
+  const options = () => qa(root, 'select[aria-label="Worktree"] option').map((o) => o.textContent);
+  expect(options()).toEqual(["Whole project", "w2", "w1"]);
   graph.setWorktreeOrder(undefined);
-  expect(options()).toEqual(["Whole repository", "w1", "w2"]);
+  expect(options()).toEqual(["Whole project", "w1", "w2"]);
 });
 
 test("registeredRepos is empty before the first load and never fetched by a hidden graph", async () => {
@@ -628,14 +628,14 @@ test("selecting a tip publishes project and worktree; the Events select publishe
   expect(store.get().worktree).toBe("w2");
   graph.show("events");
   await flush();
-  const sel = q(root, 'select[aria-label="Workspace"]') as HTMLSelectElement;
+  const sel = q(root, 'select[aria-label="Worktree"]') as HTMLSelectElement;
   sel.value = "w1";
   sel.dispatchEvent(new Event("change"));
   await flush();
   expect(store.get().worktree).toBe("w1");
   store.narrow({ worktree: "w2" });
   await flush();
-  expect((q(root, 'select[aria-label="Workspace"]') as HTMLSelectElement).value).toBe("w2");
+  expect((q(root, 'select[aria-label="Worktree"]') as HTMLSelectElement).value).toBe("w2");
 });
 
 // ---- Escape (finding 8) ----------------------------------------------------------------------------------

@@ -84,7 +84,7 @@ describe("sessions band", () => {
     const last = (row: Element) => row.closest(".session-item")!.querySelector(".session-last")?.textContent;
     // No title captured and no checkout: the agent and a short id, never the UUID alone.
     expect(rows[0].querySelector(".name")?.textContent).toBe("codex · s2");
-    expect(rows[0].querySelector(".state")?.textContent).toBe("NEEDS YOU");
+    expect(rows[0].querySelector(".state")?.textContent).toBe("needs you");
     expect(last(rows[0])).toBe("approve Bash");
     expect(rows[0].querySelector(".age")?.textContent).toBe("1m");
     expect(rows[1].querySelector(".spark")?.textContent).toMatch(/[▁▂▃▄▅▆▇█]/);
@@ -106,7 +106,7 @@ describe("sessions band", () => {
 
     const rows = [...panel.root.querySelectorAll(".band-row")];
     expect(rows.map((r) => r.querySelector(".name")?.textContent)).toEqual(["claude · fresh", "codex · ghost"]);
-    expect(rows[1].querySelector(".state")?.textContent).toBe("needs_input");
+    expect(rows[1].querySelector(".state")?.textContent).toBe("needs you");
     expect(rows[1].querySelector(".state.needs")).toBeNull();
   });
 
@@ -139,7 +139,7 @@ describe("sessions band", () => {
     const panel = createSessions(() => {}, () => []);
     await panel.refresh();
     const rows = [...panel.root.querySelectorAll(".band-row")];
-    expect(rows[0].querySelector(".state")?.textContent).toBe("NEEDS YOU");
+    expect(rows[0].querySelector(".state")?.textContent).toBe("needs you");
     expect(rows[0].closest(".session-item")!.querySelector(".session-last")?.textContent).toBe("approve edit");
   });
 
@@ -164,13 +164,13 @@ describe("sessions band", () => {
     expect(panel.root.querySelector(".session-heading .session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
   });
 
-  test("a captured failure reads FAILED and leads", async () => {
+  test("a captured failure reads failed and leads", async () => {
     sessions.mockResolvedValue([summary({ id: "ok", last_time: new Date(now - 1_000).toISOString() }), summary({ id: "f" })]);
     attentionSays([inbox({ id: "ok" }), inbox({ id: "f", state: "failed", pending: evidence(20_000, { kind: "failure", summary: "StopFailure" }) })]);
     const panel = createSessions(() => {}, () => []);
     await panel.refresh();
     const first = panel.root.querySelector<HTMLElement>(".band-row")!;
-    expect(first.querySelector(".state")?.textContent).toBe("FAILED");
+    expect(first.querySelector(".state")?.textContent).toBe("failed");
     expect(first.querySelector(".state.needs")).not.toBeNull();
   });
 
@@ -192,9 +192,22 @@ describe("sessions band", () => {
 
     const row = panel.root.querySelector<HTMLElement>(".band-row")!;
     expect(row.querySelector(".err")?.textContent).toBe("!");
+    expect(row.querySelector(".err")?.getAttribute("role")).toBe("img");
+    expect(row.querySelector(".err")?.getAttribute("aria-label")).toBe("error captured");
+    expect(row.querySelector(".err")?.getAttribute("title")).toBeTruthy();
     row.click();
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("s1"));
   });
+});
+
+test("a row without an error carries no image role or label on its error cell", async () => {
+  sessions.mockResolvedValue([summary({ id: "s1" })]);
+  sessionEvents.mockResolvedValue([]);
+  const panel = createSessions(() => {}, () => []);
+  await panel.refresh();
+  const err = panel.root.querySelector(".band-row .err")!;
+  expect(err.hasAttribute("role")).toBe(false);
+  expect(err.hasAttribute("aria-label")).toBe(false);
 });
 
 test("a session opened from another panel before the list loaded is still headed by its name", async () => {
@@ -244,7 +257,7 @@ test("an unknown session id is headed by a short id, never the bare UUID", async
   sessionEvents.mockResolvedValue([]);
   const panel = createSessions(() => {}, () => []);
   await panel.openSession("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
-  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("session 2ed4f8a3");
+  expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("2ed4f8a3");
   expect(panel.root.querySelector(".session-heading .session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
 });
 
@@ -326,7 +339,7 @@ test("a session row offers to open its score without opening the event list", as
   const panel = createSessions(() => {}, () => [], (id) => scored.push(id));
   await panel.refresh();
   const btn = panel.root.querySelector<HTMLButtonElement>(".session-item .score-open")!;
-  expect(btn.getAttribute("aria-label")).toBe("open score for session s1");
+  expect(btn.getAttribute("aria-label")).toBe("open score for claude · s1");
   btn.click();
   expect(scored).toEqual(["s1"]);
   expect(sessionEvents).not.toHaveBeenCalled();
@@ -492,7 +505,7 @@ describe("sessions panel reads the shared scope", () => {
     store.setResolver(null);
     store.narrow({ worktree: undefined });
     await panel.refresh();
-    expect(panel.root.textContent).toContain("no sessions in this cell");
+    expect(panel.root.textContent).toContain("no sessions in this worktree");
     expect(panel.root.textContent).not.toContain("no sessions in this scope");
   });
 
@@ -617,4 +630,46 @@ describe("sessions history is invalidated by scope (F5)", () => {
     await panel.refresh();
     expect(panel.root.querySelector(".sessions-scope-note")!.textContent).toContain("200 of 350 sessions known");
   });
+});
+
+describe("sessions heading", () => {
+  test("opens with an h2 equal to the nav label", () => {
+    const p = createSessions(() => {}, () => []);
+    expect(p.root.firstElementChild?.tagName).toBe("H2");
+    expect(p.root.firstElementChild?.textContent).toBe("Sessions");
+  });
+});
+
+describe("session directory", () => {
+  const id = "2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c";
+
+  test("each refresh remembers the list and the inbox sessions", async () => {
+    const { createSessionDirectory } = await import("../session-directory");
+    const directory = createSessionDirectory();
+    sessions.mockResolvedValue([summary({ id, title: "From list" })]);
+    attentionSays([inbox({ id: "inbox-only", source: "codex", title: "From inbox" })]);
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), directory);
+    await panel.refresh();
+    expect(directory.lookup({ id, source: "claude-code" })?.title).toBe("From list");
+    expect(directory.lookup({ id: "inbox-only", source: "codex" })?.title).toBe("From inbox");
+  });
+
+  test("the history heading uses the directory for a session the list does not hold", async () => {
+    const { createSessionDirectory } = await import("../session-directory");
+    const directory = createSessionDirectory();
+    directory.remember([{ id, source: "codex", title: "Remembered title" }]);
+    sessions.mockResolvedValue([]);
+    sessionEvents.mockResolvedValue([]);
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), directory);
+    await panel.openSession(id, "codex");
+    expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("Remembered title");
+  });
+});
+
+test("score and loops buttons name the session by its title, not its id", async () => {
+  sessions.mockResolvedValue([summary({ id: "2385e3bc-1111-2222", title: "Fix login bug" })]);
+  const panel = createSessions(() => {}, () => [], () => {}, () => {});
+  await panel.refresh();
+  expect(panel.root.querySelector(".score-open")!.getAttribute("aria-label")).toBe("open score for Fix login bug");
+  expect(panel.root.querySelector(".loops-open")!.getAttribute("aria-label")).toBe("open loops for Fix login bug");
 });

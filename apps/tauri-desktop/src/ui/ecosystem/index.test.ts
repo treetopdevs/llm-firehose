@@ -106,3 +106,8 @@ test("map caption retains filtered totals on later pages",async()=>{
  const panel=createEcosystem();await load(panel);click(panel.root,'Next beds');
  expect(panel.root.querySelector('.ecosystem-map')?.textContent).toContain('21–40 of 45 filtered / 45 total file beds');
 });
+test("opens with an h2 equal to the nav label", () => {
+    const panel = createEcosystem(vi.fn());
+    expect(panel.root.firstElementChild?.tagName).toBe("H2");
+    expect(panel.root.firstElementChild?.textContent).toBe("Patch ecosystem");
+});

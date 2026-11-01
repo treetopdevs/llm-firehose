@@ -6,6 +6,7 @@ import { ApiError, worktree as fetchWorktree, worktrees as fetchWorktrees } from
 import type { WorktreeCommit, WorktreeDetail, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { idLabel, shortId } from "../../format";
+import { displayRepoLabel } from "../fleet/model";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
@@ -36,6 +37,8 @@ export function splitGoPatch<P extends object>(patch: (P & { encoding?: ProjectE
   const { encoding, ...scopePatch } = patch;
   return encoding === undefined ? { scopePatch } : { scopePatch, encoding };
 }
+
+const IDLE_REASON = "idle: ahead of the default branch and quiet for hours";
 
 export interface ProjectApi {
   worktrees(signal?: AbortSignal): Promise<WorktreeLifetimeView[]>;
@@ -130,6 +133,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   let active = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let unsub: (() => void) | undefined;
+  let unsubResolver: (() => void) | undefined;
   let laneIds: string[] = [];
   let optionKey = "";
   let suppressClick = false;
@@ -255,7 +259,18 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   }
 
   function syncSelect(ids: string[], repo: string | undefined): void {
-    const nameOf = (id: string): string => deps.projectLabel?.(id) ?? id;
+    // A name beats a fallback: the store resolver first, then the host's label unless it is
+    // only the fallback form (which a later resolved name must be able to outrank).
+    const nameOf = (id: string): string => {
+      const fallback = displayRepoLabel(idLabel(id));
+      let resolved: string | undefined;
+      try { resolved = store.resolver()?.labels({ project: id, window: "live" } as Scope).project || undefined; } catch { resolved = undefined; }
+      // The panel's own "<shortid> (unknown)" placeholder is not a name: fall through to the host's label.
+      if (resolved !== undefined && !resolved.endsWith(" (unknown)")) return displayRepoLabel(resolved);
+      let hosted: string | undefined;
+      try { hosted = deps.projectLabel?.(id) || undefined; } catch { hosted = undefined; }
+      return hosted !== undefined && displayRepoLabel(hosted) !== fallback ? displayRepoLabel(hosted) : fallback;
+    };
     const key = ids.map((id) => `${id}\u0001${nameOf(id)}`).join("\0");
     if (key !== optionKey) {
       optionKey = key;
@@ -350,7 +365,11 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (l.clippedLeft) g.append(svg("text", { class: "project-clip", x: X0 - 4, y: y - 8, "font-size": 9, fill: "currentColor" }, "‹"));
     if (l.clippedRight) g.append(svg("text", { class: "project-clip", x: X1 + 2, y: y - 8, "font-size": 9, fill: "currentColor" }, "›"));
     if (l.badge) g.append(svg("text", { class: "project-badge", x: X1 + 8, y: y + 4, "font-size": 10, fill: "currentColor" }, l.badge));
-    if (l.idle) g.append(svg("text", { class: "project-idle", x: VIEW_W - 12, y: y + 4, fill: "currentColor" }, "!"));
+    if (l.idle) {
+      g.append(
+        svg("text", { class: "project-idle", role: "img", "aria-label": "idle", x: VIEW_W - 12, y: y + 4, fill: "currentColor" }, svg("title", {}, IDLE_REASON), "!"),
+      );
+    }
     onActivate(g, () => {
       if (consumeSuppress()) return;
       go("sessions", { project: repoId, worktree: l.id, cell: undefined });
@@ -791,6 +810,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       if (!active) {
         active = true;
         unsub = store.subscribe(onScope);
+        unsubResolver = store.onResolver(() => syncSelect(pickerIds(), repoNow()));
         document.addEventListener("keydown", onDocKey);
         document.addEventListener("keydown", onEscapeCapture, true);
         timer = setInterval(() => void load(true), refreshMs);
@@ -814,6 +834,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       cursor = undefined;
       unsub?.();
       unsub = undefined;
+      unsubResolver?.();
+      unsubResolver = undefined;
       document.removeEventListener("keydown", onDocKey);
       document.removeEventListener("keydown", onEscapeCapture, true);
       endDrag();

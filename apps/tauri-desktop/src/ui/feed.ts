@@ -48,7 +48,7 @@ export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => voi
   search.addEventListener("input", applyFilter);
 
   const bar = el("div", { class: "feed-bar" }, pauseBtn, categorySel, sourceSel, search);
-  const root = el("section", { class: "feed" }, bar, rowsBox);
+  const root = el("section", { class: "feed" }, el("h2", {}, "Live"), bar, rowsBox);
 
   function renderRow(row: Row): HTMLElement {
     const ev = row.event;

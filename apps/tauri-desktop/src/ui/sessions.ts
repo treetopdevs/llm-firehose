@@ -1,9 +1,11 @@
 import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary } from "../api";
 import { clear, el } from "../dom";
-import { formatClock, sessionName, sessionWhere, shortId, workspaceKey } from "../format";
+import { formatClock, sessionName, sessionRefLabel, sessionWhere, shortId, workspaceKey } from "../format";
 import type { SessionLike } from "../format";
-import { evidenceTime, needsLabel, pendingNow } from "../needs";
+import type { SessionDirectory } from "../session-directory";
+import { idChip } from "./session-id";
+import { evidenceTime, needsLabel, pendingNow, stateWord } from "../needs";
 import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventList } from "./feed";
 import type { CellScope } from "./workspace/model";
@@ -36,7 +38,7 @@ type Status = {
  * /sessions aggregates every source under one native id, so a row needs you
  * when any /attention entry with that id holds a live pending episode. A
  * session /attention does not know (legacy history, or /attention down) is
- * "unknown", never NEEDS YOU.
+ * "unknown", never "needs you".
  */
 function statusOf(entries: readonly AttentionSession[], nowMs: number): Status {
   const pending = entries.filter((a) => pendingNow(a, nowMs)).sort((a, b) => evidenceTime(a.pending) - evidenceTime(b.pending));
@@ -46,7 +48,7 @@ function statusOf(entries: readonly AttentionSession[], nowMs: number): Status {
   }
   if (entries.length === 0) return { label: "unknown", needs: false, since: NaN };
   const latest = entries.reduce((a, b) => (evidenceTime(b.last) > evidenceTime(a.last) ? b : a));
-  return { label: latest.state, needs: false, since: NaN };
+  return { label: stateWord(latest.state), needs: false, since: NaN };
 }
 export function createSessions(
   onSelect: (ev: FirehoseEvent) => void,
@@ -54,10 +56,11 @@ export function createSessions(
   onOpenScore?: (id: string, source?: string) => void,
   onOpenLoops?: (id: string, source?: string) => void,
   store: ScopeStore = createScope(),
+  directory?: SessionDirectory,
 ): SessionsPanel {
   const listBox = el("div", { class: "sessions-list" });
   const eventsBox = el("div", { class: "sessions-events" });
-  const root = el("section", { class: "sessions" }, listBox, eventsBox);
+  const root = el("section", { class: "sessions" }, el("h2", {}, "Sessions"), listBox, eventsBox);
   let historyVersion = 0;
   /** The last list drawn, so a session opened by id can be named. */
   let known = new Map<string, SessionSummary>();
@@ -137,19 +140,6 @@ export function createSessions(
     }
   }
 
-  /** The full native id, demoted to a copyable detail. */
-  function idChip(id: string): HTMLElement {
-    const chip = el("button", { class: "session-id dim", title: `copy session id ${id}`, "aria-label": `copy session id ${id}` }, id);
-    chip.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void navigator.clipboard?.writeText(id).then(
-        () => chip.classList.add("copied"),
-        () => {},
-      );
-    });
-    return chip;
-  }
-
   /** What names the history on screen: the matching source's attention entry when the open is source-qualified. */
   function headingSubject(id: string, s: SessionSummary | undefined, source: string | undefined): SessionLike | undefined {
     if (source && s && s.source !== source) return knownBySource.get(`${source}\0${id}`) ?? { id, source };
@@ -158,14 +148,14 @@ export function createSessions(
   }
 
   function sessionHeading(id: string, summary: SessionSummary | undefined, source: string | undefined, count: number): HTMLElement {
-    const s = headingSubject(id, summary, source);
-    const name = s ? sessionName(s) : `session ${shortId(id)}`;
+    const s = headingSubject(id, summary, source) ?? directory?.lookup({ id, source });
+    const ref = sessionRefLabel({ id, source }, s);
     const where = s ? sessionWhere(s) : { label: "", full: undefined };
     const facts = [source || s?.source, where.label, s?.first_time ? `started ${formatClock(s.first_time)}` : "", `${count} events`].filter(Boolean);
     return el(
       "div",
       { class: "session-heading" },
-      el("h3", {}, name),
+      el("h3", { class: ref.resolved ? "" : "unresolved" }, ref.label),
       el("div", { class: "session-sub" }, el("span", { title: where.full ?? "" }, facts.join(" · ")), idChip(id)),
     );
   }
@@ -183,13 +173,19 @@ export function createSessions(
       el("span", { class: "cell spark", "aria-hidden": "true" }, sparkline(buckets, scale)),
       el("span", { class: "cell age" }, age),
       el("span", { class: `cell state${needs ? " needs" : ""}` }, status.label),
-      el("span", { class: "cell err", title: s.has_error ? "an error was captured in this session" : "" }, s.has_error ? "!" : ""),
+      el(
+        "span",
+        s.has_error
+          ? { class: "cell err", role: "img", "aria-label": "error captured", title: "an error was captured in this session" }
+          : { class: "cell err", title: "" },
+        s.has_error ? "!" : "",
+      ),
     );
     const facts = [s.agent || s.source, where.label, s.first_time ? `started ${formatClock(s.first_time)}` : "", `${s.events} events`].filter(Boolean);
     const subRow = el("div", { class: "session-sub" }, el("span", { class: "session-facts", title: where.full ?? "" }, facts.join(" · ")));
     if (onOpenScore) {
       // The score replays this one session; the row itself still opens the list.
-      const score = el("button", { class: "score-open", "aria-label": `open score for session ${s.id}`, title: "replay this session as a score" }, "score");
+      const score = el("button", { class: "score-open", "aria-label": `open score for ${sessionName(s)}`, title: "replay this session as a score" }, "score");
       score.addEventListener("click", (e) => {
         e.stopPropagation();
         onOpenScore(s.id, s.source);
@@ -197,7 +193,7 @@ export function createSessions(
       subRow.append(score);
     }
     if (onOpenLoops) {
-      const loops = el("button", { class: "loops-open", "aria-label": `open loops for session ${s.id}` }, "loops");
+      const loops = el("button", { class: "loops-open", "aria-label": `open loops for ${sessionName(s)}` }, "loops");
       loops.addEventListener("click", (e) => { e.stopPropagation(); onOpenLoops(s.id, s.source); });
       subRow.append(loops);
     }
@@ -235,6 +231,7 @@ export function createSessions(
       const scope = sc.cell ?? null;
       const members = sc.worktree || sc.project ? membership(store, sc) : undefined;
       known = new Map(list.value.map((s) => [s.id, s]));
+      directory?.remember([...list.value, ...(inbox.status === "fulfilled" ? inbox.value.sessions : [])]);
       // A title that arrived since the history was opened moves into its heading.
       const heading = eventsBox.querySelector(".session-heading");
       if (shown && heading) heading.replaceWith(sessionHeading(shown.id, known.get(shown.id), shown.source, shown.count));
@@ -253,7 +250,7 @@ export function createSessions(
         listBox.append(scopeChip(scope));
       }
       if (all.length === 0) {
-        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this cell" : members ? "no sessions in this scope" : "no sessions captured yet"));
+        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this worktree" : members ? "no sessions in this scope" : "no sessions captured yet"));
         return;
       }
       if (members) {

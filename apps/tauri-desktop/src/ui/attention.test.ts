@@ -87,7 +87,7 @@ test.each(["r1", ".", "..", "a/b?&= %+"])("opens exact captured evidence for ID 
   const selected = vi.fn();
   const panel = mount({ onSelect: selected });
   await panel.refresh();
-  expect(panel.strip.textContent).toContain("1 needs attention");
+  expect(panel.strip.textContent).toContain("1 needs you");
   expect(panel.root.querySelector(".attention-row")?.textContent).toContain(
     `reason ${id}`,
   );
@@ -120,7 +120,7 @@ test("snooze survives a desktop restart, can be cleared, and never hides a new e
   button(reopened.root, "Snooze 15 minutes").click();
   snapshot.sessions[0].pending = evidence("r2");
   await reopened.refresh();
-  expect(reopened.strip.textContent).toContain("1 needs attention");
+  expect(reopened.strip.textContent).toContain("1 needs you");
   expect(reopened.strip.textContent).toContain("0 snoozed");
 });
 
@@ -169,7 +169,7 @@ test("rejects an old response after disconnect and recovers with an authoritativ
   expect(p.root.textContent).not.toContain("reason r1");
   p.setConnected(true);
   await p.refresh();
-  expect(p.strip.textContent).toContain("1 needs attention");
+  expect(p.strip.textContent).toContain("1 needs you");
 });
 
 test("shows captured warnings and explains storage failures without losing the inbox", async () => {
@@ -257,7 +257,7 @@ test("a resolution or snooze during a delayed OS check suppresses the notificati
   expect(notifications.send).not.toHaveBeenCalled();
   snapshot.sessions[0].pending = undefined;
   await p.refresh();
-  expect(p.strip.textContent).toContain("0 needs attention");
+  expect(p.strip.textContent).toContain("0 need you");
 });
 
 test("only the most recently selected evidence can open and failures are readable", async () => {
@@ -367,7 +367,7 @@ test("the native notification command receives only the fixed private message", 
       args: {
         options: {
           title: "Agent Firehose",
-          body: "An agent session needs attention. Open the Attention inbox.",
+          body: "An agent session needs you. Open Needs you.",
         },
       },
     });
@@ -413,4 +413,59 @@ test("unrecorded capture gaps are inspectable and show workspace identity separa
   expect(fetcher.mock.calls.some(([url]) => url.includes("undefined"))).toBe(
     false,
   );
+});
+
+test("the panel heading is the nav label and the old name is gone", async () => {
+  const p = mount();
+  expect(p.root.querySelector("h2")?.textContent).toBe("Needs you");
+  expect(p.root.textContent).not.toContain("Attention inbox");
+});
+
+test("rows are named, not identified: titled and untitled h3, short agent line, copyable full id chip", async () => {
+  const UUID = "2385e3bc-aaaa-bbbb-cccc-111122223333";
+  const OTHER = "bbbbbbbb-aaaa-bbbb-cccc-111122223333";
+  snapshot.sessions = [
+    { ...session(UUID), title: "Fix login bug" },
+    { ...session(OTHER), cwd: "/Users/n/develop/llm-firehose" },
+  ];
+  const p = mount();
+  await p.refresh();
+  const h3s = [...p.root.querySelectorAll("h3")].map((h) => h.textContent);
+  expect(h3s).toContain("Fix login bug");
+  expect(h3s).toContain("codex in llm-firehose");
+  for (const h of h3s) {
+    expect(h).not.toContain(UUID);
+    expect(h).not.toContain(OTHER);
+  }
+  const row = p.root.querySelector("article")!;
+  expect(row.textContent).toContain("codex · codex");
+  const chip = row.querySelector<HTMLButtonElement>("button.session-id")!;
+  expect(chip.textContent).toBe(row.querySelector("h3")!.textContent === "Fix login bug" ? UUID : OTHER);
+  expect(chip.getAttribute("aria-label")).toBe(`copy session id ${chip.textContent}`);
+});
+
+test("duplicate titles are told apart by source and short id", async () => {
+  snapshot.sessions = [
+    { ...session("aaaaaaaa-1111"), title: "Same" },
+    { ...session("cccccccc-2222"), title: "Same", source: "claude-code" },
+    { ...session("dddddddd-3333"), title: "Unique" },
+  ];
+  const p = mount();
+  await p.refresh();
+  const h3s = [...p.root.querySelectorAll("h3")].map((h) => h.textContent);
+  expect(h3s).toContain("Same · codex aaaaaaaa");
+  expect(h3s).toContain("Same · claude-code cccccccc");
+  expect(h3s).toContain("Unique");
+});
+
+test("onSessions receives the session list after every load", async () => {
+  const seen: unknown[][] = [];
+  const p = mount({ onSessions: (l: unknown[]) => seen.push(l) } as never);
+  await p.refresh();
+  expect(seen).toHaveLength(1);
+  expect(seen[0]).toHaveLength(2);
+  snapshot.sessions = [session("only")];
+  await p.refresh();
+  expect(seen).toHaveLength(2);
+  expect(seen[1]).toHaveLength(1);
 });

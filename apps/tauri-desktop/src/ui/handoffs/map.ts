@@ -8,7 +8,8 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string,
     return node;
 }
 /** The map is a page-sized index of annotations, never a clock or inferred trace. */
-export function renderHandoffMap(links: Handoff[], onInspect: (endpoint: Endpoint) => void): HTMLElement {
+/** `nameOf` names a session reference; event ids are never renamed. */
+export function renderHandoffMap(links: Handoff[], onInspect: (endpoint: Endpoint) => void, nameOf: (ref: { id: string; source: string }) => string = ref => ref.id): HTMLElement {
     const map = buildHandoffMap(links.slice(0, 10));
     const root = document.createElement('section');
     root.className = 'handoff-map';
@@ -39,7 +40,7 @@ export function renderHandoffMap(links: Handoff[], onInspect: (endpoint: Endpoin
         drawing.append(svg('line', { x1: String(x(i)), x2: String(x(i)), y1: '55', y2: String(height - 20), stroke: colors[i % colors.length], 'stroke-width': '4', opacity: '.5' }));
         const label = document.createElement('div');
         label.style.cssText = `position:absolute;left:${x(i) - 95}px;top:4px;width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
-        label.textContent = `${lane.source} · ${lane.session_id}`;
+        label.textContent = `${lane.source} · ${nameOf({ id: lane.session_id, source: lane.source })}`;
         label.title = `${lane.source} / ${lane.session_id}`;
         canvas.append(label);
     });
@@ -60,7 +61,7 @@ export function renderHandoffMap(links: Handoff[], onInspect: (endpoint: Endpoin
         button.type = 'button';
         button.textContent = station.endpoint.id.slice(0, 12);
         button.title = station.endpoint.id;
-        button.setAttribute('aria-label', `Inspect station ${station.endpoint.source} / ${station.endpoint.session_id} / ${station.endpoint.id}`);
+        button.setAttribute('aria-label', `Inspect station ${station.endpoint.source} / ${nameOf({ id: station.endpoint.session_id, source: station.endpoint.source })} / ${station.endpoint.id}`);
         button.style.cssText = `position:absolute;left:${position.x - 80}px;top:${position.y + 10}px;width:160px;overflow:hidden;text-overflow:ellipsis`;
         button.addEventListener('click', () => onInspect({ ...station.endpoint }));
         canvas.append(button);

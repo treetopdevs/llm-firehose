@@ -5,6 +5,7 @@ import {
   ENCODINGS, FORK_GLYPH, GLYPH_CAP, IDLE_MARK, NOREPO_KEY, buildFleet, displayRepoLabel, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, signature, stripOf,
 } from "./model";
 import type { FleetInput, FleetNeed } from "./model";
+import { forkAriaLabel } from "./model";
 
 const MIN = 60_000;
 const key = (source: string, id: string) => JSON.stringify([source, id]);
@@ -167,7 +168,7 @@ describe("sessions without a repo id", () => {
     const r = buildFleet(input({ sessions }));
     const last = r.rows[r.rows.length - 1];
     expect(last.id).toBe(NOREPO_KEY);
-    expect(last.label).toBe("No repo id");
+    expect(last.label).toBe("No project");
     expect(last.noRepo).toBe(true);
     expect(last.known).toBe(false);
     expect(last.needsCount).toBe(1);
@@ -396,7 +397,7 @@ describe("needs-you never silently dropped (item 6)", () => {
     expect(r.needs.map((n) => n.id)).toEqual(["orphan"]);
   });
 
-  test("a pending session with an empty repo_id lands on the No repo id row even when stale", () => {
+  test("a pending session with an empty repo_id lands on the No project row even when stale", () => {
     const r = buildFleet(input({ sessions: [att({ id: "e", waitMs: 5 * 24 * 60 * MIN, lastAgoMs: 5 * 24 * 60 * MIN })] }));
     const last = r.rows[r.rows.length - 1]!;
     expect(last.noRepo).toBe(true);
@@ -439,5 +440,21 @@ describe("gone age basis (review round 2)", () => {
     expect(r.goneRecent).toBe(1);
     expect(r.goneUnknown).toBe(1);
     expect(stripOf(r.forks, false).hidden).toHaveLength(0);
+  });
+});
+
+describe("fork aria labels carry idle and needs", () => {
+  const open = FIXTURE_ROWS.find((w) => w.worktree_id === "wt-open")!;
+  const idle = FIXTURE_ROWS.find((w) => w.worktree_id === "wt-idle")!;
+  test("forkOf: non-idle unchanged, idle appends ', idle'", () => {
+    expect(forkOf(open, NOW).ariaLabel).toBe("/w/alpha-open, open");
+    expect(forkOf(idle, NOW).ariaLabel).toBe("/w/alpha-idle, open, idle");
+  });
+  test("forkAriaLabel appends the need count in words", () => {
+    const f = forkOf(open, NOW);
+    expect(forkAriaLabel({ ...f, needs: 2 })).toBe(`${f.ariaLabel}, 2 need you`);
+    expect(forkAriaLabel({ ...f, needs: 1 })).toBe(`${f.ariaLabel}, 1 needs you`);
+    expect(forkAriaLabel({ ...f, needs: 0 })).toBe(f.ariaLabel);
+    expect(forkAriaLabel({ ...f, needs: 2 })).not.toMatch(/cost|12/);
   });
 });

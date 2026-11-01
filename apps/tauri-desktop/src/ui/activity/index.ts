@@ -328,7 +328,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
       }
     }
     if (!resp || !tree) {
-      chart.append(el("p", { class: "dim map-empty" }, loading ? "Loading activity…" : repo ? "" : "Select a repository."));
+      chart.append(el("p", { class: "dim map-empty" }, loading ? "Loading activity…" : repo ? "" : "Select a project."));
       restore();
       return;
     }
@@ -378,7 +378,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
     const path = trail(tree!, zoom || tree!.key);
     path.forEach((node, i) => {
       const last = i === path.length - 1;
-      const name = i === 0 ? "Repository" : stripControl(node.name);
+      const name = i === 0 ? "Project" : stripControl(node.name);
       if (last) crumbs.append(el("span", { class: "map-crumb current", "aria-current": "location" }, name));
       else {
         const btn = el("button", { type: "button", class: "map-crumb", "data-key": `crumb:${node.key}` }, name);

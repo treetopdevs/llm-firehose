@@ -259,7 +259,7 @@ test("a selected workspace on the Graph tab loads one small scoped page for its 
 test("the scoped page ignores the Timeline tab's filters and never disturbs its paging", async () => {
   const panel = await mount({ timelineTab: true });
   expect(timelineCalls()[0].params.get("limit")).toBe("250");
-  change(q<HTMLSelectElement>(panel.root, '[aria-label="Workspace"]'), "w1");
+  change(q<HTMLSelectElement>(panel.root, '[aria-label="Worktree"]'), "w1");
   await settle();
   expect(Object.fromEntries(timelineCalls().at(-1)!.params)).toEqual({ repo_id: "ra", workspace_id: "w1", limit: "250" });
   click(panel.root, "Graph");
@@ -307,7 +307,7 @@ test("at most one timeline request is in flight: every new load aborts the previ
   net.hold = (c) => c.path === "/timeline";
   const panel = await mount({ timelineTab: true });
   for (const workspace of ["w1", "w2", "w3", ""]) {
-    change(q<HTMLSelectElement>(panel.root, '[aria-label="Workspace"]'), workspace);
+    change(q<HTMLSelectElement>(panel.root, '[aria-label="Worktree"]'), workspace);
     await settle();
   }
   const calls = timelineCalls();
@@ -333,7 +333,7 @@ test("a real failure of the current request is still reported on the Timeline ta
   net.hold = (c) => c.path === "/timeline";
   const panel = await mount({ timelineTab: true });
   const stale = timelineCalls()[0];
-  change(q<HTMLSelectElement>(panel.root, '[aria-label="Workspace"]'), "w1");
+  change(q<HTMLSelectElement>(panel.root, '[aria-label="Worktree"]'), "w1");
   await settle();
   expect(stale.state).toBe("aborted");
   const fetchMock = globalThis.fetch;
@@ -382,7 +382,7 @@ test("a storm of events, refreshes and filter changes never exhausts the connect
     await vi.advanceTimersByTimeAsync(600);
     tick!();
     window.dispatchEvent(new Event("focus"));
-    change(q<HTMLSelectElement>(panel.root, '[aria-label="Workspace"]'), round % 2 ? "w1" : "w2");
+    change(q<HTMLSelectElement>(panel.root, '[aria-label="Worktree"]'), round % 2 ? "w1" : "w2");
     await vi.advanceTimersByTimeAsync(0);
   }
   // browsers allow about six connections per host; one timeline request is all this screen may hold
@@ -408,7 +408,7 @@ test("while the new snapshot loads the header shows a loading state, never the p
   expect(q(panel.root, ".graph-status").textContent).toBe("");
   expect(panel.root.textContent).not.toContain("alpha warning");
   expect(panel.root.querySelector(".graph-canvas")).toBeNull();
-  expect(q(panel.root, ".graph-empty").textContent).toContain("Loading repository topology");
+  expect(q(panel.root, ".graph-empty").textContent).toContain("Loading project topology");
   expect(q<HTMLSelectElement>(panel.root, ".graph-repo select").value).toBe("rb");
 
   snapshotCalls("rb")[0].respond(net.snapshots.get("rb"));

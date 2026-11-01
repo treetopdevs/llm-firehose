@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { LANE_CAP, MAX_OPEN_SPAN_MS, axisTicks, buildLanes } from "./model";
+import { LANE_CAP, MAX_OPEN_SPAN_MS, SEP, axisTicks, buildLanes } from "./model";
 import type { FirehoseEvent, SessionSummary } from "../../api";
 
 const now = Date.parse("2026-07-02T10:10:00Z");
@@ -165,5 +165,33 @@ describe("axisTicks", () => {
       const d = new Date(t.at);
       expect([d.getHours(), d.getMinutes()]).toEqual([0, 0]);
     }
+  });
+});
+
+describe("buildLanes names qualified sessions", () => {
+  const native = "2385e3bc-1111-2222-3333-444444444444";
+  test("a qualified summary is named from the decoded native id and source, never a slice of the key", () => {
+    const id = `claude-code${SEP}${native}`;
+    const [lane] = buildLanes([], [summary({ id, source: "claude-code", agent: "claude-code" })], now, 5 * MIN);
+    expect(lane.id).toBe(id);
+    expect(lane.label).toBe("claude-code · 2385e3bc");
+    expect(lane.label).not.toContain("claude-c ");
+  });
+  test("a qualified summary with a title keeps its title and its composite key", () => {
+    const id = `codex${SEP}${native}`;
+    const [lane] = buildLanes([], [summary({ id, title: "Fix login bug" })], now, 5 * MIN);
+    expect([lane.id, lane.label]).toEqual([id, "Fix login bug"]);
+  });
+  test("an event-only lane is named by the directory lookup when it knows the session", () => {
+    const events = [ev(`codex${SEP}${native}`, 10_000)];
+    const lookup = (ref: { id: string; source?: string }) => (ref.id === native && ref.source === "codex" ? { id: native, source: "codex", title: "Fix login bug" } : undefined);
+    expect(buildLanes(events, [], now, 5 * MIN)[0].label).toBe("codex");
+    expect(buildLanes(events, [], now, 5 * MIN, lookup)[0].label).toBe("Fix login bug");
+  });
+  test("lanes sharing a name carry source and short id; the grouping key stays composite", () => {
+    const a = `codex${SEP}${native}`, b = `claude-code${SEP}bbbbbbbb-1111`;
+    const lanes = buildLanes([], [summary({ id: a, title: "Fix login bug" }), summary({ id: b, source: "claude-code", title: "Fix login bug" })], now, 5 * MIN);
+    expect(lanes.map((l) => l.label).sort()).toEqual(["Fix login bug · claude-code bbbbbbbb", "Fix login bug · codex 2385e3bc"]);
+    expect(lanes.map((l) => l.id).sort()).toEqual([b, a].sort());
   });
 });

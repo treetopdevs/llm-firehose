@@ -3,7 +3,7 @@
 // overlay. The daemon (bundled as the firehosed sidecar) is the only data
 // source — this UI never touches spool files.
 
-import { CLIENT_SCHEMA_VERSION, getConfig, health, recent, stream } from "./api";
+import { CLIENT_SCHEMA_VERSION, getConfig, health, recent, sessions, stream } from "./api";
 import type { FirehoseEvent } from "./api";
 import { checkCompat } from "./compat";
 import { createConnector } from "./connect";
@@ -36,6 +36,7 @@ import { createTransport } from "./transport";
 import type { Scope, ScopePatch, SessionRef } from "./scope";
 import { createEscapeHandler } from "./escape";
 import { createBreadcrumb } from "./breadcrumb";
+import { createSessionDirectory } from "./session-directory";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -45,7 +46,7 @@ const detailPane = el("aside", { class: "detail" });
 const siblings = (ev: FirehoseEvent) =>
   ev.call_id ? feedState.events().filter((o) => o.source === ev.source && o.session_id === ev.session_id && o.call_id === ev.call_id) : [];
 const showDetail = (ev: FirehoseEvent) =>
-  renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings, undefined, offerEvidence);
+  renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings, undefined, offerEvidence, sessionDirectory);
 
 const refOf = (id: string, source?: string): SessionRef => (source === undefined ? { id } : { id, source });
 
@@ -67,7 +68,9 @@ function openLoops(id: string, source?: string) {
   show("session", { tab: "loops" });
 }
 
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope);
+// The one place sessions are named: /sessions and /attention feed it, the lens head and crumb read it.
+const sessionDirectory = createSessionDirectory(() => sessions());
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory);
 
 // Opening a session from elsewhere keeps the project/worktree parents only
 // when the graph resolver says the session belongs to them; otherwise the
@@ -93,7 +96,7 @@ function openSessionAltitude(id: string, source?: string, tab: SessionTab = "sco
 
 const workspacePanel = createWorkspaceGraph(openSession, scope, { hosted: true });
 
-const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention")});
+const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention"),onSessions:(l)=>sessionDirectory.remember(l)});
 attentionPanel.setConnected(false);
 // Altitudes (D94-D98): Fleet > Project > Worktree (sessions) > Session (score).
 // The old fleet panels are encodings inside Fleet. Landing is Project, then once
@@ -142,6 +145,7 @@ const fleetPanel = createFleet({
     sessionsViaFleet = name === "sessions";
   },
   events: () => feedState.events(),
+  directory: sessionDirectory,
   onLabels: (labels) => {
     fleetLabels = labels;
   },
@@ -161,19 +165,22 @@ const makeScore = () => createScore((ev, sessionSiblings, signature, dismiss) =>
     sessionSiblings,
     signature,
     offerEvidence,
+    sessionDirectory,
   ),
   scope,
 );
-const adapt = (p: { root: HTMLElement; refresh(): unknown }) => ({ root: p.root, refresh: p.refresh, deactivate: p.refresh });
+// A host that owns subscriptions brings its own deactivate; the rest re-run refresh to settle.
+const adapt = (p: { root: HTMLElement; refresh(): unknown; deactivate?(): unknown }) => ({ root: p.root, refresh: p.refresh, deactivate: p.deactivate ?? p.refresh });
 const sessionPanel = createSession({
   store: scope,
+  directory: sessionDirectory,
   lenses: {
     // Factories: each lens is built on first entry (or via sessionPanel.lens), not at boot.
     score: makeScore,
-    loops: () => createLoops(scope),
+    loops: () => createLoops(scope, sessionDirectory),
     loom: () => createLoom(openScore),
-    replay: () => createReplay(openScore),
-    handoffs: () => adapt(createHandoffs(openScore, () => feedState.events())),
+    replay: () => createReplay(openScore, sessionDirectory),
+    handoffs: () => adapt(createHandoffs(openScore, () => feedState.events(), undefined, sessionDirectory)),
     court: () => {
       const court = createCourt(openScore);
       return { ...adapt(court), offerEvent: court.offerEvent };
@@ -190,9 +197,9 @@ const panels = {
   attention: attentionPanel,
   sessions: sessionsPanel,
   session: sessionPanel,
-  strata: createStrata(openLoops, openScore),
+  strata: createStrata(openLoops, openScore, sessionDirectory),
   ecosystem: createEcosystem(openScore),
-  files: createFiles(),
+  files: createFiles(sessionDirectory),
   doctor: createDoctor(),
   settings: createSettings(),
 } as const;
@@ -212,6 +219,20 @@ const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
   ["Lenses", ["live", "attention", "strata", "ecosystem"]],
   ["Housekeeping", ["files", "doctor", "settings"]],
 ];
+/** Sidebar labels and each panel's visible h2: one name per panel, sentence case. */
+export const NAV_LABELS: Record<PanelName, string> = {
+  fleet: "Fleet",
+  project: "Project",
+  sessions: "Sessions",
+  session: "Session",
+  live: "Live",
+  attention: "Needs you",
+  strata: "Session stratigraphy",
+  ecosystem: "Patch ecosystem",
+  files: "Files",
+  doctor: "Doctor",
+  settings: "Settings",
+};
 const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 /** Panels that read scope.window; the shell transport is shown only over these. */
@@ -246,12 +267,15 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if (name === "ecosystem") renderDetail(detailPane, null, () => {});
 
   if (active === "files" && name !== "files") panels.files.deactivate();
+  if (active === "strata" && name !== "strata") panels.strata.deactivate();
   active = name;
   transport.setPanel(name);
   transport.refresh();
   transport.setVisible(TRANSPORT_PANELS.has(name));
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
+    if (n === name) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
   }
   clear(content);
   content.append(panels[name].root);
@@ -296,7 +320,7 @@ const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT
 for (const [heading, names] of NAV_GROUPS) {
   nav.append(el("div", { class: "nav-heading" }, heading));
   for (const name of names) {
-    const btn = el("button", { class: "nav-btn" }, name);
+    const btn = el("button", { class: "nav-btn", "data-panel": name }, NAV_LABELS[name]);
     btn.addEventListener("click", () => {
       sessionsViaFleet = false;
       show(name);
@@ -306,7 +330,7 @@ for (const [heading, names] of NAV_GROUPS) {
   }
 }
 
-const crumb = createBreadcrumb(scope);
+const crumb = createBreadcrumb(scope, { directory: sessionDirectory });
 const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount);
 app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
 
