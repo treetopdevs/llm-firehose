@@ -5,11 +5,37 @@
 import { ApiError, worktree as fetchWorktree, worktrees as fetchWorktrees } from "../../api";
 import type { WorktreeCommit, WorktreeDetail, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
-import { idLabel } from "../../format";
+import { idLabel, shortId } from "../../format";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
 import type { LaneGeom, TimeRange } from "./model";
+import { createActivityMap } from "../activity";
+import type { ActivityMap, MapWorkspace } from "../activity";
+
+/** The four encodings of one repository at Project altitude; Lanes is the default. */
+export type ProjectEncoding = "lanes" | "graph" | "map" | "events";
+export const ENCODING_LABELS: Readonly<Record<ProjectEncoding, string>> = { lanes: "Lanes", graph: "Graph", map: "Map", events: "Events" };
+const ENCODINGS: readonly ProjectEncoding[] = ["lanes", "graph", "map", "events"];
+
+/** The workspace graph as Project hosts it: no picker, no project of its own (scope.project is the identity). */
+export interface ProjectGraphHost {
+  root: HTMLElement;
+  show(view: "graph" | "events"): void;
+  hide(): void;
+  setWorktreeOrder(ids: readonly string[] | undefined): void;
+  onEvent(ev: import("../../api").FirehoseEvent): void;
+  onView(fn: (view: "graph" | "events") => void): void;
+  currentRepo?(): string;
+  registeredRepos?(): string[];
+}
+
+/** Splits a go() patch into the scope patch and the Project encoding it asks for. */
+export function splitGoPatch<P extends object>(patch: (P & { encoding?: ProjectEncoding }) | undefined): { scopePatch: Omit<P, "encoding"> | undefined; encoding?: ProjectEncoding } {
+  if (!patch) return { scopePatch: undefined };
+  const { encoding, ...scopePatch } = patch;
+  return encoding === undefined ? { scopePatch } : { scopePatch, encoding };
+}
 
 export interface ProjectApi {
   worktrees(signal?: AbortSignal): Promise<WorktreeLifetimeView[]>;
@@ -28,13 +54,22 @@ export interface ProjectDeps {
   projectLabel?(id: string): string | undefined;
   now?: () => number;
   refreshMs?: number;
+  /** The workspace graph, hosted under the Graph and Events chips. Without it Project has no chips. */
+  graph?: ProjectGraphHost;
+  /** The shared fork order for a repository (Fleet's); undefined falls back to Project's own memory. */
+  worktreeOrder?(repo: string): readonly string[] | undefined;
+  /** The daemon privacy mode, passed to the Activity Map. */
+  privacyMode?(): string | undefined;
 }
 
 export interface ProjectPanel {
   root: HTMLElement;
   refresh(): Promise<void>;
-  activate(): Promise<void>;
+  activate(opts?: { encoding?: ProjectEncoding }): Promise<void>;
   deactivate(): void;
+  onEvent(ev: import("../../api").FirehoseEvent): void;
+  encoding(): ProjectEncoding;
+  setEncoding(e: ProjectEncoding): void;
   setConnected(connected: boolean): void;
 }
 
@@ -100,6 +135,12 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   let suppressClick = false;
   let drag: { startX: number; curX: number; range: TimeRange } | undefined;
   let brushRect: SVGElement | undefined;
+  const graph = deps.graph;
+  let encoding: ProjectEncoding = "lanes";
+  const byRepo = new Map<string, ProjectEncoding>();
+  let lastRepo: string | undefined;
+  let pendingBind = false;
+  let passedOrderKey = "";
 
   const detailKey = (repo: string, wt: string): string => `${repo}\0${wt}`;
 
@@ -108,14 +149,26 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   const statusBox = el("div", { class: "project-status", role: "status" });
   const chart = el("div", { class: "project-chart" });
   const hint = el("p", { class: "project-hint" }, "Click a lane to open its sessions, a bead to open its score. Arrow keys or 1-9 pick a lane, Enter opens it. Drag on the time axis to narrow the window; the time bar above sets the span.");
-  const root = el(
-    "section",
-    { class: "project", "aria-label": "Project" },
-    el("header", { class: "project-header" }, el("h2", {}, "Project"), select),
-    statusBox,
-    chart,
-    hint,
-  );
+  const chips = el("div", { class: "project-chips", role: "tablist", "aria-label": "Encoding" });
+  const chipBtns = new Map<ProjectEncoding, HTMLButtonElement>();
+  const lanesBody = el("div", { class: "project-lanes-body" }, chart, hint);
+  const encodingBody = el("div", { class: "project-encoding-body" });
+  encodingBody.hidden = true;
+  const header = el("header", { class: "project-header" }, el("h2", {}, "Project"), select);
+  if (graph) header.append(chips);
+  const root = el("section", { class: "project", "aria-label": "Project" }, header, statusBox, lanesBody, encodingBody);
+  const noteBox = el("p", { class: "project-map-note" });
+  const map: ActivityMap | undefined = graph
+    ? createActivityMap({
+        onWindow: (w) => store.narrow({ window: w }),
+        onPickWorktree: (id) => {
+          const sc = store.get();
+          store.narrow({ project: repoNow() ?? sc.project, worktree: id, cell: undefined, window: sc.window });
+        },
+        now: nowFn,
+      })
+    : undefined;
+  map?.setActive(false);
 
   // Membership is exactly what /worktrees returned: the per-lane session list is
   // capped, so a lane with sessions_total > sessions.length is partial. Nothing is
@@ -164,7 +217,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     labels(sc) {
       const sel = scopedRows(sc);
       const label = sc.worktree !== undefined ? sel?.[0]?.label : undefined;
-      return label ? { worktree: label } : {};
+      const out: { project?: string; worktree?: string } = label ? { worktree: label } : {};
+      // A project the rows do not know (registered only): a short id, marked, never a guess at a name.
+      if (graph && sc.project !== undefined && status === "ready" && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
+      return out;
     },
   });
 
@@ -172,9 +228,13 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (select.value) store.narrow({ project: select.value, cell: undefined });
   });
 
-  function pickedRepo(): string | undefined {
-    return pickRepo(rows, store.get().project);
+  // With the graph hosted, scope.project is the sole repository identity: an explicit
+  // project is never replaced by a guess, even when no lifetime row carries it.
+  function repoNow(): string | undefined {
+    const p = store.get().project;
+    return graph ? (p ?? pickRepo(rows)) : pickRepo(rows, p);
   }
+  const pickedRepo = repoNow;
 
   function selection(): string | undefined {
     const repo = pickedRepo();
@@ -184,6 +244,14 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (isLane(cursor)) return cursor;
     const wt = store.get().worktree;
     return isLane(wt) ? wt : undefined;
+  }
+
+  function pickerIds(): string[] {
+    const ids = repoIds(rows);
+    if (!graph) return ids;
+    const extra = [...(graph.registeredRepos?.() ?? []), ...(store.get().project !== undefined ? [store.get().project!] : [])];
+    for (const id of extra) if (!ids.includes(id)) ids.push(id);
+    return ids;
   }
 
   function syncSelect(ids: string[], repo: string | undefined): void {
@@ -200,6 +268,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
 
   function renderStatus(laneCount: number, repoRows: number, pending = 0): void {
     clear(statusBox);
+    if (encoding !== "lanes" && status === "ready") return;
     if (status === "unsupported") {
       statusBox.append(
         el(
@@ -289,20 +358,185 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     return g;
   }
 
+  function laneOrder(repo: string, repoRows: readonly WorktreeLifetimeView[]): string[] {
+    const order = orderLanes(deps.worktreeOrder?.(repo) ?? orders.get(repo), repoRows);
+    orders.set(repo, order);
+    return order;
+  }
+
+  function passOrder(repo: string, repoRows: readonly WorktreeLifetimeView[]): void {
+    if (!graph) return;
+    const order = laneOrder(repo, repoRows);
+    const key = `${repo}\0${order.join("\0")}`;
+    if (key === passedOrderKey) return;
+    passedOrderKey = key;
+    graph.setWorktreeOrder(order);
+  }
+
+  const baseName = (s: string): string => s.split(/[/\\]/).filter(Boolean).pop() ?? s;
+  function updateMap(repo: string | undefined, repoRows: readonly WorktreeLifetimeView[]): void {
+    if (!map) return;
+    if (repo === undefined || (status === "ready" && repoRows.length === 0)) {
+      map.cancel();
+      noteBox.textContent = repo === undefined ? "Select a project" : "No lifetimes for this project";
+      if (noteBox.parentNode !== encodingBody) encodingBody.replaceChildren(noteBox);
+      return;
+    }
+    if (map.root.parentNode !== encodingBody) encodingBody.replaceChildren(map.root);
+    const sc = store.get();
+    const workspaces: MapWorkspace[] = repoRows.map((r) => ({ id: r.worktree_id, name: r.label ? baseName(r.label) : idLabel(r.worktree_id) }));
+    map.update(repo, workspaces, deps.privacyMode?.(), { window: sc.window, ...(sc.liveSpanMs !== undefined ? { liveSpanMs: sc.liveSpanMs } : {}), ...(sc.worktree !== undefined ? { worktree: sc.worktree } : {}) });
+  }
+
+  // Keeps per-repository encoding memory. Returns true when it switched encoding (the switch rendered).
+  function syncRepo(repo: string | undefined): boolean {
+    if (repo === lastRepo) return false;
+    const first = lastRepo === undefined;
+    lastRepo = repo;
+    if (repo === undefined) return false;
+    if (first && pendingBind) {
+      pendingBind = false;
+      byRepo.set(repo, encoding);
+      if (encoding !== "lanes" && store.get().project === undefined) {
+        store.narrow({ project: repo, window: store.get().window });
+      }
+      return false;
+    }
+    const mem = byRepo.get(repo) ?? "lanes";
+    if (mem === encoding) return false;
+    encoding = mem;
+    mountEncoding();
+    return true;
+  }
+
+  // Adopts the remembered encoding of the current repository without mounting anything,
+  // so a reactivation never mounts the previous repository's encoding first.
+  function restoreRepoMemory(): void {
+    const repo = repoNow();
+    if (repo === undefined || repo === lastRepo) return;
+    if (lastRepo === undefined && pendingBind) return; // syncRepo binds the pending encoding to this repository
+    lastRepo = repo;
+    encoding = byRepo.get(repo) ?? "lanes";
+    syncChips();
+  }
+
+  function syncChips(): void {
+    for (const [e, b] of chipBtns) {
+      b.setAttribute("aria-selected", String(e === encoding));
+      b.tabIndex = e === encoding ? 0 : -1;
+    }
+  }
+
+  // Makes the DOM and the hosted views match `encoding`; idempotent.
+  function mountEncoding(): void {
+    if (!graph || !map) return;
+    syncChips();
+    if (!active) return;
+    lanesBody.hidden = encoding !== "lanes";
+    encodingBody.hidden = encoding === "lanes";
+    if (encoding !== "lanes") endDrag(); // leaving Lanes mid-brush: drop the document listeners
+    if (encoding === "lanes") {
+      graph.hide();
+      map.cancel();
+      map.setActive(false);
+      encodingBody.replaceChildren();
+      render();
+      loadDetail();
+      return;
+    }
+    const repo = repoNow();
+    const repoRows = repo === undefined ? [] : rows.filter((r) => r.repo_id === repo);
+    if (encoding === "map") {
+      graph.hide();
+      map.setActive(true);
+      renderStatus(0, repoRows.length);
+      updateMap(repo, repoRows);
+      return;
+    }
+    map.cancel();
+    map.setActive(false);
+    if (graph.root.parentNode !== encodingBody) encodingBody.replaceChildren(graph.root);
+    if (repo !== undefined) {
+      passedOrderKey = "";
+      passOrder(repo, repoRows);
+    }
+    renderStatus(0, repoRows.length);
+    graph.show(encoding);
+  }
+
+  function setEncodingTo(next: ProjectEncoding): void {
+    if (!graph) return;
+    if (next === encoding) {
+      if (active) mountEncoding();
+      return;
+    }
+    const prev = encoding;
+    if (active) {
+      const sc = store.get();
+      const patch: ScopePatch = { window: sc.window };
+      let extra = false;
+      if (prev === "lanes" && cursor !== undefined) {
+        patch.project = repoNow();
+        patch.worktree = cursor;
+        patch.cell = undefined;
+        extra = true;
+      }
+      if (sc.project === undefined && patch.project === undefined) {
+        const d = pickRepo(rows);
+        if (d !== undefined) { patch.project = d; extra = true; }
+      }
+      cursor = undefined;
+      if (extra) store.narrow(patch);
+    }
+    encoding = next;
+    const repo = repoNow();
+    if (repo === undefined) pendingBind = true;
+    else byRepo.set(repo, next);
+    mountEncoding();
+  }
+
+  for (const e of ENCODINGS) {
+    const b = el("button", { type: "button", role: "tab", class: "project-chip", "data-encoding": e, "aria-selected": String(e === encoding), tabindex: e === encoding ? "0" : "-1" }, ENCODING_LABELS[e]);
+    b.addEventListener("click", () => setEncodingTo(e));
+    b.addEventListener("keydown", (ev) => {
+      const i = ENCODINGS.indexOf(e);
+      const j = ev.key === "ArrowRight" ? (i + 1) % ENCODINGS.length : ev.key === "ArrowLeft" ? (i + ENCODINGS.length - 1) % ENCODINGS.length : ev.key === "Home" ? 0 : ev.key === "End" ? ENCODINGS.length - 1 : -1;
+      if (j < 0) return;
+      ev.preventDefault();
+      setEncodingTo(ENCODINGS[j]!);
+      chipBtns.get(ENCODINGS[j]!)?.focus();
+    });
+    chipBtns.set(e, b);
+    chips.append(b);
+  }
+  graph?.onView((v) => {
+    if (!active || (encoding !== "graph" && encoding !== "events") || v === encoding) return;
+    encoding = v;
+    const repo = repoNow();
+    if (repo !== undefined) byRepo.set(repo, v);
+    syncChips();
+    renderStatus(0, 0);
+  });
+
   function render(): void {
     const sc: Scope = store.get();
     const now = nowFn();
     const range = resolveWindow(sc.window, now, sc.liveSpanMs);
-    const ids = repoIds(rows);
-    const repo = pickRepo(rows, sc.project);
-    syncSelect(ids, repo);
+    const repo = repoNow();
+    syncSelect(pickerIds(), repo);
+    if (graph && syncRepo(repo)) return;
 
     const repoRows = repo === undefined ? [] : rows.filter((r) => r.repo_id === repo);
     let lanes: LaneGeom[] = [];
     let baseLabel = "default branch";
+    if (encoding !== "lanes") {
+      renderStatus(0, repoRows.length);
+      if (encoding === "map") updateMap(repo, repoRows);
+      else if (repo !== undefined) passOrder(repo, repoRows);
+      return;
+    }
     if (repo !== undefined) {
-      const order = orderLanes(orders.get(repo), repoRows);
-      orders.set(repo, order);
+      const order = laneOrder(repo, repoRows);
       const sel = selection();
       const cs = sel !== undefined ? details.get(detailKey(repo, sel)) : undefined;
       lanes = layoutLanes(repoRows, order, range, X0, X1, now, sel !== undefined && cs ? { [sel]: cs } : undefined);
@@ -382,7 +616,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   function loadDetail(): void {
     detailCtl?.abort();
     detailCtl = undefined;
-    if (!active) return;
+    if (!active || encoding !== "lanes") return;
     const repo = pickedRepo();
     const wt = selection();
     if (repo === undefined || wt === undefined) return;
@@ -452,7 +686,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   }
 
   function onBrushDown(e: MouseEvent): void {
-    if (!active || e.button !== 0 || drag) return;
+    if (!active || encoding !== "lanes" || e.button !== 0 || drag) return;
     const t = e.target as Element | null;
     if (t?.closest?.(".project-bead")) return;
     const x = plotX(e.clientX);
@@ -472,6 +706,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   function onBrushUp(e: MouseEvent): void {
     const d = drag;
     if (!d) return;
+    if (!active || encoding !== "lanes") { // a brush that outlived its encoding never commits
+      endDrag();
+      return;
+    }
     const x = plotX(e.clientX);
     endDrag();
     const win = brushWindow(d.startX, x, d.range, X0, X1);
@@ -496,7 +734,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   // Capture phase so the claim lands before the shared bubble-phase ascent handler.
   // Local state first: an in-progress brush, then a keyboard-picked lane not yet in scope.
   function onEscapeCapture(e: KeyboardEvent): void {
-    if (e.key !== "Escape" || !active || !root.isConnected || !isEscapeEligible(e)) return;
+    if (e.key !== "Escape" || !active || encoding !== "lanes" || !root.isConnected || !isEscapeEligible(e)) return;
     if (drag) {
       endDrag();
       claimEscape(e);
@@ -510,7 +748,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
 
   function onDocKey(e: KeyboardEvent): void {
     if (e.key === "Escape") return;
-    if (!active || !root.isConnected) return;
+    if (!active || encoding !== "lanes" || !root.isConnected) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (!isEscapeEligible(e)) return;
     const t = e.target as Element | null;
@@ -544,7 +782,12 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   return {
     root,
     refresh: () => (active ? load() : Promise.resolve()),
-    activate() {
+    onEvent(ev) {
+      if (active && (encoding === "graph" || encoding === "events")) graph?.onEvent(ev);
+    },
+    encoding: () => encoding,
+    setEncoding: setEncodingTo,
+    activate(opts) {
       if (!active) {
         active = true;
         unsub = store.subscribe(onScope);
@@ -552,10 +795,21 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
         document.addEventListener("keydown", onEscapeCapture, true);
         timer = setInterval(() => void load(true), refreshMs);
       }
+      if (graph) {
+        restoreRepoMemory();
+        if (opts?.encoding !== undefined) setEncodingTo(opts.encoding);
+        else mountEncoding();
+      }
       render();
       return load();
     },
     deactivate() {
+      if (graph && map) {
+        graph.hide();
+        map.cancel();
+        map.setActive(false);
+        encodingBody.replaceChildren();
+      }
       active = false;
       cursor = undefined;
       unsub?.();

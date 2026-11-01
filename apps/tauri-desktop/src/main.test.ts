@@ -210,6 +210,8 @@ test("leaving Files aborts its pending history request", async () => {
 // ---------------------------------------------------------------------------
 
 import type { ScopeResolver } from "./scope";
+import type { ActivityResponse, EventPage } from "./ui/graph/api";
+import activityJson from "./ui/activity/fixture.activity.json";
 import scoreFixture from "./ui/score/fixture.session.json";
 
 const NOW = Date.parse("2026-10-31T12:00:00Z");
@@ -240,6 +242,7 @@ const snapshotOf = (repo: string, workspaces: string[]) => ({
   stale: false,
 });
 
+const activityFixture = (repo: string): ActivityResponse => ({ ...structuredClone(activityJson as ActivityResponse), repo_id: repo });
 type Boot = {
   scope: typeof import("./scope").scope;
   urls: string[];
@@ -247,7 +250,7 @@ type Boot = {
   nav: (name: string) => HTMLButtonElement;
   active: () => string | null | undefined;
   worktreeSignals: Array<AbortSignal | undefined>;
-  sources: Array<{ onopen: (() => void) | null }>;
+  sources: Array<{ onopen: (() => void) | null; onmessage: ((m: { data: string }) => void) | null }>;
 };
 let tracked: Boot["keydownListeners"] = [];
 
@@ -255,15 +258,20 @@ type BootOpts = {
   sessions?: unknown[]; repos?: unknown[]; snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
   worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
+  // /workspace-graph/timeline answers a valid EventPage; /workspace-graph/activity a valid ActivityResponse.
+  timeline?: EventPage | ((q: URLSearchParams) => EventPage);
+  activity?: ActivityResponse | ((q: URLSearchParams) => ActivityResponse);
+  // Also fake setTimeout (live-event debounce tests).
+  fakeTimeout?: boolean;
 };
 async function boot(opts: BootOpts = {}): Promise<Boot> {
   document.body.innerHTML = '<div id="app"></div>';
-  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.useFakeTimers({ toFake: opts.fakeTimeout ? ["Date", "setTimeout"] : ["Date"], now: NOW });
   vi.setSystemTime(NOW);
   vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
-  const sources: Array<{ onopen: (() => void) | null }> = [];
-  vi.stubGlobal("EventSource", class { onopen: (() => void) | null = null; onerror = null; onmessage = null; constructor() { sources.push(this); } close() {} });
+  const sources: Boot["sources"] = [];
+  vi.stubGlobal("EventSource", class { onopen: (() => void) | null = null; onerror = null; onmessage: ((m: { data: string }) => void) | null = null; constructor() { sources.push(this); } close() {} });
   const urls: string[] = [];
   const worktreeSignals: Array<AbortSignal | undefined> = [];
   let failNext = opts.worktreesFailFirst === true;
@@ -288,6 +296,14 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     if (p.startsWith("/sessions/")) return json(opts.sessionEvents ?? scoreFixture);
     if (p === "/events") return json(opts.events ?? []);
     if (p === "/workspace-graph/repos") return json(opts.repos ?? []);
+    if (p === "/workspace-graph/timeline") {
+      const t = opts.timeline ?? { events: [], has_more: false, order: "newest_first" };
+      return json(typeof t === "function" ? t(u.searchParams) : t);
+    }
+    if (p === "/workspace-graph/activity") {
+      const a = opts.activity ?? activityFixture(u.searchParams.get("repo_id") ?? "");
+      return json(typeof a === "function" ? a(u.searchParams) : a);
+    }
     if (p === "/workspace-graph") return json(opts.snapshots?.[u.searchParams.get("repo_id") ?? ""] ?? {});
     if (p === "/config") return json({ privacy_mode: "balanced" });
     return json([]);
@@ -306,6 +322,12 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
   return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, active: () => document.querySelector(".nav-btn.active")?.textContent };
 }
 
+// The workspace graph is the Graph chip of Project (it has no sidebar entry any more).
+const chip = (e: string) => document.querySelector<HTMLButtonElement>(`.project-chips [data-encoding=${e}]`)!;
+const openGraph = (b: Boot) => {
+  if (b.active() !== "project") b.nav("project").click();
+  chip("graph").click();
+};
 const esc = (target: EventTarget = document.body, init: KeyboardEventInit = {}) => {
   const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...init });
   target.dispatchEvent(e);
@@ -551,7 +573,10 @@ test("footer crumb sits between the status text and the event count and never as
   expect(kids.indexOf(crumb)).toBe(kids.indexOf(bar.querySelector(".event-count")!) - 1);
   expect(crumb.textContent).toBe("");
   b.scope.narrow({ project: "repo-abcdef123456", worktree: "wt-0123456789ab" });
-  expect(crumb.querySelectorAll(".unresolved")).toHaveLength(2);
+  // The Project panel's fallback resolver marks a project the lifetimes do not know as "(unknown)";
+  // only the worktree stays an unresolved short id.
+  expect(crumb.querySelectorAll(".unresolved")).toHaveLength(1);
+  expect(crumb.textContent).toContain("(unknown)");
   b.scope.setResolver({ sessions: () => undefined, labels: () => ({ project: "Alpha", worktree: "main" }) });
   expect(crumb.textContent).toBe("Alpha › main");
   // Landing on Project issues the one /worktrees request; the crumb adds none.
@@ -559,7 +584,10 @@ test("footer crumb sits between the status text and the event count and never as
 });
 
 test("graph round trip: a second project scope loads that repository; sessions filter only through the resolver", async () => {
+  // The hidden graph answers no membership, so the resolver is Project's lifetime rows.
+  const inRepo = wtRow({ repo_id: "r1", worktree_id: "wt-r1", sessions: [{ source: "codex", session_id: "s-in", first_time: iso(NOW - 600_000), last_time: iso(NOW - 5_000), events: 3 }], sessions_total: 1 });
   const b = await boot({
+    worktrees: [inRepo],
     sessions: [sessionRow("s-in"), sessionRow("s-out")],
     repos: [repoOf("r1"), repoOf("r2")],
     snapshots: { r1: snapshotOf("r1", ["w1"]), r2: snapshotOf("r2", ["w2"]) },
@@ -569,9 +597,12 @@ test("graph round trip: a second project scope loads that repository; sessions f
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(2));
   b.scope.reset();
-  b.nav("workspace").click();
+  openGraph(b);
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes("repo_id=r1"))).toBe(true));
   b.scope.narrow({ project: "r2" });
+  // Encodings are remembered per repository: r2 opens in Lanes, where the hidden graph fetches nothing.
+  expect(selectedChip()).toBe("lanes");
+  chip("graph").click();
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes("repo_id=r2"))).toBe(true));
   expect(b.scope.get().project).toBe("r2");
   b.scope.narrow({ project: "r1" });
@@ -586,7 +617,7 @@ test("Escape in the real graph clears the selection first and leaves the project
     repos: [repoOf("r1")],
     snapshots: { r1: snapshotOf("r1", ["w1"]) },
   });
-  b.nav("workspace").click();
+  openGraph(b);
   await vi.waitFor(() => expect(document.querySelector(".workspace-label")).not.toBeNull());
   document.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await vi.waitFor(() => expect(b.scope.get().worktree).toBe("w1"));
@@ -618,11 +649,12 @@ const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty"
 test("sidebar groups altitudes, lenses and housekeeping; the folded panels are gone", async () => {
   const b = await boot();
   const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
-  expect(names).toEqual(["fleet", "project", "sessions", "session", "live", "attention", "workspace", "strata", "ecosystem", "files", "doctor", "settings"]);
+  expect(names).toEqual(["fleet", "project", "sessions", "session", "live", "attention", "strata", "ecosystem", "files", "doctor", "settings"]);
   const heads = [...document.querySelectorAll(".sidebar .nav-heading")];
   expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Lenses", "Housekeeping"]);
   const first = ["fleet", "live", "files"];
   heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
+  expect(b.nav("workspace")).toBeUndefined();
   for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeUndefined();
   expect(b.active()).toBe("project");
 });
@@ -1410,4 +1442,412 @@ test("transport: a window change does not restart the cold-start retry", async (
   expect(b.worktreeSignals.length).toBe(n);
   release();
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+});
+
+// ---------------------------------------------------------------------------
+// Project encodings: the workspace graph, activity map and events are chips of Project
+// ---------------------------------------------------------------------------
+
+const gp = (u: string) => new URL(u).pathname;
+const hits = (b: Boot, path: string) => b.urls.filter((u) => gp(u) === path);
+const graphHits = (b: Boot) => b.urls.filter((u) => gp(u).startsWith("/workspace-graph"));
+const param = (u: string, k: string) => new URL(u).searchParams.get(k);
+const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
+const tlEvent = (id: string, ageMs: number, over: Record<string, unknown> = {}) => ({
+  id, time: iso(NOW - ageMs), source: "codex", session_id: "s-o1", category: "tool", name: "tool.completed",
+  summary: `summary ${id}`, repo_id: "r1", worktree_id: "w1", ...over,
+});
+const tlPage = (events: unknown[], next?: string): EventPage => ({
+  events: events as EventPage["events"], has_more: !!next, ...(next ? { next_cursor: next } : {}), order: "newest_first",
+});
+const R1_ROWS = [wtRow({ repo_id: "r1", worktree_id: "wt-a" })];
+const projectLoaded = () => vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+const bootProject = async (extra: BootOpts = {}) => {
+  const b = await boot({
+    worktrees: R1_ROWS,
+    repos: [repoOf("r1")],
+    snapshots: { r1: snapshotOf("r1", ["w1", "w2"]) },
+    ...extra,
+  });
+  await projectLoaded();
+  return b;
+};
+const selectedChip = () => document.querySelector(".project-chips [aria-selected=true]")?.getAttribute("data-encoding");
+
+test("the Graph chip reaches the real graph inside Project; nothing graph-related is requested before it", async () => {
+  const b = await bootProject();
+  expect(graphHits(b)).toHaveLength(0);
+  expect(document.querySelector(".workspace-graph")).toBeNull();
+  chip("graph").click();
+  await vi.waitFor(() => expect(b.urls.some((u) => gp(u) === "/workspace-graph" && param(u, "repo_id") === "r1")).toBe(true));
+  expect(document.querySelector(".content .project .workspace-graph")).not.toBeNull();
+  expect(document.querySelector(".graph-repo")).toBeNull();
+  expect(document.querySelector(".graph-tabs")).toBeNull();
+  expect(b.active()).toBe("project");
+  expect(selectedChip()).toBe("graph");
+});
+
+test("scope: Graph, Map and Events write only the default repo; repos[0] differing does not flip-flop or add requests", async () => {
+  const b = await bootProject({
+    repos: [repoOf("rX"), repoOf("r1")],
+    snapshots: { rX: snapshotOf("rX", ["x1"]), r1: snapshotOf("r1", ["w1", "w2"]) },
+    timeline: tlPage([tlEvent("e1", 3_600_000)]),
+  });
+  expect(b.scope.get()).toEqual({ window: "live" });
+  for (const e of ["graph", "map", "events"]) {
+    chip(e).click();
+    await settle();
+    expect(b.scope.get()).toEqual({ window: "live", project: "r1" });
+    expect(selectedChip()).toBe(e);
+  }
+  await vi.waitFor(() => expect(hits(b, "/workspace-graph/timeline").length).toBeGreaterThan(0));
+  await vi.waitFor(() => expect(hits(b, "/workspace-graph/activity").length).toBeGreaterThan(0));
+  for (const u of graphHits(b)) {
+    if (gp(u) === "/workspace-graph/repos") continue;
+    expect(param(u, "repo_id")).toBe("r1");
+  }
+  expect(b.urls.some((u) => u.includes("repo_id=rX"))).toBe(false);
+  const n = graphHits(b).length;
+  await settle();
+  expect(graphHits(b)).toHaveLength(n);
+  expect(b.scope.get()).toEqual({ window: "live", project: "r1" });
+});
+
+test("scope: Graph then away then back leaves scope unchanged", async () => {
+  const b = await bootProject();
+  chip("graph").click();
+  await settle();
+  const before = b.scope.get();
+  b.nav("live").click();
+  b.nav("project").click();
+  await settle();
+  expect(b.scope.get()).toEqual(before);
+  b.nav("live").click();
+  b.nav("project").click();
+  await settle();
+  expect(b.scope.get()).toEqual(before);
+});
+
+test("an explicit scope.project absent from /worktrees rows is preserved across every chip", async () => {
+  const b = await boot({
+    worktrees: R1_ROWS,
+    repos: [repoOf("r1"), repoOf("reg-only")],
+    snapshots: { r1: snapshotOf("r1", ["w1"]), "reg-only": snapshotOf("reg-only", ["z1"]) },
+    timeline: tlPage([]),
+  });
+  await projectLoaded();
+  b.scope.narrow({ project: "reg-only" });
+  for (const e of ["graph", "map", "events", "lanes", "graph"]) {
+    chip(e).click();
+    await settle();
+    expect(b.scope.get().project).toBe("reg-only");
+  }
+  await vi.waitFor(() => expect(b.urls.some((u) => gp(u) === "/workspace-graph" && param(u, "repo_id") === "reg-only")).toBe(true));
+  expect(b.urls.some((u) => gp(u) === "/workspace-graph" && param(u, "repo_id") === "r1")).toBe(false);
+  const picker = document.querySelector<HTMLSelectElement>("select.project-repo")!;
+  expect([...picker.options].map((o) => o.value)).toContain("reg-only");
+  expect(picker.value).toBe("reg-only");
+});
+
+test("a frozen window survives a Project lane pick and then the Graph and Map chips", async () => {
+  const b = await bootProject();
+  const win = { from: NOW - 6 * 3_600_000, to: NOW - 3_600_000 };
+  b.scope.narrow({ window: win });
+  await settle();
+  document.querySelector<SVGGElement>(".project-lane")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  expect(b.active()).toBe("sessions");
+  expect(b.scope.get().window).toEqual(win);
+  b.nav("project").click();
+  await settle();
+  for (const e of ["graph", "map", "events"]) {
+    chip(e).click();
+    await settle();
+    expect(b.scope.get().window).toEqual(win);
+  }
+});
+
+test("Escape in the real graph (Graph chip) behaves as before: selection first, then leaves the project", async () => {
+  const b = await bootProject();
+  openGraph(b);
+  await vi.waitFor(() => expect(document.querySelector(".workspace-label")).not.toBeNull());
+  document.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await vi.waitFor(() => expect(b.scope.get().worktree).toBe("w1"));
+  esc();
+  expect(b.scope.get().project).toBe("r1");
+  esc();
+  await vi.waitFor(() => expect(b.scope.get().project).toBeUndefined());
+});
+
+test.each(["map", "events"])("Escape from %s ascends worktree then project", async (e) => {
+  const b = await bootProject({ timeline: tlPage([tlEvent("e1", 3_600_000)]) });
+  chip(e).click();
+  await settle();
+  b.scope.narrow({ project: "r1", worktree: "wt-a" });
+  await settle();
+  esc();
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().project).toBe("r1");
+  expect(selectedChip()).toBe(e);
+  esc();
+  expect(b.scope.get().project).toBeUndefined();
+});
+
+// Map brush harness: the strip needs a measurable width (happy-dom has no layout).
+const STRIP_W = 1000;
+const spyRect = () => vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: STRIP_W, height: 72, right: STRIP_W, bottom: 72, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+const bucketAt = (bucket: number) => ({ clientX: (bucket + 0.5) * (STRIP_W / activityJson.buckets), clientY: 10, bubbles: true, pointerId: 1 });
+const mapDown = (bucket: number) => document.querySelector(".map-strip")!.dispatchEvent(new PointerEvent("pointerdown", bucketAt(bucket)));
+const mapMove = (bucket: number) => window.dispatchEvent(new PointerEvent("pointermove", bucketAt(bucket)));
+const mapUp = (bucket: number) => window.dispatchEvent(new PointerEvent("pointerup", bucketAt(bucket)));
+const openMap = async (b: Boot) => {
+  chip("map").click();
+  await vi.waitFor(() => expect(document.querySelector(".map-strip")).not.toBeNull());
+  await settle();
+  expect(b.scope.get().project).toBe("r1");
+};
+
+test("Escape mid Map drag cancels the brush and does not ascend; pointerup afterwards commits nothing", async () => {
+  spyRect();
+  const b = await bootProject();
+  await openMap(b);
+  b.scope.narrow({ worktree: "wt-a" });
+  await settle();
+  await vi.waitFor(() => expect(document.querySelector(".map-strip")).not.toBeNull());
+  const before = b.scope.get();
+  mapDown(100);
+  mapMove(120);
+  const e = esc();
+  expect(e.defaultPrevented).toBe(true);
+  expect(b.scope.get()).toEqual(before);
+  mapUp(120);
+  await settle();
+  expect(b.scope.get()).toEqual(before);
+  expect(b.scope.get().window).toBe("live");
+  expect(document.querySelectorAll(".map-bar.in")).toHaveLength(0);
+  // With the drag gone, Escape ascends again.
+  esc();
+  expect(b.scope.get().worktree).toBeUndefined();
+});
+
+test("a completed Map drag narrows the shared window, and leaving mid-drag leaves it unchanged", async () => {
+  spyRect();
+  const b = await bootProject();
+  await openMap(b);
+  mapDown(100);
+  mapMove(120);
+  chip("events").click();
+  mapUp(120);
+  await settle();
+  expect(b.scope.get().window).toBe("live");
+  expect(selectedChip()).toBe("events");
+  chip("map").click();
+  await vi.waitFor(() => expect(document.querySelector(".map-strip")).not.toBeNull());
+  await settle();
+  mapDown(100);
+  mapMove(120);
+  mapUp(120);
+  await settle();
+  expect(b.scope.get().window).not.toBe("live");
+});
+
+test("Escape from inputs, menus and dialogs never changes scope; the body Escape then ascends", async () => {
+  const b = await bootProject({ timeline: tlPage([tlEvent("e1", 3_600_000), tlEvent("e2", 1_800_000, { worktree_id: "w2" })]) });
+  b.scope.narrow({ project: "r1", worktree: "wt-a" });
+  const before = b.scope.get();
+  const stays = (target: EventTarget, ownsKey = false) => {
+    const e = esc(target);
+    // The graph search box and the More menu claim the key themselves (preventDefault).
+    if (!ownsKey) expect(e.defaultPrevented).toBe(false);
+    expect(b.scope.get()).toEqual(before);
+  };
+  stays(document.querySelector("select.project-repo")!);
+  chip("events").click();
+  await vi.waitFor(() => expect(document.querySelector('input[aria-label="Search captured events"]')).not.toBeNull());
+  stays(document.querySelector('input[aria-label="Search captured events"]')!);
+  const wsSelect = document.querySelector<HTMLSelectElement>('.workspace-graph select[aria-label="Workspace"]');
+  expect(wsSelect).not.toBeNull();
+  stays(wsSelect!);
+  stays(document.querySelector("select.project-repo")!);
+  chip("graph").click();
+  await vi.waitFor(() => expect(document.querySelector(".graph-search-input")).not.toBeNull());
+  stays(document.querySelector(".graph-search-input")!, true);
+  stays(document.querySelector("select.project-repo")!);
+  // A dialog owns Escape.
+  const dlg = document.createElement("div");
+  dlg.setAttribute("role", "dialog");
+  document.body.append(dlg);
+  stays(document.body);
+  dlg.remove();
+  // An open More menu owns Escape; the second Escape ascends.
+  document.querySelector<HTMLButtonElement>(".graph-more-button")!.click();
+  stays(document.body, true);
+  expect(document.querySelector<HTMLElement>(".graph-menu")!.hidden).toBe(true);
+  esc();
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().project).toBe("r1");
+});
+
+test("More open, then a keyboard encoding switch, then Escape is not swallowed by a stale menu", async () => {
+  const b = await bootProject();
+  chip("graph").click();
+  await vi.waitFor(() => expect(document.querySelector(".graph-more-button")).not.toBeNull());
+  b.scope.narrow({ project: "r1", worktree: "wt-a" });
+  document.querySelector<HTMLButtonElement>(".graph-more-button")!.click();
+  expect(document.querySelector<HTMLElement>(".graph-menu")!.hidden).toBe(false);
+  chip("graph").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  expect(selectedChip()).toBe("map");
+  expect(document.querySelector(".graph-menu:not([hidden])")).toBeNull();
+  esc();
+  expect(b.scope.get().worktree).toBeUndefined();
+});
+
+const crumbText = () => document.querySelector(".scope-crumb")?.textContent ?? "";
+const LONG_REPO = "repo-0123456789abcdef0123456789abcdef";
+
+test("the footer crumb names the project on every chip and after a project switch while the graph is hidden", async () => {
+  const b = await bootProject({
+    worktrees: [wtRow({ repo_id: LONG_REPO, worktree_id: "wt-a" })],
+    repos: [repoOf(LONG_REPO, "alpha-repo")],
+    snapshots: { [LONG_REPO]: { ...snapshotOf(LONG_REPO, ["w1"]), repository: repoOf(LONG_REPO, "alpha-repo") } },
+    timeline: tlPage([]),
+  });
+  const ok = (full: string) => {
+    expect(crumbText()).not.toBe("");
+    expect(crumbText()).not.toContain(full);
+    // A resolved name when the graph is shown, otherwise the short id; never the raw full id.
+    expect(crumbText().includes("alpha-repo") || crumbText().includes(full.slice(0, 8))).toBe(true);
+  };
+  for (const e of ["graph", "map", "events", "lanes"]) {
+    chip(e).click();
+    await settle();
+    ok(LONG_REPO);
+  }
+  // Switch project while the graph is hidden (Lanes): unknown to the rows, marked, never blank.
+  const other = "other-repo-abcdef0123456789";
+  b.scope.narrow({ project: other });
+  await settle();
+  ok(other);
+  expect(crumbText()).toContain("(unknown)");
+  for (const e of ["graph", "map", "events"]) {
+    chip(e).click();
+    await settle();
+    ok(other);
+  }
+});
+
+test("a historical session of a removed worktree stays in scope after the Graph is shown then hidden", async () => {
+  // The lifetime view still lists the removed worktree; the graph snapshot does not.
+  const gone = wtRow({ repo_id: "r1", worktree_id: "wt-removed", state: "removed", sessions: [{ source: "codex", session_id: "s-hist", first_time: iso(NOW - 86_400_000), last_time: iso(NOW - 80_000_000), events: 2 }] });
+  const b = await bootProject({ worktrees: [...R1_ROWS, gone] });
+  const session = { id: "s-hist", source: "codex" };
+  b.scope.narrow({ project: "r1", worktree: "wt-removed", session });
+  await settle();
+  const before = b.scope.get();
+  chip("graph").click();
+  await settle();
+  chip("lanes").click();
+  await settle();
+  expect(b.scope.get()).toEqual(before);
+  expect(b.scope.get().session).toEqual(session);
+  expect(b.scope.get().worktree).toBe("wt-removed");
+});
+
+const sendEvent = (b: Boot, e: unknown) => b.sources[0]!.onmessage!({ data: JSON.stringify(e) });
+
+test("live events do not reach the graph on Lanes or Map, and a shown Graph refreshes attention once per 500 ms", async () => {
+  const b = await bootProject({ fakeTimeout: true, timeline: tlPage([tlEvent("e1", 3_600_000)]) });
+  const counts = () => [hits(b, "/attention").length, hits(b, "/workspace-graph/timeline").length];
+  await vi.advanceTimersByTimeAsync(1000);
+  let base = counts();
+  sendEvent(b, tlEvent("live-1", 10));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(counts()).toEqual(base);
+  chip("map").click();
+  await vi.advanceTimersByTimeAsync(1000);
+  base = counts();
+  sendEvent(b, tlEvent("live-2", 10));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(counts()).toEqual(base);
+
+  chip("graph").click();
+  await vi.advanceTimersByTimeAsync(1000);
+  base = counts();
+  sendEvent(b, tlEvent("live-3", 10));
+  await vi.advanceTimersByTimeAsync(499);
+  expect(hits(b, "/attention")).toHaveLength(base[0]!);
+  await vi.advanceTimersByTimeAsync(1);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(hits(b, "/attention")).toHaveLength(base[0]! + 1);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(hits(b, "/attention")).toHaveLength(base[0]! + 1);
+  expect(hits(b, "/workspace-graph/timeline").length).toBe(base[1]);
+  vi.useRealTimers();
+});
+
+test("Events chip hide and show with more than 250 missed events restarts pagination at the head", async () => {
+  const b = await bootProject({
+    fakeTimeout: true,
+    timeline: (q) =>
+      q.get("cursor")
+        ? tlPage([tlEvent("old-1", 5 * 3_600_000)])
+        : tlPage([tlEvent("h1", 3_600_000), tlEvent("h2", 1_800_000)], `c-head-${hits(b, "/workspace-graph/timeline").length}`),
+  });
+  chip("events").click();
+  await vi.advanceTimersByTimeAsync(1000);
+  const tl = () => hits(b, "/workspace-graph/timeline");
+  expect(tl().length).toBeGreaterThan(0);
+  expect(param(tl()[0]!, "cursor")).toBeNull();
+  chip("lanes").click();
+  await vi.advanceTimersByTimeAsync(10);
+  for (let i = 0; i < 260; i++) sendEvent(b, tlEvent(`burst-${i}`, 10));
+  await vi.advanceTimersByTimeAsync(1000);
+  const before = tl().length;
+  chip("events").click();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(tl().length).toBeGreaterThan(before);
+  const head = tl()[tl().length - 1]!;
+  expect(param(head, "cursor")).toBeNull();
+  const older = [...document.querySelectorAll<HTMLButtonElement>(".workspace-graph button")].find((x) => x.textContent === "Load older events");
+  expect(older).toBeDefined();
+  older!.click();
+  await vi.advanceTimersByTimeAsync(1000);
+  const last = tl()[tl().length - 1]!;
+  expect(param(last, "cursor")).toMatch(/^c-head-/);
+  expect(param(last, "cursor")).not.toBe(param(tl()[0]!, "cursor"));
+  vi.useRealTimers();
+});
+
+test("the shell window reaches Map and Events", async () => {
+  const b = await bootProject({ timeline: tlPage([tlEvent("in-1", 4 * 3_600_000), tlEvent("out-1", 3 * 86_400_000), tlEvent("in-2", 5 * 3_600_000)]) });
+  const win = { from: NOW - 6 * 3_600_000, to: NOW - 3_600_000 };
+  b.scope.narrow({ window: win });
+  await settle();
+  chip("map").click();
+  await vi.waitFor(() => expect(hits(b, "/workspace-graph/activity").length).toBeGreaterThan(0));
+  const req = hits(b, "/workspace-graph/activity").pop()!;
+  expect(param(req, "from")).toBe(new Date(win.from).toISOString());
+  expect(param(req, "to")).toBe(new Date(win.to).toISOString());
+  expect(document.querySelector(".map-presets")).toBeNull();
+  expect(document.querySelector(".map-live")).toBeNull();
+  chip("events").click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("summary in-1"));
+  expect(document.body.textContent).toContain("summary in-2");
+  expect(document.body.textContent).not.toContain("summary out-1");
+  expect([...document.querySelectorAll("button")].some((x) => /pause|resume/i.test(x.textContent ?? ""))).toBe(false);
+});
+
+test("older daemon: /worktrees 404 still renders the graph for repos[0], and Map works with scope.project", async () => {
+  const b = await boot({
+    worktreesStatus: 404,
+    repos: [repoOf("r1")],
+    snapshots: { r1: snapshotOf("r1", ["w1"]) },
+  });
+  await vi.waitFor(() => expect(document.querySelector(".project-unsupported")).not.toBeNull());
+  chip("graph").click();
+  await vi.waitFor(() => expect(b.urls.some((u) => gp(u) === "/workspace-graph" && param(u, "repo_id") === "r1")).toBe(true));
+  expect(document.querySelector(".workspace-graph")).not.toBeNull();
+  b.scope.narrow({ project: "r1" });
+  chip("map").click();
+  await vi.waitFor(() => expect(hits(b, "/workspace-graph/activity").some((u) => param(u, "repo_id") === "r1")).toBe(true));
+  expect(document.querySelector(".map-strip, .map-summary, .map-notice")).not.toBeNull();
 });

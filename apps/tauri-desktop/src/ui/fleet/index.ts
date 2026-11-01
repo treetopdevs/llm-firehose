@@ -52,6 +52,8 @@ export interface FleetPanel {
   encoding: Encoding;
   /** The trailing span the live view draws now: the user-set span for Lanes, else the default. */
   effectiveLiveSpan(): number;
+  /** The stable fork order for a repository (Project seeds its lanes from it); undefined before the first load or for an unknown repo. */
+  forkOrder(repo: string): readonly string[] | undefined;
 }
 
 const SEP = "\u0000"; // matches qualifyLaneInput
@@ -809,6 +811,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   return {
     root,
     get encoding() { return encoding; },
+    forkOrder: (repo: string): readonly string[] | undefined => order.forks[repo],
     effectiveLiveSpan: (): number => (encoding === "lanes" ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : DEFAULT_LIVE_SPAN_MS),
     set encoding(e: Encoding) { setEncoding(e); },
     refresh: () => (active ? load() : Promise.resolve()),

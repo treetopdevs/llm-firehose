@@ -64,6 +64,24 @@ export interface TimelineFilter {
   session?: string;
   category?: string;
   search?: string;
+  from?: number;
+  to?: number;
+}
+export function orderBy<T>(
+  order: readonly string[] | undefined,
+  items: readonly T[],
+  id: (t: T) => string,
+): T[] {
+  if (!order || order.length === 0) return [...items];
+  const rank = new Map<string, number>();
+  order.forEach((k, i) => {
+    if (!rank.has(k)) rank.set(k, i);
+  });
+  const rest = order.length;
+  return items
+    .map((t, i) => ({ t, i, r: rank.get(id(t)) ?? rest }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.t);
 }
 export function eventWorkspace<T extends { id: string }>(
   ev: FirehoseEvent,
@@ -73,7 +91,23 @@ export function eventWorkspace<T extends { id: string }>(
     (w) => w.id === (ev.jj_workspace_id ?? ev.worktree_id),
   );
 }
+/**
+ * D110: the most events the Events timeline holds, the live feed's ring size
+ * (`FeedState(5000)` in main.ts). Past it the far edge is evicted; see merge().
+ */
+export const TIMELINE_CAP = 5000;
+/** How many events one merge evicted from each edge of the time range. */
+export interface Eviction {
+  older: number;
+  newer: number;
+}
 export class TimelineState {
+  constructor(readonly cap = TIMELINE_CAP) {}
+  /**
+   * The oldest events were evicted at some point, so durable history older than
+   * what is held exists and must be paged in again ("Load older" stays offered).
+   */
+  olderEvicted = false;
   private associations = new Map<
     string,
     { repo_id: string; workspace_id: string }
@@ -101,13 +135,19 @@ export class TimelineState {
       }
     );
   }
+  /**
+   * Merge by exact ID. Past the cap, live and head merges evict the oldest
+   * events; an `older` page evicts the newest instead, so paging back is not
+   * undone by its own merge (a later head refresh restores the newest).
+   */
   merge(
     events: readonly FirehoseEvent[],
     associations: Record<
       string,
       { repo_id: string; workspace_id: string }
     > = {},
-  ) {
+    opts: { older?: boolean } = {},
+  ): Eviction {
     for (const [id, a] of Object.entries(associations))
       this.associations.set(id, a);
     for (const e of events) {
@@ -118,6 +158,25 @@ export class TimelineState {
       }
       this.events.set(e.id, e);
     }
+    return this.evict(!!opts.older);
+  }
+  private evict(older: boolean): Eviction {
+    const over = this.events.size - this.cap;
+    if (over <= 0) return { older: 0, newer: 0 };
+    // Oldest first, the reverse of rows(); an unparsable time counts as oldest.
+    const keyed = [...this.events.values()].map((e) => {
+      const t = Date.parse(e.time);
+      return { e, t: Number.isNaN(t) ? -Infinity : t, sub: submillisecond(e.time) };
+    });
+    keyed.sort((a, b) => a.t - b.t || a.sub - b.sub || (a.e.id < b.e.id ? -1 : a.e.id > b.e.id ? 1 : 0));
+    const gone = older ? keyed.slice(keyed.length - over) : keyed.slice(0, over);
+    for (const { e } of gone) {
+      this.events.delete(e.id);
+      this.associations.delete(e.id);
+      if (this.arrivals.delete(e.id)) this.unread = Math.max(0, this.unread - 1);
+    }
+    if (!older) this.olderEvicted = true;
+    return older ? { older: 0, newer: over } : { older: over, newer: 0 };
   }
   select(id: string) {
     this.selected = this.events.get(id);
@@ -138,8 +197,10 @@ export class TimelineState {
     return [...this.events.values()];
   }
   private matching(events: FirehoseEvent[], f: TimelineFilter) {
+    const ranged = f.from !== undefined || f.to !== undefined;
     return events.filter(
       (e) =>
+        (!ranged || this.inRange(e, f)) &&
         (!f.repo || this.association(e, f.repo).repo_id === f.repo) &&
         (!f.workspace ||
           this.association(e, f.repo).workspace_id === f.workspace) &&
@@ -151,6 +212,13 @@ export class TimelineState {
             .join(" ")
             .toLowerCase()
             .includes(f.search.toLowerCase())),
+    );
+  }
+  private inRange(e: FirehoseEvent, f: TimelineFilter) {
+    const t = Date.parse(e.time);
+    if (Number.isNaN(t)) return false;
+    return (
+      (f.from === undefined || t >= f.from) && (f.to === undefined || t <= f.to)
     );
   }
   unreadFor(f: TimelineFilter) {
