@@ -202,7 +202,7 @@ func runView(cfg cfgType, home string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	events, history, sessions, err := viewFeed(ctx, cfg, home)
+	events, history, sessions, worktrees, err := viewFeed(ctx, cfg, home, host.OpenLocalFeed)
 	if err != nil {
 		return err
 	}
@@ -210,6 +210,7 @@ func runView(cfg cfgType, home string) error {
 	model := tui.NewModel(events)
 	model = model.Preload(history)
 	model = model.PreloadSessions(sessions)
+	model = model.WithWorktrees(worktrees)
 	model.ExportFn = func(evs []event.Event) (string, error) {
 		name := fmt.Sprintf("firehose-export-%s.ndjson", time.Now().Format("20060102-150405"))
 		f, err := os.Create(name)
@@ -236,7 +237,7 @@ func runView(cfg cfgType, home string) error {
 // viewFeed prefers the daemon API; without one it opens the same host-composed
 // Capture Engine locally. Both paths preload durable history and Projection
 // state, then reconcile bounded live-stream interruptions.
-func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event, []event.Event, []tui.SessionAttention, error) {
+func viewFeed(ctx context.Context, cfg cfgType, home string, openLocal func(context.Context, cli.Config, string) (host.Feed, error)) (<-chan event.Event, []event.Event, []tui.SessionAttention, tui.WorktreeSource, error) {
 	if cfg.DaemonAddr != "" {
 		c := client.New("http://" + cfg.DaemonAddr)
 		if h, err := c.Health(ctx); err == nil {
@@ -245,24 +246,24 @@ func viewFeed(ctx context.Context, cfg cfgType, home string) (<-chan event.Event
 				schema = 1
 			}
 			if schema != event.CurrentSchemaVersion {
-				return nil, nil, nil, fmt.Errorf(
+				return nil, nil, nil, nil, fmt.Errorf(
 					"daemon schema version %d is incompatible with client schema version %d",
 					schema, event.CurrentSchemaVersion,
 				)
 			}
 			stream, history, sessions, err := c.Feed(ctx, 500, 10000)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
-			return stream, history, sessionAttention(sessions), nil
+			return stream, history, sessionAttention(sessions), host.SelectWorktrees(c, host.Feed{}), nil
 		}
 	}
 
-	feed, err := host.OpenLocalFeed(ctx, cfg, home)
+	feed, err := openLocal(ctx, cfg, home)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return feed.Events, feed.History, sessionAttention(feed.Sessions), nil
+	return feed.Events, feed.History, sessionAttention(feed.Sessions), host.SelectWorktrees(nil, feed), nil
 }
 
 func sessionAttention(sessions []livesubscription.Session) []tui.SessionAttention {

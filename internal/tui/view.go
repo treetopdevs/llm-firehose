@@ -71,9 +71,12 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	now := m.now()
 	var body []string
-	if m.alt == altWorkspace {
+	switch m.alt {
+	case altWorkspace:
 		body = m.viewWorkspace(now)
-	} else {
+	case altWorktree:
+		body = m.viewWorktrees(now)
+	default:
 		body = m.viewFeed(now)
 	}
 	for _, line := range body {
@@ -100,8 +103,13 @@ func (m Model) viewHeader() string {
 	switch {
 	case m.alt == altWorkspace:
 		parts = append(parts, dimStyle.Render("workspace"))
+	case m.alt == altWorktree:
+		parts = append(parts, dimStyle.Render("worktrees"))
 	case m.lanes:
 		parts = append(parts, dimStyle.Render("lanes · "+windowLabel(laneWindows[m.laneIdx])))
+	}
+	if m.wscope != nil {
+		parts = append(parts, dimStyle.Render("worktrees ▸ sessions of ")+stripControl(m.wscope.Label)+dimStyle.Render(" · loaded events"))
 	}
 	if m.scope != nil {
 		parts = append(parts, dimStyle.Render("▸ ")+whereLabel(m.scope.Where)+" · "+m.scope.Agent)
@@ -166,7 +174,13 @@ func (m Model) viewFeed(now time.Time) []string {
 		prev = &rows[i]
 	}
 	if len(rows) == 0 {
-		lines = append(lines, dimStyle.Render("  waiting for agent activity…"))
+		if held := m.heldWorktreeEvents(); held > 0 {
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("  %d event(s) for this worktree held by pause · space to resume", held)))
+		} else if n := m.unloadedWorktreeSessions(); n > 0 {
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("  history not loaded: no loaded events for %d listed session(s)", n)))
+		} else {
+			lines = append(lines, dimStyle.Render("  waiting for agent activity…"))
+		}
 	}
 	return lines
 }
@@ -312,7 +326,12 @@ func (m Model) viewLaneStrip(sessions []sessionInfo, now time.Time, agentW int) 
 	window := laneWindows[m.laneIdx]
 	lines := make([]string, 0, maxRows+3)
 	lines = append(lines, strings.Repeat(" ", prefixW)+dimStyle.Render(laneAxis(now, window, laneW)))
-	for i, ln := range buildLanes(m.events, sessions, now, window, laneW) {
+	evs := m.events
+	if m.wscope != nil {
+		// Session IDs are only unique per source: lanes take only scoped events.
+		evs = m.scoped(evs)
+	}
+	for i, ln := range buildLanes(evs, sessions, now, window, laneW) {
 		if i >= maxRows {
 			lines = append(lines, dimStyle.Render(fmt.Sprintf("+%d more", len(sessions)-i)))
 			break
@@ -478,7 +497,13 @@ func (m Model) viewFooter() string {
 	help := "? help · esc workspace · l lanes"
 	switch {
 	case m.alt == altWorkspace:
-		help = "? help · ↑↓ pick · enter open"
+		help = "? help · ↑↓ pick · enter open · w wt"
+	case m.alt == altWorktree:
+		help = m.worktreeFooter()
+	case m.wscope != nil && m.lanes:
+		help = "? help · esc worktrees · l band"
+	case m.wscope != nil:
+		help = "? help · esc worktrees · l lanes"
 	case m.lanes:
 		help = "? help · esc workspace · l band"
 	}
@@ -493,12 +518,14 @@ func (m Model) viewHelp() string {
 	b.WriteString(headerStyle.Render("HELP") + dimStyle.Render("  (? or esc to close)") + "\n\n")
 	b.WriteString("  altitudes\n")
 	b.WriteString("  workspace (repos × agents)  ›  session (band or lanes over rows)  ›  call\n")
-	b.WriteString("  enter descends, esc ascends; the header keeps the scope as a breadcrumb\n\n")
+	b.WriteString("  workspace › worktree › session › call   (w adds the worktree rung between workspace and session)\n")
+	b.WriteString("  enter descends, esc ascends one rung; the header keeps the scope as a breadcrumb\n\n")
 	b.WriteString("  keys\n")
 	b.WriteString("  space  pause / resume      ↑↓ j k  scroll / pick  enter  descend\n")
 	b.WriteString("  f      cycle category      a       cycle source   /      search summaries\n")
 	b.WriteString("  l      lanes ⇄ band        - +     lane window    t      hide / show cwd\n")
-	b.WriteString("  e      export visible      q       quit           esc    ascend\n\n")
+	b.WriteString("  e      export visible      q       quit           esc    ascend\n")
+	b.WriteString("  w      worktree list       (from workspace or session)\n\n")
 	b.WriteString("  glyphs\n ")
 	for _, cat := range glyphOrder {
 		b.WriteString("  " + categoryGlyphs[cat] + " " + string(cat))
@@ -509,6 +536,10 @@ func (m Model) viewHelp() string {
 	b.WriteString("  one line per live session: agent · events per 30s over the last 5m · time in its state as a bar, │ marks 5m and full is 10m · state · what it last did\n\n")
 	b.WriteString("  lanes\n")
 	b.WriteString("  wall time across, now at the right edge · ▂▄▆█ events per slot · ─ tool call still running · ! error · ? needs you\n\n")
+	b.WriteString("  worktrees\n")
+	b.WriteString("  REPO PATH BRANCH SESS LIVE LAST STATE, in stable repo/path order (never by recency)\n")
+	b.WriteString("  STATE needs the daemon; without it the column shows – · BRANCH is not captured, so it shows –\n")
+	b.WriteString("  enter narrows the session view to one worktree, over the loaded events only; listed sessions with no loaded events say history not loaded\n\n")
 	b.WriteString("  workspace\n")
 	b.WriteString("  one row per workspace, one column per agent · sparkline · ? needs you  ● working  · idle · count when more than one session\n")
 	return b.String()
