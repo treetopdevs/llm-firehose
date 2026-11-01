@@ -343,3 +343,29 @@ For `docs/plans/2026-10-18-backlog-coordination.html`, numbering continues from 
 > Constraint carried into slice 6 (map actions): one `Actions` affordance and one verb list
 > shared by Fleet, Project and Worktree units. Constraint carried into slice 8 (session
 > tabs): the Session altitude reads the shared transport rather than keeping Score's own.
+
+## Follow-through: slices 8 and 10 against the P1 list (2026-11-01, later the same day)
+
+Read-only check of the two PRs that cite this audit, done from `gh pr diff` so no
+worktree was touched. PR #66 is slice 8 (Session altitude tabs), PR #67 is slice 10
+(shell-owned transport). Slice 9 (Project encodings, D110/D114) was in progress and is
+not judged here; the graph and map still ignoring `scope.window` is deferred to it by
+D110 and D113 and is not re-flagged.
+
+| P1 finding | PR | Status | Evidence in the diff |
+|---|---|---|---|
+| Six time controls, Score writes-only | #67, #66 | **Closed for Project, Fleet, Session**; Graph and Map wait on slice 9 | `transport.ts` is the only shell writer and writes through `store.narrow`; `project-live` button, `project-window` line and the Fleet `fleet-window` chip are deleted; Project's axis drag survives as a narrowing scrub, which D113 allows; #66 adds a test named "scope.window drives Score and the filter lenses; the panel only writes through the reset chip" |
+| Focus `outline: none`, no visible focus on new chrome | #66, #67 | **Not repeated** in the new surfaces | `.session-tabs button:focus-visible`, `.session-lens-head button:focus-visible`, `.transport-*:focus-visible` all draw a 2px accent outline; the five existing `outline: none` lines in `styles.css` are untouched and remain open |
+| Click-only openers (`sessions.ts`, `feed.ts`) | #66 | **Open** | neither file is in the diff; the fix belongs to slice 12. The new tablist itself is keyboard-complete (Arrow, Home, End, Escape tested) and the transport track is a `role=slider` with arrow and Home handling |
+| Raw ids in headers and breadcrumb | #66 | **Open, and one new instance** | the lens head in `ui/session/index.ts` renders `TITLES[t] · stripControl(session.id)`; it should go through `sessionName` / `sessionWhere` from `format.ts` (slice 11) |
+| Two palettes, 84 colour literals | #66 | **One new literal** | `.session-tabs button[aria-selected="true"]` uses `rgba(255, 106, 0, 0.14)` instead of an accent token with alpha; slice 13 should fold it in |
+| Unbounded graph timeline model, per-event render | — | **Open**, assigned to slice 9 by D110 (c) | not in either PR |
+| Feed 1000-row rebuild | — | **Open** | not in either PR |
+| Lowercase codename nav | #66 | **Open** | nav gains a `session` entry under Altitudes in the same lowercase style; slice 11 |
+
+Two decisions in D115 are worth keeping in mind for slice 9: at the session altitude the
+transport's wall-clock presets are inert and only Live acts (hint text "Zoom with the
+Score"), so the Session altitude still has a second, local time control by design; and a
+preset only survives into a session through Fleet navigation. Both are documented
+behaviour rather than defects, but they are the kind of "two ways in" the unification
+section argues against, and the legend work in slice 12 should state them.
