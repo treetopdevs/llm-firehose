@@ -51,7 +51,7 @@ template for everything else.
 Specific tells, each verified:
 
 1. **Side-stripe borders.** `.band-row { border-left: 3px solid hsl(var(--hue) 55% 55%) }`
-   (`styles.css:211`), `.dwell-row` (`:254-261`), `.capture-warning { border-left: 3px solid var(--warn) }` (`:394`). The session hue is meaningful, so the fix is not to drop it but to move it: the TUI already draws the same hue as a `│` glyph inside the row (`internal/tui/view.go`, help text "│ one hue per session"). Do that in the desktop too.
+   (`styles.css:211`, the stripe on every card in `fleet-altitude-sessions.png`), `.dwell-row` (`:254-261`), `.capture-warning { border-left: 3px solid var(--warn) }` (`:394`). The session hue is meaningful, so the fix is not to drop it but to move it: the TUI already draws the same hue as a `│` glyph inside the row (`internal/tui/view.go`, help text "│ one hue per session"). Do that in the desktop too.
 2. **First-order category reflex.** "Developer observability tool, so GitHub dark plus mono." The palette was not chosen for this product; it was inherited from the category. Scene sentence that should drive the choice: *a developer with four dark terminals and an editor open on a 27-inch display in a daylit room glances at Firehose between agent turns to see who is blocked.* Dark holds (it sits beside dark terminals and must not flash on glance), but the neutrals should be the app's own, tinted toward its warm accent, with the graph brought onto the same tokens.
 3. **Identical card stacks.** Sessions (`fleet-altitude-sessions.png`) and Attention inbox (`attention.png`): same-shaped bordered cards, 200+px tall each, three facts and two buttons per card, ten per screen. A dense table or band (as the TUI draws it) is the right affordance here; the card is the lazy one.
 4. **Accent as decoration.** The live feed paints the source column in `--accent` on every row (`.cell.source`, `styles.css:103`), and the Attention inbox paints "Activity captured" orange on sessions that are simply working (`attention.png`). PRODUCT.md principle 4 says attention earns colour. On these screens the most common value owns it.
@@ -64,7 +64,7 @@ lanes view and the Fleet map are distinctive and would not be mistaken for a tem
 
 - Audit health score: **9/20** (Poor), dragged down by theming and the shell. The new
   altitudes score well in isolation.
-- Issues: **0 P0 · 9 P1 · 11 P2 · 3 P3.**
+- Issues: **0 P0 · 9 P1 · 12 P2 · 3 P3.**
 - Top five:
   1. **The named target is split in three.** "Workspace" is the old repo×agent matrix (`ui/workspace`, still alive through `CellScope`), the revision graph lens (`ui/graph`), and the TUI's top altitude (`viewWorkspace`). In the shell, `workspace` (graph) and `project` (lanes) are two Project-altitude pictures of the same repository with two repository pickers and no shared window. Unify them (section 5).
   2. **Time is not one axis.** Six independent time controls exist. The scope `window` is read by Project and Fleet, written (never read) by Score, and ignored by the graph, whose Timeline and Map tabs carry their own Live toggles and presets.
@@ -114,7 +114,7 @@ lanes view and the Fleet map are distinctive and would not be mistaken for a tem
 - Command: `/impeccable clarify`.
 
 **[P1] Unbounded graph timeline model and per-event full render**
-- Location: `ui/graph/model.ts:104-120` (`TimelineModel.events` Map never pruned; `rows()` re-sorts with `Date.parse` in the comparator); `ui/graph/index.ts:1391` → `render()` on every live event while the Timeline tab is up; `main.ts:280` forwards every event to the graph even when it is not the active panel.
+- Location: `ui/graph/model.ts:104-120` (`merge()` only ever calls `this.events.set`, nothing prunes; `rows()` re-sorts with `Date.parse` in the comparator); `ui/graph/index.ts:1391` → `render()` on every live event while the Timeline tab is up; `main.ts:280` forwards every event to the graph even when it is not the active panel.
 - Category: Performance. Impact: a day is 29k events; memory and per-event cost grow for as long as the app is open.
 - Recommendation: cap the model to the scope window (or the feed's 5000 ring), parse once on insert, and gate `onEvent` on `active === "workspace"` as is already done for Fleet (`main.ts:281`).
 - Command: `/impeccable optimize`.
