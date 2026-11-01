@@ -21,8 +21,22 @@ export function isFailure(s: AttentionSession): boolean {
   return s.pending?.kind === "failure" || s.state === "failed";
 }
 
-/** NEEDS YOU or FAILED for a live pending episode, else the reported state. */
+/**
+ * The one place a session state becomes words. Casing is presentational (the
+ * .badge/.state CSS uppercases it); the words are the same on every surface.
+ */
+export function stateWord(state: string): string {
+  if (state === "needs_input") return "needs you";
+  return state;
+}
+
+/** "needs you" or "failed" for a live pending episode, else the reported state in the same words. */
 export function needsLabel(s: AttentionSession, nowMs: number): string {
-  if (!pendingNow(s, nowMs)) return s.state;
-  return isFailure(s) ? "FAILED" : "NEEDS YOU";
+  if (!pendingNow(s, nowMs)) return stateWord(s.state);
+  return isFailure(s) ? stateWord("failed") : stateWord("needs_input");
+}
+
+/** `1 needs you`, `3 need you`. */
+export function needYouCount(n: number): string {
+  return `${n} ${n === 1 ? "needs" : "need"} you`;
 }

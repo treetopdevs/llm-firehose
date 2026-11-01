@@ -28,7 +28,7 @@ export const desktopNotifications: NotificationDelivery = {
     await invoke("plugin:notification|notify", {
       options: {
         title: "Agent Firehose",
-        body: "An agent session needs attention. Open the Attention inbox.",
+        body: "An agent session needs you. Open Needs you.",
       },
     });
   },

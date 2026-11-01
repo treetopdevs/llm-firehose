@@ -5,7 +5,7 @@
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
 import { idLabel, sessionName } from "../../format";
-import { isFailure } from "../../needs";
+import { isFailure, needYouCount } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
 import { IDLE_AFTER_MS, isIdleWorker, orderLanes } from "../project/model";
 
@@ -130,6 +130,11 @@ function tooltipOf(r: WorktreeLifetimeView, label: string): string {
   return lines.join("\n");
 }
 
+/** The fork's accessible name: its state and idleness, plus how many sessions wait on you. */
+export function forkAriaLabel(f: Pick<FleetFork, "ariaLabel" | "needs">): string {
+  return f.needs > 0 ? `${f.ariaLabel}, ${needYouCount(f.needs)}` : f.ariaLabel;
+}
+
 export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
   const label = r.label ?? idLabel(r.worktree_id);
   // A gone worktree's age is when the daemon last saw it, not when it last produced a signal:
@@ -140,16 +145,17 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
     .map((s) => ({ first: time(s.first_time), last: time(s.last_time) }))
     .filter((s) => Number.isFinite(s.first) && Number.isFinite(s.last))
     .map((s) => ({ first: Math.min(s.first, s.last), last: Math.max(s.first, s.last) }));
+  const idle = isIdleWorker(r, now);
   return {
     id: r.worktree_id,
     label,
     short: lastSegment(label),
     state: r.state,
     glyph: FORK_GLYPH[r.state] ?? FORK_GLYPH.unknown,
-    idle: isIdleWorker(r, now),
+    idle,
     old: goneKnown && !(now - removedAt <= GONE_RECENT_MS),
     ageUnknown: r.state === "gone" && !goneKnown,
-    ariaLabel: `${label}, ${r.state}`,
+    ariaLabel: `${label}, ${r.state}${idle ? ", idle" : ""}`,
     tooltip: tooltipOf(r, label),
     needs: 0,
     lastMs: finiteOr(time(r.last_time), 0),
@@ -253,7 +259,7 @@ export function buildFleet(input: FleetInput): FleetResult {
     const noRepo = id === NOREPO_KEY;
     let label: string;
     let digest = false;
-    if (noRepo) label = "No repo id";
+    if (noRepo) label = "No project";
     else {
       let resolved: string | undefined;
       try { resolved = input.resolveLabel?.(id) || undefined; } catch { resolved = undefined; }

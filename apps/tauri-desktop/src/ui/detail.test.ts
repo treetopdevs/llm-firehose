@@ -182,3 +182,19 @@ test("offers captured event to Evidence Court only on explicit action", () => {
   renderDetail(pane, null, () => {});
   expect(pane.textContent).not.toContain("Use in Evidence Court");
 });
+import { createSessionDirectory } from "../session-directory";
+describe("renderDetail names", () => {
+  test("names the session once the directory knows it, then stops following when the pane closes", () => {
+    const dir = createSessionDirectory(); const pane = document.createElement("aside"); const e = ev({ id: "x1" });
+    renderDetail(pane, e, () => {}, () => [], undefined, undefined, dir);
+    expect(pane.querySelector(".detail-crumb")?.textContent).toBe("…/dev/app · claude · session 30c5b813");
+    dir.remember([{ id: e.session_id!, source: e.source, title: "Fix login bug" }]);
+    expect(pane.querySelector(".detail-crumb")?.textContent).toBe("…/dev/app · claude · session Fix login bug");
+    expect(pane.querySelector(".detail-crumb")?.getAttribute("title")).toContain(e.session_id);
+    expect(pane.textContent).toContain("session Fix login bug");
+    expect(pane.querySelector(".detail-meta")!.textContent).not.toContain(e.session_id!);
+    renderDetail(pane, null, () => {}, () => [], undefined, undefined, dir);
+    dir.remember([{ id: e.session_id!, source: e.source, title: "Renamed later" }]);
+    expect(pane.textContent).toBe("");
+  });
+});

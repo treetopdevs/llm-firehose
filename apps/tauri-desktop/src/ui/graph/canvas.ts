@@ -125,6 +125,7 @@ interface ClusterRec {
   dot: SVGCircleElement;
   cluster: LaidCluster;
   flags: string;
+  aria: string;
 }
 
 function fnv(h: number, s: string): number {
@@ -217,7 +218,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
   expandButton.onclick = () => handlers.expandHistory();
   footer.append(legend, footerStatus, expandButton);
   // Zoomed far out the labels are too small to read; say so rather than show specks.
-  const zoomHint = el("div", { class: "graph-zoom-hint", role: "status" }, "Zoomed out: labels are hidden. Zoom in, or search, to read workspaces.");
+  const zoomHint = el("div", { class: "graph-zoom-hint", role: "status" }, "Zoomed out: labels are hidden. Zoom in, or search, to read worktrees.");
   zoomHint.hidden = true;
   // Workspaces beyond each edge of the view, so a cropped Fit never hides them silently.
   // Each is a button that pans a screenful toward them.
@@ -473,7 +474,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       ? ` (${clustered} grouped in ${new Set(layout.clusterOf.values()).size} counted ${new Set(layout.clusterOf.values()).size === 1 ? "cluster" : "clusters"})`
       : "";
     const counts = viewCounts();
-    const text = `All ${total} workspaces labelled${grouped} · ${counts.inView} in view`;
+    const text = `All ${total} worktrees labelled${grouped} · ${counts.inView} in view`;
     if (footerStatus.textContent !== text) footerStatus.textContent = text;
     for (const side of ["left", "right", "top", "bottom"] as const) {
       const hint = edgeHints[side];
@@ -482,7 +483,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       if (n) {
         const t = hintText[side](n);
         if (hint.textContent !== t) hint.textContent = t;
-        hint.setAttribute("aria-label", `${n} more ${n === 1 ? "workspace" : "workspaces"} ${side === "left" ? "to the left" : side === "right" ? "to the right" : side === "top" ? "above" : "below"}; pan toward them`);
+        hint.setAttribute("aria-label", `${n} more ${n === 1 ? "worktree" : "worktrees"} ${side === "left" ? "to the left" : side === "right" ? "to the right" : side === "top" ? "above" : "below"}; pan toward them`);
       }
     }
     expandButton.hidden = !graph.hasMore;
@@ -552,6 +553,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     text.textContent = ws.name;
     const dot = svg("circle", {
       class: "agent-dot state-none",
+      "aria-hidden": "true",
       cx: l.w - 12,
       cy: l.h / 2,
       r: 4.5,
@@ -571,7 +573,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       "data-key": `cluster:${c.revision_key}`,
       transform: `translate(${num(c.x)},${num(c.y)})`,
       "aria-expanded": c.expanded ? "true" : "false",
-      "aria-label": `${c.count} workspaces on one revision, ${c.expanded ? "expanded" : "collapsed"}`,
+      "aria-label": `${c.count} worktrees on one revision, ${c.expanded ? "expanded" : "collapsed"}`,
     });
     if (c.leader)
       g.append(
@@ -585,19 +587,20 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       );
     g.append(svg("rect", { class: "chip", width: c.w, height: c.h, rx: 6 }));
     const text = svg("text", { x: 10, y: c.h / 2 + 4 });
-    text.textContent = `${c.count} workspaces ${c.expanded ? "▾" : "▸"}`;
+    text.textContent = `${c.count} worktrees ${c.expanded ? "▾" : "▸"}`;
     const dot = svg("circle", {
       class: "agent-dot state-none",
+      "aria-hidden": "true",
       cx: c.w - 12,
       cy: c.h / 2,
       r: 4.5,
     });
     const title = svg("title");
     title.textContent = c.expanded
-      ? "Collapse this group of workspaces"
-      : "Expand to show every workspace on this revision";
+      ? "Collapse this group of worktrees"
+      : "Expand to show every worktree on this revision";
     g.append(clipped(text, c.w, c.h), dot, title);
-    return { g, dot, cluster: c, flags: "" };
+    return { g, dot, cluster: c, flags: "", aria: "" };
   }
 
   /** Key (`workspace:..`, `cluster:..`, `revision:..`) of the focused element inside the svg. */
@@ -1010,6 +1013,11 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
         setClass(rec.g, `workspace-cluster${flags}`);
       }
       setClass(rec.dot, `agent-dot state-${agent}`);
+      const aria = `${rec.cluster.count} worktrees on one revision, ${rec.cluster.expanded ? "expanded" : "collapsed"}, ${stateDescription(agent)}`;
+      if (rec.aria !== aria) {
+        rec.aria = aria;
+        rec.g.setAttribute("aria-label", aria);
+      }
     }
     // Keep the selected label as the keyboard entry point unless focus is inside the canvas.
     if (!canvas.contains(document.activeElement) || document.activeElement === canvas) {

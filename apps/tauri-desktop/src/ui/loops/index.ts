@@ -1,7 +1,9 @@
 import { capturedEvent, errorSignatures, sessionEvents, sessions } from "../../api";
-import type { ErrorSignature, FirehoseEvent } from "../../api";
+import type { ErrorSignature, FirehoseEvent, SessionSummary } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
-import { formatDuration } from "../../format";
+import { formatDuration, sessionName, sessionRefLabel } from "../../format";
+import type { SessionLike } from "../../format";
+import type { SessionDirectory } from "../../session-directory";
 import { createScope, membership, selectSession } from "../../scope";
 import { activeRange, inWindow, sessionKey } from "../session/context";
 import type { Range, SessionTabContext } from "../session/context";
@@ -16,7 +18,7 @@ export const PAGE_SIZE = 40;
 export const SIGNATURE_TIMEOUT_MS = 4000;
 
 /** A historical snapshot. Its own detail region never writes the shared pane. */
-export function createLoops(store: ScopeStore = createScope()) {
+export function createLoops(store: ScopeStore = createScope(), directory?: SessionDirectory) {
   const sessionSelect = el("select", {"aria-label": "Loop session"});
   const sourceSelect = el("select", {"aria-label": "Loop source"});
   const refreshButton = el("button", {}, "Refresh history");
@@ -30,6 +32,43 @@ export function createLoops(store: ScopeStore = createScope()) {
     el("div", {class: "loops-controls"}, el("label", {}, "Session ", sessionSelect), el("label", {}, "Source ", sourceSelect), refreshButton, sessionStatus), body, notice, detail);
   let phase: "idle" | "loading" | "error" | "ready" = "idle";
   let sessionId = "";
+  let listed: readonly SessionSummary[] = [];
+  let loadingLine: HTMLElement | undefined;
+  let unsubDirectory: (() => void) | undefined;
+  const nameOfCurrent = () => sessionRefLabel(source ? { id: sessionId, source } : { id: sessionId }, directory?.lookup(source ? { id: sessionId, source } : { id: sessionId })).label;
+  const optionText = (s: SessionLike) => {
+    const name = sessionName(s), agent = s.agent || s.source;
+    return name.startsWith(agent) ? name : `${agent} · ${name}`;
+  };
+  /** The picker text for the open session when the list does not carry it. */
+  const currentOption = () => {
+    const known = directory?.lookup(source ? { id: sessionId, source } : { id: sessionId });
+    return known ? optionText(known) : nameOfCurrent();
+  };
+  /** Names the picker and the heading in place; the loaded history, pages and selection stay. */
+  /** Same-id sessions from different sources are separate options; select the exact one. */
+  function selectExact() {
+    const opts = [...sessionSelect.options];
+    const i = opts.findIndex(o => o.value === sessionId && (!source || o.getAttribute("data-source") === source));
+    sessionSelect.selectedIndex = i >= 0 ? i : Math.max(0, opts.findIndex(o => o.value === sessionId));
+  }
+  function labelOptions() {
+    for (const o of [...sessionSelect.options]) {
+      if (!o.value) continue;
+      // The open option answers to the exact source-qualified ref; the directory is fresher than the cached list.
+      const mine = o.value === sessionId;
+      const known = mine && source ? listed.find(s => s.id === o.value && s.source === source) : listed.find(s => s.id === o.value);
+      const fresh = known ? (directory?.lookup({id: known.id, source: known.source}) ?? known) : undefined;
+      const text = fresh ? optionText(fresh) : mine ? currentOption() : undefined;
+      if (text !== undefined && o.textContent !== text) o.textContent = text;
+    }
+    if (sessionId) selectExact();
+  }
+  function relabel() {
+    labelOptions();
+    if (loadingLine && body.contains(loadingLine)) loadingLine.textContent = `Loading ${nameOfCurrent()}…`;
+    if (phase === "ready") draw();
+  }
   let source: string | undefined;
   let events: FirehoseEvent[] = [];
   let signatures: ErrorSignature[] = [];
@@ -124,7 +163,7 @@ export function createLoops(store: ScopeStore = createScope()) {
     if (phase === "loading" || phase === "error") return;
     const restore = keepFocus(root); clear(body);
     if (!sessionId) { body.append(el("p", {}, "Choose a session to inspect recurring errors.")); return; }
-    body.append(el("p", {class: "dim"}, `Session ${sessionId} · ${source || "all sources (signatures stay separate)"} · ${model.events.length} captured events in this snapshot`));
+    body.append(el("p", {class: "dim"}, `Session ${nameOfCurrent()} · ${source || "all sources (signatures stay separate)"} · ${model.events.length} captured events in this snapshot`));
     body.append(el("p", {class: "loops-disclosure", role: "status"},
       model.fallbackCount ? `${model.fallbackCount} error observations across this loaded session/source use local fallback identity. Authoritative membership is missing, unavailable, pending, or capped; local grouping may differ.` : "All loaded error observations use authoritative signature membership.",
       signatureStatus === "pending" ? " Signature lookup pending." : signatureStatus === "unavailable" ? " Signature lookup unavailable." : ""));
@@ -222,8 +261,9 @@ export function createLoops(store: ScopeStore = createScope()) {
     const historyCtl = new AbortController(); historyAbort = historyCtl;
     signatureAbort?.abort(); clearTimeout(signatureTimer);
     sessionId = id; source = selectedSource; events = []; signatures = []; signatureStatus = "pending"; activeKey = undefined; interval = undefined; occurrencePage = 0; groupPage = 0;
-    if (![...sessionSelect.options].some(o => o.value === id)) sessionSelect.append(el("option", {value: id}, id));
-    sessionSelect.value = id; selectSources(); clear(body); body.append(el("p", {role: "status"}, `Loading ${id}…`));
+    if (![...sessionSelect.options].some(o => o.value === id)) sessionSelect.append(el("option", {value: id}, currentOption()));
+    sessionSelect.value = id; labelOptions(); selectSources(); clear(body); loadingLine = el("p", {role: "status"}, `Loading ${nameOfCurrent()}…`); body.append(loadingLine);
+    directory?.ensure(source ? {id, source} : {id});
     const ctl = new AbortController(); signatureAbort = ctl;
     let loaded = false;
     signatureTimer = setTimeout(() => { ctl.abort(); if (current === version) { signatureStatus = "unavailable"; if (loaded) derive(); } }, SIGNATURE_TIMEOUT_MS);
@@ -244,16 +284,18 @@ export function createLoops(store: ScopeStore = createScope()) {
     }
   }
   async function refresh() {
+    unsubDirectory ??= directory?.subscribe(relabel);
     // Reconcile on every show, as Score.activate does.
     const want = store.get().session;
     if (want && (want.id !== sessionId || want.source !== source)) void open(want.id, want.source);
     const token = ++listingVersion; sessionStatus.textContent = "Loading session list…";
     try {
       const list = await sessions(); if (token !== listingVersion) return;
+      listed = list; directory?.remember(list);
       clear(sessionSelect); sessionSelect.append(el("option", {value: ""}, "Choose a session"));
-      for (const s of list) sessionSelect.append(el("option", {value: s.id}, `${s.agent || s.source} · ${s.id}`));
-      if (sessionId && !list.some(s => s.id === sessionId)) sessionSelect.append(el("option", {value: sessionId}, sessionId));
-      sessionSelect.value = sessionId; sessionStatus.textContent = list.length ? "" : "No sessions available.";
+      for (const s of list) sessionSelect.append(el("option", {value: s.id, "data-source": s.source}, optionText(s)));
+      if (sessionId && !list.some(s => s.id === sessionId)) sessionSelect.append(el("option", {value: sessionId}, currentOption()));
+      sessionSelect.value = sessionId; labelOptions(); sessionStatus.textContent = list.length ? "" : "No sessions available.";
     } catch { if (token === listingVersion) sessionStatus.textContent = "Session list unavailable. Refresh to retry."; }
   }
   sessionSelect.addEventListener("change", () => {
@@ -292,6 +334,7 @@ export function createLoops(store: ScopeStore = createScope()) {
     if (changed) windowChanged();
   }
   function deactivate() {
+    unsubDirectory?.(); unsubDirectory = undefined;
     lastRef = null; selfWritten = false;
     if (phase === "loading") {
       version++; historyAbort?.abort(); signatureAbort?.abort(); clearTimeout(signatureTimer); cancelDetail();

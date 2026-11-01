@@ -57,3 +57,19 @@ export function keepFocus(root: Element): () => void {
     }
   };
 }
+
+/**
+ * Remembers which control under root has focus by its position among the
+ * controls, for a redraw that keeps the same structure but rewrites text.
+ */
+export function keepControlFocus(root: Element): () => void {
+  const sel = "button, input, select, textarea, a[href], [tabindex]";
+  const active = document.activeElement;
+  const at = active && root.contains(active) ? [...root.querySelectorAll(sel)].indexOf(active) : -1;
+  const tag = active?.tagName;
+  return () => {
+    if (at < 0) return;
+    const node = root.querySelectorAll<HTMLElement>(sel)[at];
+    if (node && node.tagName === tag) node.focus();
+  };
+}

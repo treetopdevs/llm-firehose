@@ -24,7 +24,7 @@ export function renderErrorPaths(paths:ErrorPathRange[],names:Map<string,string>
   status.textContent=`Showing ${page*20+1}–${Math.min(paths.length,(page+1)*20)} of ${paths.length} error paths; error-only paths may have no Heat tile.`;
   const list=el("ul");
   for(const p of paths.slice(page*20,(page+1)*20)){
-   const item=el("li",{},el("strong",{},stripControl(p.path)),el("p",{},`${stripControl(activityGroupLabel(p.group,names))||"Repository-relative"} · ${p.count ? `${p.count} retained error observations` : "No retained observations in range; omitted signatures have unknown range"} · ${p.repeated} repeated signatures`));
+   const item=el("li",{},el("strong",{},stripControl(p.path)),el("p",{},`${stripControl(activityGroupLabel(p.group,names))||"Project-relative"} · ${p.count ? `${p.count} retained error observations` : "No retained observations in range; omitted signatures have unknown range"} · ${p.repeated} repeated signatures`));
    if(p.omitted)item.append(el("p",{class:"dim"},`${p.omitted} signatures omitted from the loaded window; range counts and repeats may be incomplete.`));
    const details=el("details",{},el("summary",{},"Signature counts"));
    for(const s of p.signatures)details.append(el("p",{},`${s.count} · ${stripControl(s.key)}`));

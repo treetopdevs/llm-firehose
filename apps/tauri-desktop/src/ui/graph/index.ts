@@ -433,7 +433,7 @@ export function createWorkspaceGraph(
         await refresh();
       } catch {
         throw new Error(
-          "Unable to register repository. Check the local root and VCS availability.",
+          "Unable to register project. Check the local root and VCS availability.",
         );
       }
     },
@@ -782,7 +782,7 @@ export function createWorkspaceGraph(
     status.textContent = [
       snapshot.stale ? "Stale snapshot — last successful scan retained" : "",
       workspace && !selectedWorkspace()
-        ? "Selected workspace is no longer available."
+        ? "Selected worktree is no longer available."
         : "",
       ...(snapshot.warnings ?? []),
     ]
@@ -799,9 +799,7 @@ export function createWorkspaceGraph(
       })),
       repo,
       count: snapshot
-        ? `${snapshot.workspaces.length} ${
-            snapshot.repository.vcs === "jj" ? "workspace" : "worktree"
-          }${snapshot.workspaces.length === 1 ? "" : "s"}`
+        ? `${snapshot.workspaces.length} worktree${snapshot.workspaces.length === 1 ? "" : "s"}`
         : busy && repo
           ? "Loading…"
           : "",
@@ -826,12 +824,12 @@ export function createWorkspaceGraph(
           "p",
           { class: "dim graph-empty" },
           busy
-            ? "Loading repository topology…"
+            ? "Loading project topology…"
             : unregistered
-              ? "This project is not registered in the workspace graph. Register its root under More."
+              ? "This project is not registered in the graph. Register its root under More."
               : repos.length
-              ? "Repository topology unavailable. The next refresh retries automatically."
-              : "Register a local repository to inspect its ancestry. Discovery stays on this machine.",
+              ? "Project topology unavailable. The next refresh retries automatically."
+              : "Register a local project to inspect its ancestry. Discovery stays on this machine.",
         ),
       );
       restore();
@@ -978,9 +976,9 @@ export function createWorkspaceGraph(
     };
     filters.append(
       select(
-        "Workspace",
+        "Worktree",
         [
-          ["", "Whole repository"],
+          ["", "Whole project"],
           ...orderedWorkspaces().map(
             (w) => [w.id, caption(w)] as [string, string],
           ),
@@ -1202,7 +1200,7 @@ export function createWorkspaceGraph(
         el(
           "p",
           {},
-          `Observed workspace: ${timeline.selected.worktree_id ?? "unassigned"}`,
+          `Observed worktree: ${timeline.selected.worktree_id ?? "unassigned"}`,
         ),
       );
       if (/permission/i.test(timeline.selected.name ?? ""))
@@ -1214,7 +1212,7 @@ export function createWorkspaceGraph(
   }
   function showInGraph(e: FirehoseEvent) {
     if (timeline.association(e, repo).repo_id !== repo) {
-      status.textContent = "Workspace unavailable in the selected repository.";
+      status.textContent = "Worktree unavailable in the selected project.";
       return;
     }
     const w = eventWorkspace(
@@ -1227,7 +1225,7 @@ export function createWorkspaceGraph(
     );
     if (!w) {
       status.textContent =
-        "Workspace unavailable: no discovered checkout matches this event’s observed identity.";
+        "Worktree unavailable: no discovered worktree matches this event’s observed identity.";
       return;
     }
     workspace = w.id;
@@ -1441,7 +1439,7 @@ export function createWorkspaceGraph(
       if (workspace && selectedWorkspace())
         revision = selectedWorkspace()!.revision;
       if (workspace && !selectedWorkspace())
-        status.textContent = "Selected workspace is no longer available.";
+        status.textContent = "Selected worktree is no longer available.";
       done();
       render();
       ensureHistory();
@@ -1486,7 +1484,7 @@ export function createWorkspaceGraph(
       if (a.gaps?.length) {
         setStatus();
         status.textContent +=
-          " · Capture gaps reported by attention projection";
+          " · Capture gaps reported by the needs-you snapshot";
       }
     } catch {
       /* Existing shared attention strip shows connectivity. */

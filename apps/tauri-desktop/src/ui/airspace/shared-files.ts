@@ -2,6 +2,7 @@ import { capturedEvent, fileSessions } from '../../api';
 import type { AttentionSession, FileSession } from '../../api';
 import { clear, el } from '../../dom';
 import { matchesFileReceipt } from '../files';
+import { disambiguateSessionLabel, idLabel, sessionRefLabel } from '../../format';
 import { stripControl } from '../score/model';
 import { sharedFileLanes } from './shared-files-model';
 
@@ -19,24 +20,31 @@ export function createSharedFiles(now: () => number = Date.now) {
   const retry = button('Retry shared files', () => void refresh());
   const root = el('section', { 'aria-label': 'Shared recorded files' }, heading,
     el('p', { class: 'dim' }, 'Historical recorded strings, not simultaneous activity or physical file identity. No lane does not prove no shared file: privacy digests, relative/absolute paths, symlinks, case and truncation can hide matches. A relative path under a shared worktree may name different files in different working directories.'),
-    el('p', { class: 'dim' }, 'Workspace/search/source filters select attention sessions, not their historical file scopes. The recent window changes attention bands only. These snapshots are fetched separately and are not atomic. Full historical data is loaded in memory; pagination bounds rendering only.'), load, retry, notice, receipt, body);
+    el('p', { class: 'dim' }, 'Worktree/search/source filters select the sessions that need you, not their historical file scopes. The recent window changes the bands only. These snapshots are fetched separately and are not atomic. Full historical data is loaded in memory; pagination bounds rendering only.'), load, retry, notice, receipt, body);
   let sessions: readonly AttentionSession[] = [], rows: FileSession[] | undefined;
   let attentionStale = true, attentionTime: number | undefined, attentionAvailable = false;
   let active = true, connected = true, stale = true, loading = false, error = '', fetchedAt: number | undefined, page = 0;
-  let membership = '';
+  let membership = '', names = '';
   let listToken = 0, detailToken = 0, listAbort: AbortController | undefined, detailAbort: AbortController | undefined;
   const timestamp = (n: number | undefined) => n === undefined ? 'not fetched' : new Date(n).toISOString();
+  // The needs-you snapshot names exactly the sessions that can appear here.
+  const nameOf = (m: { source: string; session_id: string }) => {
+    const ref = { id: m.session_id, source: m.source };
+    const known = sessions.find(s => s.id === m.session_id && s.source === m.source);
+    const named = sessionRefLabel(ref, known);
+    return named.resolved ? named.label : idLabel(m.session_id);
+  };
   function cancelReceipt() { detailToken++; detailAbort?.abort(); clear(receipt); }
   function invalidateList() { listToken++; listAbort?.abort(); loading = false; }
   function draw() {
     load.textContent = rows ? 'Refresh shared files' : 'Load shared files';
     load.disabled = !active || !connected;
     retry.hidden = !error; retry.disabled = !active || !connected;
-    const statusText = `${!connected ? 'Disconnected. ' : ''}${loading ? 'Loading shared files. ' : ''}Files ${stale ? 'stale' : 'checked'} at ${timestamp(fetchedAt)}. Attention ${attentionStale ? 'stale' : 'checked'} at ${timestamp(attentionTime)}. ${error}`;
+    const statusText = `${!connected ? 'Disconnected. ' : ''}${loading ? 'Loading shared files. ' : ''}Files ${stale ? 'stale' : 'checked'} at ${timestamp(fetchedAt)}. Needs-you snapshot ${attentionStale ? 'stale' : 'checked'} at ${timestamp(attentionTime)}. ${error}`;
     if (notice.textContent !== statusText) notice.textContent = statusText;
     notice.classList.toggle('stale', stale || attentionStale || !connected);
     clear(body);
-    if (!attentionAvailable) { body.append(el('p', {}, 'Waiting for an attention snapshot. Loaded file rows will be retained.')); return; }
+    if (!attentionAvailable) { body.append(el('p', {}, 'Waiting for the needs-you snapshot. Loaded file rows will be retained.')); return; }
     if (!rows) { body.append(el('p', {}, 'Load shared files to inspect recorded file observations.')); return; }
     const lanes = sharedFileLanes(rows, sessions);
     const participants = lanes.flatMap((lane, laneIndex) => lane.members.map((member, memberIndex) => ({ lane, member, laneIndex, memberIndex })));
@@ -47,6 +55,7 @@ export function createSharedFiles(now: () => number = Date.now) {
     let previous = '';
     let list: HTMLOListElement | undefined;
     const visible = participants.slice(page * 40, page * 40 + 40);
+    const peerNames = participants.map(p => [`${p.member.source}\0${p.member.session_id}`, nameOf(p.member)] as const);
     for (const { lane, member, laneIndex, memberIndex } of visible) {
       const key = JSON.stringify([lane.workspace_kind, lane.workspace, lane.path]);
       if (key !== previous) {
@@ -57,7 +66,7 @@ export function createSharedFiles(now: () => number = Date.now) {
         body.append(el('p', {}, `Lane ${laneIndex + 1}: participants ${memberIndex + 1}–${memberIndex + shown} of ${lane.members.length}.`));
         list = el('ol', { 'aria-label': `File lane ${laneIndex + 1}: ${stripControl(lane.path)}`, start: String(memberIndex + 1) }); body.append(list);
       }
-      const name = `${stripControl(member.source)} / ${stripControl(member.session_id)}`;
+      const name = `${stripControl(member.source)} / ${stripControl(disambiguateSessionLabel(`${member.source}\0${member.session_id}`, nameOf(member), peerNames))}`;
       const inspect = button(`Inspect latest file observation: ${name}`, () => void inspectFile(member, inspect));
       inspect.setAttribute('aria-label', `Inspect latest file observation: ${name}; ${stripControl(lane.path)}; ${stripControl(lane.workspace_kind)}: ${stripControl(lane.workspace)}; lane ${laneIndex + 1}, participant ${memberIndex + 1}`);
       inspect.disabled = !member.last_event_id || !connected || !active;
@@ -105,7 +114,11 @@ export function createSharedFiles(now: () => number = Date.now) {
   function setSessions(next: readonly AttentionSession[], isStale: boolean, time?: number, available = true) {
     const nextMembership = JSON.stringify([...new Set(next.map(s => JSON.stringify([s.source, s.id])))].sort());
     const changed = nextMembership !== membership || available !== attentionAvailable;
-    if (!changed && attentionStale === isStale && attentionTime === time) return;
+    // A rename is not a membership change: it redraws names without cancelling a receipt or the page.
+    const nextNames = JSON.stringify(next.map(s => [s.source, s.id, s.title, s.agent]));
+    const renamed = nextNames !== names;
+    names = nextNames;
+    if (!changed && !renamed && attentionStale === isStale && attentionTime === time) return;
     if (changed) { cancelReceipt(); page = 0; }
     membership = nextMembership; sessions = next; attentionStale = isStale; attentionTime = time; attentionAvailable = available; draw();
   }

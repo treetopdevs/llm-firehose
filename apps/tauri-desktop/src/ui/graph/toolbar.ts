@@ -132,7 +132,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
         "data-kind": r.kind,
       });
       if (r.state) {
-        const dot = el("span", { class: `agent-dot state-${r.state}`, title: stateDescription(r.state) });
+        const dot = el("span", { class: `agent-dot state-${r.state}`, role: "img", "aria-label": stateDescription(r.state), title: stateDescription(r.state) });
         li.append(dot);
       } else li.append(el("span", { class: "result-kind" }, r.kind === "revision" ? "◆" : "•"));
       li.append(el("span", { class: "result-title" }, r.title), el("span", { class: "result-detail" }, r.detail));
@@ -220,7 +220,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
   fitGroup.append(fitBtn, allBtn);
 
   // Graph / Timeline / Map.
-  const tabs = el("div", { class: "graph-tabs", role: "tablist", "aria-label": "Workspace view" });
+  const tabs = el("div", { class: "graph-tabs", role: "tablist", "aria-label": "Worktree view" });
   const tabButtons = {
     graph: el("button", { type: "button", role: "tab" }, "Graph"),
     timeline: el("button", { type: "button", role: "tab" }, "Timeline"),
@@ -241,8 +241,8 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
   const form = el("form", { class: "graph-register" });
   form.hidden = true;
   const rootInput = el("input", {
-    placeholder: "Local repository root",
-    "aria-label": "Local repository root",
+    placeholder: "Local project root",
+    "aria-label": "Local project root",
     required: "true",
   });
   const vcsSelect = el("select", { "aria-label": "VCS" });
@@ -305,7 +305,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
       registerError.textContent =
         err instanceof Error && err.message
           ? err.message
-          : "Unable to register repository. Check the local root and VCS availability.";
+          : "Unable to register project. Check the local root and VCS availability.";
     }
   };
 

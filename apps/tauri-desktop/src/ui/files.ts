@@ -1,6 +1,8 @@
 import { files, fileSessions, capturedEvent } from "../api";
 import type { FileArtifact, FileSession, FirehoseEvent } from "../api";
-import { clear, el } from "../dom";
+import { clear, el, keepControlFocus } from "../dom";
+import { sessionRefLabel } from "../format";
+import type { SessionDirectory } from "../session-directory";
 import { stripControl } from "./score/model";
 
 export function recordedFilePaths(event: FirehoseEvent): string[] {
@@ -44,7 +46,7 @@ const label = (s: string) => {
 };
 
 // Selected mode lives in this panel instance; no new disk/browser persistence.
-export function createFiles() {
+export function createFiles(directory?: SessionDirectory) {
   const root = el("section", { class: "files" }),
     heading = el("h2", { tabindex: "-1" }, "Files");
   const body = el("div"),
@@ -86,10 +88,17 @@ export function createFiles() {
     detailAbort = undefined;
     clear(detail);
   }
-  function deactivate() {
+  let unsubscribe: (() => void) | undefined;
+  /** Cancels pending work; used by every reload and by leaving the panel. */
+  function cancelWork() {
     version++;
     listAbort?.abort();
     cancelDetail();
+  }
+  function deactivate() {
+    cancelWork();
+    unsubscribe?.();
+    unsubscribe = undefined;
   }
   const summaryButton = button("Path summary", () => {
     if (mode === "summary") return;
@@ -195,11 +204,12 @@ export function createFiles() {
     for (let i = start; i < end; i++) {
       const row = visible[i],
         count = groups.get(groupKey(row))?.size ?? 0;
+      if (row.session_id) directory?.ensure({ id: row.session_id, source: row.source });
       const scope = row.workspace
         ? (/^[a-f0-9]{64}$/.test(row.workspace)
             ? "Opaque recorded scope ID: "
             : "Recorded scope: ") + label(row.workspace)
-        : "Unknown workspace";
+        : "Unknown worktree";
       const inspect = button(
         `Inspect latest observation ${i + 1}`,
         () => void inspectRow(row, inspect),
@@ -213,8 +223,8 @@ export function createFiles() {
           el("p", {}, `${row.workspace_kind} · ${scope}`),
           el(
             "p",
-            {},
-            `${label(row.source)} · ${label(row.session_id) || "Unknown session"} · ${row.events} events · ${row.first_time} → ${row.last_time}`,
+            row.session_id ? { title: `session id ${stripControl(row.session_id)}` } : {},
+            `${label(row.source)} · ${row.session_id ? label(sessionRefLabel({ id: row.session_id, source: row.source }, directory?.lookup({ id: row.session_id, source: row.source })).label) : "Unknown session"} · ${row.events} events · ${row.first_time} → ${row.last_time}`,
           ),
           el(
             "p",
@@ -284,7 +294,14 @@ export function createFiles() {
     }
   }
   async function refresh() {
-    deactivate();
+    cancelWork();
+    // Names that arrive later redraw the rows in place; page, filter and receipt stay.
+    unsubscribe ??= directory?.subscribe(() => {
+      if (phase !== "ready" || mode !== "sessions") return;
+      const restore = keepControlFocus(body);
+      draw();
+      restore();
+    });
     const current = version,
       ctl = new AbortController();
     listAbort = ctl;

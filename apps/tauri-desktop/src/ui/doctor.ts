@@ -1,5 +1,5 @@
 import { doctor } from "../api";
-import { clear, el } from "../dom";
+import { el } from "../dom";
 import { runAdapterInstall } from "./install";
 
 const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigravity"];
@@ -7,14 +7,13 @@ const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigra
 // Adapter wiring status from /doctor, with one-click install per adapter.
 export function createDoctor(): { root: HTMLElement; refresh(): void } {
   const root = el("section", { class: "doctor" });
+  const heading = el("h2", {}, "Doctor");
 
   async function refresh() {
-    clear(root);
-    root.append(el("p", { class: "dim" }, "running checks…"));
+    root.replaceChildren(heading, el("p", { class: "dim" }, "running checks…"));
     try {
       const checks = await doctor();
-      clear(root);
-      root.append(el("h2", {}, "doctor"));
+      root.replaceChildren(heading);
       const list = el("div", { class: "doctor-list" });
       for (const c of checks) {
         list.append(
@@ -38,8 +37,7 @@ export function createDoctor(): { root: HTMLElement; refresh(): void } {
       }
       root.append(el("h3", {}, "adapters"), buttons, status);
     } catch (err) {
-      clear(root);
-      root.append(el("p", { class: "error" }, String(err)));
+      root.replaceChildren(heading, el("p", { class: "error" }, String(err)));
     }
   }
 

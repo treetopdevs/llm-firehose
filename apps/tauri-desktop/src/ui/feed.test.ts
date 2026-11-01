@@ -18,3 +18,11 @@ describe("feed rows", () => {
     expect(cwds[0].title).toBe(digest);
   });
 });
+
+describe("feed heading", () => {
+  test("opens with an h2 equal to the nav label", () => {
+    const panel = createFeed(new FeedState(10), () => {});
+    expect(panel.root.firstElementChild?.tagName).toBe("H2");
+    expect(panel.root.firstElementChild?.textContent).toBe("Live");
+  });
+});

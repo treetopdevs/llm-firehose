@@ -52,7 +52,7 @@ test("scoped activity loads explicitly and shows shared recorded scopes without 
   await settle();
   expect(api.fileSessions).toHaveBeenCalledTimes(1);
   expect(panel.root.textContent).toContain("2 source/session scopes");
-  expect(panel.root.textContent).toContain("Unknown workspace");
+  expect(panel.root.textContent).toContain("Unknown worktree");
   expect(panel.root.textContent).toContain("does not prove");
 });
 test("changing modes invalidates a pending scoped receipt", async () => {
@@ -211,4 +211,31 @@ test("session paths keep full suffixes and filtering a failed load preserves Ret
       (b) => b.textContent === "Retry files",
     ),
   ).toBe(true);
+});
+import { createSessionDirectory } from "../session-directory";
+test("names a session known to the directory, relabels late in place, and stops after deactivate", async () => {
+  api.fileSessions.mockResolvedValue([row]);
+  const dir = createSessionDirectory(); const panel = createFiles(dir);
+  click(panel.root, "Activity by session"); await settle();
+  const line = () => [...panel.root.querySelectorAll("article p")].find((p) => p.textContent?.includes(" events · "))!;
+  expect(line().textContent).toContain(` · ${captured.session_id.slice(0, 8)} · `);
+  expect(line().getAttribute("title")).toContain(captured.session_id);
+  dir.remember([{ id: captured.session_id, source: captured.source, title: "Fix login bug" }]);
+  expect(line().textContent).toContain(` · Fix login bug · `);
+  expect(line().textContent).not.toContain(captured.session_id);
+  expect(api.fileSessions).toHaveBeenCalledTimes(1);
+  panel.deactivate();
+  dir.remember([{ id: captured.session_id, source: captured.source, title: "Renamed later" }]);
+  expect(line().textContent).toContain("Fix login bug");
+});
+test("a background naming update keeps keyboard focus on the same control", async () => {
+  api.fileSessions.mockResolvedValue([row]);
+  const dir = createSessionDirectory(); const panel = createFiles(dir); document.body.append(panel.root);
+  click(panel.root, "Activity by session"); await settle();
+  const inspect = [...panel.root.querySelectorAll("button")].find((b) => b.textContent === "Inspect latest observation 1")!;
+  inspect.focus(); expect(document.activeElement).toBe(inspect);
+  dir.remember([{ id: "unrelated-session", source: "codex", title: "Other" }]);
+  dir.remember([{ id: captured.session_id, source: captured.source, title: "Fix login bug" }]);
+  expect((document.activeElement as HTMLElement).textContent).toBe("Inspect latest observation 1");
+  expect(panel.root.contains(document.activeElement)).toBe(true);
 });

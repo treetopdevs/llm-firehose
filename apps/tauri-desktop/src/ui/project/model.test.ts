@@ -288,3 +288,12 @@ describe("review regressions: landing, outcome, dirty", () => {
     expect(c!.badge).toBe("");
   });
 });
+
+describe("lane aria label carries idle", () => {
+  test("idle lane ends ', idle'; others do not", () => {
+    const idle = layoutLanes(FIXTURE_ROWS.filter((r) => r.worktree_id === "wt-idle"), ["wt-idle"], live, X0, X1, NOW)[0]!;
+    expect(idle.idle).toBe(true);
+    expect(idle.ariaLabel).toBe(`${idle.label}, ${"open"}, idle`);
+    expect(lane("wt-open").ariaLabel).toBe("/w/alpha-open, open");
+  });
+});

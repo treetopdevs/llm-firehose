@@ -3,6 +3,7 @@
 
 import type { FirehoseEvent } from "../../api";
 import { clear, el, onActivate } from "../../dom";
+import { stateWord } from "../../needs";
 import { isTransition, sessionHue } from "../../spark";
 import { axisTicks } from "../lanes/model";
 import type { Lane } from "../lanes/model";
@@ -91,10 +92,10 @@ export function lanesStrip(
     const mid = y + ROW_H / 2;
     const { id, source } = decode(lane.id, sourceOf);
     const needs = lane.state === "needs_input";
-    const g = svg("g", { class: "fleet-lane-row", tabindex: 0, role: "button", "aria-label": `open session ${lane.label}`, "data-key": lane.id });
+    const g = svg("g", { class: "fleet-lane-row", tabindex: 0, role: "button", "aria-label": `open session ${lane.label}${needs ? `, ${stateWord(lane.state)}` : ""}`, "data-key": lane.id });
     onActivate(g, () => onOpen(id, source));
     g.append(
-      svg("title", {}, `${lane.label} · ${lane.state || "?"}${lane.reason ? ` · ${lane.reason}` : ""}`),
+      svg("title", {}, `${lane.label} · ${lane.state ? stateWord(lane.state) : "?"}${lane.reason ? ` · ${lane.reason}` : ""}`),
       svg("rect", { class: "lane-hit", x: 0, y, width: w, height: ROW_H }),
       svg("rect", { x: 0, y: y + 4, width: 3, height: ROW_H - 8, fill: `hsl(${sessionHue(lane.id)} 55% 55%)` }),
       svg("text", { class: `lane-label${needs ? " needs" : ""}`, x: 8, y: mid + 4 }, cut(lane.label)),
@@ -117,7 +118,7 @@ export function lanesStrip(
 
 /** One chip per attention band, in band order. Wording is about captured observations only. */
 export function airspaceBands(d: ReturnType<typeof deriveAirspace>): HTMLElement {
-  const root = el("div", { class: "fleet-bands", role: "group", "aria-label": "Attention bands" });
+  const root = el("div", { class: "fleet-bands", role: "group", "aria-label": "Needs-you bands" });
   clear(root);
   for (const band of BANDS) {
     const n = d.counts[band.id];

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createScope } from "../../scope";
 import type { ScopeStore } from "../../scope";
 import { SESSION_TABS, windowLabel, type SessionTab } from "./context";
+import { createSessionDirectory, type SessionDirectory } from "../../session-directory";
 import { createSession, type SessionLens, type SessionPanel } from "./index";
 
 type Fake = SessionLens & {
@@ -33,6 +34,7 @@ let fakes: Record<SessionTab, Fake>;
 let factories: Record<SessionTab, ReturnType<typeof vi.fn> & (() => SessionLens)>;
 let onTabShown: ReturnType<typeof vi.fn>;
 let panel: SessionPanel;
+let directory: SessionDirectory;
 const S1 = { id: "s1", source: "codex" };
 const S2 = { id: "s2", source: "codex" };
 
@@ -40,7 +42,8 @@ function build(): void {
   fakes = Object.fromEntries(SESSION_TABS.map((t) => [t, fakeLens(t)])) as Record<SessionTab, Fake>;
   onTabShown = vi.fn();
   factories = Object.fromEntries(SESSION_TABS.map((t) => [t, vi.fn(() => fakes[t])])) as Record<SessionTab, ReturnType<typeof vi.fn> & (() => SessionLens)>;
-  panel = createSession({ store, lenses: factories, onTabShown });
+  directory = createSessionDirectory();
+  panel = createSession({ store, lenses: factories, onTabShown, directory });
   document.body.append(panel.root);
 }
 
@@ -299,5 +302,57 @@ describe("lazy lens construction", () => {
     expect(factories.court).toHaveBeenCalledTimes(1);
     expect(panel.lens("court")).toBe(l);
     expect(fakes.court.root.isConnected).toBe(true);
+  });
+});
+
+test("the session root opens with an h2 named Session", () => {
+  expect(panel.root.firstElementChild?.tagName).toBe("H2");
+  expect(panel.root.firstElementChild?.textContent).toBe("Session");
+  expect(panel.root.querySelectorAll(":scope > h2")).toHaveLength(1);
+});
+
+test("a hosted lens's h2 is exposed at level 3 beneath the panel h2", () => {
+  fakes.court.root.append(document.createElement("h2"));
+  panel.activate("court");
+  expect(fakes.court.root.querySelector("h2")!.getAttribute("aria-level")).toBe("3");
+  expect(panel.root.querySelector(":scope > h2")!.hasAttribute("aria-level")).toBe(false);
+});
+
+describe("session lens head names", () => {
+  const ID = "2385e3bc-aaaa-bbbb-cccc-111122223333";
+  const head = () => panel.root.querySelector<HTMLElement>("#session-panel-score .session-lens-head")!;
+
+  test("`<Tab> · <name>` with the full id as the name's title; unresolved is flagged", () => {
+    store.narrow({ session: { id: ID, source: "codex" } });
+    panel.activate();
+    expect(head().textContent).toContain("Score · 2385e3bc");
+    const name = head().querySelector<HTMLElement>(".session-lens-name")!;
+    expect(name.getAttribute("title")).toBe(ID);
+    expect(name.classList.contains("unresolved")).toBe(true);
+  });
+
+  test("a late remember re-renders the head with the title", () => {
+    store.narrow({ session: { id: ID, source: "codex" } });
+    panel.activate();
+    directory.remember([{ id: ID, source: "codex", title: "Fix login bug" }]);
+    expect(head().textContent).toContain("Score · Fix login bug");
+    const name = head().querySelector<HTMLElement>(".session-lens-name")!;
+    expect(name.classList.contains("unresolved")).toBe(false);
+    expect(name.getAttribute("title")).toBe(ID);
+  });
+
+  test("deactivate unsubscribes from the directory", () => {
+    store.narrow({ session: { id: ID, source: "codex" } });
+    panel.activate();
+    panel.deactivate();
+    directory.remember([{ id: ID, source: "codex", title: "Late" }]);
+    expect(head().textContent).not.toContain("Late");
+  });
+
+  test("activate asks the directory to find an unnamed session", () => {
+    const ensure = vi.spyOn(directory, "ensure");
+    store.narrow({ session: { id: ID, source: "codex" } });
+    panel.activate();
+    expect(ensure).toHaveBeenCalledWith({ id: ID, source: "codex" });
   });
 });

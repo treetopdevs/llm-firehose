@@ -26,3 +26,13 @@ test("transfer arrows stop outside station dots", () => {
     const path = root.querySelector("path[data-transfer]")!;
     expect(path.getAttribute("d")).toBe("M 305 162 C 210 162, 210 90, 117 90");
 });
+test("names session lanes and station labels but never renames event ids", () => {
+    const named = (ref: { id: string; source: string }) => ref.id === 'departure' ? 'Fix login bug' : ref.id;
+    const root = renderHandoffMap([links[0], { ...links[1], from: { ...links[1].from, id: 'from-other', session_id: 'departure' } }], vi.fn(), named);
+    expect(root.textContent).toContain('codex · Fix login bug');
+    const labels = [...root.querySelectorAll('button')].map(b => b.getAttribute('aria-label'));
+    expect(labels.filter(l => l!.includes('Fix login bug'))).toHaveLength(2);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.some(l => l!.includes('from-other'))).toBe(true);
+    expect([...root.querySelectorAll('button')].map(b => b.textContent)).toContain('from-0');
+});

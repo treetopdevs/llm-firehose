@@ -2,6 +2,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createBreadcrumb } from './breadcrumb';
+import { createSessionDirectory } from './session-directory';
 import { createScope, type ScopeResolver } from './scope';
 
 const resolver = (labels: { project?: string; worktree?: string }): ScopeResolver => ({
@@ -89,4 +90,42 @@ test('destroy unsubscribes both channels', () => {
   s.narrow({ worktree: 'wt-abcdefghij' });
   s.setResolver(resolver({ project: 'Z' }));
   expect(b.root.textContent).toBe('repo-123');
+});
+
+test('session segment is the resolved name from the directory, unresolved otherwise', () => {
+  const s = createScope();
+  const directory = createSessionDirectory();
+  const b = createBreadcrumb(s, { directory });
+  const id = '2385e3bc-aaaa-bbbb-cccc-111122223333';
+  s.narrow({ session: { id, source: 'codex' } });
+  expect(b.root.textContent).toBe('2385e3bc');
+  expect(b.root.querySelector('.unresolved')).not.toBeNull();
+  directory.remember([{ id, source: 'codex', title: 'Fix login bug' }]);
+  expect(b.root.textContent).toBe('Fix login bug');
+  expect(b.root.querySelector('.unresolved')).toBeNull();
+  expect(b.root.querySelector('[title]')!.getAttribute('title')).toBe(id);
+  b.destroy();
+  directory.remember([{ id, source: 'codex', title: 'Renamed' }]);
+  expect(b.root.textContent).toBe('Fix login bug');
+});
+
+test('an ambiguous source-less session ref stays a short id and unresolved', () => {
+  const s = createScope();
+  const directory = createSessionDirectory();
+  const id = '2385e3bc-aaaa-bbbb-cccc-111122223333';
+  directory.remember([{ id, source: 'codex', title: 'A' }, { id, source: 'claude-code', title: 'B' }]);
+  const b = createBreadcrumb(s, { directory });
+  s.narrow({ session: { id } });
+  expect(b.root.textContent).toBe('2385e3bc');
+  expect(b.root.querySelector('.unresolved')).not.toBeNull();
+});
+
+test('a directory notification that changes nothing visible does not rebuild', () => {
+  const s = createScope();
+  const directory = createSessionDirectory();
+  const b = createBreadcrumb(s, { directory });
+  s.narrow({ session: { id: 'sess-0123456789', source: 'codex' } });
+  const first = b.root.firstChild;
+  directory.remember([{ id: 'other', source: 'codex', title: 'Other' }]);
+  expect(b.root.firstChild).toBe(first);
 });

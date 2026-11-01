@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createSessionDirectory } from "../../session-directory";
+import type { SessionDirectory } from "../../session-directory";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
@@ -34,7 +36,7 @@ interface Rig {
   data: { wt: WorktreeLifetimeView[]; sessions: AttentionSession[]; summaries: SessionSummary[]; events: FirehoseEvent[] };
 }
 
-function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; onEncoding?: () => void } = {}) {
+function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; onEncoding?: () => void; directory?: SessionDirectory } = {}) {
   const store: ScopeStore = createScope(opts.scope);
   const data: Rig["data"] = { wt: FIXTURE_ROWS, sessions: baseSessions(), summaries: [], events: [] };
   const api = {
@@ -45,7 +47,7 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const go = vi.fn((_n: string, p?: ScopePatch) => { if (opts.realGo && p) store.narrow(p); });
   const panel = createFleet({
     store, go: go as never, events: () => data.events, api: api as unknown as FleetApi,
-    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels, onEncoding: opts.onEncoding,
+    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels, onEncoding: opts.onEncoding, directory: opts.directory,
   });
   document.body.append(panel.root);
   panels.push(panel);
@@ -545,12 +547,12 @@ describe("encodings", () => {
 
   // Replaced (fleet-altitude item 4): Matrix was a repository x agent grid with only a "repository" header
   // on real data. It is now the state matrix the plan names: open / idle / needs-you / gone (7d) / last activity.
-  test("matrix is a real matrix: repository, open, idle, needs-you, gone (7d), last activity", async () => {
+  test("matrix is a real matrix: project, open, idle, needs-you, gone (7d), last activity", async () => {
     const { panel, q } = setup();
     panel.encoding = "matrix";
     await panel.activate();
     expect(q("table.fleet-matrix")).toHaveLength(1);
-    expect(q(".fleet-matrix thead th").map((t) => t.textContent)).toEqual(["repository", "open", "idle", "needs you", "gone (7d)", "last activity"]);
+    expect(q(".fleet-matrix thead th").map((t) => t.textContent)).toEqual(["project", "open", "idle", "needs you", "gone (7d)", "last activity"]);
     expect(q(".fleet-matrix tbody tr")).toHaveLength(4);
   });
 
@@ -1007,7 +1009,7 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     expect(byKey(needKey("claude-code", "orphan")).getAttribute("title")).toContain("stale");
   });
 
-  test("a pending session with no repo_id lands on the No repo id row", async () => {
+  test("a pending session with no repo_id lands on the No project row", async () => {
     const { panel, data, byKey } = setup();
     data.sessions = [att({ id: "norepo", waitMs: 2 * D, lastAgoMs: 2 * D })];
     await panel.activate();
@@ -1181,5 +1183,41 @@ describe("forkOrder (shared with Project lanes)", () => {
     const next = panel.forkOrder("repoA")!;
     expect(next.slice(0, first.length)).toEqual(first);
     expect(next[next.length - 1]).toBe("wt-brand-new");
+  });
+});
+
+describe("lane names from the session directory", () => {
+  test("lanes read the directory late, in place, and stop after deactivate", async () => {
+    const dir = createSessionDirectory();
+    const { panel, data, q } = setup({ directory: dir });
+    data.events = [ev({ id: "e1", session_id: "2385e3bc-1111-2222-3333-444444444444", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    const label = () => q("text.lane-label").map((n) => n.textContent);
+    expect(label()).toHaveLength(1);
+    expect(label()[0]).not.toContain("Fix login bug");
+    const calls = data.events.length;
+    dir.remember([{ id: "2385e3bc-1111-2222-3333-444444444444", source: data.events[0]!.source, agent: "codex", title: "Fix login bug" }]);
+    expect(label()).toEqual(["Fix login bug"]);
+    expect(data.events).toHaveLength(calls);
+    panel.deactivate();
+    dir.remember([{ id: "2385e3bc-1111-2222-3333-444444444444", source: data.events[0]!.source, agent: "codex", title: "Renamed later" }]);
+    expect(label()).toEqual(["Fix login bug"]);
+  });
+});
+
+describe("fork aria labels", () => {
+  test("idle and needs show in the fork's accessible name and follow changes", async () => {
+    const { panel, data, byKey } = setup();
+    await panel.activate();
+    expect(byKey(key("fork", "repoA", "wt-idle")).getAttribute("aria-label")).toContain("idle");
+    expect(byKey(key("fork", "repoA", "wt-open")).getAttribute("aria-label")).toContain("1 needs you");
+    data.sessions = [...baseSessions(), att({ id: "sx", repo_id: "repoA", worktree_id: "wt-open", waitMs: 5 * MIN })];
+    const node = byKey(key("fork", "repoA", "wt-open"));
+    await vi.advanceTimersByTimeAsync(REFRESH + 1);
+    await flush();
+    expect(byKey(key("fork", "repoA", "wt-open"))).toBe(node);
+    expect(node.getAttribute("aria-label")).toContain("2 need you");
   });
 });

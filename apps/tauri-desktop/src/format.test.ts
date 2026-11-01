@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { disambiguateSessionLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, idLabel, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
+import { disambiguateSessionLabel, sessionRefLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, idLabel, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
 import type { FirehoseEvent } from "./api";
 
 describe("formatClock", () => {
@@ -113,5 +113,26 @@ describe("session naming", () => {
   test("shortId is the first eight characters", () => {
     expect(shortId(base.id)).toBe("2ed4f8a3");
     expect(shortId("abc")).toBe("abc");
+  });
+});
+
+describe("sessionRefLabel", () => {
+  const id = "2385e3bc-aaaa-bbbb-cccc-111122223333";
+  test("an unknown ref is the short id, unresolved", () => {
+    expect(sessionRefLabel({ id, source: "claude-code" }, undefined)).toEqual({ label: "2385e3bc", resolved: false });
+  });
+  test("a titled session is its title, resolved", () => {
+    expect(sessionRefLabel({ id }, { id, source: "codex", title: "Fix login bug" })).toEqual({ label: "Fix login bug", resolved: true });
+  });
+  test("agent in checkout is resolved without a title", () => {
+    const known = { id, source: "claude-code", agent: "claude", cwd: "/Users/n/develop/llm-firehose" };
+    expect(sessionRefLabel({ id, source: "claude-code" }, known)).toEqual({ label: "claude in llm-firehose", resolved: true });
+  });
+  test("a digested checkout never reads as a name", () => {
+    const known = { id, source: "claude-code", agent: "claude", cwd: "ab".repeat(32) };
+    expect(sessionRefLabel({ id }, known)).toEqual({ label: "claude · 2385e3bc", resolved: false });
+  });
+  test("a path-shaped id reads as its tail, unresolved", () => {
+    expect(sessionRefLabel({ id: "/a/b/c" }, undefined)).toEqual({ label: "b/c", resolved: false });
   });
 });

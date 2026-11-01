@@ -412,7 +412,7 @@ describe("map", () => {
     expect(store.get().project).toBe("repoA");
     // Zoomed into the group (named by its id: no row names it), not narrowed.
     expect(q(".map-crumb.current")[0]!.textContent).toBe("alias-elsewhere");
-    q(".map-crumb").find((c) => c.textContent === "Repository")!.click();
+    q(".map-crumb").find((c) => c.textContent === "Project")!.click();
     groupTile(q, "wt-open").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flush();
     expect(store.get().worktree).toBe("wt-open");

@@ -3,6 +3,8 @@
 // panel only writes the store through the "whole session" reset chip.
 
 import { el } from "../../dom";
+import { sessionRefLabel } from "../../format";
+import type { SessionDirectory } from "../../session-directory";
 import type { ScopeStore, ScopeWindow, SessionRef } from "../../scope";
 import { stripControl } from "../score/model";
 import {
@@ -33,6 +35,8 @@ export interface SessionDeps {
   // lens costs nothing at boot.
   lenses: Record<SessionTab, () => SessionLens>;
   onTabShown?(tab: SessionTab): void;
+  /** Names the session in each lens head; optional so a bare panel still renders its short id. */
+  directory?: SessionDirectory;
 }
 
 export interface SessionPanel {
@@ -73,6 +77,7 @@ export function createSession(deps: SessionDeps): SessionPanel {
   let current: SessionTab = "score";
   let entered = false;
   let unsub: (() => void) | null = null;
+  let unsubDirectory: (() => void) | null = null;
   const memory = new Map<string, SessionTab>();
   let delivered: { key: string | null; win: ScopeWindow } | null = null;
 
@@ -103,7 +108,7 @@ export function createSession(deps: SessionDeps): SessionPanel {
     }, heads[t]);
     panels[t].hidden = true;
   }
-  root.append(tablist, ...SESSION_TABS.map((t) => panels[t]));
+  root.append(el("h2", {}, "Session"), tablist, ...SESSION_TABS.map((t) => panels[t]));
 
   tablist.addEventListener("keydown", (e) => {
     const i = SESSION_TABS.indexOf(current);
@@ -144,7 +149,15 @@ export function createSession(deps: SessionDeps): SessionPanel {
         h.append(el("span", { class: "session-lens-title" }, "no session in scope"));
         continue;
       }
-      h.append(el("span", { class: "session-lens-title" }, `${TITLES[t]} · ${stripControl(session.id)}`));
+      const ref = sessionRefLabel(session, deps.directory?.lookup(session));
+      h.append(
+        el(
+          "span",
+          { class: "session-lens-title" },
+          `${TITLES[t]} · `,
+          el("span", { class: ref.resolved ? "session-lens-name" : "session-lens-name unresolved", title: stripControl(session.id) }, stripControl(ref.label)),
+        ),
+      );
       if (WINDOW_MODE[t] === "none") {
         h.append(el("span", { class: "session-lens-window" }, " whole session (notebook: the window does not apply)"));
       } else if (win === "live") {
@@ -174,6 +187,8 @@ export function createSession(deps: SessionDeps): SessionPanel {
     paintTabs();
     const l = lens(tab);
     panels[tab].append(l.root);
+    // The panel owns the h2; a hosted lens's own h2 sits one level beneath it.
+    for (const h of l.root.querySelectorAll("h2")) h.setAttribute("aria-level", "3");
     renderHead();
     const ctx = ctxNow();
     delivered = { key: ctx.session ? sessionKey(ctx.session) : null, win: ctx.window };
@@ -196,6 +211,8 @@ export function createSession(deps: SessionDeps): SessionPanel {
     if (!entered) return;
     renderHead();
     remember();
+    const now = store.get().session;
+    if (now) deps.directory?.ensure(now);
     if (WINDOW_MODE[current] === "transport" && !store.get().session) lens(current).showEmpty?.();
     if (WINDOW_MODE[current] !== "filters") return;
     const ctx = ctxNow();
@@ -224,7 +241,10 @@ export function createSession(deps: SessionDeps): SessionPanel {
     entered = true;
     unsub?.();
     unsub = store.subscribe(onStore);
+    unsubDirectory?.();
+    unsubDirectory = deps.directory?.subscribe(() => renderHead()) ?? null;
     enter(next);
+    if (s) deps.directory?.ensure(s);
   }
 
   function deactivate(): void {
@@ -233,6 +253,8 @@ export function createSession(deps: SessionDeps): SessionPanel {
     entered = false;
     unsub?.();
     unsub = null;
+    unsubDirectory?.();
+    unsubDirectory = null;
   }
 
   paintTabs();

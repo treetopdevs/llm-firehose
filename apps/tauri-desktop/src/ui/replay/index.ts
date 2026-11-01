@@ -1,20 +1,26 @@
 import { attention, sessionEvents, capturedEvent } from "../../api";
 import type { FirehoseEvent } from "../../api";
-import { clear, el } from "../../dom";
+import { clear, el, keepControlFocus } from "../../dom";
 import { buildReplayRoute, replayTimeLabel } from "./model";
 import { readReplayBook, saveReplayBook } from "./notebook";
 import type { ReplayBook, ReplayBranch } from "./notebook";
 import { renderReplayMap } from "./map";
+import { sessionRefLabel } from "../../format";
+import type { SessionDirectory } from "../../session-directory";
 import { activeRange, inWindow, sessionKey } from "../session/context";
 import type { Range, SessionTabContext } from "../session/context";
-export function createReplay(openScore: (id: string, source: string) => void = () => { }) {
+export function createReplay(openScore: (id: string, source: string) => void = () => { }, directory?: SessionDirectory) {
+    let unsubscribe: (() => void) | undefined;
+    // The loaded route is one session; its name replaces the id in labels, and event ids stay event ids.
+    const routeName = () => { const ref = { id: loadedSession, source: loadedSource }; return sessionRefLabel(ref, directory?.lookup(ref)).label; };
+    let selectionLine: HTMLElement | undefined;
     const storage = { getItem: (key: string) => localStorage.getItem(key), setItem: (key: string, value: string) => localStorage.setItem(key, value) };
     const source = el("input", { "aria-label": "Source" }), session = el("input", { "aria-label": "Session ID" }), choices = el("select", { "aria-label": "Known session" }), search = el("input", { type: "search", "aria-label": "Search captured route" }), title = el("input", { "aria-label": "Branch title", maxlength: "120" }), steps = el("textarea", { "aria-label": "Hypothetical steps", rows: "5" });
     const choicesStatus = el("p", { role: "status" }), routeStatus = el("p", { role: "status" }), bookStatus = el("p", { role: "status" }), recovery = el("section"), selection = el("section", { tabindex: "-1", "aria-label": "Selected observation" }), evidence = el("section", { class: "replay-evidence" }), map = el("section"), routeList = el("section"), branchList = el("section"), editorRegion = el("section", { tabindex: "-1", "aria-label": "Hypothetical branch editor" }), reference = el("p"), confirmation = el("section", { class: "replay-confirmation" });
     const saveButton = button("Save branch", save), loadBranchButton = button("Load branch route", () => { if (!editor)
         return; clearScope(); source.value = editor.source; session.value = editor.sessionId; void loadRoute(); });
     editorRegion.append(el("h3", {}, "Hypothetical branch — outcome and timing unknown"), reference, el("label", {}, "Branch title ", title), el("label", {}, "One hypothetical step per line (1–12; no blank lines)", steps), saveButton, button("Discard edits", discard), loadBranchButton);
-    const root = el("section", { class: "replay" }, el("h2", {}, "Forked Replay Lab"), el("p", { class: "dim" }, "Retrospective annotations only. Hypothetical steps are not executed and have unknown outcomes and timing. Captured order is not task causality."), el("p", { class: "dim" }, "Notebook text and references remain in this local browser/app origin and profile, outside capture privacy. No sync or encryption guarantee; clearing app data loses annotations. Cross-window conflicts are detected best effort, not transactionally."), el("div", { class: "replay-controls" }, choices, button("Refresh session choices", () => void refresh())), choicesStatus, el("div", { class: "replay-controls" }, el("label", {}, "Source ", source), el("label", {}, "Session ID ", session), button("Load captured route", () => void loadRoute())), routeStatus, selection, evidence, map, el("label", {}, "Search captured route ", search), routeList, el("h3", {}, "Saved hypothetical branches"), button("Refresh notebook", refreshNotebook), bookStatus, recovery, branchList, editorRegion, confirmation);
+    const root = el("section", { class: "replay" }, el("h2", {}, "Replay lab"), el("p", { class: "dim" }, "Retrospective annotations only. Hypothetical steps are not executed and have unknown outcomes and timing. Captured order is not task causality."), el("p", { class: "dim" }, "Notebook text and references remain in this local browser/app origin and profile, outside capture privacy. No sync or encryption guarantee; clearing app data loses annotations. Cross-window conflicts are detected best effort, not transactionally."), el("div", { class: "replay-controls" }, choices, button("Refresh session choices", () => void refresh())), choicesStatus, el("div", { class: "replay-controls" }, el("label", {}, "Source ", source), el("label", {}, "Session ID ", session), button("Load captured route", () => void loadRoute())), routeStatus, selection, evidence, map, el("label", {}, "Search captured route ", search), routeList, el("h3", {}, "Saved hypothetical branches"), button("Refresh notebook", refreshNotebook), bookStatus, recovery, branchList, editorRegion, confirmation);
     let book: ReplayBook = { version: 1, branches: [] }, token: string | null = null, writable = false, dirty = false, editor: ReplayBranch | undefined;
     let route: ReturnType<typeof buildReplayRoute> | undefined, loadedSource = "", loadedSession = "", routePage = 0, branchPage = 0, focus: FirehoseEvent | undefined, verified: FirehoseEvent | undefined;
     let win: Range | null = null, lastRef: string | null = null, ctxRef: SessionTabContext["session"] = null;
@@ -26,13 +32,14 @@ export function createReplay(openScore: (id: string, source: string) => void = (
     function sameScope() { return !!editor && !!route && editor.source === loadedSource && editor.sessionId === loadedSession; }
     function drawMap() { clear(map); if (!route)
         return; const matching = sameScope(); if (editor && !matching)
-        map.append(el("p", {}, "Branch reference belongs to a different source/session. Load branch route to compare; no anchor or alternative is paired here.")); map.append(renderReplayMap(route.events.filter(e => inWindow(e.time, win)), matching ? editor!.eventId : undefined, matching ? steps.value.split("\n").filter(s => s.trim()) : [], selectObservation)); }
+        map.append(el("p", {}, "Branch reference belongs to a different source/session. Load branch route to compare; no anchor or alternative is paired here.")); map.append(renderReplayMap(route.events.filter(e => inWindow(e.time, win)), matching ? editor!.eventId : undefined, matching ? steps.value.split("\n").filter(s => s.trim()) : [], selectObservation, routeName())); }
     function pager(host: HTMLElement, page: number, total: number, size: number, name: string, change: (p: number) => void) { if (total <= size)
         return; const previous = button(`Previous ${name}`, () => change(page - 1)), next = button(`Next ${name}`, () => change(page + 1)); previous.disabled = page === 0; next.disabled = (page + 1) * size >= total; host.append(el("div", { class: "replay-controls" }, previous, el("span", {}, `${page * size + 1}–${Math.min((page + 1) * size, total)} of ${total}`), next)); }
     function drawRoute() { clear(routeList); drawMap(); if (!route)
-        return; const needle = search.value.toLocaleLowerCase(); const scoped = route.events.filter(e => inWindow(e.time, win)); const filtered = scoped.filter(e => [e.id, e.summary, e.name, e.category].join(" ").toLocaleLowerCase().includes(needle)); routePage = Math.min(routePage, Math.max(0, Math.ceil(filtered.length / 40) - 1)); routeList.append(el("p", {}, `${filtered.length} filtered / ${route.events.length} captured observations. Invalid clocks are undated; no timing inference.${win ? ` ${scoped.length} of ${route.events.length} in window.` : ""}`)); const list = el("ol", { start: String(routePage * 40 + 1) }); for (const event of filtered.slice(routePage * 40, routePage * 40 + 40))
-        list.append(el("li", { class: "replay-observation" }, el("span", {}, `${replayTimeLabel(event.time)} · ${event.summary || event.name || event.id}`), button("Select observation", () => selectObservation(event), `Select observation ${event.source} / ${event.session_id} / ${event.id}`))); routeList.append(list); pager(routeList, routePage, filtered.length, 40, "observations", page => { clearFocus(); routePage = page; drawRoute(); }); }
-    function selectObservation(event: FirehoseEvent) { clearFocus(); focus = event; selection.append(el("h3", {}, `Captured observation ${event.id}`), el("p", {}, `${loadedSource} / ${loadedSession} · ${replayTimeLabel(event.time)} · ${event.summary || event.name || ""}`), el("p", { class: "dim" }, "Timeline metadata only. Inspect the captured receipt before creating a hypothetical branch."), button("Inspect captured receipt", () => void inspect(event))); selection.focus(); }
+        return; if (loadedSession)
+        directory?.ensure({ id: loadedSession, source: loadedSource }); const needle = search.value.toLocaleLowerCase(); const scoped = route.events.filter(e => inWindow(e.time, win)); const filtered = scoped.filter(e => [e.id, e.summary, e.name, e.category].join(" ").toLocaleLowerCase().includes(needle)); routePage = Math.min(routePage, Math.max(0, Math.ceil(filtered.length / 40) - 1)); routeList.append(el("p", {}, `${filtered.length} filtered / ${route.events.length} captured observations. Invalid clocks are undated; no timing inference.${win ? ` ${scoped.length} of ${route.events.length} in window.` : ""}`)); const list = el("ol", { start: String(routePage * 40 + 1) }); for (const event of filtered.slice(routePage * 40, routePage * 40 + 40))
+        list.append(el("li", { class: "replay-observation" }, el("span", {}, `${replayTimeLabel(event.time)} · ${event.summary || event.name || event.id}`), button("Select observation", () => selectObservation(event), `Select observation ${event.source} / ${routeName()} / ${event.id}`))); routeList.append(list); pager(routeList, routePage, filtered.length, 40, "observations", page => { clearFocus(); routePage = page; drawRoute(); }); }
+    function selectObservation(event: FirehoseEvent) { clearFocus(); focus = event; selection.append(el("h3", {}, `Captured observation ${event.id}`), (selectionLine = el("p", {}, `${loadedSource} / ${routeName()} · ${replayTimeLabel(event.time)} · ${event.summary || event.name || ""}`)), el("p", { class: "dim" }, "Timeline metadata only. Inspect the captured receipt before creating a hypothetical branch."), button("Inspect captured receipt", () => void inspect(event))); selection.focus(); }
     async function inspect(event: FirehoseEvent) { cancelReceipt(); const current = receiptVersion, scope = loadVersion, ctl = new AbortController(); receiptAbort = ctl; evidence.append(el("p", { role: "status" }, "Loading captured receipt…")); try {
         const full = await capturedEvent(event.id, ctl.signal);
         if (ctl.signal.aborted || current !== receiptVersion || scope !== loadVersion || focus?.id !== event.id)
@@ -119,7 +126,7 @@ export function createReplay(openScore: (id: string, source: string) => void = (
             return;
         routeStatus.textContent = `Route unavailable: ${error instanceof Error ? error.message : String(error)}. No prior route shown as new scope.`;
     } }
-    async function refresh() { cancelReceipt(); refreshNotebook(); const current = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choicesStatus.textContent = "Loading session choices…"; try {
+    async function refresh() { follow(); cancelReceipt(); refreshNotebook(); const current = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choicesStatus.textContent = "Loading session choices…"; try {
         const result = await attention(ctl.signal);
         if (ctl.signal.aborted || current !== choiceVersion)
             return;
@@ -144,13 +151,19 @@ export function createReplay(openScore: (id: string, source: string) => void = (
         string
     ]; source.value = s; session.value = id; });
     search.addEventListener("input", () => { clearFocus(); routePage = 0; drawRoute(); });
-    function deactivate() { lastRef = null; choicesStatus.textContent = "Session choices paused. Refresh on return."; choiceVersion++; choiceAbort?.abort(); loadVersion++; loadAbort?.abort(); cancelReceipt(); if (!route)
+    /** A name that arrives late relabels the route in place; page, selection and receipt stay. */
+    function relabel() { if (!route)
+        return; const restore = keepControlFocus(root); drawRoute(); if (focus && selectionLine && selection.contains(selectionLine))
+        selectionLine.textContent = `${loadedSource} / ${routeName()} · ${replayTimeLabel(focus.time)} · ${focus.summary || focus.name || ""}`; restore(); }
+    function follow() { if (!unsubscribe && directory) { unsubscribe = directory.subscribe(relabel); relabel(); } }
+    function deactivate() { unsubscribe?.(); unsubscribe = undefined; lastRef = null; choicesStatus.textContent = "Session choices paused. Refresh on return."; choiceVersion++; choiceAbort?.abort(); loadVersion++; loadAbort?.abort(); cancelReceipt(); if (!route)
         routeStatus.textContent = "No captured route loaded. Load explicitly."; }
     choices.append(el("option", { value: "" }, "Choose source/session"));
     refreshNotebook();
     form();
     /** Session-tab context: the scope session is loaded once per key; window changes filter without refetching. Never touches the notebook. */
     function setContext(ctx: SessionTabContext) {
+        follow();
         const next = activeRange(ctx.window);
         const changed = (next?.from ?? null) !== (win?.from ?? null) || (next?.to ?? null) !== (win?.to ?? null);
         win = next; ctxRef = ctx.session;

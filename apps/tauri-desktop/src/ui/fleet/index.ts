@@ -13,9 +13,11 @@ import { formatAge } from "../../spark";
 import { deriveAirspace } from "../airspace/model";
 import { buildDwell, sessionKey } from "../dwell/model";
 import type { DwellRow } from "../dwell/model";
-import { LANE_WINDOWS_MS, buildLanes } from "../lanes/model";
+import { LANE_WINDOWS_MS, SEP, buildLanes } from "../lanes/model";
+import type { SessionDirectory } from "../../session-directory";
+import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
-import { ENCODINGS, IDLE_MARK, NOREPO_KEY, buildFleet, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
+import { ENCODINGS, IDLE_MARK, NOREPO_KEY, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
 import type { Encoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
 export type { Encoding } from "./model";
@@ -31,6 +33,8 @@ export interface FleetDeps {
   go(name: "project" | "sessions" | "score" | "live", patch?: ScopePatch): void;
   /** The live event buffer; lanes are drawn from it. */
   events: () => readonly FirehoseEvent[];
+  /** Names lane sessions the summaries do not cover; optional, so lanes fall back to agent names. */
+  directory?: SessionDirectory;
   api?: FleetApi;
   now?: () => number;
   refreshMs?: number;
@@ -56,7 +60,6 @@ export interface FleetPanel {
   forkOrder(repo: string): readonly string[] | undefined;
 }
 
-const SEP = "\u0000"; // matches qualifyLaneInput
 const CHANGE_MS = 1600;
 const EVENT_REFRESH_MS = 1000;
 const LANES_REDRAW_MS = 250;
@@ -160,6 +163,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let lanesTimer: ReturnType<typeof setTimeout> | undefined;
   let unsub: (() => void) | undefined;
   let unsubResolver: (() => void) | undefined;
+  let unsubDirectory: (() => void) | undefined;
 
   // Keyed nodes and transition memory. prevStates survives deactivate on purpose.
   const nodes = new Map<string, Element>();
@@ -183,7 +187,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const toast = el("div", { class: "fleet-toast", role: "status" });
   const body = el("div", { class: "fleet-body" });
   const foot = el("div", { class: "fleet-foot" });
-  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a fork glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick.");
+  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a worktree glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick.");
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
@@ -306,7 +310,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (kind === "loading") statusBox.append(el("div", { class: "fleet-loading" }, "Loading…"));
     else if (kind === "connecting") statusBox.append(el("div", { class: "fleet-connecting" }, "Connecting to daemon…"));
     else if (kind === "empty") statusBox.append(el("div", { class: "fleet-empty" }, "No live sessions or worktrees captured yet."));
-    else if (kind === "unsupported") statusBox.append(el("div", { class: "fleet-unsupported" }, "This daemon does not serve /worktrees (older daemon). Showing attention only; update Agent Firehose to see forks."));
+    else if (kind === "unsupported") statusBox.append(el("div", { class: "fleet-unsupported" }, "This daemon does not serve /worktrees (older daemon). Showing sessions that need you only; update Agent Firehose to see worktrees."));
     else if (kind === "error") {
       const retry = el("button", { class: "fleet-retry", type: "button" }, "Retry");
       retry.addEventListener("click", () => void load());
@@ -378,15 +382,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setClass(node, "current", sc.project === row.id);
     setClass(node, "selected", selRow === row.id);
     setAttr(refs.head, "aria-disabled", navigable ? null : "true");
-    setAttr(refs.head, "aria-label", `${row.label}${row.needsCount ? `, ${row.needsCount} need you` : ""}`);
+    setAttr(refs.head, "aria-label", `${row.label}${row.needsCount ? `, ${needYouCount(row.needsCount)}` : ""}`);
     setClass(node, "unregistered", row.digest);
-    const base = row.noRepo ? "Sessions waiting on you that carry no repository id" : row.known ? `${row.forks.length} worktrees` : "Seen by attention only: no worktree data captured for this repository";
-    setAttr(refs.head, "title", row.digest ? `${base}\nunregistered: only a digest was recorded (balanced/minimal privacy, or the repository is not registered)` : base);
+    const base = row.noRepo ? "Sessions waiting on you that carry no project" : row.known ? `${row.forks.length} worktrees` : "Seen in the needs-you snapshot only: no worktree data captured for this project";
+    setAttr(refs.head, "title", row.digest ? `${base}\nunregistered: only a digest was recorded (balanced/minimal privacy, or the project is not registered)` : base);
     setText(refs.glyph, row.noRepo ? "–" : row.known ? "●" : "?");
     setText(refs.label, row.label);
     setText(refs.needs, row.needsCount > 0 ? `${row.needsCount}?` : "");
     setText(refs.counts, row.known ? `${row.openForks}● ${row.idleForks}${IDLE_MARK}` : "");
-    setAttr(refs.counts, "title", "open forks, idle forks (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
+    setAttr(refs.counts, "title", "open worktrees, idle worktrees (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
@@ -406,7 +410,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setClass(k.node, "current", sc.project === row.id && sc.worktree === f.id);
       for (const st of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${st}`, f.state === st);
       setAttr(k.node, "title", f.tooltip);
-      setAttr(k.node, "aria-label", f.ariaLabel);
+      setAttr(k.node, "aria-label", forkAriaLabel(f));
       setText(fr.glyph, f.glyph + (f.idle ? IDLE_MARK : ""));
       setText(fr.label, f.state === "open" ? f.short : "");
       setText(fr.needs, f.needs > 0 ? `${f.needs}?` : "");
@@ -431,7 +435,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       }
       setText(m.node, open ? "collapse" : `+${strip.more}`);
       setAttr(m.node, "aria-expanded", open ? "true" : "false");
-      setAttr(m.node, "aria-label", open ? "collapse forks" : `show ${strip.more} more forks`);
+      setAttr(m.node, "aria-label", open ? "collapse worktrees" : `show ${strip.more} more worktrees`);
       forkNodes.push(m.node);
     }
     reconcile(refs.forks, forkNodes);
@@ -522,7 +526,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     clear(body);
     nodes.clear();
     const table = el("table", { class: "fleet-matrix" });
-    table.append(el("thead", {}, el("tr", {}, ...["repository", "open", "idle", "needs you", "gone (7d)", "last activity"].map((h) => el("th", {}, h)))));
+    table.append(el("thead", {}, el("tr", {}, ...["project", "open", "idle", "needs you", "gone (7d)", "last activity"].map((h) => el("th", {}, h)))));
     const tbody = el("tbody");
     for (const r of result.rows) {
       const head = el("th", { scope: "row", "data-key": "matrix:" + r.id + "|head" }, r.label);
@@ -550,7 +554,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         needs.setAttribute("role", "button");
         needs.setAttribute("tabindex", "0");
         needs.setAttribute("data-key", `matrix:${r.id}|needs`);
-        needs.setAttribute("aria-label", `${r.label}, ${r.needsCount} need you, open the longest-waiting`);
+        needs.setAttribute("aria-label", `${r.label}, ${needYouCount(r.needsCount)}, open the longest-waiting`);
         onActivate(needs, () => { const cur = result.rows.find((x) => x.id === r.id)?.needs[0]; if (cur) openNeed(cur); });
       }
       tbody.append(el("tr", { "data-key": "matrix:" + r.id }, head, forkCount(r.openForks), forkCount(r.idleForks), needs, forkCount(r.goneRecent, goneTitle), el("td", { class: "dim" }, lastText(r, now))));
@@ -566,7 +570,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const d = deriveAirspace(att ?? [], { now, windowMs: AIRSPACE_WINDOW_MS });
     body.append(
       airspaceBands(d),
-      el("p", { class: "dim fleet-note" }, "Captured observations from the latest attention snapshot, not process monitoring. Recent activity means a working session with an event in the last 15 minutes. No observation is not proof of absence."),
+      el("p", { class: "dim fleet-note" }, "Captured observations from the latest needs-you snapshot, not process monitoring. Recent activity means a working session with an event in the last 15 minutes. No observation is not proof of absence."),
     );
   }
 
@@ -580,7 +584,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const end = live ? now : w.to;
     const windowMs = live ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : Math.max(w.to - w.from, 1);
     const qualified = summaries.map((s) => ({ ...s, id: `${s.source}${SEP}${s.id}` }));
-    const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => live || !(Date.parse(e.time) > end))), qualified, end, windowMs);
+    const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => live || !(Date.parse(e.time) > end))), qualified, end, windowMs, deps.directory ? (ref) => deps.directory!.lookup(ref) : undefined);
     body.append(lanesStrip(lanes, end, windowMs, body.clientWidth || FALLBACK_W, (id, source) => openSession(id, source)));
     restore();
   }
@@ -592,7 +596,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     else if (encoding === "matrix") renderMatrix(now);
     else if (encoding === "airspace") renderAirspace(now);
     else renderLanes(now);
-    setText(foot, result.unattributed.length > 0 ? `${result.unattributed.length} live sessions with no repository id` : "");
+    setText(foot, result.unattributed.length > 0 ? `${result.unattributed.length} live sessions with no project` : "");
   }
 
   // ---- encodings --------------------------------------------------------
@@ -821,6 +825,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         seenWindow = windowKey(store.get());
         unsub = store.subscribe(onScope);
         unsubResolver = store.onResolver(() => { if (active) recompute(); });
+        // A session named late relabels the lanes in place; nothing is refetched.
+        unsubDirectory = deps.directory?.subscribe(() => { if (active && encoding === "lanes") renderLanes(nowFn()); });
         document.addEventListener("keydown", onDocKey);
         document.addEventListener("keydown", onEscapeCapture, true);
         timer = setInterval(() => { void load(true); void loadSessions(true); }, refreshMs);
@@ -835,6 +841,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       unsub = undefined;
       unsubResolver?.();
       unsubResolver = undefined;
+      unsubDirectory?.();
+      unsubDirectory = undefined;
       document.removeEventListener("keydown", onDocKey);
       document.removeEventListener("keydown", onEscapeCapture, true);
       if (timer !== undefined) clearInterval(timer);

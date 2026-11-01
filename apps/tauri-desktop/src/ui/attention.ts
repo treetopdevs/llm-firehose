@@ -6,8 +6,10 @@ import type {
   FirehoseEvent,
 } from "../api";
 import { clear, el, keepFocus } from "../dom";
-import { workspaceLabel } from "../format";
+import { disambiguateSessionLabel, sessionName, workspaceLabel } from "../format";
+import { needYouCount } from "../needs";
 import { formatAge } from "../spark";
+import { idChip } from "./session-id";
 
 import { createAttentionPreferences } from "./attention-preferences";
 import type { LocalStorage } from "./attention-preferences";
@@ -22,6 +24,8 @@ export type AttentionOptions = {
   onOpenSession(id: string, source?: string): void;
   onDoctor(): void;
   onOpenInbox(): void;
+  /** Every load hands over the sessions it names, so other panels can name them too. */
+  onSessions?(list: readonly AttentionSession[]): void;
 };
 
 export function createAttention(options: AttentionOptions) {
@@ -68,7 +72,7 @@ export function createAttention(options: AttentionOptions) {
     ]);
   const strip = el("section", {
     class: "attention-strip",
-    "aria-label": "Attention status",
+    "aria-label": "Needs you status",
   });
   const rows = el("div", { class: "attention-rows" });
   const status = el("p", { class: "dim", role: "status" });
@@ -78,10 +82,10 @@ export function createAttention(options: AttentionOptions) {
   const search = el("input", {
     type: "search",
     placeholder: "Search sessions and reasons…",
-    "aria-label": "Search attention",
+    "aria-label": "Search sessions",
   });
   const source = el("select", { "aria-label": "Source" });
-  const workspace = el("select", { "aria-label": "Workspace" });
+  const workspace = el("select", { "aria-label": "Worktree" });
   const eventTime = (ev: AttentionEvidence) =>
     Date.parse(ev.source_time ?? ev.time);
   const where = (s: AttentionSession) => s.worktree_id || s.cwd || s.repo || "";
@@ -108,7 +112,7 @@ export function createAttention(options: AttentionOptions) {
   const root = el(
     "section",
     { class: "attention-inbox" },
-    el("h2", {}, "Attention inbox"),
+    el("h2", {}, "Needs you"),
     filters,
     notifyButton,
     notificationStatus,
@@ -135,6 +139,10 @@ export function createAttention(options: AttentionOptions) {
           "Captured evidence is unavailable. Try again after reconnecting.";
     }
   }
+  const keyOf = (s: AttentionSession) => `${s.source}\0${s.id}`;
+  /** Names of the whole snapshot, so two sessions with one title can be told apart. */
+  let names: (readonly [string, string])[] = [];
+  const nameOf = (s: AttentionSession) => disambiguateSessionLabel(keyOf(s), sessionName(s), names);
   function row(s: AttentionSession) {
     const evidence = s.pending ?? s.last;
     const inspectButton = el(
@@ -170,11 +178,13 @@ export function createAttention(options: AttentionOptions) {
     return el(
       "article",
       { class: "attention-row" },
-      el("h3", {}, `${s.agent || s.source} · ${s.source} · ${s.id}`),
+      el("h3", {}, nameOf(s)),
+      el("p", { class: "dim" }, `${s.agent || s.source} · ${s.source}`),
+      idChip(s.id),
       el(
         "p",
         {},
-        workspaceLabel(s.repo, s.worktree_id || s.cwd) || "Workspace unknown",
+        workspaceLabel(s.repo, s.worktree_id || s.cwd) || "Worktree unknown",
       ),
       el(
         "p",
@@ -219,12 +229,13 @@ export function createAttention(options: AttentionOptions) {
       "Desktop notifications are opt-in and require this app to stay open.";
     clear(rows);
     clear(strip);
+    names = snapshot.sessions.map((s) => [keyOf(s), sessionName(s)] as const);
     const pending = snapshot.sessions.filter((s) => s.pending);
     const snoozed = pending.filter((s) => prefs.snoozed(episodeKey(s))).length;
     const open = el(
       "button",
       { "data-key": "inbox" },
-      `${pending.length - snoozed} needs attention · ${snoozed} snoozed`,
+      `${needYouCount(pending.length - snoozed)} · ${snoozed} snoozed`,
     );
     open.addEventListener("click", options.onOpenInbox);
     const doctor = el(
@@ -261,7 +272,7 @@ export function createAttention(options: AttentionOptions) {
       snapshot.sessions.map((s) => s.source),
       "All sources",
     );
-    choices(workspace, snapshot.sessions.map(where), "All workspaces");
+    choices(workspace, snapshot.sessions.map(where), "All worktrees");
     const term = search.value.trim().toLocaleLowerCase();
     const rank = (s: AttentionSession) =>
       s.pending
@@ -282,6 +293,7 @@ export function createAttention(options: AttentionOptions) {
           (!workspace.value || workspace.value === where(s)) &&
           [
             s.id,
+            s.title,
             s.source,
             s.agent,
             s.repo,
@@ -416,6 +428,7 @@ export function createAttention(options: AttentionOptions) {
       if (disposed || !connected || version !== epoch) return;
       snapshot = result;
       fresh = true;
+      options.onSessions?.(result.sessions);
       const keys = new Set(
         snapshot.sessions.filter((s) => s.pending).map(episodeKey),
       );
@@ -431,7 +444,7 @@ export function createAttention(options: AttentionOptions) {
       if (disposed || version !== epoch) return;
       fresh = false;
       status.textContent =
-        "Attention unavailable — waiting for the local engine.";
+        "Needs you is unavailable — waiting for the local engine.";
       render();
     } finally {
       clearTimeout(timeout);
@@ -455,7 +468,7 @@ export function createAttention(options: AttentionOptions) {
     abort?.abort();
     inFlight = null;
     status.textContent = value
-      ? "Refreshing attention…"
+      ? "Refreshing needs you…"
       : "Offline · displayed observations may be out of date.";
     render();
     if (value) void refresh();

@@ -1,6 +1,7 @@
 import type { ErrorSignature, FirehoseEvent } from "../api";
 import { clear, el } from "../dom";
-import { formatClockMs, formatDuration, formatValue, latencyLabel, workspaceLabel } from "../format";
+import { formatClockMs, formatDuration, formatValue, latencyLabel, sessionRefLabel, workspaceLabel } from "../format";
+import type { SessionDirectory } from "../session-directory";
 import { coalesce } from "../state";
 
 /** Finds the other observations of an event's tool call (same session and call id). */
@@ -44,7 +45,12 @@ function kvTable(title: string, payload: Record<string, unknown> | undefined, om
 // dump. Start and end are paired by call id, the duration is the difference,
 // and the start payload is the request, the end payload the response. The
 // full JSON stays behind a disclosure for when it is really wanted.
-export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature, offerEvidence?: (id: string) => void): void {
+/** What a pane subscribed to the directory with; a pane shows one event, so one subscription. */
+const paneOff = new WeakMap<HTMLElement, () => void>();
+
+export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature, offerEvidence?: (id: string) => void, directory?: SessionDirectory): void {
+  paneOff.get(pane)?.();
+  paneOff.delete(pane);
   clear(pane);
   if (!ev) {
     pane.classList.remove("open");
@@ -53,10 +59,18 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
   pane.classList.add("open");
 
   const toolName = typeof ev.payload?.tool_name === "string" ? ev.payload.tool_name : "";
-  const crumb = [
+  // The session is named when the directory knows it; the full id stays in the ids row's tooltip.
+  const sessionName = () => (ev.session_id ? sessionRefLabel({ id: ev.session_id, source: ev.source }, directory?.lookup({ id: ev.session_id, source: ev.source })) : { label: "", resolved: false });
+  const crumbText = () => [
     workspaceLabel(ev.repo, ev.cwd),
     ev.agent || ev.source,
-    ev.session_id ? `session ${ev.session_id.slice(0, 8)}` : "",
+    ev.session_id ? `session ${sessionName().label}` : "",
+  ].filter(Boolean).join(" · ");
+  const idsText = () => [
+    ev.session_id && `session ${sessionName().resolved ? sessionName().label : ev.session_id}`,
+    ev.turn_id && `turn ${ev.turn_id}`,
+    ev.call_id && `call ${ev.call_id}`,
+    ev.trace_id && `trace ${ev.trace_id}`,
   ].filter(Boolean).join(" · ");
   const headline = [
     formatClockMs(ev.time),
@@ -88,20 +102,14 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
     const d = Date.parse(ev.capture_time) - Date.parse(ev.source_time);
     if (Number.isFinite(d)) add("captured", latencyLabel(d));
   }
-  add(
-    "ids",
-    [
-      ev.session_id && `session ${ev.session_id}`,
-      ev.turn_id && `turn ${ev.turn_id}`,
-      ev.call_id && `call ${ev.call_id}`,
-      ev.trace_id && `trace ${ev.trace_id}`,
-    ].filter(Boolean).join(" · "),
-  );
+  add("ids", idsText());
+  const idsValue = meta.lastElementChild;
+  if (ev.session_id && idsValue?.tagName === "DD") idsValue.setAttribute("title", `session id ${ev.session_id}`);
   add("source", ev.source);
   add("source time", ev.source_time);
   add("capture time", ev.capture_time);
-  add("repository identity", ev.repo_id);
-  add("workspace identity", ev.worktree_id);
+  add("project identity", ev.repo_id);
+  add("worktree identity", ev.worktree_id);
   add("repo", ev.repo);
   add("cwd", ev.cwd);
   if (ev.severity && ev.severity !== "info") add("severity", ev.severity);
@@ -147,13 +155,24 @@ export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClos
     sections.push(offer);
   }
 
+  const crumbEl = el("div", { class: "detail-crumb dim", ...(ev.session_id ? { title: `session id ${ev.session_id}` } : {}) }, crumbText());
   pane.append(
     close,
     el("h2", {}, ev.summary || ev.name || ev.category),
-    el("div", { class: "detail-crumb dim" }, crumb),
+    crumbEl,
     el("div", { class: "detail-headline" }, headline),
     meta,
     ...sections,
     json,
   );
+  if (directory && ev.session_id) {
+    // A name that arrives later replaces the short id in place; nothing else is redrawn.
+    const ref = { id: ev.session_id, source: ev.source };
+    directory.ensure(ref);
+    const idsDd = idsValue?.tagName === "DD" ? idsValue : null;
+    paneOff.set(pane, directory.subscribe(() => {
+      crumbEl.textContent = crumbText();
+      if (idsDd) idsDd.textContent = idsText();
+    }));
+  }
 }

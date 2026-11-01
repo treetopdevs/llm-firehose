@@ -198,6 +198,7 @@ export function layoutLanes(
     if (forkT > range.to) continue;
     if (!open && extentT < range.from) continue;
     const label = r.label ?? idLabel(r.worktree_id);
+    const idle = isIdleWorker(r, now);
     const beads: LaneBead[] = [];
     for (const s of r.sessions) {
       const t0 = time(s.first_time);
@@ -240,7 +241,7 @@ export function layoutLanes(
       id,
       repoId: r.repo_id,
       label,
-      ariaLabel: `${label}, ${r.state}`,
+      ariaLabel: `${label}, ${r.state}${idle ? ", idle" : ""}`,
       state: r.state,
       end,
       forkX: X(forkT),
@@ -254,7 +255,7 @@ export function layoutLanes(
       ticks,
       glyphs,
       badge: badgeOf(r),
-      idle: isIdleWorker(r, now),
+      idle,
       tooltip: tooltipOf(r, label, extra),
     };
     if (open) lane.tailX = x1;

@@ -14,3 +14,10 @@ test('missing anchors remain explicit, user text safe and alternative count boun
  const root=renderReplayMap(events,'missing',Array.from({length:15},()=>'<script>unsafe</script>'),()=>{});
  expect(root.textContent).toContain('Saved anchor not in loaded snapshot');expect(root.querySelectorAll('[data-alternative]')).toHaveLength(12);expect(root.querySelector('script')).toBeNull();expect(root.textContent).toContain('12 of 15');
 });
+test("the observation label names the session but keeps the event id", () => {
+    const e = { id: "ev-1", source: "codex", session_id: "2385e3bc-1111", time: "2026-07-02T10:00:00Z", category: "tool" } as never;
+    const named = renderReplayMap([e], undefined, [], vi.fn(), "Fix login bug");
+    expect(named.querySelector("button")!.getAttribute("aria-label")).toBe("Captured observation codex / Fix login bug / ev-1");
+    const bare = renderReplayMap([e], undefined, [], vi.fn());
+    expect(bare.querySelector("button")!.getAttribute("aria-label")).toBe("Captured observation codex / 2385e3bc-1111 / ev-1");
+});

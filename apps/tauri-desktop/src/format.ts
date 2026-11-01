@@ -159,3 +159,14 @@ export function disambiguateSessionLabel(key: string, label: string, all: readon
   const [source, id] = key.split("\0");
   return `${label} · ${source} ${shortId(id ?? "")}`;
 }
+
+/**
+ * The name for a session reference. Resolved only when something real names it
+ * (a title, or a readable checkout); otherwise the short id, flagged so callers
+ * can dim it. Nothing is fabricated.
+ */
+export function sessionRefLabel(ref: { id: string; source?: string }, known?: SessionLike): { label: string; resolved: boolean } {
+  if (!known) return { label: idLabel(ref.id), resolved: false };
+  const where = sessionWhere(known).label;
+  return { label: sessionName(known), resolved: !!known.title || (where !== "" && !where.startsWith("#")) };
+}
