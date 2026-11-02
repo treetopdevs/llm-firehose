@@ -5,7 +5,7 @@ import {
   type AttentionSession,
   type FirehoseEvent,
 } from "../../api";
-import { el, clear, onActivate, keepFocus } from "../../dom";
+import { el, clear, keepFocus } from "../../dom";
 import { renderDetail } from "../detail";
 import {
   graphAPI,
@@ -25,6 +25,8 @@ import {
   type AgentRow,
   type InspectorContext,
 } from "./inspector";
+import { timelineView } from "../events/model";
+import { createEventList } from "../events";
 import { TimelineState, eventWorkspace, orderBy, type GraphNode } from "./model";
 import {
   aggregateState,
@@ -147,6 +149,98 @@ export function createWorkspaceGraph(
   /** Revisions whose workspace cluster the user expanded. */
   const expandedClusters = new Set<string>();
   const timeline = new TimelineState(opts.timelineCap);
+  /** The Events rows read through the shared view; this module keeps the network, cursor and pagination. */
+  const eventsView = timelineView(timeline, {
+    repo: () => repo,
+    workspace: () => eventsWorkspace(),
+    hasMore: () => hasMore,
+    loadOlder: () => loadHistory(true),
+    reload: () => loadHistory(),
+    pausable: !hosted,
+    window: () => windowRange(),
+    sources: () =>
+      // Scoped like sessionRefs: this repo/worktree's sessions and the loaded events, not every attention session.
+      Array.from(
+        new Set([
+          ...timeline.all().map((e) => e.source),
+          ...scopedSessions().map((s) => s.source),
+          ...(source ? [source] : []),
+        ]),
+      ).sort(),
+    sessions: () => sessionRefs(),
+    // A changed query is the existing filter reset: drop the cursor, abort the stale request, refetch the head.
+    setQuery: (q) => {
+      queryFired = true;
+      if (syncing) return; // the list is only catching up with a reset the graph made itself
+      source = q.source ?? "";
+      session = q.session ?? "";
+      category = q.category ?? "";
+      search = q.text ?? "";
+      if (session && source && !session.startsWith(source + "\0")) {
+        // A source change drops a session of another source, in the list's controls too.
+        session = "";
+        eventList.setFilter(eventQuery());
+        return;
+      }
+      cursor = "";
+      // Hidden (hosted): show() restarts pagination itself; nothing is requested for a hidden view.
+      if (!hidden()) void loadHistory();
+    },
+  });
+  /** The session filter's options: scoped live sessions plus those the loaded events name. */
+  function sessionRefs(): string[] {
+    return Array.from(
+      new Set([
+        ...scopedSessions().map((s) => `${s.source}\0${s.id}`),
+        ...timeline
+          .all()
+          .filter(
+            (e) =>
+              e.session_id &&
+              (!eventsWorkspace() || timeline.association(e, repo).workspace_id === eventsWorkspace()),
+          )
+          .map((e) => `${e.source}\0${e.session_id}`),
+        ...(session ? [session] : []),
+      ]),
+    ).filter((s) => !source || s.startsWith(source + "\0"));
+  }
+  const eventList = createEventList(eventsView, {
+    heading: false,
+    onSelect: (e) => {
+      timeline.select(e.id);
+      render();
+    },
+    selectedKey: () => timeline.selected?.id,
+    rowAction: () => ({ label: "Show in Graph", run: (r) => showInGraph(r.event) }),
+    sessionLabel: (ref) => {
+      const all = sessionRefs().map((k) => [k, sessionLabel(k)] as [string, string]);
+      return disambiguateSessionLabel(ref, sessionLabel(ref), all);
+    },
+  });
+  let queryFired = false;
+  let syncing = false;
+  /** Bring the list's controls in line with filters the graph changed itself, without a request. */
+  function syncList() {
+    // Search text typed inside the debounce is the user's, not stale: keep it and fetch for it.
+    const typed = eventList.pending();
+    if (typed) search = typed.text ?? "";
+    syncing = true;
+    try {
+      eventList.setFilter(eventQuery());
+    } finally {
+      syncing = false;
+    }
+    if (typed && !hidden()) {
+      cursor = "";
+      void loadHistory();
+    }
+  }
+  const eventQuery = () => ({
+    source: source || undefined,
+    session: session || undefined,
+    category: category || undefined,
+    text: search || undefined,
+  });
 
   // Derived per snapshot / per attention poll; never touches the DOM.
   let nodesByKey = new Map<string, GraphNode>();
@@ -371,8 +465,13 @@ export function createWorkspaceGraph(
     filterTimeline: (src, id) => {
       session = `${src}\0${id}`;
       switchTab("timeline");
+      queryFired = false;
+      eventList.setFilter(eventQuery());
+      if (!queryFired) {
+        cursor = "";
+        void loadHistory();
+      }
       render();
-      void loadHistory();
     },
     openTimeline: () => {
       switchTab("timeline");
@@ -560,6 +659,7 @@ export function createWorkspaceGraph(
       repo = "";
       unregistered = false;
       source = ""; // the Events source filter belongs to the previous repository
+      syncList();
       discardTopology();
       if (hidden()) {
         pendingRefresh = true; // defer: nothing is requested until show()
@@ -861,7 +961,7 @@ export function createWorkspaceGraph(
       );
     } else {
       clear(body);
-      renderTimeline();
+      renderEventsView();
     }
     const nextTimeline = body.querySelector<HTMLElement>(".graph-timeline");
     if (nextTimeline) nextTimeline.scrollTop = timelineScrollTop;
@@ -960,12 +1060,17 @@ export function createWorkspaceGraph(
 
   // ---- timeline (unchanged behaviour) ---------------------------------------
 
-  function renderTimeline() {
+  function renderEventsView() {
     const panel = el("div", { class: "graph-timeline" });
     const filters = el("div", { class: "graph-controls" });
     function changed() {
-      cursor = "";
-      void loadHistory();
+      queryFired = false;
+      eventList.setFilter(eventQuery());
+      if (!queryFired) {
+        // Same query (a worktree or scope change): the reset is still needed.
+        cursor = "";
+        void loadHistory();
+      }
       render();
     }
     const names = new Map<string, number>();
@@ -998,100 +1103,9 @@ export function createWorkspaceGraph(
           publish();
         },
       ),
-      select(
-        "Source",
-        [
-          ["", "All sources"],
-          ...Array.from(
-            new Set([
-              ...timeline.all().map((e) => e.source),
-              ...sessions.map((s) => s.source),
-            ]),
-          )
-            .sort()
-            .map((s) => [s, s] as [string, string]),
-        ],
-        source,
-        (v) => {
-          source = v;
-          session = "";
-          changed();
-        },
-      ),
-      select(
-        "Session",
-        [
-          ["", "All sessions"],
-          ...Array.from(
-            new Set([
-              ...scopedSessions().map((s) => `${s.source}\0${s.id}`),
-              ...timeline
-                .all()
-                .filter(
-                  (e) =>
-                    e.session_id &&
-                    (!eventsWorkspace() ||
-                      timeline.association(e, repo).workspace_id === eventsWorkspace()),
-                )
-                .map((e) => `${e.source}\0${e.session_id}`),
-            ]),
-          )
-            .filter((s) => !source || s.startsWith(source + "\0"))
-            .map((s) => [s, sessionLabel(s)] as [string, string])
-            .map(([key, label], _i, all) => [key, disambiguateSessionLabel(key, label, all)] as [string, string]),
-        ],
-        session,
-        (v) => {
-          session = v;
-          changed();
-        },
-      ),
-      select(
-        "Category",
-        [
-          ["", "All categories"],
-          ...Array.from(new Set(timeline.all().map((e) => e.category)))
-            .sort()
-            .map((s) => [s, s] as [string, string]),
-        ],
-        category,
-        (v) => {
-          category = v;
-          changed();
-        },
-      ),
     );
-    const searchInput = el("input", {
-      "aria-label": "Search captured events",
-      placeholder: "Search hooks and events",
-      value: search,
-    });
-    let timeout: ReturnType<typeof setTimeout>;
-    searchInput.oninput = () => {
-      search = searchInput.value;
-      clearTimeout(timeout);
-      timeout = setTimeout(changed, 250);
-    };
-    // Hosted: the shared window decides what is followed, so there is no pause/resume.
-    if (hosted) filters.append(searchInput);
-    else
-      filters.append(
-        searchInput,
-        button(
-          timeline.paused
-            ? `Resume · ${timeline.unreadFor({ repo, workspace, source, session, category, search })} arrivals`
-            : "● Live · pause",
-          () => {
-            if (timeline.paused) {
-              timeline.resume();
-              void loadHistory();
-            } else timeline.pause();
-            render();
-          },
-        ),
-      );
     const range = windowRange();
-    const rowsShown = timeline.rows({ repo, workspace: eventsWorkspace(), source, session, category, search, ...range });
+    const rowsShown = eventsView.rows(eventQuery(), range).map((r) => r.event);
     if (hosted) {
       const sc = store.get();
       const now = nowMs();
@@ -1099,7 +1113,7 @@ export function createWorkspaceGraph(
         sc.window === "live"
           ? `Following live · last ${formatSpan(liveSpanOf(sc))}`
           : `Frozen range ${formatRange(sc.window, now).text}`;
-      panel.append(el("p", { class: "graph-events-state", role: "status" }, `${state} · ${rowsShown.length} shown`));
+      panel.append(el("p", { class: "graph-timeline-state", role: "status" }, `${state} · ${rowsShown.length} shown`));
     }
     panel.append(
       filters,
@@ -1111,60 +1125,10 @@ export function createWorkspaceGraph(
     );
     if (historyError)
       panel.append(el("p", { class: "graph-warning" }, historyError));
-    const table = el("table", { class: "graph-events" });
-    table.append(
-      el(
-        "thead",
-        {},
-        el(
-          "tr",
-          {},
-          ...[
-            "Time",
-            "Session",
-            "Native hook / event",
-            "Category",
-            "Summary",
-            "",
-          ].map((s) => el("th", {}, s)),
-        ),
-      ),
-    );
-    const rows = el("tbody");
-    const filtered = rowsShown;
-    for (const e of filtered) {
-      const row = el("tr", {
-        "data-key": `event:${e.id}`,
-        tabindex: "0",
-        class: timeline.selected?.id === e.id ? "selected" : "",
-      });
-      row.append(
-        el("td", {}, new Date(e.time).toLocaleTimeString()),
-        el("td", { class: "timeline-session", title: e.session_id ? `${e.source} · ${e.session_id}` : "" }, e.session_id ? sessionLabel(`${e.source}\0${e.session_id}`) : `${e.source} · unassigned`),
-        el("td", {}, e.name ?? "—"),
-        el("td", {}, e.category),
-        el("td", {}, e.summary ?? ""),
-      );
-      const graph = button("Show in Graph", () => showInGraph(e));
-      graph.onclick = (evt) => {
-        evt.stopPropagation();
-        showInGraph(e);
-      };
-      row.append(el("td", {}, graph));
-      // The row holds its own Show in Graph button: only the row itself selects it.
-      onActivate(
-        row,
-        () => {
-          timeline.select(e.id);
-          render();
-        },
-        { self: true },
-      );
-      rows.append(row);
-    }
-    table.append(rows);
-    panel.append(table);
-    if (!filtered.length)
+    panel.append(eventList.root);
+    syncList(); // filters the graph reset while the Events view was away
+    eventList.refresh();
+    if (!rowsShown.length)
       panel.append(
         el(
           "p",
@@ -1175,18 +1139,12 @@ export function createWorkspaceGraph(
         ),
       );
     panel.append(
-      button(
-        hasMore ? "Load older events" : "Reconcile durable history",
-        () => void loadHistory(hasMore),
-      ),
-      el(
-        "p",
-        { class: "dim" },
-        hasMore
-          ? "Older durable history available."
-          : "Loaded history boundary reached; capture gaps may still exist.",
-      ),
+      hasMore
+        ? el("p", { class: "dim" }, "Older durable history available.")
+        : button("Reconcile durable history", () => void loadHistory(false)),
     );
+    if (!hasMore)
+      panel.append(el("p", { class: "dim" }, "Loaded history boundary reached; capture gaps may still exist."));
     const detail = el("aside", { class: "graph-event-detail" });
     if (timeline.selected) {
       renderDetail(
@@ -1586,6 +1544,7 @@ export function createWorkspaceGraph(
         cursor = "";
         hasMore = false;
       }
+      eventList.activate();
       if (!wasShown || pendingRefresh || !snapshot) void refresh();
       else {
         render();
@@ -1605,6 +1564,8 @@ export function createWorkspaceGraph(
       workspace = "";
       revision = "";
       session = "";
+      syncList();
+      eventList.deactivate();
       toolbar.closeMenu();
     },
     setWorktreeOrder(ids: readonly string[] | undefined) {

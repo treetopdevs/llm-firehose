@@ -110,11 +110,11 @@ test("all workspace labels remain selectable; Graph and Timeline retain scope an
     panel.root.querySelector<HTMLSelectElement>('[aria-label="Worktree"]')!
       .value,
   ).toBe("w");
-  panel.root.querySelector<HTMLElement>('[data-key="event:e"]')!.click();
+  panel.root.querySelector<HTMLElement>('[data-key="e"]')!.click();
   expect(
     panel.root.querySelector(".graph-event-detail")!.textContent,
   ).toContain("captured");
-  click(panel.root, "● Live · pause");
+  click(panel.root, "pause");
   panel.onEvent({
     id: "new",
     time: "2026-10-05T00:00:00Z",
@@ -123,8 +123,8 @@ test("all workspace labels remain selectable; Graph and Timeline retain scope an
     repo_id: "r",
     worktree_id: "w",
   });
-  expect(panel.root.textContent).toContain("Resume · 1 arrivals");
-  expect(panel.root.querySelectorAll(".graph-events tbody tr")).toHaveLength(1);
+  expect(panel.root.textContent).toContain("resume (1 new)");
+  expect(panel.root.querySelectorAll(".feed-row")).toHaveLength(1);
   click(panel.root, "Graph");
   click(panel.root, "Timeline");
   expect(
@@ -150,7 +150,7 @@ test("Show in Graph reports deleted workspace and failed scans keep successful t
   click(panel.root, "Timeline");
   await flush();
   panel.root
-    .querySelector<HTMLButtonElement>('[data-key="event:gone"] button')!
+    .querySelector<HTMLButtonElement>('[data-key="gone\0action"]')!
     .click();
   expect(panel.root.querySelector(".graph-status")!.textContent).toContain(
     "Worktree unavailable",
@@ -177,7 +177,7 @@ test("paused live arrivals preserve timeline scroll position", async () => {
   const panel = await setup();
   click(panel.root, "Timeline");
   await flush();
-  click(panel.root, "● Live · pause");
+  click(panel.root, "pause");
   panel.root.querySelector<HTMLElement>(".graph-timeline")!.scrollTop = 240;
   panel.onEvent({
     id: "arrival",
@@ -239,7 +239,7 @@ test("Timeline workspace change updates revision and Show in Graph centers its a
   click(panel.root, "Timeline");
   await flush();
   panel.root
-    .querySelector<HTMLButtonElement>('[data-key="event:second"] button')!
+    .querySelector<HTMLButtonElement>('[data-key="second\0action"]')!
     .click();
   expect(
     panel.root.querySelector(".graph-canvas > g")!.getAttribute("transform"),
@@ -742,7 +742,7 @@ test("Show in Graph reveals a workspace hidden in a cluster and the expansion ou
   });
   click(root, "Timeline");
   await flush();
-  root.querySelector<HTMLButtonElement>('[data-key="event:ev-c3"] button')!.click();
+  root.querySelector<HTMLButtonElement>('[data-key="ev-c3\0action"]')!.click();
   await flush();
   expect(label(root, "c3").classList.contains("selected")).toBe(true);
   label(root, "c3").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -1644,34 +1644,35 @@ const keyEv = (target: Element, key: string) => {
 
 test("keys on the nested Show in Graph button do not select or re-render the timeline row", async () => {
   const panel = await timelineWithRow();
-  const row = panel.root.querySelector<HTMLElement>('[data-key="event:keyed"]')!;
+  const row = panel.root.querySelector<HTMLElement>('[data-key="keyed"]')!;
   expect(row).not.toBeNull();
-  const btn = row.querySelector<HTMLButtonElement>("button")!;
+  const btn = panel.root.querySelector<HTMLButtonElement>('[data-key="keyed\0action"]')!;
+  expect(row.contains(btn)).toBe(false); // the action is a sibling, not nested in the row
   btn.focus();
   for (const k of ["Enter", " "]) {
     const e = keyEv(btn, k);
     expect(e.defaultPrevented).toBe(false);
   }
-  expect(panel.root.querySelector('[data-key="event:keyed"]')).toBe(row);
+  expect(panel.root.querySelector('[data-key="keyed"]')).toBe(row);
   expect(row.classList.contains("selected")).toBe(false);
   expect(panel.root.querySelector(".graph-event-detail")?.textContent ?? "").not.toContain("keyed");
   // the browser turns Enter/Space on a button into one click: that shows it in the graph without selecting the row
   btn.click();
-  expect(panel.root.querySelector('[data-key="event:keyed"]')).toBeNull();
+  expect(panel.root.querySelector('[data-key="keyed"]')).toBeNull();
   expect(panel.root.querySelector(".graph-canvas")).not.toBeNull();
 });
 
 test("clicking the timeline row elsewhere selects it, and Enter on the row itself selects", async () => {
   const panel = await timelineWithRow();
-  const cell = panel.root.querySelector<HTMLElement>('[data-key="event:keyed"] td')!;
+  const cell = panel.root.querySelector<HTMLElement>('[data-key="keyed"] .cell.summary')!;
   cell.click();
-  expect(panel.root.querySelector('[data-key="event:keyed"]')!.classList.contains("selected")).toBe(true);
+  expect(panel.root.querySelector('[data-key="keyed"]')!.classList.contains("selected")).toBe(true);
   // unselect by re-rendering through another selection is out of scope: use a fresh panel for Enter
   document.body.replaceChildren();
   const second = await timelineWithRow();
-  const row = second.root.querySelector<HTMLElement>('[data-key="event:keyed"]')!;
+  const row = second.root.querySelector<HTMLElement>('[data-key="keyed"]')!;
   expect(keyEv(row, "Enter").defaultPrevented).toBe(true);
-  expect(second.root.querySelector('[data-key="event:keyed"]')!.classList.contains("selected")).toBe(true);
+  expect(second.root.querySelector('[data-key="keyed"]')!.classList.contains("selected")).toBe(true);
 });
 
 test("/ focuses search from the body and is ignored while typing in a field", async () => {

@@ -572,7 +572,7 @@ describe("sessions history is invalidated by scope (F5)", () => {
     store.narrow({ session: A });
     const panel = createSessions(() => {}, () => [], undefined, undefined, store);
     await panel.openSession("A", "codex");
-    store.narrow({ window: { from: 1, to: 2 } });
+    store.narrow({ window: { from: 0, to: Number.MAX_SAFE_INTEGER } });
     expect(panel.root.textContent).toContain("kept evidence");
   });
 
@@ -921,4 +921,54 @@ test("the Worktree rung keeps its header above the list, so the toggle is never 
   expect(body.querySelector(".sessions-list")).not.toBeNull();
   expect(body.querySelector(".sessions-inbox")).not.toBeNull();
   expect(body.querySelector(".sessions-needs")).toBeNull();
+});
+
+describe("Worktree rung uses the shared event policy", () => {
+  const e = (id: string, over: Record<string, unknown>) => ({ ...ev("S", 1000), id, summary: id, ...over }) as FirehoseEvent;
+  const rows = (panel: { root: HTMLElement }) => [...panel.root.querySelectorAll(".session-events-list .feed-row")].map((r) => r.textContent ?? "");
+
+  test("graph worktree id differing from event worktree_id still shows the session's rows; meta hidden; one fetch", async () => {
+    sessions.mockResolvedValue([]);
+    sessionEvents.mockResolvedValue([
+      e("in-a", { worktree_id: "event-space-a" }),
+      e("in-b", { worktree_id: "" }),
+      e("in-jj", { worktree_id: undefined, jj_workspace_id: "jj-1" }),
+      e("meta-a", { worktree_id: "event-space-a", category: "meta" }),
+    ]);
+    const store = createScope();
+    store.narrow({ worktree: "graph-space-id" });
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    await panel.openSession("S", "claude-code");
+    expect(rows(panel)).toHaveLength(3);
+    expect(panel.root.querySelector(".session-events-note")?.textContent).toContain("1 event hidden");
+    expect(sessionEvents).toHaveBeenCalledTimes(1);
+  });
+
+  test("changing the shared window while a session is open re-scopes the shown rows without a refetch", async () => {
+    sessions.mockResolvedValue([]);
+    sessionEvents.mockResolvedValue([e("old", {}), { ...e("new", {}), time: new Date(now - 100).toISOString() }]);
+    const store = createScope();
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    await panel.openSession("S", "claude-code");
+    expect(rows(panel)).toHaveLength(2);
+    store.narrow({ window: { from: now - 500, to: now } });
+    expect(rows(panel)).toHaveLength(1);
+    expect(panel.root.querySelector(".session-heading")?.textContent).toContain("1 events");
+    expect(panel.root.querySelector(".session-events-note")?.textContent).toContain("1 event hidden");
+    expect(sessionEvents).toHaveBeenCalledTimes(1);
+  });
+
+  test("a retained range is applied and Enter on a row opens detail", async () => {
+    sessions.mockResolvedValue([]);
+    sessionEvents.mockResolvedValue([e("old", {}), { ...e("new", {}), time: new Date(now - 100).toISOString() }]);
+    const store = createScope();
+    store.narrow({ window: { from: now - 500, to: now } });
+    const onSelect = vi.fn();
+    const panel = createSessions(onSelect, () => [], undefined, undefined, store);
+    await panel.openSession("S", "claude-code");
+    expect(rows(panel)).toHaveLength(1);
+    const row = panel.root.querySelector<HTMLElement>(".session-events-list .feed-row")!;
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
 });

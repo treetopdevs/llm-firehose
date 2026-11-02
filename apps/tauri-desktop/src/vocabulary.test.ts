@@ -230,8 +230,8 @@ describe("live is an alias, not a panel", () => {
     const main = readFileSync(join(SRC, "main.ts"), "utf8");
     expect(main).not.toMatch(/^\s*live:\s/m);
     expect(main).not.toMatch(/NAV_GROUPS[\s\S]{0,400}"live"/);
-    const feed = readFileSync(join(SRC, "ui", "feed.ts"), "utf8");
+    const feed = readFileSync(join(SRC, "ui", "events", "index.ts"), "utf8");
     expect(feed).not.toMatch(/el\("h2", \{\}, "Live"\)/);
-    expect(feed).toContain('opts?.heading ?? "Events"');
+    expect(feed).toContain('opts.heading ?? "Events"');
   });
 });

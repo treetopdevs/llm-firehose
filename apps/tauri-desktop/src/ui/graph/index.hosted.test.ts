@@ -9,6 +9,7 @@ import { graphAPI, type EventPage, type Repository, type Snapshot, type Workspac
 import { attention, getConfig, type AttentionSession, type FirehoseEvent } from "../../api";
 import { createScope, membership, type ScopeResolver } from "../../scope";
 import { isEscapeClaimed } from "../../escape";
+import { listKeys } from "../../keys";
 
 vi.mock("../../api", () => ({
   DAEMON_URL: "http://127.0.0.1:4517",
@@ -149,7 +150,7 @@ const qa = (root: HTMLElement, sel: string) => [...root.querySelectorAll<HTMLEle
 const click = (root: HTMLElement, name: string) =>
   [...root.querySelectorAll("button")].find((b) => b.textContent === name)!.click();
 const rowIds = (root: HTMLElement) =>
-  qa(root, ".graph-events tbody tr").map((r) => r.getAttribute("data-key")!.replace("event:", ""));
+  qa(root, ".feed-row").map((r) => r.getAttribute("data-key")!);
 const key = (k: string, opts: KeyboardEventInit = {}) =>
   new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts });
 
@@ -487,11 +488,11 @@ test("Events follow the shared window: live state, frozen range, no pause UI, no
   const { store, graph, root } = make({ project: "r" });
   graph.show("events");
   await flush();
-  const state = () => q(root, ".graph-events-state").textContent!;
+  const state = () => q(root, ".graph-timeline-state").textContent!;
   expect(state()).toContain("Following live · last 7 d");
   expect(state()).toContain("3 shown");
-  expect(root.textContent).not.toContain("Live · pause");
-  expect(root.textContent).not.toContain("Resume");
+  expect(root.querySelector(".pause")).toBeNull();
+  expect(root.textContent).not.toContain("resume");
   expect(root.textContent).not.toMatch(/unread/i);
   expect(root.textContent).not.toContain("250");
   // following live adds a row immediately
@@ -509,6 +510,34 @@ test("Events follow the shared window: live state, frozen range, no pause UI, no
   expect(state()).toContain("Following live · last 2 h");
   expect(rowIds(root)).toEqual(["later", "fresh", "e3", "e2"]); // e2 sits exactly on the inclusive bound
   expect(rowIds(root)).not.toContain("e1");
+});
+
+test("hosted Events: Space is inert and registers no events-scope binding; the standalone panel owns exactly one", async () => {
+  const eventsScope = () => listKeys().filter((r) => r.scope === "events");
+  // Standalone (not hosted) owns the events scope from creation; it has no hide().
+  mocks();
+  const standalone = createWorkspaceGraph(() => {}, createScope({ project: "r" }), { now: () => NOW });
+  document.body.append(standalone.root);
+  await standalone.refresh();
+  await flush();
+  click(standalone.root, "Timeline");
+  await flush();
+  expect(eventsScope()).toHaveLength(1);
+  document.body.replaceChildren();
+  expect(eventsScope()).toHaveLength(0); // listed only while connected
+  const { graph, root } = make({ project: "r" });
+  graph.show("events");
+  await flush();
+  expect(eventsScope()).toHaveLength(0);
+  graph.hide();
+  expect(eventsScope()).toHaveLength(0);
+  graph.show("events");
+  await flush();
+  const before = root.querySelectorAll(".feed-row").length;
+  const sp = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+  document.body.dispatchEvent(sp);
+  expect(sp.defaultPrevented).toBe(false);
+  expect(root.querySelectorAll(".feed-row").length).toBe(before);
 });
 
 test("an empty window says so and points at Load older", async () => {
@@ -604,7 +633,7 @@ test("view changes the graph makes itself are announced via onView; show() does 
   // '/' from Events
   graph.show("events");
   await flush();
-  q(root, "table").focus();
+  q(root, ".feed-rows").focus();
   document.body.dispatchEvent(key("/"));
   expect(views).toEqual(["graph", "graph"]);
   // Open scoped Timeline from the inspector
@@ -691,7 +720,7 @@ test("a repository switch from the host clears the Events source filter", async 
   const { store, graph, root } = make({ project: "r" });
   graph.show("events");
   await flush();
-  const sel = () => root.querySelector<HTMLSelectElement>('select[aria-label="Source"]')!;
+  const sel = () => root.querySelector<HTMLSelectElement>('select[title="source filter"]')!;
   sel().value = "codex";
   sel().dispatchEvent(new Event("change"));
   expect(sel().value).toBe("codex");
@@ -765,4 +794,113 @@ test("CODEX: refresh() on a hidden graph issues no request", async () => {
   await graph.refresh();
   await flush();
   expect(snapshotCalls()).toHaveLength(0);
+});
+
+// ---- one event list (slice 15) ------------------------------------------------------------
+
+test("Events rows: Enter opens the detail aside, selection survives a live arrival, Show in Graph is a sibling button", async () => {
+  const { graph, root } = make({ project: "r" });
+  graph.show("events");
+  await flush();
+  const row = q(root, '.feed-row[data-key="e2"]');
+  row.dispatchEvent(key("Enter"));
+  expect(q(root, ".graph-event-detail").textContent).not.toBe("");
+  graph.onEvent(ev("fresh", 30_000));
+  expect(q(root, '.feed-row[data-key="e2"]').classList.contains("selected")).toBe(true);
+  expect(q(root, ".graph-event-detail").textContent).not.toBe("");
+  const action = q(root, '[data-key="e2\0action"]');
+  expect(action.closest(".feed-row")).toBeNull();
+  action.click();
+  expect(q(root, ".graph-pane")).toBeTruthy();
+});
+
+test("Events toggle with Graph reloads the head exactly once per show; repeated show/hide adds no listeners or key registrations", async () => {
+  const { graph, root } = make({ project: "r" });
+  graph.show("events");
+  await flush();
+  const calls = timelineCalls().length;
+  const kb = listKeys().length;
+  for (let i = 0; i < 3; i++) {
+    graph.hide();
+    graph.show("events");
+    await flush();
+  }
+  expect(listKeys().length).toBe(kb);
+  expect(qa(root, ".feed-rows")).toHaveLength(1);
+  // hide() aborts history and show() restarts it (intentional): exactly one head request per show, never more.
+  expect(timelineCalls().length).toBe(calls + 3);
+});
+
+test("Events search: typing refetches once after a pause and the search box keeps focus through the rebuild", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const { graph, root } = make({ project: "r" });
+  graph.show("events");
+  await vi.advanceTimersByTimeAsync(0);
+  await flush();
+  const calls = timelineCalls().length;
+  const input = q(root, "input[type=search]") as HTMLInputElement;
+  input.focus();
+  for (const text of ["e", "er", "err"]) {
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(80);
+  }
+  expect(timelineCalls().length).toBe(calls); // nothing mid-word
+  await vi.advanceTimersByTimeAsync(300);
+  await flush();
+  expect(timelineCalls().length).toBe(calls + 1);
+  expect(timelineCalls().at(-1)![0]).toMatchObject({ search: "err" });
+  expect(document.activeElement).toBe(q(root, "input[type=search]"));
+});
+
+test("Events source filter offers the loaded events and this project's sessions, not other projects'", async () => {
+  mocks({ sessions: [{ ...S_NEW, source: "claude-code" }, { ...S_NEW, id: "elsewhere", source: "opencode", repo_id: "other", worktree_id: "ox" }] });
+  vi.mocked(graphAPI.timeline).mockImplementation(async () => page([E1]));
+  const store = createScope({ project: "r" });
+  const graph = createWorkspaceGraph(() => {}, store, { hosted: true, now: () => NOW });
+  document.body.append(graph.root);
+  graph.show("events");
+  await flush();
+  const opts = qa(graph.root, "select[title='source filter'] option").map((o) => o.textContent);
+  expect(opts).toContain("codex");
+  expect(opts).toContain("claude-code");
+  expect(opts).not.toContain("opencode");
+});
+
+test("REVIEW: a session filter the graph clears while away is not kept by the list on return", async () => {
+  const { store, graph, root } = make({ project: "r", worktree: "w1" });
+  graph.show("events");
+  await flush();
+  const sel = q(root, "select[title='session filter']") as HTMLSelectElement;
+  sel.value = "codex\0s-new";
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+  await flush();
+  graph.show("graph");
+  await flush();
+  q(root, '[data-key="workspace:w2"]').dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w2");
+  graph.show("events");
+  await flush();
+  expect((q(root, "select[title='session filter']") as HTMLSelectElement).value).toBe("");
+  expect(timelineCalls().at(-1)![0].session_id).toBeUndefined();
+});
+
+test("REVIEW: search typed inside the debounce survives leaving and returning to Events", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const { graph, root } = make({ project: "r" });
+  graph.show("events");
+  await vi.advanceTimersByTimeAsync(0);
+  await flush();
+  const input = q(root, "input[type=search]") as HTMLInputElement;
+  input.value = "err";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await vi.advanceTimersByTimeAsync(50);
+  graph.hide();
+  await vi.advanceTimersByTimeAsync(400);
+  graph.show("events");
+  await vi.advanceTimersByTimeAsync(0);
+  await flush();
+  expect((q(root, "input[type=search]") as HTMLInputElement).value).toBe("err");
+  expect(timelineCalls().at(-1)![0]).toMatchObject({ search: "err" });
 });

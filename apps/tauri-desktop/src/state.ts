@@ -87,6 +87,7 @@ export class FeedState {
   private buf: FirehoseEvent[] = [];
   private seenIds = new Set<string>();
   private frozen: FirehoseEvent[] | null = null;
+  private arrived: FirehoseEvent[] = [];
   private filter: Filter = {};
   private seenSources: string[] = [];
   paused = false;
@@ -109,6 +110,8 @@ export class FeedState {
     }
     if (this.paused) {
       this.unread++;
+      this.arrived.push(ev);
+      if (this.arrived.length > this.cap) this.arrived.splice(0, this.arrived.length - this.cap);
     }
   }
 
@@ -116,13 +119,25 @@ export class FeedState {
     if (this.paused) return;
     this.paused = true;
     this.unread = 0;
+    this.arrived = [];
     this.frozen = [...this.buf];
   }
 
   resume(): void {
     this.paused = false;
     this.unread = 0;
+    this.arrived = [];
     this.frozen = null;
+  }
+
+  /** Events held for display: the frozen copy while paused, else the live buffer. Oldest first. */
+  snapshot(): readonly FirehoseEvent[] {
+    return this.frozen ?? this.buf;
+  }
+
+  /** Events that arrived since pause() (bounded by the ring size), for scoped unread counts. */
+  arrivals(): readonly FirehoseEvent[] {
+    return this.arrived;
   }
 
   setFilter(f: Filter): void {

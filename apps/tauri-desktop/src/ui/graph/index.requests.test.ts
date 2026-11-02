@@ -195,7 +195,7 @@ test("live-event bursts merge into the timeline and refresh attention, but never
   }
   expect(timelineCalls()).toHaveLength(before);
   expect(vi.mocked(attention).mock.calls.length).toBeGreaterThan(attentionBefore);
-  expect(qa(panel.root, ".graph-events tbody tr")).toHaveLength(120);
+  expect(qa(panel.root, ".feed-row")).toHaveLength(120);
 });
 
 test("on the Graph tab an event updates the selected workspace's activity without a request", async () => {
@@ -325,7 +325,7 @@ test("at most one timeline request is in flight: every new load aborts the previ
   expect(q(panel.root, ".graph-timeline").textContent).not.toContain("Durable history unavailable");
   calls[4].respond({ events: [event("late")], has_more: false, order: "newest_first" });
   await settle();
-  expect(qa(panel.root, ".graph-events tbody tr")).toHaveLength(1);
+  expect(qa(panel.root, ".feed-row")).toHaveLength(1);
   expect(q(panel.root, ".graph-timeline").textContent).not.toContain("Durable history unavailable");
 });
 
@@ -472,4 +472,39 @@ test("leaving the view aborts in-flight history, and returning loads it again", 
   expect(timelineCalls()).toHaveLength(2);
   expect(timelineCalls()[1].state).toBe("pending");
   expect(panel.root.textContent).not.toContain("Durable history unavailable");
+});
+
+// ---- Slice 15: the Events query path goes through the shared timeline view ----------------------
+
+test("a query change during an in-flight older page aborts it and fetches the filtered head with a reset cursor", async () => {
+  net.hold = (c) => c.path === "/timeline";
+  const panel = await mount();
+  click(panel.root, "Timeline");
+  await settle();
+  pending("/timeline")[0].respond({ events: [event("e1")], has_more: true, next_cursor: "c1", order: "newest_first" });
+  await settle();
+  click(panel.root, "Load older events");
+  await settle();
+  const older = pending("/timeline")[0];
+  expect(older.params.get("cursor")).toBe("c1");
+  change(q<HTMLSelectElement>(panel.root, "select[title='category filter']"), "tool");
+  await settle();
+  expect(older.state).toBe("aborted");
+  const head = pending("/timeline")[0];
+  expect(head.params.get("cursor")).toBeNull();
+  expect(head.params.get("category")).toBe("tool");
+});
+
+test("a live event while Events is hidden still refreshes attention and never fetches history", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const panel = await mount();
+  pill(panel.root, "w1").dispatchEvent(new MouseEvent("click"));
+  await settle();
+  const calls = timelineCalls().length;
+  const before = vi.mocked(attention).mock.calls.length;
+  panel.onEvent(event("fresh"));
+  await vi.advanceTimersByTimeAsync(600);
+  expect(vi.mocked(attention).mock.calls.length).toBeGreaterThan(before);
+  expect(timelineCalls()).toHaveLength(calls);
+  expect(q(panel.root, ".graph-inspector .insp-activity").textContent).toContain("summary fresh");
 });

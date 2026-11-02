@@ -13,7 +13,8 @@ import { renderDetail } from "./ui/detail";
 import { createAttention } from "./ui/attention";
 import { createCourt } from "./ui/court";
 import { createDoctor } from "./ui/doctor";
-import { createFeed } from "./ui/feed";
+import { createEventList } from "./ui/events";
+import { liveSource } from "./ui/events/model";
 import { createFiles } from "./ui/files";
 import { createOnboarding, isOnboarded } from "./ui/onboarding";
 import { createLoops } from "./ui/loops";
@@ -150,7 +151,8 @@ let sessionsViaFleet = false;
 const strataPanel = createStrata(openLoops, openScore, sessionDirectory);
 const ecosystemPanel = createEcosystem(openScore);
 // Fleet Events honours a retained historical window like Project Events does; live follows the whole ring.
-const feedPanel = createFeed(feedState, showDetail, {
+const feedPanel = createEventList(liveSource(feedState, { renderLimit: 1000 }), {
+  onSelect: showDetail,
   heading: false,
   window: () => {
     const w = scope.get().window;
@@ -171,7 +173,7 @@ const fleetPanel = createFleet({
   },
   onEncoding: () => syncTransport(),
   hosts: {
-    events: { root: feedPanel.root, activate: () => feedPanel.refresh(), deactivate: () => {} },
+    events: { root: feedPanel.root, activate: () => feedPanel.activate(), deactivate: () => {} },
     strata: strataPanel,
     ecosystem: { root: ecosystemPanel.root, activate: () => { renderDetail(detailPane, null, () => {}); return ecosystemPanel.refresh(); }, deactivate: () => ecosystemPanel.deactivate() },
   },
@@ -400,7 +402,7 @@ function onEvent(ev: FirehoseEvent) {
     renderQueued = true;
     requestAnimationFrame(() => {
       renderQueued = false;
-      if (active === "fleet" && fleetPanel.encoding === "events") feedPanel.refresh();
+      if (active === "fleet" && fleetPanel.encoding === "events") feedPanel.onEvent(ev);
     });
   }
 }

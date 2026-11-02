@@ -35,7 +35,8 @@ vi.mock("./ui/graph/api", () => ({
 }));
 
 import type { FirehoseEvent, SessionSummary } from "./api";
-import { createFeed } from "./ui/feed";
+import { createEventList } from "./ui/events";
+import { liveSource } from "./ui/events/model";
 import { FeedState } from "./state";
 import { createSessions } from "./ui/sessions";
 import { createProject } from "./ui/project";
@@ -65,11 +66,10 @@ function walk(dir: string, out: string[] = []): string[] {
 
 /** `file:firstArg#n` -> whether the activated element holds interactive descendants, and why. */
 const ONACTIVATE_CALLERS: Record<string, { descendants: boolean; why: string }> = {
-  "ui/graph/index.ts:row#1": { descendants: true, why: "timeline row holds the Show in Graph button" },
   "ui/project/index.ts:bead#1": { descendants: false, why: "SVG rect leaf; stop keeps it out of its lane" },
   "ui/project/index.ts:g#1": { descendants: true, why: "lane holds focusable beads" },
   "ui/sessions.ts:item#1": { descendants: true, why: "session card holds score, loops and the id chip" },
-  "ui/feed.ts:line#1": { descendants: false, why: "text cells only (self:true kept so a future control cannot double-fire)" },
+  "ui/events/view.ts:line#1": { descendants: false, why: "text cells only (self:true kept so a future control cannot double-fire)" },
   "ui/fleet/encodings.ts:g#1": { descendants: false, why: "lane row: shapes and text only" },
   "ui/fleet/index.ts:head#1": { descendants: false, why: "row head: spans only" },
   "ui/fleet/index.ts:k.node#1": { descendants: false, why: "fork chip: spans only" },
@@ -162,7 +162,7 @@ async function mountAll(): Promise<void> {
   const feedState = new FeedState(50);
   feedState.push(at("2026-11-01T12:00:00Z"));
   feedState.push(at("2026-11-01T12:00:10Z", { source: "codex", category: "shell", summary: "ran ls" }));
-  const feed = createFeed(feedState, () => {});
+  const feed = createEventList(liveSource(feedState, { renderLimit: 1000 }), { onSelect: () => {} });
   keep("feed", feed.root);
   feed.refresh();
 
@@ -260,6 +260,7 @@ async function mountAll(): Promise<void> {
  */
 const EXCEPTIONS: Array<{ where: string; selector: string; key?: string; why: string }> = [
   { where: "feed", selector: ".feed-rows", why: "scrollable region tab stop with an aria-label; rows inside it are the buttons" },
+  { where: "graph", selector: ".feed-rows", why: "the same shared event list inside Project Events" },
   { where: "graph:canvas", selector: ".graph-canvas", key: "ArrowRight", why: "canvas: arrows pan, +/-/0 zoom; nodes inside it rove with arrows and answer Enter" },
   { where: "activity", selector: ".map-strip", key: "ArrowRight", why: "slider: arrows move the brushed range" },
   { where: "transport", selector: ".transport-track", key: "ArrowLeft", why: "slider: arrows shift the window" },

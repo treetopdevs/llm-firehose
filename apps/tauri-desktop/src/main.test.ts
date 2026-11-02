@@ -1689,8 +1689,8 @@ test("Escape from inputs, menus and dialogs never changes scope; the body Escape
   };
   stays(document.querySelector("select.project-repo")!);
   chip("events").click();
-  await vi.waitFor(() => expect(document.querySelector('input[aria-label="Search captured events"]')).not.toBeNull());
-  stays(document.querySelector('input[aria-label="Search captured events"]')!);
+  await vi.waitFor(() => expect(document.querySelector('.workspace-graph .feed input[type="search"]')).not.toBeNull());
+  stays(document.querySelector('.workspace-graph .feed input[type="search"]')!);
   const wsSelect = document.querySelector<HTMLSelectElement>('.workspace-graph select[aria-label="Worktree"]');
   expect(wsSelect).not.toBeNull();
   stays(wsSelect!);
@@ -2384,6 +2384,21 @@ test("onEvent gating: the feed refreshes only on Fleet Events, once per animatio
   expect(rowsNow()).toBe(before);
   flushFrames();
   expect(rowsNow()).toBe(before + 2);
+});
+
+test("Fleet Events mount is the shared event list: one pushed event appears once, via the single onEvent fan-out", async () => {
+  const frames: Array<() => void> = [];
+  vi.stubGlobal("requestAnimationFrame", (cb: () => void) => { frames.push(cb); return frames.length; });
+  const b = await boot({ worktrees: [wtRow()] });
+  b.go("live");
+  expect(document.querySelector(".fleet-body .feed")).not.toBeNull();
+  frames.length = 0;
+  sendEvent(b, feedEvent("once-1"));
+  frames.splice(0).forEach((cb) => cb());
+  const hits = [...document.querySelectorAll(".fleet-body .feed-row")].filter((r) => r.getAttribute("data-key")?.includes("once-1") || r.textContent?.includes("once-1"));
+  expect(document.querySelectorAll(".fleet-body .feed-row").length).toBeGreaterThan(0);
+  expect(hits.length).toBeLessThanOrEqual(1);
+  expect(document.querySelectorAll(".fleet-body .feed-row[data-key*='once-1']")).toHaveLength(1);
 });
 
 test("Escape ascent lands on Fleet in the user's last encoding and writes nothing to it; go('live') is the only selector", async () => {
