@@ -393,7 +393,7 @@ describe('local key descriptors', () => {
     'ui/graph/index.ts': { keydown: 1, uses: ['canvasClear'] },
     'ui/graph/toolbar.ts': { keydown: 3, uses: ['graphSearch', 'graphMenu'] },
     'ui/graph/inspector.ts': { keydown: 1, uses: ['inspectorCompare'] },
-    'ui/feed.ts': { keydown: 1, uses: ['feedRows'] },
+    'ui/events/view.ts': { keydown: 1, uses: ['feedRows'] },
     'ui/session/index.ts': { keydown: 1, uses: ['sessionTabs'] },
     'ui/project/index.ts': { keydown: 2, uses: ['projectViews', 'laneClear'] },
     'ui/fleet/index.ts': { keydown: 1, uses: ['fleetClear'] },

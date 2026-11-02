@@ -222,10 +222,14 @@ export class TimelineState {
     );
   }
   unreadFor(f: TimelineFilter) {
+    return this.unreadEvents(f).length;
+  }
+  /** Arrivals since pause() that match the filter. */
+  unreadEvents(f: TimelineFilter) {
     return this.matching(
       this.all().filter((e) => this.arrivals.has(e.id)),
       f,
-    ).length;
+    );
   }
   rows(f: TimelineFilter) {
     return this.matching(this.frozen ?? this.all(), f).sort(

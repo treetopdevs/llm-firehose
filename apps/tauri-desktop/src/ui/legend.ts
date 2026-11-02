@@ -42,7 +42,7 @@ export function localScopesFor(ctx: PanelContext): ReadonlySet<string> {
         case "map":
           return new Set(["activity map", "activity strip"]);
         case "events":
-          return new Set(["project views", ...GRAPH_EVENTS_SCOPES]);
+          return new Set(["project views", ...GRAPH_EVENTS_SCOPES, LOCAL.feedRows.scope]);
         default:
           return new Set([...GRAPH_SCOPES, "time window", "project views"]);
       }

@@ -8,10 +8,11 @@ import { ERROR_MARK } from "../glyphs";
 import { idChip } from "./session-id";
 import { evidenceTime, needsLabel, pendingNow, stateWord } from "../needs";
 import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
-import { renderEventList } from "./feed";
+import { renderEventRows } from "./events";
+import { scopeEvents } from "./events/model";
 import type { CellScope } from "./workspace/model";
 import { createScope, membership, sameSession } from "../scope";
-import type { ScopeStore, SessionRef } from "../scope";
+import type { Scope, ScopeStore, SessionRef } from "../scope";
 
 export type SessionsPanel = {
   root: HTMLElement;
@@ -141,6 +142,8 @@ export function createSessions(
   let knownBySource = new Map<string, AttentionSession>();
   /** The session whose history is on screen, so a refreshed title updates its heading. */
   let shown: { id: string; source?: string; count: number } | null = null;
+  /** The fetched history of the open session; re-scoped (not refetched) when the shared window moves. */
+  let loaded: { id: string; source?: string; summary: SessionSummary | undefined; events: FirehoseEvent[] } | null = null;
 
   /** The session whose history is on screen or loading; null when no history is open. */
   let historyRef: SessionRef | null = null;
@@ -158,6 +161,7 @@ export function createSessions(
     ++historyVersion;
     historyRef = null;
     shown = null;
+    loaded = null;
     clear(eventsBox);
   }
 
@@ -170,7 +174,13 @@ export function createSessions(
     const contextMoved = next.project !== prev.project || next.worktree !== prev.worktree || !sameSession(next.session, prev.session);
     const departed = contextMoved && (!next.session || !sameSession(next.session, historyRef));
     if (cellOpened || departed) dropHistory();
+    else if (loaded && !sameWindow(next.window, prev.window)) drawHistory();
   });
+
+  function sameWindow(a: Scope["window"], b: Scope["window"]): boolean {
+    if (a === "live" || b === "live") return a === b;
+    return a.from === b.from && a.to === b.to;
+  }
 
   function scopeChip(active: CellScope): HTMLElement {
     const clearBtn = el("button", { title: "show every session" }, "×");
@@ -198,21 +208,46 @@ export function createSessions(
               .then((list) => list?.find((x) => x.id === id))
               .catch(() => undefined),
       ]);
-      const evs = evsAll.filter(ev => !source || ev.source === source);
       if (version !== historyVersion) return;
-      clear(eventsBox);
-      shown = { id, source, count: evs.length };
-      // renderEventList owns (and clears) its container, so the heading gets its own.
-      // The list may have refreshed while the history loaded: prefer its summary.
-      const list = el("div", { class: "session-events-list" });
-      eventsBox.append(sessionHeading(id, known.get(id) ?? s, source, evs.length), list);
-      renderEventList(list, evs, onSelect);
+      loaded = { id, source, summary: s, events: evsAll.filter(ev => !source || ev.source === source) };
+      drawHistory();
     } catch (err) {
       if (version !== historyVersion) return;
       historyRef = null;
       clear(eventsBox);
       eventsBox.append(el("p", { class: "error" }, String(err)));
     }
+  }
+
+  /**
+   * The one event-list policy over the fetched history: retained range, meta hidden by default.
+   * No worktree filter: the session list is already scoped by the resolver, and a graph worktree id is
+   * not an event id, so comparing it with raw event fields would hide a session's own rows.
+   */
+  function drawHistory() {
+    if (!loaded) return;
+    const { id, source, summary, events } = loaded;
+    const sc = store.get();
+    const evs = scopeEvents(events, { window: sc.window === "live" ? undefined : { from: sc.window.from, to: sc.window.to } });
+    clear(eventsBox);
+    shown = { id, source, count: evs.length };
+    // renderEventRows owns (and clears) its container, so the heading gets its own.
+    // The list may have refreshed while the history loaded: prefer its summary.
+    const list = el("div", { class: "session-events-list" });
+    eventsBox.append(sessionHeading(id, known.get(id) ?? summary, source, evs.length), list);
+    if (evs.length < events.length || evs.length === 0) {
+      const hidden = events.length - evs.length;
+      eventsBox.append(
+        el(
+          "p",
+          { class: "dim session-events-note", role: "status" },
+          evs.length === 0 && hidden === 0
+            ? "No captured events for this session."
+            : `${hidden} event${hidden === 1 ? "" : "s"} hidden by the time window or the meta filter.`,
+        ),
+      );
+    }
+    renderEventRows(list, evs, onSelect);
   }
 
   /** What names the history on screen: the matching source's attention entry when the open is source-qualified. */

@@ -178,6 +178,9 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
   cursor: pointer;
   white-space: nowrap;
 }
+.feed-item { display: flex; align-items: center; gap: 0.4rem; }
+.feed-item .feed-row { flex: 1; min-width: 0; }
+.feed-row.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
 .feed-row:hover { background: var(--bg-hover); }
 .feed-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; background: var(--bg-hover); }
 .cell.time { color: var(--text-dim); flex-shrink: 0; }
@@ -775,12 +778,8 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .graph-timeline { flex: 1; min-width: 0; overflow: auto; padding: 12px 16px; }
 .graph-timeline .graph-controls { padding: 8px 0; }
 .graph-timeline .graph-controls select { max-width: 220px; }
-.graph-events { border-collapse: collapse; width: 100%; text-align: left; font-size: var(--fs-sm); }
-.graph-events th { color: var(--text-dim); padding: 12px 8px; background: var(--bg-hover); }
-.graph-events td { border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); padding: 12px 8px; max-width: 300px; overflow-wrap: anywhere; }
-.graph-events tr { cursor: pointer; }
-.graph-events tr.selected { background: color-mix(in srgb, var(--selected) 16%, var(--bg-panel)); outline: 1px solid var(--selected); }
-.graph-events tr:hover { background: var(--bg-hover); }
+.graph-timeline .feed { flex: none; }
+.graph-timeline .feed-rows { flex: none; overflow: visible; }
 .graph-event-detail:empty { display: none; }
 .graph-event-detail { position: relative; padding-top: 48px; }
 /* activity map */

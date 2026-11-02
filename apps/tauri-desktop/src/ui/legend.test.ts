@@ -367,7 +367,8 @@ describe("panel context", () => {
     has(localScopesFor({ panel: "project", encoding: "lanes" }), "project lanes", "rows and cards", "project views", "time window");
     has(localScopesFor({ panel: "project", encoding: "map" }), "activity map", "activity strip");
     const ev = localScopesFor({ panel: "project", encoding: "events" });
-    has(ev, "project views", "graph search");
+    has(ev, "project views", "graph search", "live feed");
+    lacks(ev, "events"); // hosted Events cannot pause, so it owns no Space binding
     has(localScopesFor({ panel: "fleet", encoding: "events" }), "events", "live feed");
     lacks(localScopesFor({ panel: "fleet", encoding: "events" }), "fleet", "rows and cards");
     has(localScopesFor({ panel: "sessions" }), "rows and cards");
