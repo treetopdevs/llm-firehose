@@ -5,7 +5,7 @@
 import { el } from "../dom";
 import { claimEscape } from "../escape";
 import { GLYPH_GROUPS, swatchSvg } from "../glyphs";
-import { QUEUE_KEYS, listKeys, listLocalKeys, type KeyRow } from "../keys";
+import { LOCAL, QUEUE_KEYS, listKeys, listLocalKeys, type KeyRow } from "../keys";
 
 /** The two time-control behaviours of the shell transport (D115). */
 export const TIME_CONTROL_NOTES: readonly string[] = [
@@ -17,11 +17,53 @@ export const TIME_CONTROL_NOTES: readonly string[] = [
 const SPACE_NATIVE = "Buttons and links: Space activates them natively.";
 const spaceKey = /\bSpace\b/;
 
+/** Where the user is: the panel, plus the encoding (fleet, project) or tab (session) when one is showing. */
+export interface PanelContext {
+  panel: string;
+  encoding?: string;
+  tab?: string;
+}
+
+const GRAPH_SCOPES = ["graph canvas", "graph search", "graph menu", "graph inspector"];
+const GRAPH_EVENTS_SCOPES = ["graph search", "graph menu", "graph inspector"];
+
+/** The element-local scopes (the `scope` strings in keys.ts LOCAL) that act inside a panel and encoding. */
+export function localScopesFor(ctx: PanelContext): ReadonlySet<string> {
+  switch (ctx.panel) {
+    case "fleet":
+      // Hosted lens encodings (Strata, Patches) draw none of the Fleet row scopes.
+      if (ctx.encoding === "events") return new Set(["events", LOCAL.feedRows.scope]);
+      if (ctx.encoding === "strata" || ctx.encoding === "ecosystem") return new Set();
+      return new Set(["fleet", "time window", "rows and cards"]);
+    case "project":
+      switch (ctx.encoding) {
+        case "lanes":
+          return new Set(["project lanes", "rows and cards", "project views", "time window"]);
+        case "map":
+          return new Set(["activity map", "activity strip"]);
+        case "events":
+          return new Set(["project views", ...GRAPH_EVENTS_SCOPES]);
+        default:
+          return new Set([...GRAPH_SCOPES, "time window", "project views"]);
+      }
+    case "sessions":
+      return new Set(["rows and cards"]);
+    case "session":
+      // The score's step and play keys act only on the Score tab; the other tabs own just the tab strip.
+      return new Set(ctx.tab === undefined || ctx.tab === "score" ? ["session tabs", "score", "score track", "time window"] : ["session tabs", "time window"]);
+    default:
+      return new Set();
+  }
+}
+
 /** The Space notes, derived from the registered and element-local key rows that include Space. */
-export function spaceNotes(): string[] {
+export function spaceNotes(ctx?: PanelContext): string[] {
   const seen = new Set<string>();
   const notes: string[] = [];
-  for (const r of [...listKeys(), ...listLocalKeys()]) {
+  const scopes = ctx ? localScopesFor(ctx) : null;
+  const registered = listKeys().filter((r) => !ctx || r.scope === "global" || r.scope === ctx.panel || (scopes?.has(r.scope) ?? false));
+  const localRows = listLocalKeys().filter((r) => !scopes || scopes.has(r.scope));
+  for (const r of [...registered, ...localRows]) {
     if (!spaceKey.test(r.display)) continue;
     const n = `${r.scope}: Space ${r.label}.`;
     if (seen.has(n)) continue;
@@ -36,6 +78,8 @@ export interface LegendOptions {
   opener?: HTMLElement | SVGElement;
   /** Where focus goes when the opener is gone. */
   fallbackFocus?: HTMLElement;
+  /** The panel the user is in, read when the legend opens. Without it nothing is filtered. */
+  context?: PanelContext | (() => PanelContext);
 }
 
 interface Open {
@@ -81,14 +125,22 @@ export function openLegend(opts: LegendOptions = {}): { close(): void } {
   const opener = opts.opener ?? ((active instanceof HTMLElement || active instanceof SVGElement) && active !== document.body ? active : undefined);
   const fallback = opts.fallbackFocus;
 
+  const ctx = typeof opts.context === "function" ? opts.context() : opts.context;
   const panel = listKeys();
+  const scopes = ctx ? localScopesFor(ctx) : null;
+  const panelRows = panel.filter((r) => r.scope !== "global" && (!ctx || r.scope === ctx.panel || (scopes?.has(r.scope) ?? false)));
+  const allLocal = listLocalKeys();
+  const panelLocal = scopes ? allLocal.filter((r) => scopes.has(r.scope)) : [];
+  const elsewhere = scopes ? allLocal.filter((r) => !scopes.has(r.scope)) : allLocal;
+  const here = [...panelRows, ...panelLocal];
+  const elsewhereDetails = el("details", { class: "legend-part" }, el("summary", {}, "Elsewhere"), keyRows(elsewhere, true));
   const closeBtn = el("button", { type: "button", class: "legend-close" }, "Close");
   const body = el("div", { class: "legend-body", tabindex: "0", role: "region", "aria-label": "Keys and symbols reference" });
   body.append(
-    part("This panel", keyRows(panel.filter((r) => r.scope !== "global"), false)),
+    part("This panel", here.length ? keyRows(here, panelLocal.length > 0) : el("p", { class: "dim" }, "No panel-specific keys")),
     part("Everywhere", keyRows(panel.filter((r) => r.scope === "global"), false)),
-    part("Also on the keyboard", keyRows(listLocalKeys(), true)),
-    part("Space", el("ul", { class: "legend-notes" }, ...spaceNotes().map((n) => el("li", {}, n)))),
+    elsewhereDetails,
+    part("Space", el("ul", { class: "legend-notes" }, ...spaceNotes(ctx).map((n) => el("li", {}, n)))),
     ...symbols(),
     part("Time controls", el("ul", { class: "legend-notes" }, ...TIME_CONTROL_NOTES.map((n) => el("li", {}, n)))),
   );
@@ -114,7 +166,7 @@ export function openLegend(opts: LegendOptions = {}): { close(): void } {
 
   // Document-capture, so it also sees Tab when a click on dialog text left focus on body.
   function trapTab(e: KeyboardEvent): void {
-    const stops = [...dialog.querySelectorAll<HTMLElement>("button, [tabindex='0']")];
+    const stops = [...dialog.querySelectorAll<HTMLElement>("button, summary, [tabindex='0']")];
     const first = stops[0];
     const last = stops[stops.length - 1];
     if (!first || !last) return;

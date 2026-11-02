@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { disambiguateSessionLabel, sessionRefLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, idLabel, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
+import { projectName, worktreeName, displayRepoLabel, disambiguateSessionLabel, sessionRefLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, idLabel, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
 import type { FirehoseEvent } from "./api";
 
 describe("formatClock", () => {
@@ -135,4 +135,38 @@ describe("sessionRefLabel", () => {
   test("a path-shaped id reads as its tail, unresolved", () => {
     expect(sessionRefLabel({ id: "/a/b/c" }, undefined)).toEqual({ label: "b/c", resolved: false });
   });
+});
+
+describe("projectName", () => {
+  const id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  test("paths reduce to the folder; full is the id", () => {
+    expect(projectName("/Users/n/develop/browser-life/.git")).toEqual({ label: "browser-life", full: "/Users/n/develop/browser-life/.git" });
+    expect(projectName("/a/b/browser-life/.git/").label).toBe("browser-life");
+    expect(projectName("x", "/Users/n/browser-life/.git").label).toBe("browser-life");
+    expect(projectName("C:\\r\\proj\\.git").label).toBe("proj");
+  });
+  test("names are kept", () => {
+    expect(projectName("r", "firehose").label).toBe("firehose");
+    expect(projectName("r", "owner/repo").label).toBe("owner/repo");
+    expect(projectName("abc12345 (unknown)").label).toBe("abc12345 (unknown)");
+    expect(projectName(id).label).toBe(id.slice(0, 8));
+  });
+  test("the label never contains .git", () => {
+    for (const s of ["/a/b/.git", "/a/b/c/.git/", "C:\\a\\.git\\"]) expect(projectName(s).label).not.toContain(".git");
+  });
+});
+
+describe("worktreeName", () => {
+  test("folder of a path, resolved names kept, short ids", () => {
+    expect(worktreeName("/r/.claude/worktrees/foo").label).toBe("foo");
+    expect(worktreeName("/r/.claude/worktrees/foo/").label).toBe("foo");
+    expect(worktreeName("w", "feat/x").label).toBe("feat/x");
+    expect(worktreeName("w", "/w/alpha-open").label).toBe("alpha-open");
+    expect(worktreeName("wt-abcdefghij").label).toBe("wt-abcde");
+    expect(worktreeName("/r/x").full).toBe("/r/x");
+  });
+});
+
+test("displayRepoLabel is exported from format", () => {
+  expect(displayRepoLabel("/Users/n/browser-life/.git")).toBe("/Users/n/browser-life");
 });

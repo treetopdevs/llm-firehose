@@ -8,6 +8,7 @@ const click = (label:string) => {
   const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === label);
   expect(button, label).toBeTruthy(); button!.click();
 };
+let goFn: (name: "ecosystem") => void = () => {};
 const nav = (panel:string) => document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${panel}]`)!.click();
 const tab = (name:string) => document.querySelector<HTMLElement>(`#session-tab-${name}`)!.click();
 const input = (label:string, value:string) => {
@@ -26,7 +27,7 @@ async function setup() {
     if (url.includes(`/attention/event?id=${event.id}`)) {receiptSignal=init?.signal as AbortSignal; return new Promise<Response>(()=>{});}
     return new Response(JSON.stringify(url.endsWith("/health")?{status:"ok",version:"test",schema_version:1}:url.includes("/attention")?{sessions:[],warnings:[]}:[]));
   }));
-  await import("./main");
+  ({go: goFn} = await import("./main"));
   return ()=>receiptSignal;
 }
 test("all prototypes coexist and close a shared receipt on entry",async()=>{
@@ -36,8 +37,9 @@ test("all prototypes coexist and close a shared receipt on entry",async()=>{
     expect(document.querySelector("aside.detail pre")).not.toBeNull();
     const tab = ["court","handoffs","loom","replay"].includes(name);
     if (tab) {nav("session");document.querySelector<HTMLElement>(`#session-tab-${name}`)!.click();}
+    else if (name==="ecosystem") goFn("ecosystem");
     else nav(name);
-    expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe(tab?"session":name);
+    expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe(tab?"session":name==="ecosystem"?"fleet":name);
     expect(document.querySelector("aside.detail")?.textContent).not.toContain(event.id);
     expect(document.querySelector(".attention-strip")).not.toBeNull();
   }
@@ -49,7 +51,7 @@ test("leaving Court cancels its pending receipt and preserves unsaved text acros
   expect(signal()).toBeDefined();
   input("New claim","Unsubmitted idea");tab("replay");
   expect(signal()!.aborted).toBe(true);
-  nav("ecosystem");nav("session");
+  goFn("ecosystem");nav("session");
   expect(document.querySelector("#session-tab-replay")?.getAttribute("aria-selected")).toBe("true");
   tab("court");
   expect(document.querySelector<HTMLInputElement>('[aria-label="New claim"]')?.value).toBe("Unsubmitted idea");

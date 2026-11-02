@@ -20,11 +20,36 @@ describe("feed rows", () => {
   });
 });
 
+describe("feed window", () => {
+  test("a retained historical window hides rows outside it and offers a way back to live", () => {
+    const feed = new FeedState(10);
+    const t = (ms: number) => new Date(Date.parse("2026-11-01T12:00:00Z") + ms).toISOString();
+    for (const [id, ms] of [["old", -3_600_000], ["in", 0], ["new", 3_600_000]] as const) feed.push({ id, time: t(ms), source: "codex", category: "tool", summary: id } as FirehoseEvent);
+    let range: { from?: number; to?: number } | undefined = { from: Date.parse(t(-60_000)), to: Date.parse(t(60_000)) };
+    const reset = vi.fn(() => { range = undefined; });
+    const panel = createFeed(feed, () => {}, { window: () => range, resetWindow: reset });
+    panel.refresh();
+    expect([...panel.root.querySelectorAll(".feed-row .summary")].map((n) => n.textContent)).toEqual(["in"]);
+    expect(panel.root.querySelector<HTMLElement>(".feed-window")!.hidden).toBe(false);
+    panel.root.querySelector<HTMLButtonElement>(".feed-window-live")!.click();
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(panel.root.querySelectorAll(".feed-row")).toHaveLength(3);
+    expect(panel.root.querySelector<HTMLElement>(".feed-window")!.hidden).toBe(true);
+  });
+});
+
 describe("feed heading", () => {
   test("opens with an h2 equal to the nav label", () => {
     const panel = createFeed(new FeedState(10), () => {});
     expect(panel.root.firstElementChild?.tagName).toBe("H2");
-    expect(panel.root.firstElementChild?.textContent).toBe("Live");
+    expect(panel.root.firstElementChild?.textContent).toBe("Events");
+  });
+
+  test("heading:false renders no h2; a custom heading is used", () => {
+    const hidden = createFeed(new FeedState(10), () => {}, { heading: false });
+    expect(hidden.root.querySelector("h2")).toBeNull();
+    const custom = createFeed(new FeedState(10), () => {}, { heading: "Stream" });
+    expect(custom.root.querySelector("h2")?.textContent).toBe("Stream");
   });
 });
 
@@ -93,7 +118,7 @@ describe("feed rows are keyboard operable", () => {
     const { panel } = mount([mk("a")]);
     const box = panel.root.querySelector(".feed-rows")!;
     expect(box.getAttribute("tabindex")).toBe("0");
-    expect(box.getAttribute("aria-label")).toBe("Live events");
+    expect(box.getAttribute("aria-label")).toBe("Events");
   });
 
   test("roving tabindex: exactly one tab stop; arrows move it and focus", () => {
@@ -221,19 +246,19 @@ describe("feed focus survives a rebuild", () => {
 });
 
 describe("Space goes through the shared key map", () => {
-  test("the live-scope binding is listed and fires only while the feed root is connected", () => {
+  test("the events-scope binding is listed and fires only while the feed root is connected", () => {
     const feed = new FeedState(10);
     const panel = createFeed(feed, () => {});
     // Not mounted yet: not listed, and Space does nothing.
-    expect(listKeys().filter((r) => r.scope === "live")).toEqual([]);
+    expect(listKeys().filter((r) => r.scope === "events")).toEqual([]);
     expect(press(document.body, " ").defaultPrevented).toBe(false);
     expect(feed.paused).toBe(false);
     document.body.append(panel.root);
-    expect(listKeys().filter((r) => r.scope === "live")).toEqual([{ scope: "live", display: "Space", label: "pause or resume the feed" }]);
+    expect(listKeys().filter((r) => r.scope === "events")).toEqual([{ scope: "events", display: "Space", label: "pause or resume the feed" }]);
     expect(press(document.body, " ").defaultPrevented).toBe(true);
     expect(feed.paused).toBe(true);
     panel.root.remove();
-    expect(listKeys().filter((r) => r.scope === "live")).toEqual([]);
+    expect(listKeys().filter((r) => r.scope === "events")).toEqual([]);
     press(document.body, " ");
     expect(feed.paused).toBe(true);
   });

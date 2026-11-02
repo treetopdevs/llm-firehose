@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { FeedState, coalesce } from "./state";
+import { FEED_RING, FeedState, coalesce } from "./state";
+import { TIMELINE_CAP } from "./ui/graph/model";
 import type { FirehoseEvent } from "./api";
 
 function ev(partial: Partial<FirehoseEvent> & { id: string }): FirehoseEvent {
@@ -205,5 +206,18 @@ describe("row keys", () => {
   test("events without ids still get unique keys", () => {
     const rows = coalesce([ev({ id: "" }), ev({ id: "" })]);
     expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+  });
+});
+
+describe("FEED_RING", () => {
+  test("equals the project timeline cap and evicts the oldest", () => {
+    expect(FEED_RING).toBe(5000);
+    expect(FEED_RING).toBe(TIMELINE_CAP);
+    const feed = new FeedState(FEED_RING);
+    for (let i = 0; i < 5050; i++) feed.push(ev({ id: `e${i}` }));
+    const ids = feed.events().map((e) => e.id);
+    expect(ids).toHaveLength(5000);
+    expect(ids[0]).toBe("e50");
+    expect(ids[4999]).toBe("e5049");
   });
 });

@@ -229,7 +229,14 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 }
 
 /* sessions */
-.sessions { display: flex; gap: 0.8rem; flex: 1; min-height: 0; }
+.sessions { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); align-items: baseline; gap: 0.6rem 0.8rem; flex: 1; min-height: 0; }
+.sessions > h2 { margin: 0; }
+.sessions-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+.sessions-body { grid-column: 1 / -1; align-self: stretch; }
+.sessions-head .sessions-scope { margin: 0; }
+.sessions-head .sessions-needs { margin: 0; }
+.sessions-body { display: flex; gap: 0.8rem; flex: 1; min-height: 0; }
+.sessions-inbox:not([hidden]) { flex: 1; min-width: 0; overflow-y: auto; }
 .sessions-list { width: 44%; min-width: 360px; max-width: 640px; overflow-y: auto; flex-shrink: 0; }
 .sessions-events { flex: 1; overflow-y: auto; min-width: 0; }
 .session-item {
@@ -306,8 +313,6 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .matrix-cell .glyph.needs { color: var(--needs); font-weight: 700; }
 .matrix-cell .err { display: inline-block; width: 1ch; color: var(--err); font-weight: 700; }
 .matrix-cell .count { color: var(--text-dim); margin-left: 0.4rem; }
-.sessions-scope { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; color: var(--text-dim); }
-.sessions-scope button { padding: 0 0.4rem; }
 
 /* dwell: one bar per live session, time in state against a five-minute hairline */
 .dwell { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
@@ -433,6 +438,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .legend-head { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); }
 .legend-head h2 { margin: 0; font-size: var(--fs-md); }
 .legend-body { overflow-y: auto; padding: 0.4rem 1rem 1rem; }
+.legend-part summary { cursor: pointer; font-weight: 600; }
 .legend-part h3 { margin: 1rem 0 0.3rem; font-size: var(--fs-sm); color: var(--text-dim); }
 .legend-rows, .legend-notes { list-style: none; margin: 0; padding: 0; }
 .legend-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0; }
@@ -1322,3 +1328,26 @@ span.agent-dot.big { width: 14px; height: 14px; }
 /* Lane hooks the glyph legend names (see glyphs.ts). Butt caps are the default; this pins them so dashes read crisply. */
 .project-rejoin,
 .project-landgap { stroke-linecap: butt; }
+
+/* Worktree rung: scope line, Needs you toggle, row cap. */
+.sessions-scope { margin: 0 0 0.5rem; color: var(--text-dim); }
+.sessions-cell { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; color: var(--text-dim); }
+.sessions-cell button { padding: 0 0.4rem; }
+.sessions-needs,
+.sessions-more {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+.sessions-needs[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg-panel);
+  border-color: var(--accent);
+}
+.sessions-needs:focus-visible,
+.sessions-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }

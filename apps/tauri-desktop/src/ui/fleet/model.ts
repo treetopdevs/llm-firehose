@@ -4,14 +4,17 @@
 // attention observes, so a repo seen only by attention is drawn as fog (known:
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
-import { idLabel, sessionName } from "../../format";
+import { displayRepoLabel, idLabel, sessionName } from "../../format";
 import { FORK_GLYPH, IDLE_MARK } from "../../glyphs";
 import { isFailure, needYouCount } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
 import { IDLE_AFTER_MS, isIdleWorker, orderLanes } from "../project/model";
 
-export type Encoding = "map" | "dwell" | "matrix" | "lanes" | "airspace";
-export const ENCODINGS: readonly Encoding[] = ["map", "dwell", "matrix", "lanes", "airspace"];
+export type Encoding = "map" | "dwell" | "matrix" | "lanes" | "airspace" | "strata" | "ecosystem" | "events";
+export const ENCODINGS: readonly Encoding[] = ["map", "dwell", "matrix", "lanes", "airspace", "strata", "ecosystem", "events"];
+/** Encodings whose body is a hosted lens panel rather than a Fleet drawing. */
+export type HostEncoding = "strata" | "ecosystem" | "events";
+export const isHostEncoding = (e: Encoding): e is HostEncoding => e === "strata" || e === "ecosystem" || e === "events";
 
 /** One glyph per worktree state; Project and Fleet share the vocabulary. */
 export { FORK_GLYPH, IDLE_MARK };
@@ -105,11 +108,7 @@ export interface FleetResult {
   unattributed: AttentionSession[];
 }
 
-/** Display-only: drops a trailing "/.git" (repo ids are git common dirs). Never applied to ids. */
-export function displayRepoLabel(label: string): string {
-  const stripped = label.replace(/[/\\]\.git[/\\]?$/, "");
-  return stripped === "" ? label : stripped;
-}
+export { displayRepoLabel };
 
 const lastSegment = (s: string): string => idLabel(s).split("/").pop() || s;
 const looksDigest = (id: string): boolean => !/[/\\]/.test(id) && /^[0-9a-f]{8,}$/i.test(id);

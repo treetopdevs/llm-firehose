@@ -1,7 +1,7 @@
 import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary } from "../api";
 import { clear, el, onActivate } from "../dom";
-import { formatClock, sessionName, sessionRefLabel, sessionWhere, shortId, workspaceKey } from "../format";
+import { formatClock, projectName, sessionName, sessionRefLabel, sessionWhere, shortId, workspaceKey, worktreeName } from "../format";
 import type { SessionLike } from "../format";
 import type { SessionDirectory } from "../session-directory";
 import { ERROR_MARK } from "../glyphs";
@@ -19,7 +19,20 @@ export type SessionsPanel = {
   openSession(id: string, source?: string): Promise<void>;
   /** Narrows the list to one workspace × agent cell; null shows every session. */
   setScope(scope: CellScope | null): void;
+  /** Needs you mode: the inbox replaces the list. Never touches scope. */
+  setNeedsOnly(on: boolean): void;
+  needsOnly(): boolean;
+  /** Shows the panel: applies the optional Needs you state (absent keeps the last), then refreshes. */
+  activate(opts?: { needsOnly?: boolean }): Promise<void>;
 };
+
+/** Rows drawn per page; the rest wait behind a "Show N more" button. */
+export const SESSION_PAGE = 200;
+
+export interface WorktreeOptions {
+  /** The Needs you inbox (the strip's source), shown in place of the list while the toggle is on. */
+  inbox?: { root: HTMLElement; refresh(): unknown; count?(): number; onCount?(fn: () => void): void };
+}
 
 const REFRESH_MS = 5000;
 
@@ -60,10 +73,67 @@ export function createSessions(
   directory?: SessionDirectory,
   /** Records the activated session in scope; called before its history opens. */
   onSelectSession: (ref: SessionRef) => void = () => {},
+  opts: WorktreeOptions = {},
 ): SessionsPanel {
   const listBox = el("div", { class: "sessions-list", tabindex: "-1", "aria-label": "Sessions" });
   const eventsBox = el("div", { class: "sessions-events" });
-  const root = el("section", { class: "sessions" }, el("h2", {}, "Sessions"), listBox, eventsBox);
+  const scopeLine = el("p", { class: "sessions-scope" });
+  const needsCount = el("span", { class: "sessions-needs-count" });
+  const needsBtn = el("button", { type: "button", class: "sessions-needs", "aria-pressed": "false" }, "Needs you", needsCount);
+  const inboxBox = el("div", { class: "sessions-inbox" });
+  inboxBox.hidden = true;
+  if (opts.inbox) inboxBox.append(el("p", { class: "dim sessions-inbox-caption" }, "Needs you, across all projects"), opts.inbox.root);
+  const head = el("div", { class: "sessions-head" }, scopeLine, needsBtn);
+  const body = el("div", { class: "sessions-body" }, inboxBox, listBox, eventsBox);
+  const root = el("section", { class: "sessions" }, el("h2", {}, "Worktree"), head, body);
+  let needs = false;
+  let refreshGen = 0;
+  /** Requests in flight; the periodic poll skips while one is pending so a slow response is never starved. */
+  let pendingRequests = 0;
+  let cap = SESSION_PAGE;
+
+  function drawScopeLine() {
+    const sc = store.get();
+    const lab = store.resolver()?.labels(sc) ?? {};
+    if (sc.worktree) {
+      const n = worktreeName(sc.worktree, lab.worktree);
+      scopeLine.textContent = n.label;
+      scopeLine.title = n.full;
+    } else if (sc.project) {
+      const n = projectName(sc.project, lab.project);
+      scopeLine.textContent = n.label;
+      scopeLine.title = n.full;
+    } else {
+      scopeLine.textContent = "Sessions in all worktrees";
+      scopeLine.removeAttribute("title");
+    }
+  }
+  function drawNeedsCount() {
+    const n = opts.inbox?.count?.();
+    needsCount.textContent = n === undefined ? "" : ` (${n})`;
+  }
+  function applyNeeds(on: boolean) {
+    needs = on;
+    needsBtn.setAttribute("aria-pressed", String(on));
+    inboxBox.hidden = !on;
+    listBox.hidden = on;
+    drawNeedsCount();
+  }
+  async function refreshInbox() {
+    try {
+      await opts.inbox?.refresh();
+    } catch { /* the inbox reports its own failures */ }
+    drawNeedsCount();
+  }
+  function setNeedsOnly(on: boolean) {
+    const changed = on !== needs;
+    applyNeeds(on);
+    if (changed && on) void refreshInbox();
+  }
+  needsBtn.addEventListener("click", () => setNeedsOnly(!needs));
+  opts.inbox?.onCount?.(drawNeedsCount);
+  drawScopeLine();
+  store.onResolver(drawScopeLine);
   let historyVersion = 0;
   /** The last list drawn, so a session opened by id can be named. */
   let known = new Map<string, SessionSummary>();
@@ -93,6 +163,8 @@ export function createSessions(
 
   // Never narrows the store, only reconciles the history with it.
   store.subscribe((next, prev) => {
+    drawScopeLine();
+    if (next.project !== prev.project || next.worktree !== prev.worktree || next.cell?.where !== prev.cell?.where || next.cell?.agent !== prev.cell?.agent) cap = SESSION_PAGE;
     if (!historyRef) return;
     const cellOpened = next.cell !== undefined && (next.cell.where !== prev.cell?.where || next.cell.agent !== prev.cell?.agent);
     const contextMoved = next.project !== prev.project || next.worktree !== prev.worktree || !sameSession(next.session, prev.session);
@@ -106,7 +178,7 @@ export function createSessions(
       store.narrow({ cell: undefined });
       void refresh();
     });
-    return el("div", { class: "sessions-scope" }, el("span", {}, active.label), clearBtn);
+    return el("div", { class: "sessions-cell" }, el("span", {}, active.label), clearBtn);
   }
 
   async function openSession(id: string, source?: string) {
@@ -243,11 +315,11 @@ export function createSessions(
     const item = a.closest(".session-item");
     const key = item ? itemKey(item) : undefined;
     const control = item && a !== item ? CONTROLS.find((c) => a.classList.contains(c)) : undefined;
-    const onChip = !item && !!a.closest(".sessions-scope");
+    const onChip = !item && !!a.closest(".sessions-cell");
     return () => {
       const fresh = [...listBox.querySelectorAll<HTMLElement>(".session-item")];
       if (onChip) {
-        const btn = listBox.querySelector<HTMLElement>(".sessions-scope button");
+        const btn = listBox.querySelector<HTMLElement>(".sessions-cell button");
         if (btn) { btn.focus(); return; }
       }
       if (key !== undefined) {
@@ -277,6 +349,17 @@ export function createSessions(
   }
 
   async function rebuild(willClear: (restore: () => void) => void) {
+    const gen = ++refreshGen;
+    pendingRequests++;
+    try {
+      await rebuildBody(gen, willClear);
+    } finally {
+      pendingRequests--;
+    }
+  }
+
+  async function rebuildBody(gen: number, willClear: (restore: () => void) => void) {
+    drawNeedsCount();
     if (!listBox.firstChild) {
       listBox.append(el("p", { class: "dim" }, "loading sessions…"));
     }
@@ -284,6 +367,8 @@ export function createSessions(
       const now = Date.now();
       const scoped = !!(store.get().worktree || store.get().project);
       const [list, inbox] = await Promise.allSettled([sessions(), attention(), scoped ? store.resolver()?.refresh?.() : undefined]);
+      // A newer refresh started while these requests were in flight: it owns the DOM and the maps.
+      if (gen !== refreshGen) return;
       if (list.status === "rejected") throw list.reason;
       const byId = new Map<string, AttentionSession[]>();
       if (inbox.status === "fulfilled") {
@@ -331,10 +416,19 @@ export function createSessions(
       for (const c of counts.values()) {
         for (const n of c) scale = Math.max(scale, n);
       }
-      for (const { s, status } of all) {
+      for (const { s, status } of all.slice(0, cap)) {
         listBox.append(sessionItem(s, status, counts.get(s.id) ?? [], scale, now));
       }
+      if (all.length > cap) {
+        const more = el("button", { type: "button", class: "sessions-more" }, `Show ${all.length - cap} more`);
+        more.addEventListener("click", () => {
+          cap += SESSION_PAGE;
+          void refresh();
+        });
+        listBox.append(more);
+      }
     } catch (err) {
+      if (gen !== refreshGen) return;
       willClear(captureFocus());
       clear(listBox);
       listBox.append(el("p", { class: "error" }, String(err)));
@@ -343,8 +437,14 @@ export function createSessions(
 
   // Ages and sparklines move while the panel is on screen.
   setInterval(() => {
-    if (root.isConnected) void refresh();
+    if (root.isConnected && pendingRequests === 0) void refresh();
   }, REFRESH_MS);
 
-  return { root, refresh, openSession, setScope };
+  async function activate(o?: { needsOnly?: boolean }) {
+    if (o?.needsOnly !== undefined) applyNeeds(o.needsOnly);
+    drawScopeLine();
+    await Promise.all([refresh(), needs ? refreshInbox() : undefined]);
+  }
+
+  return { root, refresh, openSession, setScope, setNeedsOnly, needsOnly: () => needs, activate };
 }

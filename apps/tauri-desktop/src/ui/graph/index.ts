@@ -1,4 +1,4 @@
-import { disambiguateSessionLabel, sessionName } from "../../format";
+import { disambiguateSessionLabel, projectName, sessionName, worktreeName } from "../../format";
 import {
   attention,
   getConfig,
@@ -682,11 +682,14 @@ export function createWorkspaceGraph(
       if (hidden()) return out;
       if (sc.project) {
         const r = repos.find((x) => x.id === sc.project);
-        if (r) out.project = r.label;
+        if (r) out.project = projectName(sc.project, r.label).label;
       }
       if (sc.worktree) {
         const w = snapshot?.workspaces.find((x) => x.id === sc.worktree);
-        if (w) out.worktree = displayName(w);
+        if (w) {
+          const n = displayName(w);
+          out.worktree = /^([/~]|[A-Za-z]:[\\/])/.test(n) || n.includes("\\") ? worktreeName(sc.worktree, n).label : n;
+        }
       }
       return out;
     },

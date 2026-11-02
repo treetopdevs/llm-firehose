@@ -170,3 +170,39 @@ export function sessionRefLabel(ref: { id: string; source?: string }, known?: Se
   const where = sessionWhere(known).label;
   return { label: sessionName(known), resolved: !!known.title || (where !== "" && !where.startsWith("#")) };
 }
+
+/** Display-only: drops a trailing "/.git" (repo ids are git common dirs). Never applied to ids. */
+export function displayRepoLabel(label: string): string {
+  const stripped = label.replace(/[/\\]\.git[/\\]?$/, "");
+  return stripped === "" ? label : stripped;
+}
+
+const UNKNOWN_SUFFIX = " (unknown)";
+
+/** A filesystem path (absolute, home-relative, drive-lettered, backslashed or a git dir), as opposed to a name like owner/repo. */
+function pathLike(s: string): boolean {
+  return /^([/~]|[A-Za-z]:[\\/])/.test(s) || s.includes("\\") || /[/\\]\.git[/\\]?$/.test(s);
+}
+
+/** Last non-empty segment of a path, with a trailing .git directory and separators ignored. */
+function folderOf(path: string): string {
+  const parts = displayRepoLabel(path.replace(/[/\\]+$/, "")).split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function displayName(id: string, resolved?: string): { label: string; full: string } {
+  const base = resolved || id;
+  if (base.endsWith(UNKNOWN_SUFFIX)) return { label: base, full: id };
+  if (pathLike(base)) return { label: folderOf(base), full: id };
+  return { label: resolved || idLabel(id), full: id };
+}
+
+/** The one display name for a project (repo id): a folder or name, never a raw path or a trailing .git. `full` is always the id. */
+export function projectName(id: string, resolved?: string): { label: string; full: string } {
+  return displayName(id, resolved);
+}
+
+/** The one display name for a worktree id; same rule as projectName. */
+export function worktreeName(id: string, resolved?: string): { label: string; full: string } {
+  return displayName(id, resolved);
+}

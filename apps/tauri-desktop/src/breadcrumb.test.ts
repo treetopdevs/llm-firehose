@@ -38,11 +38,20 @@ test('unresolved vs resolved rendering', () => {
   expect(b.root.textContent).toBe('firehose › sess-012');
 });
 
+test('resolver label that is a path is reduced to its folder', () => {
+  const s = createScope();
+  s.setResolver(resolver({ project: '/Users/n/develop/browser-life/.git', worktree: '/r/.claude/worktrees/foo/' }));
+  const b = createBreadcrumb(s);
+  s.narrow({ project: '/Users/n/develop/browser-life/.git', worktree: 'wt-1' });
+  expect(b.root.textContent).toBe('browser-life › foo');
+  expect(b.root.textContent).not.toContain('.git');
+});
+
 test('path ids fall back to a readable tail, not an 8-char prefix', () => {
   const s = createScope();
   const b = createBreadcrumb(s);
   s.narrow({ project: '/Users/nicholas/develop/browser-life/.git', worktree: '/Users/nicholas/develop/browser-life/.claude/worktrees/foo' });
-  expect(b.root.textContent).toBe('browser-life/.git › worktrees/foo');
+  expect(b.root.textContent).toBe('browser-life › foo');
   expect(b.root.querySelector('span')!.getAttribute('title')).toBe('/Users/nicholas/develop/browser-life/.git');
 });
 

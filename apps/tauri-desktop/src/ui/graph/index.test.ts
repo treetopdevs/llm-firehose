@@ -1438,6 +1438,21 @@ test("scope: a worktree another resolver knows (Project history) survives a snap
   expect(store.get().worktree).toBeUndefined();
 });
 
+test("scope: resolver reduces a git-dir project label to its folder", async () => {
+  const store = createScope();
+  const id = "/x/repo-x/.git";
+  vi.mocked(attention).mockResolvedValue({ sessions: [] } as never);
+  await scoped(
+    store,
+    (st) => {
+      vi.mocked(graphAPI.repos).mockResolvedValue([repoRow(id)] as never);
+      st.narrow({ project: id });
+    },
+    { [id]: snapFor(id, ["w1"]) },
+  );
+  expect(store.resolver()!.labels({ project: id, window: "live" }).project).toBe("repo-x");
+});
+
 test("scope: resolver answers sessions and labels, touched after each snapshot", async () => {
   const store = createScope();
   const touch = vi.spyOn(store, "touchResolver");

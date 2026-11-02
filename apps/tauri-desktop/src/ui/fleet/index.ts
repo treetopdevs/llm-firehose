@@ -20,10 +20,17 @@ import type { SessionDirectory } from "../../session-directory";
 import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
 import { FORK_GLYPH, IDLE_MARK, NEEDS_MARK, NO_DATA_MARK, NO_PROJECT_MARK } from "../../glyphs";
-import { ENCODINGS, NOREPO_KEY, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
-import type { Encoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
+import { ENCODINGS, NOREPO_KEY, isHostEncoding, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
+import type { Encoding, HostEncoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
-export type { Encoding } from "./model";
+export type { Encoding, HostEncoding } from "./model";
+
+/** A lens panel Fleet mounts as an encoding body; Fleet owns its activate/deactivate lifetime. */
+export interface FleetHost {
+  root: HTMLElement;
+  activate?(): unknown;
+  deactivate(): unknown;
+}
 
 export interface FleetApi {
   worktrees(signal?: AbortSignal): Promise<WorktreeLifetimeView[]>;
@@ -47,6 +54,8 @@ export interface FleetDeps {
   onLabels?: (labels: Record<string, string>) => void;
   /** The encoding changed, so effectiveLiveSpan may have too. */
   onEncoding?: () => void;
+  /** Lens panels mounted as the Strata and Patches encodings. */
+  hosts?: Partial<Record<HostEncoding, FleetHost>>;
 }
 
 export interface FleetPanel {
@@ -68,7 +77,7 @@ const EVENT_REFRESH_MS = 1000;
 const LANES_REDRAW_MS = 250;
 const AIRSPACE_WINDOW_MS = 15 * 60_000;
 const BLOCKS = "▁▂▃▄▅▆▇█";
-const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Dwell", matrix: "Matrix", lanes: "Lanes", airspace: "Airspace" };
+const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Waiting", matrix: "Table", lanes: "Lanes", airspace: "By state", strata: "Strata", ecosystem: "Patches", events: "Events" };
 const FALLBACK_W = 800;
 const TOAST_MS = 2500;
 const NO_NEEDS = "no sessions need you";
@@ -182,7 +191,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let mapEntries: Array<{ row: FleetRow; refs: RowRefs; needs: Array<{ need: FleetNeed; refs: NeedRefs; node: Element }> }> = [];
 
   // Header, built once.
-  const encButtons = ENCODINGS.map((enc) => {
+  const encButtons = ENCODINGS.filter((enc) => !isHostEncoding(enc) || deps.hosts?.[enc] !== undefined).map((enc) => {
     const b = el("button", { class: "fleet-enc", type: "button", "data-enc": enc, "aria-pressed": "false" }, ENCODING_LABEL[enc]);
     b.addEventListener("click", () => setEncoding(enc));
     return b;
@@ -193,7 +202,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const toast = el("div", { class: "fleet-toast", role: "status" });
   const body = el("div", { class: "fleet-body" });
   const foot = el("div", { class: "fleet-foot" });
-  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a worktree glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick. Press ? for all keys and symbols.");
+  const TABLE_HINT = "Click a row to open the project, a worktree glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick. Press ? for all keys and symbols.";
+  const EVENTS_HINT = "The live list of every captured event, newest at the bottom. Space pauses it. Press ? for all keys and symbols.";
+  const hint = el("p", { class: "fleet-hint" }, TABLE_HINT);
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
@@ -289,6 +300,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   function syncButtons(): void {
     for (const b of encButtons) setAttr(b, "aria-pressed", b.getAttribute("data-enc") === encoding ? "true" : "false");
+    hint.hidden = isHostEncoding(encoding) && encoding !== "events";
+    const wantHint = encoding === "events" ? EVENTS_HINT : TABLE_HINT;
+    if (hint.textContent !== wantHint) hint.textContent = wantHint;
   }
 
   function syncFlags(): void {
@@ -309,7 +323,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   }
 
   function renderStatus(): void {
-    const kind = statusFor();
+    const kind = isHostEncoding(encoding) ? "" : statusFor();
     if (kind === statusKind) return;
     statusKind = kind;
     clear(statusBox);
@@ -595,7 +609,32 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     restore();
   }
 
+  let mountedHost: HostEncoding | undefined;
+  function deactivateHosts(): void {
+    const h = mountedHost;
+    if (h === undefined) return;
+    mountedHost = undefined;
+    const host = deps.hosts?.[h];
+    try { host?.deactivate(); } catch { /* a host must not break Fleet */ }
+    if (host && host.root.parentNode === body) host.root.remove();
+  }
+
+  function drawHost(h: HostEncoding): void {
+    const host = deps.hosts?.[h];
+    clear(body);
+    nodes.clear();
+    mapEntries = [];
+    setText(foot, "");
+    if (!host) return;
+    body.append(host.root);
+    mountedHost = h;
+    try { void host.activate?.(); } catch { /* a host must not break Fleet */ }
+  }
+
   function draw(now: number): void {
+    if (isHostEncoding(encoding) && mountedHost === encoding) return; // already mounted: a refresh must not restart the host
+    deactivateHosts();
+    if (isHostEncoding(encoding)) { drawHost(encoding); return; }
     if (encoding !== "map") body.querySelector(":scope > .fleet-map")?.remove();
     if (encoding === "map") renderMap(now);
     else if (encoding === "dwell") renderDwell(now);
@@ -610,6 +649,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function setEncoding(next: Encoding): void {
     if (next === encoding || !ENCODINGS.includes(next)) return;
     const wasLanes = encoding === "lanes";
+    deactivateHosts();
     encoding = next;
     try { deps.onEncoding?.(); } catch { /* a sink must not break the view */ }
     if (wasLanes) stopSessions();
@@ -806,13 +846,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const fleetKeys = (): KeyBinding[] => {
     const enabled = (): boolean => active && root.isConnected;
     // Each predicate mirrors its handler's encoding gate, so the legend lists only live commands.
+    const notHost = (): boolean => enabled() && !isHostEncoding(encoding);
     const inMapOrDwell = (): boolean => enabled() && (encoding === "map" || encoding === "dwell");
     const inMap = (): boolean => enabled() && encoding === "map";
     return [
       { scope: "fleet", ...QUEUE_KEYS.open, label: "open the selected session or lane", handler: onEnter, enabled: inMapOrDwell },
       { scope: "fleet", ...QUEUE_KEYS.pick, label: "select a project row by number", handler: onPick, enabled: inMap },
       { scope: "fleet", ...QUEUE_KEYS.walk, label: "next / previous need", handler: onWalk, enabled: inMapOrDwell },
-      { scope: "fleet", ...QUEUE_KEYS.jump, label: "open the longest-waiting need", handler: onJump, enabled },
+      { scope: "fleet", ...QUEUE_KEYS.jump, label: "open the longest-waiting need", handler: onJump, enabled: notHost },
     ];
   };
 
@@ -861,6 +902,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     },
     deactivate() {
       active = false;
+      deactivateHosts();
       unsub?.();
       unsub = undefined;
       unsubResolver?.();

@@ -11,6 +11,7 @@ import type { ScopePatch, ScopeStore } from "../../scope";
 import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
 import { orderLanes } from "../project/model";
 import { createFleet } from "./index";
+import type { FleetDeps } from "./index";
 import type { FleetApi, FleetPanel } from "./index";
 
 const MIN = 60_000;
@@ -37,7 +38,7 @@ interface Rig {
   data: { wt: WorktreeLifetimeView[]; sessions: AttentionSession[]; summaries: SessionSummary[]; events: FirehoseEvent[] };
 }
 
-function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; onEncoding?: () => void; directory?: SessionDirectory } = {}) {
+function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; onEncoding?: () => void; directory?: SessionDirectory; hosts?: FleetDeps["hosts"] } = {}) {
   const store: ScopeStore = createScope(opts.scope);
   const data: Rig["data"] = { wt: FIXTURE_ROWS, sessions: baseSessions(), summaries: [], events: [] };
   const api = {
@@ -48,7 +49,7 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const go = vi.fn((_n: string, p?: ScopePatch) => { if (opts.realGo && p) store.narrow(p); });
   const panel = createFleet({
     store, go: go as never, events: () => data.events, api: api as unknown as FleetApi,
-    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels, onEncoding: opts.onEncoding, directory: opts.directory,
+    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels, onEncoding: opts.onEncoding, directory: opts.directory, hosts: opts.hosts,
   });
   document.body.append(panel.root);
   panels.push(panel);
@@ -533,6 +534,104 @@ describe("keys", () => {
       panel.encoding = enc as never;
       expect(shown(), enc).toEqual(["Space"]);
     }
+  });
+});
+
+describe("Fleet encoding buttons", () => {
+  test("visible labels in order are Map, Waiting, Table, Lanes, By state; ids unchanged", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const btns = q(".fleet-enc");
+    expect(btns.map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state"]);
+    expect(btns.map((b) => b.getAttribute("data-enc"))).toEqual(["map", "dwell", "matrix", "lanes", "airspace"]);
+  });
+});
+
+const fakeHost = (name: string) => {
+  const root = document.createElement("section");
+  root.className = `fake-host-${name}`;
+  return { root, activate: vi.fn(), deactivate: vi.fn() };
+};
+const hostRig = () => {
+  const strata = fakeHost("strata");
+  const ecosystem = fakeHost("ecosystem");
+  const events = fakeHost("events");
+  return { strata, ecosystem, events, ...setup({ hosts: { strata, ecosystem, events } }) };
+};
+const NON_HOST = ["map", "dwell", "matrix", "lanes", "airspace"] as const;
+
+describe("Fleet host encodings", () => {
+  test("hosts add Strata and Patches buttons; without hosts they are absent", async () => {
+    const { panel, q } = hostRig();
+    await panel.activate();
+    expect(q(".fleet-enc").map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state", "Strata", "Patches", "Events"]);
+    expect(q(".fleet-enc").map((b) => b.getAttribute("data-enc")).slice(5)).toEqual(["strata", "ecosystem", "events"]);
+    const bare = setup();
+    expect(bare.q(".fleet-enc")).toHaveLength(5);
+  });
+
+  test("clicking Strata mounts its root in .fleet-body and activates once; Patches swaps it", async () => {
+    const { panel, q, strata, ecosystem } = hostRig();
+    await panel.activate();
+    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    expect(q(".fleet-body > .fake-host-strata")).toHaveLength(1);
+    expect(strata.activate).toHaveBeenCalledTimes(1);
+    expect(q(".fleet-enc[aria-pressed='true']").map((b) => b.textContent)).toEqual(["Strata"]);
+    expect(q(".fleet-hint")[0]!.hidden).toBe(true);
+    q(".fleet-enc[data-enc='ecosystem']")[0]!.click();
+    expect(strata.deactivate).toHaveBeenCalledTimes(1);
+    expect(q(".fleet-body > .fake-host-strata")).toHaveLength(0);
+    expect(q(".fleet-body > .fake-host-ecosystem")).toHaveLength(1);
+    expect(ecosystem.activate).toHaveBeenCalledTimes(1);
+    // A data refresh does not restart a mounted host.
+    await panel.refresh();
+    expect(ecosystem.activate).toHaveBeenCalledTimes(1);
+    expect(ecosystem.deactivate).not.toHaveBeenCalled();
+  });
+
+  test.each(["strata", "ecosystem", "events"] as const)("leaving %s deactivates it exactly once and leaves nothing mounted", async (host) => {
+    for (const dest of [...NON_HOST, host === "strata" ? "ecosystem" : "strata", "deactivate"] as const) {
+      const rig = hostRig();
+      await rig.panel.activate();
+      rig.q(`.fleet-enc[data-enc='${host}']`)[0]!.click();
+      expect(rig[host].activate).toHaveBeenCalledTimes(1);
+      if (dest === "deactivate") rig.panel.deactivate();
+      else rig.q(`.fleet-enc[data-enc='${dest}']`)[0]!.click();
+      expect(rig[host].deactivate, dest).toHaveBeenCalledTimes(1);
+      expect(rig.q(`.fake-host-${host}`), dest).toHaveLength(0);
+      rig.panel.deactivate();
+      expect(rig[host].deactivate, dest).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test("the jump and row keys are absent in host encodings and Space does not navigate", async () => {
+    const { panel, q, go } = hostRig();
+    await panel.activate();
+    expect(listKeys().filter((r) => r.scope === "fleet").map((r) => r.display)).toEqual(["Enter", "1–9", "n / N", "Space"]);
+    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    expect(listKeys().filter((r) => r.scope === "fleet")).toEqual([]);
+    press(" ");
+    press("1");
+    press("n");
+    press("Enter");
+    expect(go).not.toHaveBeenCalled();
+    q(".fleet-enc[data-enc='map']")[0]!.click();
+    expect(listKeys().filter((r) => r.scope === "fleet")).toHaveLength(4);
+  });
+
+  test("a hosted encoding survives deactivate and reactivate; unknown values fall back to map", async () => {
+    const { panel, strata } = hostRig();
+    await panel.activate();
+    panel.encoding = "strata";
+    panel.deactivate();
+    expect(strata.deactivate).toHaveBeenCalledTimes(1);
+    await panel.activate();
+    expect(panel.encoding).toBe("strata");
+    expect(strata.activate).toHaveBeenCalledTimes(2);
+    panel.encoding = "bogus" as never;
+    expect(panel.encoding).toBe("strata");
+    const fresh = setup();
+    expect(fresh.panel.encoding).toBe("map");
   });
 });
 
@@ -1257,5 +1356,43 @@ describe("fork aria labels", () => {
     await flush();
     expect(byKey(key("fork", "repoA", "wt-open"))).toBe(node);
     expect(node.getAttribute("aria-label")).toContain("2 need you");
+  });
+});
+
+describe("Fleet Events host", () => {
+  test("ENCODINGS lists the host encodings last", async () => {
+    const { ENCODINGS } = await import("./model");
+    expect([...ENCODINGS]).toEqual(["map", "dwell", "matrix", "lanes", "airspace", "strata", "ecosystem", "events"]);
+  });
+
+  test("clicking Events mounts the host, activates once and presses the button; leaving detaches and deactivates", async () => {
+    const { panel, q, events } = hostRig();
+    await panel.activate();
+    q(".fleet-enc[data-enc='events']")[0]!.click();
+    expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
+    expect(events.activate).toHaveBeenCalledTimes(1);
+    expect(q(".fleet-enc[data-enc='events']")[0]!.getAttribute("aria-pressed")).toBe("true");
+    q(".fleet-enc[data-enc='map']")[0]!.click();
+    expect(events.deactivate).toHaveBeenCalledTimes(1);
+    expect(q(".fake-host-events")).toHaveLength(0);
+    q(".fleet-enc[data-enc='events']")[0]!.click();
+    panel.deactivate();
+    expect(events.deactivate).toHaveBeenCalledTimes(2);
+    expect(q(".fake-host-events")).toHaveLength(0);
+  });
+
+  test("with scope.project set the host still shows (the host decides, not the scope); jump and row keys are off", async () => {
+    const { panel, q, events } = (() => {
+      const e = fakeHost("events");
+      return { events: e, ...setup({ scope: { project: "repoA", window: "live" }, hosts: { events: e } }) };
+    })();
+    await panel.activate();
+    panel.encoding = "events";
+    expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
+    expect(events.activate).toHaveBeenCalledTimes(1);
+    const { listKeys } = await import("../../keys");
+    for (const r of listKeys().filter((k) => k.scope === "fleet")) expect(r.label).not.toMatch(/longest-waiting/);
+    for (const key of ["1", "n", " ", "Enter"]) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
   });
 });

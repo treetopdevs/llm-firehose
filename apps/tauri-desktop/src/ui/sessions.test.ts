@@ -274,11 +274,11 @@ describe("sessions scope", () => {
 
     const ids = () => [...panel.root.querySelectorAll(".session-id")].map((n) => n.textContent);
     expect(ids()).toEqual(["s1"]);
-    const chip = panel.root.querySelector<HTMLElement>(".sessions-scope")!;
+    const chip = panel.root.querySelector<HTMLElement>(".sessions-cell")!;
     expect(chip.textContent).toContain("…/dev/app · claude");
     chip.querySelector("button")!.click();
     await vi.waitFor(() => expect(ids()).toEqual(["s1", "s2", "s3"]));
-    expect(panel.root.querySelector(".sessions-scope")).toBeNull();
+    expect(panel.root.querySelector(".sessions-cell")).toBeNull();
   });
 });
 
@@ -375,7 +375,7 @@ describe("sessions panel reads the shared scope", () => {
     await panel.refresh();
     expect(ids(panel)).toEqual(["s1"]);
     const narrow = vi.spyOn(store, "narrow");
-    panel.root.querySelector<HTMLElement>(".sessions-scope button")!.click();
+    panel.root.querySelector<HTMLElement>(".sessions-cell button")!.click();
     expect(narrow).toHaveBeenCalledWith({ cell: undefined });
     await vi.waitFor(() => expect(ids(panel)).toEqual(["s1", "s2", "s3"]));
     expect(store.get().cell).toBeUndefined();
@@ -393,7 +393,7 @@ describe("sessions panel reads the shared scope", () => {
     store.narrow({ cell: CELL });
     await panel.refresh();
     expect(ids(panel)).toEqual(["s1"]);
-    expect(panel.root.querySelector(".sessions-scope")?.textContent).toContain("app · claude");
+    expect(panel.root.querySelector(".sessions-cell")?.textContent).toContain("app · claude");
   });
 
   test("resolver members filter the list for worktree and project scopes (event ids differ from graph ids)", async () => {
@@ -458,20 +458,20 @@ describe("sessions panel reads the shared scope", () => {
     sessions.mockResolvedValue(three());
     const empty = createSessions(() => {}, () => [], undefined, undefined, createScope());
     await empty.refresh();
-    const baseline = empty.root.innerHTML;
+    const baseline = empty.root.querySelector(".sessions-list")!.innerHTML;
 
     const noResolver = createScope();
     noResolver.narrow({ project: "repo-graph-id" });
     const a = createSessions(() => {}, () => [], undefined, undefined, noResolver);
     await a.refresh();
-    expect(a.root.innerHTML).toBe(baseline);
+    expect(a.root.querySelector(".sessions-list")!.innerHTML).toBe(baseline);
 
     const undef = createScope();
     undef.setResolver(resolverOf(undefined));
     undef.narrow({ project: "repo-graph-id" });
     const b = createSessions(() => {}, () => [], undefined, undefined, undef);
     await b.refresh();
-    expect(b.root.innerHTML).toBe(baseline);
+    expect(b.root.querySelector(".sessions-list")!.innerHTML).toBe(baseline);
   });
 
   test("empty scope never consults the resolver, and scope.session alone does not filter", async () => {
@@ -636,7 +636,7 @@ describe("sessions heading", () => {
   test("opens with an h2 equal to the nav label", () => {
     const p = createSessions(() => {}, () => []);
     expect(p.root.firstElementChild?.tagName).toBe("H2");
-    expect(p.root.firstElementChild?.textContent).toBe("Sessions");
+    expect(p.root.firstElementChild?.textContent).toBe("Worktree");
   });
 });
 
@@ -767,4 +767,158 @@ describe("session list focus survives the periodic refresh", () => {
     expect(document.activeElement).not.toBe(document.body);
     panel.root.remove();
   });
+});
+
+describe("Worktree rung", () => {
+  const WT = "wt-abcdefghij";
+
+  test("p.sessions-scope names the scope, never a raw path or .git", () => {
+    const store = createScope();
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    const line = () => panel.root.querySelector<HTMLElement>("p.sessions-scope")!;
+    expect(line().textContent).toBe("Sessions in all worktrees");
+    store.narrow({ worktree: WT });
+    expect(line().textContent).toBe("wt-abcde");
+    expect(line().title).toBe(WT);
+    store.setResolver({ sessions: () => undefined, labels: () => ({ worktree: "/Users/n/develop/browser-life/.git/worktrees/foo" }) });
+    store.touchResolver();
+    expect(line().textContent).toBe("foo");
+    expect(line().textContent).not.toContain(".git");
+    expect(line().textContent).not.toContain("/");
+  });
+
+  test("Needs you toggle swaps the list for the inbox without touching scope", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    const store = createScope();
+    store.narrow({ project: "p" });
+    const before = store.get();
+    const inboxRoot = document.createElement("section");
+    inboxRoot.className = "attention-inbox";
+    const refreshInbox = vi.fn(async () => {});
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store, undefined, undefined, { inbox: { root: inboxRoot, refresh: refreshInbox, count: () => 2 } });
+    await panel.refresh();
+    const btn = panel.root.querySelector<HTMLButtonElement>("button.sessions-needs")!;
+    const list = panel.root.querySelector<HTMLElement>(".sessions-list")!;
+    expect(btn.textContent).toContain("Needs you");
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    expect(inboxRoot.closest<HTMLElement>(".sessions-inbox")!.hidden).toBe(true);
+    btn.click();
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(list.hidden).toBe(true);
+    expect(inboxRoot.closest<HTMLElement>(".sessions-inbox")!.hidden).toBe(false);
+    expect(panel.root.querySelector(".sessions-inbox-caption")?.textContent).toBe("Needs you, across all projects");
+    expect(panel.root.querySelector(".sessions-needs-count")?.textContent).toBe(" (2)");
+    expect(store.get()).toBe(before);
+    btn.click();
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    expect(list.hidden).toBe(false);
+  });
+
+  test("the Needs you count follows the attention count on refresh", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    let n = 3;
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), undefined, undefined, { inbox: { root: document.createElement("section"), refresh: async () => {}, count: () => n } });
+    await panel.refresh();
+    const badge = () => panel.root.querySelector(".sessions-needs-count")?.textContent;
+    expect(badge()).toBe(" (3)");
+    n = 0;
+    await panel.refresh();
+    expect(badge()).toBe(" (0)");
+  });
+
+  test("the periodic poll skips while a request is pending, so a slow response still renders", async () => {
+    vi.useFakeTimers();
+    try {
+      sessions.mockImplementation(() => new Promise((r) => setTimeout(() => r([summary({ id: "slow" })]), 6000)));
+      attention.mockResolvedValue({ sessions: [], warnings: [] });
+      const panel = createSessions(() => {}, () => []);
+      document.body.append(panel.root);
+      void panel.refresh();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(sessions).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(panel.root.querySelectorAll(".session-item")).toHaveLength(1);
+      panel.root.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("the Needs you badge updates synchronously when the inbox count changes", async () => {
+    let n = 1;
+    let fire: () => void = () => {};
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), undefined, undefined, { inbox: { root: document.createElement("section"), refresh: async () => {}, count: () => n, onCount: (fn) => { fire = fn; } } });
+    const badge = () => panel.root.querySelector(".sessions-needs-count")?.textContent;
+    fire();
+    expect(badge()).toBe(" (1)");
+    n = 0;
+    fire();
+    expect(badge()).toBe(" (0)");
+  });
+
+  test("activate({needsOnly}) sets the state and refreshes the inbox once; activate() keeps it", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    const refreshInbox = vi.fn(async () => {});
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), undefined, undefined, { inbox: { root: document.createElement("section"), refresh: refreshInbox } });
+    await panel.activate({ needsOnly: true });
+    expect(panel.needsOnly()).toBe(true);
+    expect(refreshInbox).toHaveBeenCalledTimes(1);
+    await panel.activate();
+    expect(panel.needsOnly()).toBe(true);
+    panel.setNeedsOnly(false);
+    expect(panel.needsOnly()).toBe(false);
+    expect(panel.root.querySelector<HTMLElement>(".sessions-list")!.hidden).toBe(false);
+    await panel.activate();
+    expect(panel.needsOnly()).toBe(false);
+  });
+
+  test("a late refresh never overwrites a newer one", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    let releaseA!: (v: unknown) => void;
+    attention.mockImplementationOnce(() => new Promise((r) => { releaseA = r; }));
+    const panel = createSessions(() => {}, () => []);
+    const a = panel.refresh();
+    attentionSays([inbox({ id: "s1", state: "needs_input", pending: evidence(1000, { kind: "request", summary: "need" }) })]);
+    await panel.refresh();
+    const resolved = panel.root.querySelector(".sessions-list")!.innerHTML;
+    expect(resolved).toContain("needs");
+    releaseA({ gaps: [], sessions: [], warnings: [] });
+    await a;
+    expect(panel.root.querySelector(".sessions-list")!.innerHTML).toBe(resolved);
+  });
+
+  test("450 sessions render 200 rows and page through Show more; a scope change resets the cap", async () => {
+    const rows = Array.from({ length: 450 }, (_, i) => summary({ id: `s${String(i).padStart(3, "0")}`, last_time: new Date(now - 5_000 - i * 1000).toISOString() }));
+    sessions.mockResolvedValue(rows);
+    attentionSays([inbox({ id: "s449", state: "needs_input", pending: evidence(1000, { kind: "request", summary: "need" }) })]);
+    const store = createScope();
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    await panel.refresh();
+    const count = () => panel.root.querySelectorAll(".session-item").length;
+    expect(count()).toBe(200);
+    expect(panel.root.querySelector(".session-item")!.getAttribute("data-id")).toBe("s449");
+    const more = () => panel.root.querySelector<HTMLButtonElement>("button.sessions-more");
+    expect(more()!.textContent).toBe("Show 250 more");
+    more()!.click();
+    await vi.waitFor(() => expect(count()).toBe(400));
+    more()!.click();
+    await vi.waitFor(() => expect(count()).toBe(450));
+    expect(more()).toBeNull();
+    store.narrow({ project: "p" });
+    store.narrow({ project: undefined });
+    await panel.refresh();
+    expect(count()).toBe(200);
+  });
+});
+
+test("the Worktree rung keeps its header above the list, so the toggle is never a column beside it", () => {
+  const panel = createSessions(() => {}, () => []);
+  const [h2, head, body] = [...panel.root.children];
+  expect(h2.tagName).toBe("H2");
+  expect(head.classList.contains("sessions-head")).toBe(true);
+  expect(body.classList.contains("sessions-body")).toBe(true);
+  expect(head.querySelector(".sessions-needs")).not.toBeNull();
+  expect(body.querySelector(".sessions-list")).not.toBeNull();
+  expect(body.querySelector(".sessions-inbox")).not.toBeNull();
+  expect(body.querySelector(".sessions-needs")).toBeNull();
 });

@@ -80,6 +80,9 @@ function matches(ev: FirehoseEvent, f: Filter): boolean {
   return true;
 }
 
+/** Live feed ring size; equal to the Project timeline cap so both event lists hold the same history. */
+export const FEED_RING = 5000;
+
 export class FeedState {
   private buf: FirehoseEvent[] = [];
   private seenIds = new Set<string>();
@@ -89,7 +92,7 @@ export class FeedState {
   paused = false;
   unread = 0;
 
-  constructor(private cap = 5000) {}
+  constructor(private cap = FEED_RING) {}
 
   push(ev: FirehoseEvent): void {
     if (ev.id && this.seenIds.has(ev.id)) return;

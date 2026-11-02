@@ -42,11 +42,13 @@ test("Project is the landing view; live and the attention strip remain available
   expect(document.querySelector(".attention-strip")).not.toBeNull();
   const btn = (n: string) =>
     document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${n}]`)!;
-  btn("attention").click();
+  await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
+  document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!.click();
+  expect(document.querySelector(".sessions-needs[aria-pressed=true]")).not.toBeNull();
   expect(document.querySelector(".attention-inbox")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
-  btn("live").click();
-  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("live");
+  btn("fleet").click();
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("fleet");
   expect(document.querySelector(".content .project")).toBeNull();
   expect(document.querySelector(".content")?.children.length).toBeGreaterThan(0);
 });
@@ -92,7 +94,7 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   await Promise.resolve();
   expect(document.querySelector('[aria-label="Disable replay sound"]')).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("Replay sound on");
-  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=live]")!.click();
+  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=fleet]")!.click();
   expect(close).toHaveBeenCalledOnce();
   btn.click();
   expect(document.querySelector("#session-tab-score")?.getAttribute("aria-selected")).toBe("true");
@@ -199,7 +201,7 @@ test("leaving Files aborts its pending history request", async () => {
   nav("files").click();
   expect(fileSignal).toBeDefined();
   expect(fileSignal?.aborted).toBe(false);
-  nav("live").click();
+  nav("fleet").click();
   expect(fileSignal?.aborted).toBe(true);
 });
 
@@ -246,6 +248,7 @@ type Boot = {
   urls: string[];
   keydownListeners: Array<[EventListenerOrEventListenerObject, unknown]>;
   nav: (name: string) => HTMLButtonElement;
+  go: (typeof import("./main"))["go"];
   active: () => string | null | undefined;
   worktreeSignals: Array<AbortSignal | undefined>;
   sources: Array<{ onopen: (() => void) | null; onmessage: ((m: { data: string }) => void) | null }>;
@@ -312,12 +315,12 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     if (type === "keydown") tracked.push([fn, o]);
     return orig(type, fn, o as AddEventListenerOptions);
   }) as typeof document.addEventListener);
-  await import("./main");
+  const { go } = await import("./main");
   const { scope } = await import("./scope");
   expect(scope.get()).toEqual({ window: "live" });
   const nav = (name: string) =>
     document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${name}]`)!;
-  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, active: () => document.querySelector(".nav-btn.active")?.getAttribute("data-panel") };
+  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, go, active: () => document.querySelector(".nav-btn.active")?.getAttribute("data-panel") };
 }
 
 // The workspace graph is the Graph chip of Project (it has no sidebar entry any more).
@@ -387,7 +390,7 @@ test("F3: Score A, Loops B, then the Score nav button shows B; an unset scope.se
   await vi.waitFor(() => expect(b.urls.some((u) => u.includes(`/sessions/${B}?view=timeline`))).toBe(true));
   const before = b.urls.length;
   scope.narrow({ session: undefined });
-  b.nav("live").click();
+  b.go("live");
   openTab(b, "score");
   await Promise.resolve();
   expect(b.urls.slice(before).filter((u) => u.includes("?view=timeline"))).toHaveLength(0);
@@ -406,7 +409,7 @@ test("F6: openSession outside the resolver membership replaces the context; insi
   const { scope } = b;
   const cell = { where: "w", agent: "codex", label: "l" };
   const openHistory = async (id: string) => {
-    b.nav("attention").click();
+    b.go("attention");
     await vi.waitFor(() => expect(document.querySelector(`[data-key^="history:"][data-key*="${id}"]`)).not.toBeNull());
     document.querySelector<HTMLElement>(`[data-key^="history:"][data-key*="${id}"]`)!.click();
   };
@@ -647,10 +650,12 @@ const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty"
 test("sidebar groups altitudes, lenses and housekeeping; the folded panels are gone", async () => {
   const b = await boot();
   const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
-  expect(names).toEqual(["Fleet", "Project", "Sessions", "Session", "Live", "Needs you", "Session stratigraphy", "Patch ecosystem", "Files", "Doctor", "Settings"]);
+  expect(names).toEqual(["Fleet", "Project", "Worktree", "Session", "Files", "Doctor", "Settings"]);
   const heads = [...document.querySelectorAll(".sidebar .nav-heading")];
-  expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Lenses", "Housekeeping"]);
-  const first = ["fleet", "live", "files"];
+  expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Housekeeping"]);
+  expect(b.nav("strata")).toBeNull();
+  expect(b.nav("ecosystem")).toBeNull();
+  const first = ["fleet", "files"];
   heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
   expect(b.nav("workspace")).toBeNull();
   for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeNull();
@@ -668,7 +673,7 @@ test.each([
   expect(document.querySelector(sel)).not.toBeNull();
   expect(b.scope.get()).toEqual({ window: "live" });
   expect(b.worktreeSignals).toHaveLength(1);
-  b.nav("live").click();
+  b.nav("settings").click();
   expect(b.worktreeSignals[0]?.aborted).toBe(true);
   b.nav("project").click();
   expect(b.worktreeSignals).toHaveLength(2);
@@ -694,7 +699,7 @@ test("SSE reconnect refreshes Project only while it is the active panel", async 
   const n = b.worktreeSignals.length;
   b.sources.forEach((s) => s.onopen?.());
   await vi.waitFor(() => expect(b.worktreeSignals.length).toBe(n + 1));
-  b.nav("live").click();
+  b.nav("settings").click();
   const m = b.worktreeSignals.length;
   b.sources.forEach((s) => s.onopen?.());
   await Promise.resolve();
@@ -712,14 +717,14 @@ test("lane click scopes the sessions list", async () => {
   expect(b.active()).toBe("sessions");
   expectProjectInert(b);
   await vi.waitFor(() => expect([...document.querySelectorAll(".session-item")].map((i) => i.getAttribute("data-id"))).toEqual(["s-o1"]));
-  expect(document.querySelector(".scope-crumb")?.textContent).toContain("/w/alpha-open");
+  expect(document.querySelector(".scope-crumb")?.textContent).toContain("alpha-open");
   expect(document.querySelector(".scope-crumb")?.textContent).not.toMatch(/wt-open/);
   expect(b.urls.some((u) => new URL(u).pathname === "/workspace-graph")).toBe(false);
 });
 
 test("bead click opens Score", async () => {
   const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow("s-o1")] });
-  b.nav("live").click();
+  b.go("live");
   b.nav("project").click();
   await vi.waitFor(() => expect(document.querySelector(".project-bead")).not.toBeNull());
   document.querySelector<SVGRectElement>(".project-bead")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -737,8 +742,8 @@ test("older daemon: /worktrees 404 renders the unsupported notice without touchi
   process.on("unhandledRejection", onUnhandled);
   const b = await boot({ worktreesStatus: 404 });
   await vi.waitFor(() => expect(document.querySelector(".project-unsupported")).not.toBeNull());
-  b.nav("live").click();
-  expect(b.active()).toBe("live");
+  b.go("live");
+  expect(b.active()).toBe("fleet");
   expect(b.scope.get()).toEqual({ window: "live" });
   await new Promise((r) => setTimeout(r, 0));
   process.off("unhandledRejection", onUnhandled);
@@ -772,7 +777,7 @@ test("Escape ascends Project: worktree to project stays on Project, project to f
   const e3 = esc();
   expect(e3.defaultPrevented).toBe(true);
   expect(b.scope.get().project).toBeUndefined();
-  expect(b.active()).toBe("live");
+  expect(b.active()).toBe("fleet");
 });
 
 test("detail pane is cleared on entering Project", async () => {
@@ -827,10 +832,10 @@ test("landing: navigating away before the load lands cancels the move", async ()
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
   const b = await boot({ worktrees: twoRepos(), worktreesGate: gate });
-  b.nav("live").click();
+  b.go("live");
   release();
   await new Promise((r) => setTimeout(r, 0));
-  expect(b.active()).toBe("live");
+  expect(b.active()).toBe("fleet");
   // Positive signal: a full two-repository load completes, and still nothing moves the user.
   b.nav("project").click();
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
@@ -932,7 +937,7 @@ test("Escape from Sessions reached by a Fleet fork returns to Project, then Flee
 test("Fleet is inert off-screen: keys, stream reconnects and events cause no requests or scope writes", async () => {
   const b = await boot({ worktrees: twoRepos() });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
-  b.nav("live").click();
+  b.nav("settings").click();
   const before = b.scope.get();
   const n = b.worktreeSignals.length;
   const own = b.worktreeSignals.filter((x) => x !== undefined);
@@ -944,7 +949,7 @@ test("Fleet is inert off-screen: keys, stream reconnects and events cause no req
   await new Promise((r) => setTimeout(r, 0));
   expect(b.scope.get()).toEqual(before);
   expect(b.worktreeSignals).toHaveLength(n);
-  expect(b.active()).toBe("live");
+  expect(b.active()).toBe("settings");
 });
 
 test("Fleet labels rows from attention when /worktrees is a 404, and says so", async () => {
@@ -1035,14 +1040,14 @@ test("the tab is remembered per session across nav away and back; openers naming
   const b = await boot({ sessions: [sessionRow(S1)] });
   b.scope.set({ session: { id: S1, source: "codex" }, window: "live" });
   openTab(b, "loops");
-  b.nav("live").click();
+  b.go("live");
   b.nav("session").click();
   expect(tabOn("loops")).toBe(true);
-  b.nav("live").click();
+  b.go("live");
   b.scope.narrow({ session: { id: "other-session" } });
   b.nav("session").click();
   expect(tabOn("score")).toBe(true);
-  b.nav("live").click();
+  b.go("live");
   b.scope.narrow({ session: { id: S1, source: "codex" } });
   b.nav("session").click();
   expect(tabOn("loops")).toBe(true);
@@ -1141,7 +1146,7 @@ test("empty scope: every tab opens without error or session fetch and says no se
 test("Use in Evidence Court opens the Court tab with the event id carried over", async () => {
   const ev = scoreFixture[0];
   const b = await boot({ events: [ev] });
-  b.nav("live").click();
+  b.go("live");
   await vi.waitFor(() => expect(document.querySelector(".feed-row")).not.toBeNull());
   document.querySelector<HTMLElement>(".feed-row")!.click();
   const offer = [...document.querySelectorAll<HTMLButtonElement>("aside.detail button")].find((x) => x.textContent === "Use in Evidence Court")!;
@@ -1205,7 +1210,7 @@ test("transport: mounted once between strip and layout, same node across navigat
   expect(node.parentElement?.id).toBe("app");
   expect(node.previousElementSibling?.classList.contains("attention-strip")).toBe(true);
   expect(node.nextElementSibling?.classList.contains("layout")).toBe(true);
-  for (const n of ["live", "fleet", "session", "project"]) b.nav(n).click();
+  for (const n of ["settings", "fleet", "session", "project"]) b.nav(n).click();
   expect(tpAll()).toHaveLength(1);
   expect(tp()).toBe(node);
   expect(seen).not.toHaveBeenCalled();
@@ -1223,8 +1228,8 @@ test("transport: visible only where consumed; the window persists while hidden",
   b.nav("project").click();
   tpPreset("24h").click();
   const win = b.scope.get().window;
-  for (const n of ["live", "settings"]) {
-    b.nav(n).click();
+  for (const n of ["attention", "settings"]) {
+    if (n === "attention") b.go("attention"); else b.nav(n).click();
     expect(tp().hidden, n).toBe(true);
     expect(b.scope.get().window).toEqual(win);
   }
@@ -1485,6 +1490,30 @@ test("the Graph chip reaches the real graph inside Project; nothing graph-relate
   expect(selectedChip()).toBe("graph");
 });
 
+test("labels agree for a repo id ending in /.git", async () => {
+  const gitDir = "/Users/n/develop/browser-life/.git";
+  const wtPath = "/Users/n/develop/browser-life/.claude/worktrees/foo";
+  const b = await bootProject({
+    worktrees: [wtRow({ repo_id: gitDir, worktree_id: wtPath, label: wtPath })],
+    repos: [{ ...repoOf(gitDir), label: gitDir }],
+    snapshots: { [gitDir]: snapshotOf(gitDir, ["w1"]) },
+    timeline: tlPage([tlEvent("e1", 3_600_000)]),
+  });
+  b.scope.narrow({ project: gitDir, worktree: wtPath });
+  await settle();
+  const crumb = document.querySelector(".scope-crumb")!;
+  expect(crumb.textContent).toContain("browser-life › foo");
+  expect(crumb.textContent).not.toContain(".git");
+  expect([...crumb.querySelectorAll("span[title]")].map((x) => x.getAttribute("title"))).toEqual([gitDir, wtPath]);
+  const sel = document.querySelector<HTMLSelectElement>(".project-header select")!;
+  expect(sel.selectedOptions[0]!.textContent).toBe("browser-life");
+  for (const e of ["lanes", "graph", "map", "events"]) {
+    chip(e).click();
+    await settle();
+    expect(document.querySelector(".content")!.textContent).not.toContain("/.git");
+  }
+});
+
 test("scope: Graph, Map and Events write only the default repo; repos[0] differing does not flip-flop or add requests", async () => {
   const b = await bootProject({
     repos: [repoOf("rX"), repoOf("r1")],
@@ -1516,11 +1545,11 @@ test("scope: Graph then away then back leaves scope unchanged", async () => {
   chip("graph").click();
   await settle();
   const before = b.scope.get();
-  b.nav("live").click();
+  b.go("live");
   b.nav("project").click();
   await settle();
   expect(b.scope.get()).toEqual(before);
-  b.nav("live").click();
+  b.go("live");
   b.nav("project").click();
   await settle();
   expect(b.scope.get()).toEqual(before);
@@ -1871,16 +1900,16 @@ test("exactly one sidebar button carries aria-current=page after every show() pa
   // Boot landing redirect to Fleet (two repositories).
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
   expectOneCurrent("landing redirect");
-  for (const name of ["live", "attention", "settings", "fleet", "session", "sessions", "project", "doctor"]) {
+  for (const name of ["files", "settings", "fleet", "session", "sessions", "project", "doctor"]) {
     b.nav(name).click();
     expectOneCurrent(`click ${name}`);
     expect(b.active()).toBe(name);
   }
   // Attention strip actions.
-  b.nav("live").click();
+  b.go("live");
   await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
   document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!.click();
-  expect(b.active()).toBe("attention");
+  expect(b.active()).toBe("sessions");
   expectOneCurrent("onOpenInbox");
   document.querySelector<HTMLButtonElement>(".attention-strip [data-key=doctor]")!.click();
   expect(b.active()).toBe("doctor");
@@ -1903,7 +1932,7 @@ test("exactly one sidebar button carries aria-current=page after every show() pa
 
 test("every panel opens with a visible h2 equal to its nav label", async () => {
   const b = await boot();
-  const panels = ["fleet", "project", "sessions", "session", "live", "attention", "strata", "ecosystem", "files", "doctor", "settings"];
+  const panels = ["fleet", "project", "sessions", "session", "files", "doctor", "settings"];
   for (const name of panels) {
     b.nav(name).click();
     const h2 = document.querySelector(".content h2");
@@ -1940,7 +1969,7 @@ test("names not ids: the attention inbox feeds the directory, so the lens head i
     ...extra,
   });
   const b = await boot({ attentionSessions: [attn(TITLED, { title: "Fix login bug" })] });
-  b.nav("attention").click();
+  b.go("attention");
   await vi.waitFor(() => expect(document.querySelector(".attention-row h3")?.textContent).toBe("Fix login bug"));
   b.scope.narrow({ session: { id: TITLED, source: "codex" } });
   b.nav("session").click();
@@ -2020,7 +2049,7 @@ test("Fleet keys are listed and live only while Fleet is the active view", async
   const onFleet = new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true });
   document.body.dispatchEvent(onFleet);
   expect(onFleet.defaultPrevented).toBe(true);
-  b.nav("live").click();
+  b.go("live");
   expect(listKeys().some((r) => r.scope === "fleet")).toBe(false);
   const off = new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true });
   document.body.dispatchEvent(off);
@@ -2028,7 +2057,7 @@ test("Fleet keys are listed and live only while Fleet is the active view", async
   const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
   document.body.dispatchEvent(space);
   expect(space.defaultPrevented).toBe(true); // Live's own Space (pause) owns it now, not Fleet's jump
-  expect(b.active()).toBe("live");
+  expect(b.active()).toBe("fleet");
   expect(listKeys().filter((r) => r.scope === "global").map((r) => r.display)).toContain("Esc");
 });
 
@@ -2135,4 +2164,356 @@ test("? typed in a search input does not open the legend", async () => {
   expect(e.defaultPrevented).toBe(false);
   expect(legendOpen()).toBe(0);
   await closeLegend();
+});
+
+test("? panel context: Doctor has no panel keys, Session lists score keys, Project/Graph zoom keys, Sessions is not empty", async () => {
+  const b = await boot();
+  const legendText = () => document.querySelector('[role="dialog"]')?.textContent ?? "";
+  const here = () => [...document.querySelectorAll(".legend h3")].find((h) => h.textContent === "This panel")!.parentElement!;
+  const elsewhere = () => [...document.querySelectorAll(".legend details")].find((d) => d.querySelector("summary")?.textContent === "Elsewhere") as HTMLDetailsElement;
+  b.nav("doctor").click();
+  press("?");
+  expect(here().textContent).toContain("No panel-specific keys");
+  expect(elsewhere().open).toBe(false);
+  press("Escape");
+  b.nav("session").click();
+  press("?");
+  expect(here().textContent).toContain("previous / next event");
+  press("Escape");
+  b.nav("project").click();
+  document.querySelector<HTMLButtonElement>('.project-chip[data-encoding="graph"]')?.click();
+  press("?");
+  expect(here().textContent).toContain("zoom in / out");
+  press("Escape");
+  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=sessions]")?.click();
+  press("?");
+  expect(here().querySelector("li")).not.toBeNull();
+  expect(legendText()).not.toContain("Also on the keyboard");
+});
+
+
+// ---------------------------------------------------------------------------
+// Fleet host encodings and the alias router (slice 14, T4)
+// ---------------------------------------------------------------------------
+
+const fleetEnc = (e: string) => document.querySelector<HTMLButtonElement>(`.fleet-enc[data-enc=${e}]`)!;
+
+test("go('strata') lands on Fleet with Strata pressed and its own heading in the body", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  b.go("strata");
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("strata").getAttribute("aria-pressed")).toBe("true");
+  expect(document.querySelector(".fleet-body .strata h2")?.textContent).toBe("Session stratigraphy");
+  expect(document.querySelector(".fleet-body .ecosystem")).toBeNull();
+});
+
+test("go('ecosystem') lands on Fleet Patches; leaving it removes the panel", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  b.go("ecosystem");
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("ecosystem").textContent).toBe("Patches");
+  expect(fleetEnc("ecosystem").getAttribute("aria-pressed")).toBe("true");
+  expect(document.querySelector(".fleet-body .ecosystem h2")?.textContent).toBe("Patch ecosystem");
+  fleetEnc("map").click();
+  expect(document.querySelector(".ecosystem")).toBeNull();
+});
+
+test("go('workspace') lands on the Project Graph chip", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  b.go("workspace");
+  expect(b.active()).toBe("project");
+  expect(chip("graph").getAttribute("aria-selected")).toBe("true");
+  await vi.waitFor(() => expect(document.querySelector(".workspace-graph")).not.toBeNull());
+});
+
+test("transport follows (panel, encoding): Fleet drawn encodings, Project chips, session", async () => {
+  const b = await boot({ worktrees: [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b" })] });
+  b.nav("fleet").click();
+  for (const e of ["map", "dwell", "matrix", "lanes", "airspace"]) {
+    fleetEnc(e).click();
+    expect(tp().hidden, e).toBe(false);
+  }
+  fleetEnc("strata").click();
+  expect(tp().hidden).toBe(true);
+  fleetEnc("ecosystem").click();
+  expect(tp().hidden).toBe(true);
+  fleetEnc("lanes").click();
+  expect(tp().hidden).toBe(false);
+  b.go("strata");
+  expect(tp().hidden).toBe(true);
+  b.nav("project").click();
+  expect(tp().hidden).toBe(false);
+  b.go("ecosystem");
+  expect(tp().hidden).toBe(true);
+  b.nav("session").click();
+  expect(tp().hidden).toBe(false);
+  b.go("strata");
+  expect(tp().hidden).toBe(true);
+  // An Escape ascent back to Fleet from Project follows the remembered Fleet encoding.
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane, .project-empty")).not.toBeNull());
+  b.scope.narrow({ project: "repoA" });
+  expect(tp().hidden).toBe(false);
+  esc();
+  expect(b.active()).toBe("fleet");
+  expect(tp().hidden).toBe(true);
+  fleetEnc("map").click();
+  b.nav("project").click();
+  for (const e of ["graph", "map", "events", "lanes"]) {
+    chip(e).click();
+    expect(tp().hidden, e).toBe(false);
+  }
+});
+
+test("transport: remembered Project encoding restore (A -> B -> A) keeps it visible through onEncoding", async () => {
+  const b = await boot({ worktrees: [wtRow({ repo_id: "/w/a", worktree_id: "/w/a/m" }), wtRow({ repo_id: "/w/b", worktree_id: "/w/b/m" })] });
+  b.nav("project").click();
+  b.scope.narrow({ project: "/w/a" });
+  chip("map").click();
+  b.scope.narrow({ project: "/w/b" });
+  expect(tp().hidden).toBe(false);
+  b.scope.narrow({ project: "/w/a" });
+  expect(document.querySelector(".project-chips [data-encoding=map]")!.getAttribute("aria-selected")).toBe("true");
+  expect(tp().hidden).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+// Slice 14 T5: live is an alias onto Fleet Events and the Project Events chip
+// ---------------------------------------------------------------------------
+
+const feedRows = () => document.querySelectorAll(".fleet-body .feed-row");
+const feedEvent = (id: string) => tlEvent(id, 10, { session_id: "s-live" });
+
+test("no live nav button; the sidebar names no Live panel", async () => {
+  await boot();
+  expect(document.querySelector(".nav-btn[data-panel=live]")).toBeNull();
+  expect([...document.querySelectorAll(".nav-btn")].map((x) => x.textContent)).not.toContain("Live");
+});
+
+test("go('live') with an empty scope lands on Fleet Events with the feed rows visible", async () => {
+  const b = await boot({ worktrees: [wtRow()], events: [tlEvent("h1", 5000) as never] });
+  b.go("live");
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("events").textContent).toBe("Events");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  await vi.waitFor(() => expect(feedRows().length).toBeGreaterThan(0));
+  expect(document.querySelector(".fleet-body .feed h2")).toBeNull();
+});
+
+test("go('live') with a registered project lands on the Project Events chip; with a worktree the timeline is narrowed", async () => {
+  const b = await bootProject({ timeline: tlPage([tlEvent("e1", 3_600_000)]) });
+  b.scope.narrow({ project: "r1" });
+  b.go("live");
+  expect(b.active()).toBe("project");
+  expect(selectedChip()).toBe("events");
+  await vi.waitFor(() => expect(hits(b, "/workspace-graph/timeline").length).toBeGreaterThan(0));
+  b.nav("fleet").click();
+  b.scope.narrow({ project: "r1", worktree: "w1" });
+  const n = hits(b, "/workspace-graph/timeline").length;
+  b.go("live");
+  expect(b.active()).toBe("project");
+  expect(selectedChip()).toBe("events");
+  await vi.waitFor(() => expect(hits(b, "/workspace-graph/timeline").length).toBeGreaterThan(n));
+  expect(param(hits(b, "/workspace-graph/timeline").at(-1)!, "workspace_id")).toBe("w1");
+});
+
+test("go('live') with an unregistered project lands on Fleet Events, and the Project 'Open events' fallback does too", async () => {
+  const b = await bootProject({ events: [tlEvent("h1", 5000) as never] });
+  b.scope.narrow({ project: "ghost" });
+  b.go("live");
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  await vi.waitFor(() => expect(feedRows().length).toBeGreaterThan(0));
+  expect(b.scope.get().project).toBe("ghost");
+});
+
+test("go('live') for a captured repo whose rows are all repo_unregistered lands on Fleet Events", async () => {
+  const b = await boot({ worktrees: [wtRow({ repo_id: "r1", worktree_id: "wt-a", state: "unknown", state_reason: "repo_unregistered" })], repos: [], events: [tlEvent("h1", 5000) as never] });
+  b.nav("project").click();
+  await projectLoaded();
+  b.scope.narrow({ project: "r1" });
+  b.go("live");
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+});
+
+test("go('live') before Project has rows (worktrees failed to load) lands on Fleet Events and keeps the scope", async () => {
+  const b = await boot({ worktreesStatus: 500, events: [tlEvent("h1", 5000) as never] });
+  b.scope.narrow({ project: "r1" });
+  b.go("live");
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(b.scope.get().project).toBe("r1");
+});
+
+test("Project 'Open events' under an older daemon lands on the feed", async () => {
+  const b = await boot({ worktreesStatus: 404, events: [tlEvent("h1", 5000) as never] });
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-unsupported button")).not.toBeNull());
+  document.querySelector<HTMLButtonElement>(".project-unsupported button")!.click();
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  await vi.waitFor(() => expect(feedRows().length).toBeGreaterThan(0));
+});
+
+test("onEvent gating: the feed refreshes only on Fleet Events, once per animation frame", async () => {
+  const frames: Array<() => void> = [];
+  vi.stubGlobal("requestAnimationFrame", (cb: () => void) => { frames.push(cb); return frames.length; });
+  const b = await boot({ worktrees: [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b" })] });
+  const rowsNow = () => document.querySelectorAll(".feed-row").length;
+  const flushFrames = () => { const f = frames.splice(0); f.forEach((cb) => cb()); };
+  b.nav("fleet").click();
+  for (const e of ["map", "dwell", "matrix", "lanes", "airspace", "strata", "ecosystem"]) {
+    fleetEnc(e).click();
+    frames.length = 0;
+    sendEvent(b, feedEvent(`g-${e}`));
+    expect(frames, e).toHaveLength(0);
+  }
+  b.nav("sessions").click();
+  sendEvent(b, feedEvent("g-sessions"));
+  expect(frames).toHaveLength(0);
+  b.nav("project").click();
+  sendEvent(b, feedEvent("g-project"));
+  expect(frames).toHaveLength(0);
+  b.go("live");
+  frames.length = 0;
+  const before = rowsNow();
+  sendEvent(b, feedEvent("g-a"));
+  sendEvent(b, feedEvent("g-b"));
+  expect(frames).toHaveLength(1);
+  expect(rowsNow()).toBe(before);
+  flushFrames();
+  expect(rowsNow()).toBe(before + 2);
+});
+
+test("Escape ascent lands on Fleet in the user's last encoding and writes nothing to it; go('live') is the only selector", async () => {
+  const b = await boot({ worktrees: [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b" })] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  fleetEnc("matrix").click();
+  b.nav("project").click();
+  await vi.waitFor(() => expect(laneOrEmpty()).not.toBeNull());
+  b.scope.narrow({ project: "repoA" });
+  esc();
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("matrix").getAttribute("aria-pressed")).toBe("true");
+  // Explicit go('live') selects Events, and the later ascent keeps it.
+  b.scope.replaceContext({});
+  b.go("live");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  b.nav("project").click();
+  await vi.waitFor(() => expect(laneOrEmpty()).not.toBeNull());
+  b.scope.narrow({ project: "repoA" });
+  esc();
+  expect(b.active()).toBe("fleet");
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  b.nav("settings").click();
+  b.nav("fleet").click();
+  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+});
+
+test("transport: hidden on Fleet Events, go('live') keeps a historical window, Project Events keeps the transport", async () => {
+  const b = await bootProject({ timeline: tlPage([tlEvent("e1", 3_600_000)]) });
+  b.nav("project").click();
+  tpPreset("24h").click();
+  const win = b.scope.get().window;
+  expect(win).not.toBe("live");
+  b.scope.narrow({ project: "ghost" });
+  b.go("live");
+  expect(tp().hidden).toBe(true);
+  expect(b.scope.get().window).toEqual(win);
+  b.scope.narrow({ project: "r1" });
+  b.go("live");
+  expect(b.active()).toBe("project");
+  expect(selectedChip()).toBe("events");
+  expect(tp().hidden).toBe(false);
+  expect(b.scope.get().window).toEqual(win);
+});
+
+test("Home 'return to live' is not offered on Fleet Events", async () => {
+  const b = await boot({ worktrees: [wtRow()] });
+  const { listKeys } = await import("./keys");
+  b.go("live");
+  expect(tp().hidden).toBe(true);
+  expect(listKeys().some((r) => r.scope === "events")).toBe(true);
+  expect(listKeys().some((r) => r.display === "Home" && r.label === "return to live")).toBe(false);
+});
+
+test("Space pauses the feed on Fleet Events only: not on the Project Events chip, not at Worktree", async () => {
+  const b = await bootProject({ timeline: tlPage([tlEvent("e1", 3_600_000)]) });
+  const { listKeys } = await import("./keys");
+  const space = () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+  const pauseLabel = () => document.querySelector<HTMLButtonElement>(".fleet-body .feed .pause")?.textContent;
+  b.scope.narrow({ project: "ghost" });
+  b.go("live");
+  expect(listKeys().filter((r) => r.scope === "events")).toHaveLength(1);
+  expect(pauseLabel()).toBe("pause");
+  space();
+  expect(pauseLabel()).toMatch(/^resume/);
+  space();
+  expect(pauseLabel()).toBe("pause");
+  b.scope.narrow({ project: "r1" });
+  b.go("live");
+  expect(selectedChip()).toBe("events");
+  expect(listKeys().some((r) => r.scope === "events")).toBe(false);
+  b.nav("sessions").click();
+  expect(listKeys().some((r) => r.scope === "events")).toBe(false);
+});
+
+// ---- slice 14: the ladder ---------------------------------------------------------------------
+
+test("nav is the ladder", async () => {
+  const b = await boot();
+  expect([...document.querySelectorAll(".nav-heading")].map((h) => h.textContent)).toEqual(["Altitudes", "Housekeeping"]);
+  expect([...document.querySelectorAll(".nav-btn")].map((x) => x.textContent)).toEqual(["Fleet", "Project", "Worktree", "Session", "Files", "Doctor", "Settings"]);
+  for (const gone of ["live", "attention", "strata", "ecosystem", "workspace"]) expect(b.nav(gone), gone).toBeNull();
+  for (const name of ["fleet", "project", "sessions", "session", "files", "doctor", "settings"]) {
+    b.nav(name).click();
+    expect(b.nav(name).getAttribute("aria-current")).toBe("page");
+    expect(document.querySelectorAll(".sidebar [aria-current]")).toHaveLength(1);
+  }
+});
+
+test("strip click opens Needs you on the Worktree rung without touching scope", async () => {
+  const b = await boot({ sessions: [sessionRow(S1)], attentionSessions: [attn(S1)], worktrees: [wtRow()] });
+  const strip = () => document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!;
+  await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
+  b.scope.set({ project: "r1", window: "live" });
+  b.scope.narrow({ session: { id: S1, source: "codex" } });
+  b.nav("session").click();
+  const before = b.scope.get();
+  strip().click();
+  expect(b.active()).toBe("sessions");
+  expect(b.nav("sessions").getAttribute("aria-current")).toBe("page");
+  expect(document.querySelector(".sessions-needs[aria-pressed=true]")).not.toBeNull();
+  expect(document.querySelector<HTMLElement>(".sessions-inbox")!.hidden).toBe(false);
+  expect(b.scope.get()).toBe(before);
+  // The toggle count is the strip count.
+  expect(document.querySelector(".sessions-needs-count")?.textContent).toBe(` (${strip().textContent?.match(/\d+/)?.[0]})`);
+  // Only the strip turns the mode on: a nav click and Escape land on the scoped session list.
+  b.nav("sessions").click();
+  expect(document.querySelector(".sessions-needs[aria-pressed=false]")).not.toBeNull();
+  expect(document.querySelector<HTMLElement>(".sessions-inbox")!.hidden).toBe(true);
+  strip().click();
+  b.nav("session").click();
+  esc();
+  expect(b.scope.get().session).toBeUndefined();
+  expect(document.querySelector(".sessions-needs[aria-pressed=false]")).not.toBeNull();
+  expect(document.querySelector<HTMLElement>(".sessions-list")!.hidden).toBe(false);
+  // The strip is present on every rung.
+  for (const n of ["fleet", "project", "session"]) {
+    b.nav(n).click();
+    expect(document.querySelector(".attention-strip")).not.toBeNull();
+  }
+});
+
+test("Worktree is the h2 even when scoped, and its legend lists keys", async () => {
+  const b = await boot({ sessions: [sessionRow(S1)] });
+  b.scope.narrow({ worktree: "wt-abcdefghij" });
+  b.nav("sessions").click();
+  expect(document.querySelector(".content h2")!.textContent).toBe("Worktree");
+  press("?");
+  const here = [...document.querySelectorAll(".legend-part")].find((p) => p.querySelector("h3")?.textContent === "This panel");
+  expect(here).toBeDefined();
+  expect(here!.textContent).toContain("rows and cards");
+  expect(document.body.textContent).not.toContain("No panel-specific keys");
 });

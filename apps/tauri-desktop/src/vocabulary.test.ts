@@ -147,6 +147,9 @@ const RETIRED: [string, RegExp][] = [
   ["repository", /\brepositor(y|ies)\b/i],
   ["repo id", /\brepo ids?\b/i],
   ["cell", /\bcells?\b/i],
+  ["Matrix", /\bMatrix\b/],
+  ["Airspace", /\bAirspace\b/],
+  ["Dwell", /\bDwell\b/],
 ];
 const OBSOLETE_CASED = /NEEDS YOU|NEEDS INPUT/;
 
@@ -172,6 +175,11 @@ describe("vocabulary guard", () => {
       .filter((c) => !allowed(c))
       .flatMap((c) => RETIRED.filter(([, re]) => re.test(c.text)).map(([w]) => `${c.file}:${c.line} [${w}] ${JSON.stringify(c.text)}`));
     expect(hits).toEqual([]);
+  });
+
+  test("Fleet encoding labels use Table, Waiting and By state", () => {
+    const text = all.filter((c) => c.file === "ui/fleet/index.ts").map((c) => c.text);
+    for (const w of ["Table", "Waiting", "By state"]) expect(text).toContain(w);
   });
 
   test("obsolete uppercase NEEDS YOU / NEEDS INPUT is banned, case-sensitively", () => {
@@ -214,5 +222,16 @@ describe("vocabulary guard", () => {
     expect(gapi).toContain("/workspace-graph");
     expect(api + gapi).toContain("repo_id");
     expect(api + gapi).toContain("cwd");
+  });
+});
+
+describe("live is an alias, not a panel", () => {
+  test("main.ts has no live panel in NAV_LABELS, NAV_GROUPS or the panels map, and the feed heading is Events", () => {
+    const main = readFileSync(join(SRC, "main.ts"), "utf8");
+    expect(main).not.toMatch(/^\s*live:\s/m);
+    expect(main).not.toMatch(/NAV_GROUPS[\s\S]{0,400}"live"/);
+    const feed = readFileSync(join(SRC, "ui", "feed.ts"), "utf8");
+    expect(feed).not.toMatch(/el\("h2", \{\}, "Live"\)/);
+    expect(feed).toContain('opts?.heading ?? "Events"');
   });
 });

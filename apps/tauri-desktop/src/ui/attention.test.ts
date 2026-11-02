@@ -469,3 +469,37 @@ test("onSessions receives the session list after every load", async () => {
   expect(seen).toHaveLength(2);
   expect(seen[1]).toHaveLength(1);
 });
+
+test("the inbox root keeps its h2 and class, the strip still opens the inbox, and refresh works detached", async () => {
+  const open = vi.fn();
+  const panel = mount({ onOpenInbox: open });
+  await panel.refresh();
+  expect(panel.root.querySelector("h2")?.textContent).toBe("Needs you");
+  expect(panel.root.classList.contains("attention-inbox")).toBe(true);
+  panel.strip.querySelector<HTMLButtonElement>("[data-key=inbox]")!.click();
+  expect(open).toHaveBeenCalledTimes(1);
+  panel.root.remove();
+  panel.strip.remove();
+  await expect(panel.refresh()).resolves.toBeUndefined();
+});
+
+test("count() is the strip's count: snoozed and non-pending episodes do not count", async () => {
+  snapshot.sessions = [session("a"), session("b"), { ...session("c"), source: "claude-code" } as ReturnType<typeof session>, session("w", false)];
+  const panel = mount();
+  await panel.refresh();
+  expect(panel.count()).toBe(3);
+  button(panel.root, "Snooze 15 minutes").click();
+  expect(panel.count()).toBe(2);
+  expect(panel.strip.querySelector("[data-key=inbox]")!.textContent).toBe("2 need you · 1 snoozed");
+});
+
+test("onCount listeners run when the strip redraws, so a snooze reaches them at once", async () => {
+  snapshot.sessions = [session("a")];
+  const panel = mount();
+  const seen: number[] = [];
+  panel.onCount(() => seen.push(panel.count()));
+  await panel.refresh();
+  button(panel.root, "Snooze 15 minutes").click();
+  expect(seen.at(-1)).toBe(0);
+  expect(seen).toContain(1);
+});

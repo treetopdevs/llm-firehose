@@ -127,6 +127,9 @@ export function createAttention(options: AttentionOptions) {
   let abort: AbortController | null = null;
   let snapshot: AttentionSnapshot = { sessions: [], warnings: [] };
 
+  /** Pending episodes that are not snoozed: the number the strip shows. */
+  let needing = 0;
+  const countListeners = new Set<() => void>();
   let inspection = 0;
   async function inspect(id: string) {
     const version = ++inspection;
@@ -232,6 +235,10 @@ export function createAttention(options: AttentionOptions) {
     names = snapshot.sessions.map((s) => [keyOf(s), sessionName(s)] as const);
     const pending = snapshot.sessions.filter((s) => s.pending);
     const snoozed = pending.filter((s) => prefs.snoozed(episodeKey(s))).length;
+    needing = pending.length - snoozed;
+    for (const fn of countListeners) {
+      try { fn(); } catch { /* a listener must not break the strip */ }
+    }
     const open = el(
       "button",
       { "data-key": "inbox" },
@@ -478,6 +485,10 @@ export function createAttention(options: AttentionOptions) {
     root,
     strip,
     refresh,
+    /** The strip's count (pending, not snoozed). */
+    count: () => needing,
+    /** Calls fn whenever the strip is redrawn (so a snooze or refresh reaches other displays at once). */
+    onCount(fn: () => void) { countListeners.add(fn); },
     setConnected,
     dispose() {
       disposed = true;

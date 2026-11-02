@@ -5,8 +5,7 @@
 import { ApiError, worktree as fetchWorktree, worktrees as fetchWorktrees } from "../../api";
 import type { WorktreeCommit, WorktreeDetail, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
-import { idLabel, shortId } from "../../format";
-import { displayRepoLabel } from "../fleet/model";
+import { idLabel, projectName, shortId, worktreeName } from "../../format";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
@@ -66,6 +65,8 @@ export interface ProjectDeps {
   worktreeOrder?(repo: string): readonly string[] | undefined;
   /** The daemon privacy mode, passed to the Activity Map. */
   privacyMode?(): string | undefined;
+  /** The effective encoding changed (chip, activate({encoding}) or the per-project restore). */
+  onEncoding?: (e: ProjectEncoding) => void;
 }
 
 export interface ProjectPanel {
@@ -76,6 +77,8 @@ export interface ProjectPanel {
   onEvent(ev: import("../../api").FirehoseEvent): void;
   encoding(): ProjectEncoding;
   setEncoding(e: ProjectEncoding): void;
+  /** Whether the workspace graph has this repository registered (a captured-only repo is not). */
+  registered(projectId: string): boolean;
   setConnected(connected: boolean): void;
 }
 
@@ -220,7 +223,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     refresh: () => (active ? load() : refreshRows()),
     labels(sc) {
       const sel = scopedRows(sc);
-      const label = sc.worktree !== undefined ? sel?.[0]?.label : undefined;
+      const first = sc.worktree !== undefined ? sel?.[0] : undefined;
+      const label = first?.label ? worktreeName(first.worktree_id, first.label).label : undefined;
       const out: { project?: string; worktree?: string } = label ? { worktree: label } : {};
       // A project the rows do not know (registered only): a short id, marked, never a guess at a name.
       if (graph && sc.project !== undefined && status === "ready" && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
@@ -262,20 +266,21 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     // A name beats a fallback: the store resolver first, then the host's label unless it is
     // only the fallback form (which a later resolved name must be able to outrank).
     const nameOf = (id: string): string => {
-      const fallback = displayRepoLabel(idLabel(id));
+      const fallback = projectName(id).label;
       let resolved: string | undefined;
       try { resolved = store.resolver()?.labels({ project: id, window: "live" } as Scope).project || undefined; } catch { resolved = undefined; }
       // The panel's own "<shortid> (unknown)" placeholder is not a name: fall through to the host's label.
-      if (resolved !== undefined && !resolved.endsWith(" (unknown)")) return displayRepoLabel(resolved);
+      if (resolved !== undefined && !resolved.endsWith(" (unknown)")) return projectName(id, resolved).label;
       let hosted: string | undefined;
       try { hosted = deps.projectLabel?.(id) || undefined; } catch { hosted = undefined; }
-      return hosted !== undefined && displayRepoLabel(hosted) !== fallback ? displayRepoLabel(hosted) : fallback;
+      const named = hosted !== undefined ? projectName(id, hosted).label : fallback;
+      return named !== fallback ? named : fallback;
     };
     const key = ids.map((id) => `${id}\u0001${nameOf(id)}`).join("\0");
     if (key !== optionKey) {
       optionKey = key;
       clear(select);
-      for (const id of ids) select.append(el("option", { value: id }, nameOf(id)));
+      for (const id of ids) select.append(el("option", { value: id, title: id }, nameOf(id)));
     }
     select.disabled = ids.length === 0;
     if (repo !== undefined) select.value = repo;
@@ -290,7 +295,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
           "div",
           { class: "project-unsupported" },
           el("span", {}, "This daemon does not serve /worktrees (older daemon). Update Agent Firehose to see worktree lanes."),
-          el("button", { type: "button" }, "Open live"),
+          el("button", { type: "button" }, "Open events"),
         ),
       );
       statusBox.querySelector("button")!.addEventListener("click", () => go("live"));
@@ -453,8 +458,19 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     }
   }
 
-  // Makes the DOM and the hosted views match `encoding`; idempotent.
+  // Fires deps.onEncoding once per effective change, from the single mount exit.
+  let notified: ProjectEncoding | undefined;
   function mountEncoding(): void {
+    try { mountEncodingBody(); } finally {
+      if (active && graph && map && notified !== encoding) {
+        notified = encoding;
+        try { deps.onEncoding?.(encoding); } catch { /* a sink must not break the view */ }
+      }
+    }
+  }
+
+  // Makes the DOM and the hosted views match `encoding`; idempotent.
+  function mountEncodingBody(): void {
     if (!graph || !map) return;
     syncChips();
     if (!active) return;
@@ -831,6 +847,9 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     },
     encoding: () => encoding,
     setEncoding: setEncodingTo,
+    // Graph registration: a repo listed by the graph, or one whose rows are not all repo_unregistered
+    // (a captured repo with no registered root has no graph timeline).
+    registered: (id) => (graph?.registeredRepos?.() ?? []).includes(id) || rows.some((r) => r.repo_id === id && r.state_reason !== "repo_unregistered"),
     activate(opts) {
       if (!active) {
         active = true;

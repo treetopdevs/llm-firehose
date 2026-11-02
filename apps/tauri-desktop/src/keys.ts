@@ -5,7 +5,7 @@
 // the keys the handlers act on.
 
 export interface KeyBinding {
-  /** 'global' or a panel scope ('fleet', 'project', 'live', 'graph'). Panel scopes run first. */
+  /** 'global' or a panel scope ('fleet', 'project', 'events', 'graph'). Panel scopes run first. */
   scope: string;
   /** Matched against both e.key and e.code. */
   keys: readonly string[];
