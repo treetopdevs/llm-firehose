@@ -545,9 +545,45 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 // missing component is a dangling symlink. Results are cached per directory for
 // one request, up to limit entries.
 type canonicalPaths struct {
-	ctx   context.Context
-	limit int
-	dirs  map[string]string
+	ctx          context.Context
+	limit        int
+	dirs         map[string]string
+	evalSymlinks func(string) (string, error)      // nil: filepath.EvalSymlinks
+	lstat        func(string) (fs.FileInfo, error) // nil: os.Lstat
+}
+
+// localResolvable reports whether a captured path may be handed to the
+// filesystem. Captured paths are untrusted (any local process can emit or
+// ingest events), and resolving one can reach the network: on Windows a UNC or
+// device path (\\host\share, //host/share, \\?\UNC\, \\.\) makes the OS
+// contact the host over SMB and can leak NTLM credentials, and on macOS and
+// Linux the automount trees /net and /Network mount remote hosts on lookup.
+// Only a path under a local root is resolved: a single leading "/" on unix, a
+// drive letter on Windows. The automount check is case-insensitive, since a
+// case-insensitive volume finds /NET too, and also applies to the cleaned form.
+func localResolvable(path string) bool {
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") || strings.HasPrefix(path, `\/`) || strings.HasPrefix(path, `/\`) {
+		return false
+	}
+	vol := filepath.VolumeName(path)
+	if filepath.Separator == '\\' {
+		// A drive letter, then a separator: C:\x, never C:x or a UNC volume.
+		if len(vol) != 2 || vol[1] != ':' || len(path) < 3 || !os.IsPathSeparator(path[2]) {
+			return false
+		}
+		c := vol[0] | 0x20
+		return 'a' <= c && c <= 'z'
+	}
+	if vol != "" || !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for _, p := range []string{path, filepath.Clean(path)} {
+		first, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+		if strings.EqualFold(first, "net") || strings.EqualFold(first, "Network") {
+			return false
+		}
+	}
+	return true
 }
 
 const (
@@ -557,11 +593,11 @@ const (
 )
 
 // resolve returns path with its ancestor directories canonical, or
-// filepath.Clean(path) when it is relative, oversized, cannot be resolved, or
-// the request is gone.
+// filepath.Clean(path) when it is relative, not local, oversized, cannot be
+// resolved, or the request is gone.
 func (c *canonicalPaths) resolve(path string) string {
 	clean := filepath.Clean(path)
-	if !filepath.IsAbs(clean) || len(path) > canonicalMaxBytes || c.ctx != nil && c.ctx.Err() != nil {
+	if !filepath.IsAbs(clean) || !localResolvable(path) || len(path) > canonicalMaxBytes || c.ctx != nil && c.ctx.Err() != nil {
 		return clean
 	}
 	vol := filepath.VolumeName(path)
@@ -588,16 +624,23 @@ func (c *canonicalPaths) resolveDir(vol string, parts []string) string {
 	if resolved, ok := c.dirs[key]; ok {
 		return resolved
 	}
-	resolved, err := filepath.EvalSymlinks(key)
+	evalSymlinks, lstat := c.evalSymlinks, c.lstat
+	if evalSymlinks == nil {
+		evalSymlinks = filepath.EvalSymlinks
+	}
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	resolved, err := evalSymlinks(key)
 	if errors.Is(err, fs.ErrNotExist) {
 		resolved = ""
 		// Resolution fails from the first missing component on, so a binary
 		// search finds the longest resolvable prefix.
 		lo, hi := 0, len(parts)
-		if ancestor, err := filepath.EvalSymlinks(prefix(0)); err == nil {
+		if ancestor, err := evalSymlinks(prefix(0)); err == nil {
 			for hi-lo > 1 {
 				mid := (lo + hi) / 2
-				if r, err := filepath.EvalSymlinks(prefix(mid)); err == nil {
+				if r, err := evalSymlinks(prefix(mid)); err == nil {
 					lo, ancestor = mid, r
 				} else {
 					hi = mid
@@ -605,7 +648,7 @@ func (c *canonicalPaths) resolveDir(vol string, parts []string) string {
 			}
 			// A missing component cannot be a link, so the tail joins lexically;
 			// one that exists here is a dangling symlink and is not reattached.
-			if _, err := os.Lstat(filepath.Join(ancestor, parts[lo])); errors.Is(err, fs.ErrNotExist) {
+			if _, err := lstat(filepath.Join(ancestor, parts[lo])); errors.Is(err, fs.ErrNotExist) {
 				resolved = filepath.Join(append([]string{ancestor}, parts[lo:]...)...)
 			}
 		}

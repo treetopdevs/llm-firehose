@@ -703,3 +703,60 @@ func TestActivityRootsAreNotRecanonicalised(t *testing.T) {
 		t.Fatalf("boundary moved to the symlink target: %q %q", g, p)
 	}
 }
+
+func TestLocalResolvable(t *testing.T) {
+	cases := map[string]bool{
+		`\\host\share\x`:     false,
+		`//host/share/x`:     false,
+		`\\?\UNC\host\x`:     false,
+		`\\.\pipe\x`:         false,
+		`\\?\C:\x`:           false,
+		"/net":               false,
+		"/net/host/x":        false,
+		"/NET/host/x":        false, // case-insensitive volumes still automount
+		"/Network/Servers/x": false,
+		"/tmp/../net/host/x": false,
+		t.TempDir():          true,
+	}
+	if filepath.Separator == '/' {
+		cases["/netfoo/x"] = true
+		cases["/Networking/x"] = true
+		cases["relative/x"] = false
+	} else {
+		cases[`C:\netfoo\x`] = true
+		cases[`C:\net\x`] = true   // only unix automount trees are /net
+		cases["/netfoo/x"] = false // not drive-rooted
+		cases[`C:x`] = false
+	}
+	for in, want := range cases {
+		if got := localResolvable(in); got != want {
+			t.Errorf("localResolvable(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// Captured paths are untrusted: network and automount paths come back as
+// their cleaned text without touching the filesystem.
+func TestCanonicalPathsSkipsNetworkPaths(t *testing.T) {
+	calls := 0
+	paths := canonicalPaths{
+		evalSymlinks: func(p string) (string, error) { calls++; return filepath.EvalSymlinks(p) },
+		lstat:        func(p string) (os.FileInfo, error) { calls++; return os.Lstat(p) },
+	}
+	unc := "//host/share/dir/../x.go"
+	if filepath.Separator == '\\' {
+		unc = `\\host\share\dir\..\x.go`
+	}
+	for _, in := range []string{unc, "/net/host/dir/../x.go"} {
+		if got := paths.resolve(in); got != filepath.Clean(in) {
+			t.Errorf("%q: %q, want %q", in, got, filepath.Clean(in))
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("filesystem calls on network paths: %d", calls)
+	}
+	paths.resolve(filepath.Join(t.TempDir(), "x.go"))
+	if calls == 0 {
+		t.Fatal("the injected filesystem funcs are not used")
+	}
+}
