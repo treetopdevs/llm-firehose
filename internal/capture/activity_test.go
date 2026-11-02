@@ -515,3 +515,31 @@ func TestActivityRejectsBadWindow(t *testing.T) {
 		}
 	}
 }
+
+// One event naming the same file under two spellings that resolve to one
+// path adds Heat once, as error aggregation already does.
+func TestActivityDedupesResolvedPathsPerEvent(t *testing.T) {
+	s := realShapes(t)
+	base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	ev := shapeAt(t, s, "codex patch_apply_end", "c1", base.Add(time.Minute))
+	// Normalized payload mutation: a second spelling of the captured key, as
+	// through a symlinked checkout; not a claim of a new Codex shape.
+	changes := map[string]any{}
+	for k, v := range ev.Payload["changes"].(map[string]any) {
+		changes[k] = v
+		changes[strings.Replace(k, "/work/proj/", "/alias/proj/", 1)] = v
+	}
+	ev.Payload["changes"] = changes
+	e, _ := activityEngine(t, []event.Event{ev})
+	q := activityQuery(base, base.Add(time.Hour), time.Hour)
+	q.Resolve = func(ev event.Event, path string) (string, string) {
+		return stripRoot(ev, strings.Replace(path, "/alias/proj/", "/work/proj/", 1))
+	}
+	r, err := e.Activity(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := heatOf(r); !reflect.DeepEqual(got, map[string][][2]int{"|test/pipeline/identifier_resolution_test.exs": {{0, 1}}}) {
+		t.Fatalf("heat = %v", got)
+	}
+}

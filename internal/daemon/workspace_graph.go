@@ -10,6 +10,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -424,7 +426,7 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	snapshot, scanErr := s.graph.service.Snapshot(ctx, repoID, "", false)
 	cancel()
-	roots := activityRoots{}
+	roots := activityRoots{paths: canonicalPaths{ctx: r.Context()}}
 	if scanErr == nil && len(repoAliases) > 0 {
 		for _, ws := range snapshot.Workspaces {
 			_, aliases, _ := s.graph.service.EventScope(repoID, ws.ID)
@@ -471,6 +473,7 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 type activityRoots struct {
 	byAlias map[string]string
 	all     []string
+	paths   canonicalPaths
 }
 
 func (a *activityRoots) add(repoIdentity string, aliases []string) {
@@ -514,7 +517,7 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 		}
 		return ownID, path
 	}
-	clean := filepath.Clean(path)
+	clean := a.paths.resolve(path)
 	if !filepath.IsAbs(clean) {
 		if own == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return unresolved()
@@ -532,6 +535,94 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 	}
 	rel, _ := filepath.Rel(best, clean)
 	return "", filepath.ToSlash(rel)
+}
+
+// canonicalPaths resolves symlinks in captured absolute paths at match time
+// only, so a path reported through a symlinked checkout meets the canonical
+// worktree roots. Only ancestor directories are resolved, never the final
+// component. ".." applies after links are followed; a directory that no longer
+// exists resolves through its longest existing ancestor, unless the first
+// missing component is a dangling symlink. Results are cached per directory for
+// one request, up to limit entries.
+type canonicalPaths struct {
+	ctx   context.Context
+	limit int
+	dirs  map[string]string
+}
+
+const (
+	canonicalMaxBytes   = 4096
+	canonicalMaxParts   = 256
+	canonicalCacheLimit = 4096
+)
+
+// resolve returns path with its ancestor directories canonical, or
+// filepath.Clean(path) when it is relative, oversized, cannot be resolved, or
+// the request is gone.
+func (c *canonicalPaths) resolve(path string) string {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) || len(path) > canonicalMaxBytes || c.ctx != nil && c.ctx.Err() != nil {
+		return clean
+	}
+	vol := filepath.VolumeName(path)
+	parts := strings.FieldsFunc(path[len(vol):], func(r rune) bool { return r < 128 && os.IsPathSeparator(uint8(r)) })
+	if len(parts) == 0 || len(parts) > canonicalMaxParts {
+		return clean
+	}
+	dir, base := parts[:len(parts)-1], parts[len(parts)-1]
+	if base == "." || base == ".." {
+		dir, base = parts, ""
+	}
+	if resolved := c.resolveDir(vol, dir); resolved != "" {
+		return filepath.Join(resolved, base)
+	}
+	return clean
+}
+
+// resolveDir returns the canonical form of the raw directory vol/parts, or ""
+// when it cannot be resolved.
+func (c *canonicalPaths) resolveDir(vol string, parts []string) string {
+	sep := string(filepath.Separator)
+	prefix := func(n int) string { return vol + sep + strings.Join(parts[:n], sep) }
+	key := prefix(len(parts))
+	if resolved, ok := c.dirs[key]; ok {
+		return resolved
+	}
+	resolved, err := filepath.EvalSymlinks(key)
+	if errors.Is(err, fs.ErrNotExist) {
+		resolved = ""
+		// Resolution fails from the first missing component on, so a binary
+		// search finds the longest resolvable prefix.
+		lo, hi := 0, len(parts)
+		if ancestor, err := filepath.EvalSymlinks(prefix(0)); err == nil {
+			for hi-lo > 1 {
+				mid := (lo + hi) / 2
+				if r, err := filepath.EvalSymlinks(prefix(mid)); err == nil {
+					lo, ancestor = mid, r
+				} else {
+					hi = mid
+				}
+			}
+			// A missing component cannot be a link, so the tail joins lexically;
+			// one that exists here is a dangling symlink and is not reattached.
+			if _, err := os.Lstat(filepath.Join(ancestor, parts[lo])); errors.Is(err, fs.ErrNotExist) {
+				resolved = filepath.Join(append([]string{ancestor}, parts[lo:]...)...)
+			}
+		}
+	} else if err != nil {
+		resolved = ""
+	}
+	limit := c.limit
+	if limit <= 0 {
+		limit = canonicalCacheLimit
+	}
+	if c.dirs == nil {
+		c.dirs = map[string]string{}
+	}
+	if len(c.dirs) < limit {
+		c.dirs[key] = resolved
+	}
+	return resolved
 }
 
 func under(root, path string) bool {

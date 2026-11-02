@@ -5,9 +5,11 @@ import (
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/event"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -516,5 +519,187 @@ func TestActivityIncludesUnresolvedErrorOnlyGroups(t *testing.T) {
 	}
 	if !unknown {
 		t.Fatalf("unknown group not exercised: %s", w.Body)
+	}
+}
+
+// An agent working through a symlinked checkout reports paths through the
+// link; they still resolve against the canonical worktree roots, including a
+// file deleted after capture inside a directory reached through the link.
+func TestActivitySymlinkedPathsResolveToWorktree(t *testing.T) {
+	real := gitRepo(t)
+	graphGit(t, real, "commit", "-q", "--allow-empty", "-m", "init")
+	other := filepath.Join(real, ".claude", "worktrees", "feature")
+	graphGit(t, real, "worktree", "add", "-q", "-b", "feature", other)
+	link := filepath.Join(t.TempDir(), "l")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	linkedOther := filepath.Join(link, ".claude", "worktrees", "feature")
+	if err := os.MkdirAll(filepath.Join(linkedOther, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(linkedOther, "pkg", "gone.go")
+	if err := os.WriteFile(gone, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, engine := activityServer(t, "balanced")
+	claudeEdit(t, engine, "main", link, filepath.Join(link, "a.go"), activityBase.Add(time.Minute))
+	claudeEdit(t, engine, "wt", linkedOther, filepath.Join(linkedOther, "b.go"), activityBase.Add(2*time.Minute))
+	claudeEdit(t, engine, "gone", linkedOther, gone, activityBase.Add(3*time.Minute))
+	claudeEdit(t, engine, "missing-dir", link, filepath.Join(link, "new", "deep", "c.go"), activityBase.Add(4*time.Minute))
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	repoID := onlyRepo(t, s)
+	code, body, w := getActivity(t, s, window(repoID))
+	if code != 200 {
+		t.Fatalf("status %d %s", code, w.Body)
+	}
+	want := map[string]int{"|a.go": 1, "|b.go": 1, "|pkg/gone.go": 1, "|new/deep/c.go": 1}
+	if got := heatByPath(body); !reflect.DeepEqual(got, want) {
+		t.Fatalf("symlinked paths resolve to their worktree: %v", got)
+	}
+	if len(body.Groups) != 1 || !body.Groups[0].Resolved {
+		t.Fatalf("no outside group: %+v", body.Groups)
+	}
+}
+
+func TestCanonicalPaths(t *testing.T) {
+	real := t.TempDir()
+	canonicalReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(real, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "file.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "l")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	var paths canonicalPaths
+	for name, tc := range map[string]struct{ in, want string }{
+		"symlinked ancestor": {filepath.Join(link, "dir", "x.go"), filepath.Join(canonicalReal, "dir", "x.go")},
+		"non-existent tail":  {filepath.Join(link, "a", "b", "c.go"), filepath.Join(canonicalReal, "a", "b", "c.go")},
+		"relative":           {"pkg/./x.go", filepath.Join("pkg", "x.go")},
+		"error fallback":     {filepath.Join(link, "file.txt", "sub", "y.go") + string(filepath.Separator), filepath.Join(link, "file.txt", "sub", "y.go")},
+	} {
+		for i := 0; i < 2; i++ { // the second pass is served from the directory cache
+			if got := paths.resolve(tc.in); got != tc.want {
+				t.Errorf("%s (pass %d): %q want %q", name, i, got, tc.want)
+			}
+		}
+	}
+}
+
+// symlinkOrSkip creates link -> target, skipping where symlinks are unavailable.
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+}
+
+func canonicalTemp(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Oversized paths skip resolution, a deep missing tail is resolved without
+// caching its prefixes, the cache is bounded, and a cancelled request stops
+// resolving.
+func TestCanonicalPathsBounded(t *testing.T) {
+	real := canonicalTemp(t)
+	link := filepath.Join(t.TempDir(), "l")
+	symlinkOrSkip(t, real, link)
+	sep := string(filepath.Separator)
+	many := link + sep + strings.Repeat("m"+sep, 300) + "x.go"
+	long := link + sep + strings.Repeat(strings.Repeat("a", 250)+sep, 20) + "x.go"
+	var paths canonicalPaths
+	for name, in := range map[string]string{"many components": many, "long": long} {
+		if got := paths.resolve(in); got != in {
+			t.Errorf("%s: resolved %d bytes, want the captured text", name, len(got))
+		}
+	}
+	deep := strings.Repeat("m"+sep, 200) + "x.go"
+	paths = canonicalPaths{}
+	if got := paths.resolve(filepath.Join(link, deep)); got != filepath.Join(real, deep) {
+		t.Errorf("deep missing tail: %q", got)
+	}
+	if len(paths.dirs) > 1 {
+		t.Errorf("deep missing tail cached %d prefixes", len(paths.dirs))
+	}
+	paths = canonicalPaths{limit: 8}
+	for i := range 20 {
+		in := filepath.Join(link, fmt.Sprintf("d%d", i), "x.go")
+		if got := paths.resolve(in); got != filepath.Join(real, fmt.Sprintf("d%d", i), "x.go") {
+			t.Errorf("past the cache limit: %q", got)
+		}
+	}
+	if len(paths.dirs) > 8 {
+		t.Errorf("cache grew to %d entries", len(paths.dirs))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	paths = canonicalPaths{ctx: ctx}
+	if in := filepath.Join(link, "x.go"); paths.resolve(in) != in {
+		t.Errorf("a cancelled request still resolves")
+	}
+}
+
+// /alias -> /repo with /repo/escape -> a missing target outside: the dangling
+// link is not a missing directory to reattach under the repository.
+func TestActivityDanglingSymlinkStaysOutside(t *testing.T) {
+	repo, outside := canonicalTemp(t), canonicalTemp(t)
+	symlinkOrSkip(t, filepath.Join(outside, "missing"), filepath.Join(repo, "escape"))
+	alias := filepath.Join(t.TempDir(), "alias")
+	symlinkOrSkip(t, repo, alias)
+	roots := activityRoots{}
+	roots.add("repo-id", []string{repo, "d"})
+	in := filepath.Join(alias, "escape", "x.go")
+	if g, p := roots.resolve(event.Event{WorktreeID: "d"}, in); g != "d" || p != in {
+		t.Fatalf("dangling symlink escape: %q %q", g, p)
+	}
+}
+
+// /alias/link/../x.go with /repo/link -> /outside/deep names /outside/x.go:
+// ".." applies after the link is followed.
+func TestActivityDotDotFollowsSymlinkFirst(t *testing.T) {
+	repo, outside := canonicalTemp(t), canonicalTemp(t)
+	if err := os.Mkdir(filepath.Join(outside, "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, filepath.Join(outside, "deep"), filepath.Join(repo, "link"))
+	alias := filepath.Join(t.TempDir(), "alias")
+	symlinkOrSkip(t, repo, alias)
+	roots := activityRoots{}
+	roots.add("repo-id", []string{repo, "d"})
+	in := filepath.Join(alias, "link") + string(filepath.Separator) + ".." + string(filepath.Separator) + "x.go"
+	if g, p := roots.resolve(event.Event{WorktreeID: "d"}, in); g != "d" || p != in {
+		t.Fatalf("link/.. resolves outside: %q %q", g, p)
+	}
+	if got := roots.paths.resolve(in); got != filepath.Join(outside, "x.go") {
+		t.Fatalf("canonical: %q", got)
+	}
+}
+
+// A snapshot root replaced by a symlink after the snapshot keeps its boundary:
+// roots are used exactly as the graph reports them.
+func TestActivityRootsAreNotRecanonicalised(t *testing.T) {
+	repo, elsewhere := canonicalTemp(t), canonicalTemp(t)
+	wt := filepath.Join(repo, "wt")
+	symlinkOrSkip(t, elsewhere, wt)
+	roots := activityRoots{}
+	roots.add("repo-id", []string{wt, "dwt"})
+	in := filepath.Join(elsewhere, "x.go")
+	if g, p := roots.resolve(event.Event{}, in); g != "unknown" || p != in {
+		t.Fatalf("boundary moved to the symlink target: %q %q", g, p)
 	}
 }
