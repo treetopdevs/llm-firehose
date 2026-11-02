@@ -4,7 +4,7 @@
 import type { WorktreeCommit, WorktreeLifetimeView, WorktreeMark, WorktreeOutcome, WorktreeState } from "../../api";
 import { DEFAULT_LIVE_SPAN_MS, resolveRange } from "../../scope";
 import type { ScopeWindow } from "../../scope";
-import { idLabel } from "../../format";
+import { worktreeName } from "../../format";
 import { BADGE } from "../../glyphs";
 
 export const LIVE_SPAN_MS = DEFAULT_LIVE_SPAN_MS;
@@ -193,7 +193,7 @@ export function layoutLanes(
     const extentT = mergeT === undefined ? lastT : Math.max(lastT, mergeT);
     if (forkT > range.to) continue;
     if (!open && extentT < range.from) continue;
-    const label = r.label ?? idLabel(r.worktree_id);
+    const label = worktreeName(r.worktree_id, r.label).label;
     const idle = isIdleWorker(r, now);
     const beads: LaneBead[] = [];
     for (const s of r.sessions) {

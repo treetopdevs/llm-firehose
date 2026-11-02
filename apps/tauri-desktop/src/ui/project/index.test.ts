@@ -434,6 +434,7 @@ describe("empty and degraded states", () => {
     expect(q(".project-unsupported")[0]!.textContent).toContain("/worktrees");
     expect(q(".project-unsupported")[0]!.textContent).toContain("older daemon");
     expect(q(".project-lane")).toHaveLength(0);
+    expect(q(".project-unsupported button")[0]!.textContent).toBe("Open events");
     q(".project-unsupported button")[0]!.click();
     expect(go).toHaveBeenCalledWith("live");
     expect(err).not.toHaveBeenCalled();
@@ -923,7 +924,7 @@ describe("scope membership", () => {
     await panel.activate();
     await flush();
     const r = store.resolver()!;
-    expect(r.labels({ project: "repoA", worktree: "wt-open", window: "live" })).toEqual({ worktree: "/w/alpha-open" });
+    expect(r.labels({ project: "repoA", worktree: "wt-open", window: "live" })).toEqual({ worktree: "alpha-open" });
     expect(r.labels({ project: "repoA", worktree: "wt-unk", window: "live" })).toEqual({});
   });
 
@@ -1110,6 +1111,20 @@ describe("picker names and idle semantics", () => {
     expect(opts.map((o) => o.value).sort()).toEqual([DIGEST, gitDir].sort());
     expect(opts.find((o) => o.value === gitDir)!.textContent).toBe("llm-firehose");
     expect(opts.find((o) => o.value === DIGEST)!.textContent).toBe(DIGEST.slice(0, 8));
+  });
+
+  test("the picker reduces a git-dir repo id to its folder and keeps the full id as the title", async () => {
+    const gitDir = "/Users/n/develop/repo-x/.git";
+    for (const over of [{}, { projectLabel: () => gitDir }]) {
+      const { store, panel } = setupWith([row({ repo_id: gitDir, worktree_id: "w1" })], over);
+      store.setResolver({ sessions: () => undefined, labels: () => ({ project: gitDir }) });
+      store.narrow({ project: gitDir });
+      await panel.activate();
+      const o = optionsOf(panel)[0]!;
+      expect(o.textContent).toBe("repo-x");
+      expect(o.title).toBe(gitDir);
+      panel.root.remove();
+    }
   });
 
   test("a resolved name outranks a fallback-form projectLabel and follows the resolver without a scope change", async () => {

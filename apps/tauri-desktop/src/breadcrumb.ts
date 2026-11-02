@@ -2,7 +2,7 @@
 // Labels come from the scope resolver (graph-space); unresolved segments fall
 // back to a short id. No network: event-space ids cannot be joined honestly to
 // graph ids, so this module never fetches.
-import { idLabel, sessionRefLabel } from './format';
+import { idLabel, projectName, sessionRefLabel, worktreeName } from './format';
 import type { SessionDirectory } from './session-directory';
 import type { Scope, ScopeStore } from './scope';
 
@@ -20,10 +20,10 @@ export function createBreadcrumb(store: ScopeStore, opts: { directory?: SessionD
   const keyOf = (s: Scope) =>
     JSON.stringify([s.project ?? null, s.worktree ?? null, s.session ? [s.session.id, s.session.source ?? null, sessionLabel(s)] : null]);
 
-  const segment = (full: string, label: string | undefined, resolved = !!label): HTMLElement => {
+  const segment = (full: string, label: string | undefined, resolved = !!label, name?: (id: string, r?: string) => { label: string }): HTMLElement => {
     const seg = document.createElement('span');
     seg.title = full;
-    seg.textContent = label || idLabel(full);
+    seg.textContent = name ? name(full, label).label : label || idLabel(full);
     if (!resolved) seg.className = 'unresolved';
     return seg;
   };
@@ -37,8 +37,8 @@ export function createBreadcrumb(store: ScopeStore, opts: { directory?: SessionD
       labels = {};
     }
     const parts: HTMLElement[] = [];
-    if (s.project) parts.push(segment(s.project, labels.project));
-    if (s.worktree) parts.push(segment(s.worktree, labels.worktree));
+    if (s.project) parts.push(segment(s.project, labels.project, !!labels.project, projectName));
+    if (s.worktree) parts.push(segment(s.worktree, labels.worktree, !!labels.worktree, worktreeName));
     if (s.session) {
       const ref = sessionLabel(s)!;
       parts.push(segment(s.session.id, ref.label, ref.resolved));

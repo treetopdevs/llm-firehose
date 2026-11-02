@@ -99,8 +99,14 @@ export interface FeedPanel {
 // unless paused. Row click opens the detail pane.
 let activeFeedKeys: (() => void) | undefined;
 
-export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => void): FeedPanel {
-  const rowsBox = el("div", { class: "feed-rows", role: "group", "aria-label": "Live events", tabindex: "0" });
+export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => void, opts?: {
+  heading?: string | false;
+  /** The retained scope.window as a time range, or undefined while following live. Rows outside it are hidden. */
+  window?: () => { from?: number; to?: number } | undefined;
+  /** Returns to the live window; offered while a range is applied. */
+  resetWindow?: () => void;
+}): FeedPanel {
+  const rowsBox = el("div", { class: "feed-rows", role: "group", "aria-label": "Events", tabindex: "0" });
   rove(rowsBox);
 
   const pauseBtn = el("button", { class: "pause" }, "pause");
@@ -133,7 +139,9 @@ export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => voi
   search.addEventListener("input", applyFilter);
 
   const bar = el("div", { class: "feed-bar" }, pauseBtn, categorySel, sourceSel, search);
-  const root = el("section", { class: "feed" }, el("h2", {}, "Live"), bar, rowsBox);
+  const windowNote = el("p", { class: "feed-window dim", role: "status" });
+  windowNote.hidden = true;
+  const root = el("section", { class: "feed" }, ...(opts?.heading === false ? [] : [el("h2", {}, opts?.heading ?? "Events")]), bar, windowNote, rowsBox);
 
   function renderRow(row: Row): HTMLElement {
     const ev = row.event;
@@ -162,13 +170,32 @@ export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => voi
       : "pause";
     pauseBtn.classList.toggle("paused", feed.paused);
     refreshSources();
+    const range = opts?.window?.();
+    clear(windowNote);
+    windowNote.hidden = !range;
+    if (range) {
+      windowNote.append("Showing the retained time window, not the live tail. ");
+      if (opts?.resetWindow) {
+        const live = el("button", { type: "button", class: "feed-window-live" }, "Return to live");
+        live.addEventListener("click", () => {
+          opts.resetWindow!();
+          refresh();
+        });
+        windowNote.append(live);
+      }
+    }
 
     const atBottom =
       rowsBox.scrollTop + rowsBox.clientHeight >= rowsBox.scrollHeight - 8;
     const restoreFocus = captureRowFocus(rowsBox);
     const prevStop = rowsBox.querySelector(".feed-row[tabindex='0']")?.getAttribute("data-key") ?? null;
     clear(rowsBox);
-    for (const row of feed.rows().slice(-1000)) {
+    const inRange = (row: Row): boolean => {
+      if (!range) return true;
+      const t = Date.parse(row.event.time);
+      return !Number.isNaN(t) && (range.from === undefined || t >= range.from) && (range.to === undefined || t <= range.to);
+    };
+    for (const row of feed.rows().filter(inRange).slice(-1000)) {
       rowsBox.append(renderRow(row));
     }
     setStop(rowsBox, prevStop === null ? null : rowsBox.querySelector(`.feed-row[data-key="${CSS.escape(prevStop)}"]`));
@@ -196,10 +223,10 @@ export function createFeed(feed: FeedState, onSelect: (ev: FirehoseEvent) => voi
     refresh();
     return true;
   };
-  // One feed owns the "live" scope at a time; a stale instance is displaced.
+  // One feed owns the "events" scope at a time; a stale instance is displaced.
   activeFeedKeys?.();
   activeFeedKeys = registerKeys([
-    { scope: "live", ...QUEUE_KEYS.jump, label: "pause or resume the feed", handler: pauseOnSpace, enabled: () => root.isConnected },
+    { scope: "events", ...QUEUE_KEYS.jump, label: "pause or resume the feed", handler: pauseOnSpace, enabled: () => root.isConnected },
   ]);
 
   return { root, refresh };

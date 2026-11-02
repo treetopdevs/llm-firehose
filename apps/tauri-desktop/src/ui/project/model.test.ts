@@ -203,9 +203,18 @@ describe("layoutLanes", () => {
   test("path-id lane without a label reads as its tail", () => {
     const id = "/Users/nicholas/develop/browser-life/.claude/worktrees/foo";
     const g = layoutLanes([row({ worktree_id: id, first_time: iso(NOW - D) })], [id], live, X0, X1, NOW)[0];
-    expect(g.label).toBe("worktrees/foo");
-    expect(g.ariaLabel).toBe("worktrees/foo, open");
-    expect(g.tooltip.split("\n")[0]).toBe("worktrees/foo");
+    expect(g.label).toBe("foo");
+    expect(g.ariaLabel).toBe("foo, open");
+    expect(g.tooltip.split("\n")[0]).toBe("foo");
+  });
+
+  test("an absolute-path worktree label and an unresolved id go through worktreeName", () => {
+    const id = "/Users/n/develop/browser-life/.claude/worktrees/foo";
+    const labelled = layoutLanes([row({ worktree_id: "wt-1", label: id, first_time: iso(NOW - D) })], ["wt-1"], live, X0, X1, NOW)[0];
+    expect(labelled.label).toBe("foo");
+    const bare = layoutLanes([row({ worktree_id: "/x/browser-life/.git", first_time: iso(NOW - D) })], ["/x/browser-life/.git"], live, X0, X1, NOW)[0];
+    expect(bare.label).toBe("browser-life");
+    for (const g of [labelled, bare]) expect(`${g.label}${g.ariaLabel}${g.tooltip}`).not.toContain(".git");
   });
 
   test("label column leaves a gutter before x0", () => {
@@ -217,17 +226,17 @@ describe("layoutLanes", () => {
   });
 
   test("labels", () => {
-    expect(lane("wt-open").label).toBe("/w/alpha-open");
+    expect(lane("wt-open").label).toBe("alpha-open");
     expect(lane("wt-unk").label).toBe("wt-unk");
     expect(lane("wt-unk").ariaLabel).toBe("wt-unk, unknown");
-    expect(lane("wt-open").ariaLabel).toBe("/w/alpha-open, open");
+    expect(lane("wt-open").ariaLabel).toBe("alpha-open, open");
     const long = row({ worktree_id: "abcdefghijkl", first_time: iso(NOW - D) });
     expect(layoutLanes([long], ["abcdefghijkl"], live, X0, X1, NOW)[0].label).toBe("abcdefgh");
   });
 
   test("tooltip content and meta confinement (D95)", () => {
     const o = lane("wt-open");
-    for (const s of ["/w/alpha-open", "state: open", "ahead 3", "behind 1", "sessions 2", "signal events 50"]) expect(o.tooltip).toContain(s);
+    for (const s of ["alpha-open", "state: open", "ahead 3", "behind 1", "sessions 2", "signal events 50"]) expect(o.tooltip).toContain(s);
     const lines = o.tooltip.split("\n");
     expect(lines.filter((x) => x.includes("12"))).toEqual(["cost (meta events): 12"]);
     const { tooltip: _t, ...rest } = o;
@@ -294,6 +303,6 @@ describe("lane aria label carries idle", () => {
     const idle = layoutLanes(FIXTURE_ROWS.filter((r) => r.worktree_id === "wt-idle"), ["wt-idle"], live, X0, X1, NOW)[0]!;
     expect(idle.idle).toBe(true);
     expect(idle.ariaLabel).toBe(`${idle.label}, ${"open"}, idle`);
-    expect(lane("wt-open").ariaLabel).toBe("/w/alpha-open, open");
+    expect(lane("wt-open").ariaLabel).toBe("alpha-open, open");
   });
 });

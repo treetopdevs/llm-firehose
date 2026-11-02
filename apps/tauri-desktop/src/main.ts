@@ -8,7 +8,7 @@ import type { FirehoseEvent } from "./api";
 import { checkCompat } from "./compat";
 import { createConnector } from "./connect";
 import { clear, el } from "./dom";
-import { FeedState } from "./state";
+import { FEED_RING, FeedState } from "./state";
 import { renderDetail } from "./ui/detail";
 import { createAttention } from "./ui/attention";
 import { createCourt } from "./ui/court";
@@ -27,6 +27,7 @@ import { createEcosystem } from "./ui/ecosystem";
 import { createReplay } from "./ui/replay";
 import { createStrata } from "./ui/strata";
 import { createFleet } from "./ui/fleet";
+import { isHostEncoding } from "./ui/fleet/model";
 import { createProject, splitGoPatch, type ProjectEncoding } from "./ui/project";
 import { createSessions } from "./ui/sessions";
 import { createSettings } from "./ui/settings";
@@ -36,13 +37,15 @@ import { createTransport } from "./transport";
 import type { Scope, ScopePatch, SessionRef } from "./scope";
 import { createEscapeHandler } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
-import { toggleLegend, openLegend } from "./ui/legend";
+import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
 import { createSessionDirectory } from "./session-directory";
+import { isAlias, resolveAlias } from "./nav";
+import type { AliasName } from "./nav";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
-const feedState = new FeedState(5000);
+const feedState = new FeedState(FEED_RING);
 const detailPane = el("aside", { class: "detail" });
 // The call altitude pairs a tool call's start and end from the live buffer.
 const siblings = (ev: FirehoseEvent) =>
@@ -72,7 +75,9 @@ function openLoops(id: string, source?: string) {
 
 // The one place sessions are named: /sessions and /attention feed it, the lens head and crumb read it.
 const sessionDirectory = createSessionDirectory(() => sessions());
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref));
+const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>go("attention"),onSessions:(l)=>sessionDirectory.remember(l)});
+attentionPanel.setConnected(false);
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel });
 
 // Opening a session from elsewhere keeps the project/worktree parents only
 // when the graph resolver says the session belongs to them; otherwise the
@@ -98,9 +103,9 @@ function openSessionAltitude(id: string, source?: string, tab: SessionTab = "sco
 
 const workspacePanel = createWorkspaceGraph(openSession, scope, { hosted: true });
 
-const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>show("attention"),onSessions:(l)=>sessionDirectory.remember(l)});
-attentionPanel.setConnected(false);
 // Altitudes (D94-D98): Fleet > Project > Worktree (sessions) > Session (score).
+// The nav is those four plus Files, Doctor and Settings; the retired lens names
+// (live, attention, strata, ecosystem, workspace) are aliases (see nav.ts).
 // The old fleet panels are encodings inside Fleet. Landing is Project, then once
 // to Fleet when there is more than one repository (see onRows below). The
 // attention strip is visible at every altitude.
@@ -135,11 +140,24 @@ const projectPanel = createProject({
     landingPending = false;
   },
   projectLabel: (id) => fleetLabels[id],
+  onEncoding: () => syncTransport(),
 });
 projectPanel.setConnected(false);
 // Sessions reached by clicking a Fleet fork: Escape retraces Project then Fleet
 // instead of widening scope while the panel stays on Sessions.
 let sessionsViaFleet = false;
+// The lens panels Fleet hosts as its Strata and Patches encodings.
+const strataPanel = createStrata(openLoops, openScore, sessionDirectory);
+const ecosystemPanel = createEcosystem(openScore);
+// Fleet Events honours a retained historical window like Project Events does; live follows the whole ring.
+const feedPanel = createFeed(feedState, showDetail, {
+  heading: false,
+  window: () => {
+    const w = scope.get().window;
+    return w === "live" ? undefined : { from: w.from, to: w.to };
+  },
+  resetWindow: () => scope.narrow({ window: "live" }),
+});
 const fleetPanel = createFleet({
   store: scope,
   go: (name, patch): void => {
@@ -151,7 +169,12 @@ const fleetPanel = createFleet({
   onLabels: (labels) => {
     fleetLabels = labels;
   },
-  onEncoding: () => transport.refresh(),
+  onEncoding: () => syncTransport(),
+  hosts: {
+    events: { root: feedPanel.root, activate: () => feedPanel.refresh(), deactivate: () => {} },
+    strata: strataPanel,
+    ecosystem: { root: ecosystemPanel.root, activate: () => { renderDetail(detailPane, null, () => {}); return ecosystemPanel.refresh(); }, deactivate: () => ecosystemPanel.deactivate() },
+  },
 });
 fleetPanel.setConnected(false);
 // The score replays one finished session, so its detail pairs calls from
@@ -195,19 +218,15 @@ const sessionPanel = createSession({
 const panels = {
   fleet: fleetPanel,
   project: projectPanel,
-  live: createFeed(feedState, showDetail),
-  attention: attentionPanel,
   sessions: sessionsPanel,
   session: sessionPanel,
-  strata: createStrata(openLoops, openScore, sessionDirectory),
-  ecosystem: createEcosystem(openScore),
   files: createFiles(sessionDirectory),
   doctor: createDoctor(),
   settings: createSettings(),
 } as const;
 
 type PanelName = keyof typeof panels;
-type GoName = PanelName | "score" | "loops";
+type GoName = PanelName | "score" | "loops" | AliasName;
 
 const content = el("main", { class: "content" });
 const statusDot = el("span", { class: "status-dot" });
@@ -218,19 +237,14 @@ const eventCount = el("span", { class: "event-count dim" }, "");
 let active: PanelName = "project";
 const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
   ["Altitudes", ["fleet", "project", "sessions", "session"]],
-  ["Lenses", ["live", "attention", "strata", "ecosystem"]],
   ["Housekeeping", ["files", "doctor", "settings"]],
 ];
 /** Sidebar labels and each panel's visible h2: one name per panel, sentence case. */
 export const NAV_LABELS: Record<PanelName, string> = {
   fleet: "Fleet",
   project: "Project",
-  sessions: "Sessions",
+  sessions: "Worktree",
   session: "Session",
-  live: "Live",
-  attention: "Needs you",
-  strata: "Session stratigraphy",
-  ecosystem: "Patch ecosystem",
   files: "Files",
   doctor: "Doctor",
   settings: "Settings",
@@ -245,19 +259,36 @@ const transport = createTransport({
   effectiveLiveSpan: () => (active === "fleet" ? fleetPanel.effectiveLiveSpan() : liveSpanOf(scope.get())),
 });
 
+/** Whether the shell transport is shown: scope-window panels, minus Fleet's host encodings (Events, Strata, Patches). */
+const transportShown = (): boolean => TRANSPORT_PANELS.has(active) && !(active === "fleet" && isHostEncoding(fleetPanel.encoding));
+function syncTransport(): void {
+  transport.setVisible(transportShown());
+  transport.refresh();
+}
+
 /** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
-function go(name: GoName, rawPatch?: ScopePatch & { encoding?: ProjectEncoding }, replace = false, tab?: SessionTab) {
+export function go(name: GoName, rawPatch?: ScopePatch & { encoding?: ProjectEncoding }, replace = false, tab?: SessionTab) {
   const { scopePatch: patch, encoding: patchEncoding } = splitGoPatch(rawPatch);
   if (patch) {
     if (replace) scope.replaceContext(patch as ScopePatch);
     else scope.narrow(patch as ScopePatch);
   }
   const encoding = patchEncoding;
+  if (isAlias(name)) {
+    const land = resolveAlias(name, scope.get(), (id) => projectPanel.registered(id));
+    // Only an explicit alias landing on Fleet selects its encoding; ascent never writes it.
+    if (land.fleetEncoding) fleetPanel.encoding = land.fleetEncoding;
+    // The strip and the alias are the same entry as the Worktree nav button: no stale Fleet retrace.
+    if (land.panel === "sessions") sessionsViaFleet = false;
+    const o = { ...(land.encoding ? { encoding: land.encoding as ProjectEncoding } : {}), ...(land.needsOnly ? { needsOnly: true } : {}) };
+    show(land.panel, Object.keys(o).length > 0 ? o : undefined);
+    return;
+  }
   if (name === "score" || name === "loops") show("session", { tab: name });
   else show(name, tab || encoding ? { ...(tab ? { tab } : {}), ...(encoding ? { encoding } : {}) } : undefined);
 }
 
-function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEncoding }) {
+function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEncoding; needsOnly?: boolean }) {
   // Any navigation other than the boot landing decides the landing rule.
   if (name !== "project") landingPending = false;
   if (!["fleet", "project", "sessions", "session"].includes(name)) sessionsViaFleet = false;
@@ -265,15 +296,9 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if (active === "fleet" && name !== "fleet") fleetPanel.deactivate();
   if (name === "project" || name === "fleet") renderDetail(detailPane, null, () => {});
   if (active === "session" && name !== "session") sessionPanel.deactivate();
-  if (active === "ecosystem" && name !== "ecosystem") panels.ecosystem.deactivate();
-  if (name === "ecosystem") renderDetail(detailPane, null, () => {});
-
   if (active === "files" && name !== "files") panels.files.deactivate();
-  if (active === "strata" && name !== "strata") panels.strata.deactivate();
   active = name;
   transport.setPanel(name);
-  transport.refresh();
-  transport.setVisible(TRANSPORT_PANELS.has(name));
   for (const [n, btn] of navButtons) {
     btn.classList.toggle("active", n === name);
     if (n === name) btn.setAttribute("aria-current", "page");
@@ -283,9 +308,10 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   content.append(panels[name].root);
   if (name === "fleet") void fleetPanel.activate();
   else if (name === "project") void projectPanel.activate(opts?.encoding ? { encoding: opts.encoding } : undefined);
-  else if (name === "strata") void panels.strata.activate();
+  else if (name === "sessions") void sessionsPanel.activate({ needsOnly: !!opts?.needsOnly });
   else if (name === "session") sessionPanel.activate(opts?.tab);
   else panels[name].refresh();
+  syncTransport();
 }
 
 const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "session", "project", "fleet"]);
@@ -299,14 +325,22 @@ const ascendOnEscape = createEscapeHandler({
     else if (from === "sessions" && sessionsViaFleet && alt === "project") show("project");
     else if (from === "sessions" && sessionsViaFleet && alt === "fleet") {
       sessionsViaFleet = false;
-      show(repoCount > 1 ? "fleet" : "live");
+      show("fleet");
     } else if (from === "sessions") void sessionsPanel.refresh();
     else if (from === "project" && alt === "fleet") {
       sessionsViaFleet = false;
-      show(repoCount > 1 ? "fleet" : "live");
+      show("fleet");
     }
   },
 });
+/** The panel and encoding the legend scopes its key lists to. */
+function legendContext(): PanelContext {
+  if (active === "fleet") return { panel: active, encoding: fleetPanel.encoding };
+  if (active === "project") return { panel: active, encoding: projectPanel.encoding() };
+  if (active === "session") return { panel: active, tab: sessionPanel.tab() };
+  return { panel: active };
+}
+
 registerKeys([
   {
     scope: "global",
@@ -323,7 +357,7 @@ registerKeys([
     label: "show keys and symbols",
     enabled: () => app.isConnected,
     handler: () => {
-      toggleLegend({ opener: document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : undefined, fallbackFocus: legendBtn });
+      toggleLegend({ opener: document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : undefined, fallbackFocus: legendBtn, context: legendContext });
     },
   },
 ]);
@@ -345,7 +379,7 @@ for (const [heading, names] of NAV_GROUPS) {
 const crumb = createBreadcrumb(scope, { directory: sessionDirectory });
 const legendBtn = el("button", { type: "button", class: "legend-btn", "aria-haspopup": "dialog" }, "Keys and symbols");
 legendBtn.addEventListener("click", () => {
-  openLegend({ opener: legendBtn, fallbackFocus: legendBtn });
+  openLegend({ opener: legendBtn, fallbackFocus: legendBtn, context: legendContext });
 });
 const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount, legendBtn);
 app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), statusBar);
@@ -361,11 +395,12 @@ function onEvent(ev: FirehoseEvent) {
   eventCount.textContent = `${received.toLocaleString()} events`;
   projectPanel.onEvent(ev);
   if (active === "fleet") fleetPanel.onEvent(ev);
-  if (active === "live" && !renderQueued) {
+  // The feed is only drawn on Fleet Events; every other encoding and rung skips it.
+  if (active === "fleet" && fleetPanel.encoding === "events" && !renderQueued) {
     renderQueued = true;
     requestAnimationFrame(() => {
       renderQueued = false;
-      panels.live.refresh();
+      if (active === "fleet" && fleetPanel.encoding === "events") feedPanel.refresh();
     });
   }
 }

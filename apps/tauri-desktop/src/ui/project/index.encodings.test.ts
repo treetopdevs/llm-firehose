@@ -56,7 +56,7 @@ function fakeGraph(registered: string[] = []) {
   return { g: g as unknown as ProjectGraphHost & typeof g, emitView: (v: "graph" | "events") => viewFn?.(v) };
 }
 
-function setup(opts: { registered?: string[]; worktreeOrder?: (r: string) => readonly string[] | undefined; withGraph?: boolean; initial?: Parameters<typeof createScope>[0] } = {}) {
+function setup(opts: { registered?: string[]; worktreeOrder?: (r: string) => readonly string[] | undefined; withGraph?: boolean; initial?: Parameters<typeof createScope>[0]; onEncoding?: (e: import("./index").ProjectEncoding) => void } = {}) {
   const store: ScopeStore = createScope(opts.initial);
   const go = vi.fn();
   const fg = fakeGraph(opts.registered);
@@ -67,6 +67,7 @@ function setup(opts: { registered?: string[]; worktreeOrder?: (r: string) => rea
     refreshMs: 15000,
     ...(opts.withGraph === false ? {} : { graph: fg.g }),
     ...(opts.worktreeOrder ? { worktreeOrder: opts.worktreeOrder } : {}),
+    ...(opts.onEncoding ? { onEncoding: opts.onEncoding } : {}),
   });
   document.body.append(panel.root);
   panels.push(panel);
@@ -247,6 +248,42 @@ describe("transitions", () => {
     await flush();
     expect(b.panel.encoding()).toBe("graph");
     expect(b.store.get().project).toBe(DEFAULT);
+  });
+
+  test("onEncoding fires once per effective change: chip, activate({encoding}), per-project restore; not on a no-op", async () => {
+    const seen: string[] = [];
+    const { panel, store, chip } = setup({ initial: { project: "repoA" }, onEncoding: (e) => seen.push(e) });
+    await panel.activate();
+    expect(seen).toEqual(["lanes"]);
+    chip("graph").click();
+    chip("graph").click(); // no-op
+    panel.setEncoding("graph"); // no-op
+    expect(seen).toEqual(["lanes", "graph"]);
+    store.narrow({ project: "repoB" }); // restore: B remembers nothing, so lanes
+    expect(seen).toEqual(["lanes", "graph", "lanes"]);
+    store.narrow({ project: "repoA" }); // restore A -> graph
+    expect(seen).toEqual(["lanes", "graph", "lanes", "graph"]);
+    panel.deactivate();
+    await panel.activate({ encoding: "events" });
+    expect(seen.at(-1)).toBe("events");
+    const n = seen.length;
+    await panel.activate({ encoding: "events" });
+    expect(seen).toHaveLength(n);
+  });
+
+  test("registered(projectId) knows graph-registered repos and loaded rows, but not a repo whose rows are all repo_unregistered", async () => {
+    const { panel } = setup({ registered: ["reg-only"] });
+    await panel.activate();
+    expect(panel.registered(DEFAULT)).toBe(true);
+    expect(panel.registered("reg-only")).toBe(true);
+    expect(panel.registered("nope")).toBe(false);
+  });
+
+  test("registered(projectId) is false for a captured repo whose rows are all repo_unregistered", async () => {
+    worktreesMock.mockImplementation(() => Promise.resolve(FIXTURE_ROWS.map((r) => ({ ...r, repo_id: "ghost", state: "unknown", state_reason: "repo_unregistered" }))));
+    const { panel } = setup({ registered: [] });
+    await panel.activate();
+    expect(panel.registered("ghost")).toBe(false);
   });
 
   test("a view change requested by the graph switches the chip once", async () => {

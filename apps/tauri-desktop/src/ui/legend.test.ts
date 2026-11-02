@@ -9,7 +9,8 @@ import { createTransport } from "../transport";
 import { __resetKeysForTests, listKeys, listLocalKeys, QUEUE_KEYS, registerKeys } from "../keys";
 import { GLYPH_GROUPS, swatchSvg } from "../glyphs";
 import { isEscapeClaimed } from "../escape";
-import { TIME_CONTROL_NOTES, isLegendOpen, openLegend, toggleLegend } from "./legend";
+import { TIME_CONTROL_NOTES, isLegendOpen, localScopesFor, openLegend, spaceNotes, toggleLegend } from "./legend";
+import { LOCAL_KEYS } from "../keys";
 
 vi.mock("./graph/api", () => ({ graphAPI: { activity: vi.fn(async () => structuredClone(activityFixture)) } }));
 
@@ -69,7 +70,7 @@ describe("dialog", () => {
     b.close();
   });
 
-  test("lists enabled panel keys under This panel, global under Everywhere, locals under Also on the keyboard", () => {
+  test("lists enabled panel keys under This panel, global under Everywhere, locals under Elsewhere", () => {
     unreg.push(
       registerKeys([
         { scope: "fleet", keys: ["x"], display: "x-display", label: "fleet thing", handler: () => void 0 },
@@ -89,7 +90,8 @@ describe("dialog", () => {
     expect(section("Everywhere").textContent).toContain("global thing");
     expect(text()).not.toContain("gone thing");
     expect(text()).not.toContain("off thing");
-    const local = section("Also on the keyboard").textContent!;
+    expect(text()).not.toContain("Also on the keyboard");
+    const local = dlg().querySelector("details")!.textContent!;
     for (const k of listLocalKeys()) {
       expect(local).toContain(k.display);
       expect(local).toContain(k.label);
@@ -204,7 +206,7 @@ describe("close", () => {
 
   test("opening moves focus to the close button; Tab and Shift+Tab wrap", () => {
     openLegend({ opener });
-    const focusables = [...dlg().querySelectorAll<HTMLElement>("button, [tabindex='0']")];
+    const focusables = [...dlg().querySelectorAll<HTMLElement>("button, summary, [tabindex='0']")];
     expect(focusables.length).toBeGreaterThanOrEqual(2);
     expect(document.activeElement).toBe(focusables[0]);
     expect(focusables[0].tagName).toBe("BUTTON");
@@ -233,7 +235,7 @@ describe("close", () => {
     openLegend({ opener });
     (document.activeElement as HTMLElement).blur();
     expect(document.activeElement).toBe(document.body);
-    const focusables = [...dlg().querySelectorAll<HTMLElement>("button, [tabindex='0']")];
+    const focusables = [...dlg().querySelectorAll<HTMLElement>("button, summary, [tabindex='0']")];
     const t = key(document.body, "Tab");
     expect(t.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(focusables[0]);
@@ -348,5 +350,101 @@ describe("Escape ownership: the legend closes first", () => {
     const e = key(track, "Escape");
     expect(isEscapeClaimed(e)).toBe(true);
     expect(store.get().window).toEqual(w0);
+  });
+});
+
+describe("panel context", () => {
+  const has = (set: ReadonlySet<string>, ...v: string[]) => v.forEach((x) => expect(set.has(x), x).toBe(true));
+  const lacks = (set: ReadonlySet<string>, ...v: string[]) => v.forEach((x) => expect(set.has(x), x).toBe(false));
+
+  test("localScopesFor maps each panel and encoding to real LOCAL scopes", () => {
+    const all = new Set(LOCAL_KEYS.map((k) => k.scope));
+    const fleet = localScopesFor({ panel: "fleet", encoding: "map" });
+    has(fleet, "fleet", "time window", "rows and cards");
+    lacks(fleet, "graph canvas");
+    const graph = localScopesFor({ panel: "project", encoding: "graph" });
+    has(graph, "graph canvas", "graph search", "graph menu", "graph inspector", "time window", "project views");
+    has(localScopesFor({ panel: "project", encoding: "lanes" }), "project lanes", "rows and cards", "project views", "time window");
+    has(localScopesFor({ panel: "project", encoding: "map" }), "activity map", "activity strip");
+    const ev = localScopesFor({ panel: "project", encoding: "events" });
+    has(ev, "project views", "graph search");
+    has(localScopesFor({ panel: "fleet", encoding: "events" }), "events", "live feed");
+    lacks(localScopesFor({ panel: "fleet", encoding: "events" }), "fleet", "rows and cards");
+    has(localScopesFor({ panel: "sessions" }), "rows and cards");
+    has(localScopesFor({ panel: "session" }), "session tabs", "score", "score track", "time window");
+    for (const p of ["files", "doctor", "settings"]) expect(localScopesFor({ panel: p }).size).toBe(0);
+    for (const c of [fleet, graph, ev]) for (const sc of c) expect(all.has(sc), sc).toBe(true);
+  });
+
+  test("session context lists score keys and not zoom; project graph is the reverse", () => {
+    openLegend({ opener, context: { panel: "session" } });
+    expect(section("This panel").textContent).toContain("previous / next event");
+    expect(section("This panel").textContent).not.toContain("zoom in / out");
+    toggleLegend();
+    openLegend({ opener, context: { panel: "project", encoding: "graph" } });
+    expect(section("This panel").textContent).toContain("zoom in / out");
+    expect(section("This panel").textContent).not.toContain("previous / next event");
+  });
+
+  test("Elsewhere is a collapsed details holding out-of-panel rows with scope names", () => {
+    openLegend({ opener, context: { panel: "session" } });
+    const d = [...dlg().querySelectorAll("details")].find((x) => x.querySelector("summary")?.textContent === "Elsewhere")!;
+    expect(d).toBeTruthy();
+    expect(d.hasAttribute("open")).toBe(false);
+    expect(d.textContent).toContain("zoom in / out");
+    expect(d.textContent).toContain("(graph canvas)");
+    expect(text()).not.toContain("Also on the keyboard");
+  });
+
+  test("non-Score session tabs do not advertise Score controls", () => {
+    for (const tab of ["loops", "loom", "replay", "handoffs", "court"]) {
+      expect(localScopesFor({ panel: "session", tab }).has("score")).toBe(false);
+      expect(spaceNotes({ panel: "session", tab }).join(" ")).not.toContain("score: Space");
+    }
+    expect(localScopesFor({ panel: "session", tab: "score" }).has("score")).toBe(true);
+  });
+
+  test("This panel is never an empty list", () => {
+    openLegend({ opener, context: { panel: "doctor" } });
+    const s = section("This panel");
+    expect(s.querySelector("li")).toBeNull();
+    expect(s.querySelector("p.dim")?.textContent).toBe("No panel-specific keys");
+  });
+
+  test("registered rows are filtered by context too", () => {
+    unreg.push(registerKeys([{ scope: "fleet", keys: ["x"], display: "x-display", label: "fleet thing", handler: () => void 0 }]));
+    openLegend({ opener, context: { panel: "session" } });
+    expect(section("This panel").textContent).not.toContain("fleet thing");
+  });
+
+  test("Space notes are filtered by context", () => {
+    const doctor = spaceNotes({ panel: "doctor" }).join(" ");
+    expect(doctor).not.toContain("score: Space");
+    expect(doctor).not.toContain("activity map");
+    expect(spaceNotes({ panel: "session" }).join(" ")).toContain("score: Space play or pause");
+    expect(spaceNotes().join(" ")).toContain("score: Space play or pause");
+    openLegend({ opener, context: () => ({ panel: "doctor" }) });
+    expect(section("Space").textContent).not.toContain("Score playback");
+  });
+
+  test("without a context registered non-global rows are This panel, all locals Elsewhere", () => {
+    unreg.push(registerKeys([
+      { scope: "fleet", keys: ["x"], display: "x-display", label: "fleet thing", handler: () => void 0 },
+      { scope: "global", keys: ["z"], display: "z-display", label: "global thing", handler: () => void 0 },
+    ]));
+    openLegend({ opener });
+    expect(section("This panel").textContent).toContain("fleet thing");
+    expect(section("Everywhere").textContent).toContain("global thing");
+    const d = dlg().querySelector("details")!;
+    for (const k of LOCAL_KEYS) expect(d.textContent).toContain(k.label);
+  });
+});
+
+describe("Space note for the Fleet Events host", () => {
+  test("the events-scope Space binding is noted on Fleet Events only", () => {
+    const un = registerKeys([{ scope: "events", keys: [" "], display: "Space", label: "pause or resume the feed", handler: () => false }]);
+    expect(spaceNotes({ panel: "fleet", encoding: "events" }).join("\n")).toContain("events: Space pause or resume the feed.");
+    expect(spaceNotes({ panel: "fleet", encoding: "map" }).join("\n")).not.toContain("pause or resume the feed");
+    un();
   });
 });
