@@ -26,6 +26,9 @@ type (
 	ErrorSignature    = projection.ErrorSignature
 	ErrorSession      = projection.ErrorSession
 	ErrorSessionsPage = projection.ErrorSessionsPage
+	WorktreeLifetime  = projection.WorktreeLifetime
+	WorktreeSession   = projection.WorktreeSession
+	WorktreeMark      = projection.WorktreeMark
 )
 
 func (e *Engine) applyProjection(ev event.Event) error {
@@ -268,3 +271,16 @@ func CorrelationView(ev event.Event) event.Event {
 
 // FileSessions returns exact recorded workspace/path/source/session summaries.
 func (e *Engine) FileSessions() []FileSession { return e.projection.FileSessions() }
+
+// Worktrees returns spool-only worktree lifetimes, newest last_time first, then
+// repo id, then worktree id. Rows are keyed by the privacy-processed
+// worktree_id as stored (raw in full mode, sha256 hex otherwise), so a spool
+// written under several modes yields mode-segmented rows; merging them is the
+// caller's job. Meta events are counted in MetaEvents only and never affect
+// times, sessions or paths. Never nil.
+func (e *Engine) Worktrees() []WorktreeLifetime { return e.projection.Worktrees() }
+
+// Worktree returns the lifetime stored under the privacy-processed worktree id
+// exactly as it appears in the spool. When several repos share the id the most
+// recently active one wins.
+func (e *Engine) Worktree(id string) (WorktreeLifetime, bool) { return e.projection.Worktree(id) }

@@ -63,3 +63,31 @@ func TestCaptureImplementationDependenciesStaySealed(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptureDoesNotImportWorkspaceGraph(t *testing.T) {
+	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range file.Imports {
+			value, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return err
+			}
+			if value == "agentfirehose/internal/workspacegraph" || strings.HasPrefix(value, "agentfirehose/internal/workspacegraph/") {
+				t.Errorf("%s imports %q; the graph join belongs in the daemon", path, value)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
