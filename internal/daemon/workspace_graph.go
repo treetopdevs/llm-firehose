@@ -541,15 +541,16 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 // only, so a path reported through a symlinked checkout meets the canonical
 // worktree roots. Only ancestor directories are resolved, never the final
 // component. ".." applies after links are followed; a directory that no longer
-// exists resolves through its longest existing ancestor, unless the first
-// missing component is a dangling symlink. Results are cached per directory for
-// one request, up to limit entries.
+// exists resolves through its longest existing ancestor, unless the missing
+// component is a dangling symlink's target. Link targets that are not local are
+// never followed. Results are cached per directory for one request, up to
+// limit entries.
 type canonicalPaths struct {
-	ctx          context.Context
-	limit        int
-	dirs         map[string]string
-	evalSymlinks func(string) (string, error)      // nil: filepath.EvalSymlinks
-	lstat        func(string) (fs.FileInfo, error) // nil: os.Lstat
+	ctx      context.Context
+	limit    int
+	dirs     map[string]string
+	lstat    func(string) (fs.FileInfo, error) // nil: os.Lstat
+	readlink func(string) (string, error)      // nil: os.Readlink
 }
 
 // localResolvable reports whether a captured path may be handed to the
@@ -601,7 +602,7 @@ func (c *canonicalPaths) resolve(path string) string {
 		return clean
 	}
 	vol := filepath.VolumeName(path)
-	parts := strings.FieldsFunc(path[len(vol):], func(r rune) bool { return r < 128 && os.IsPathSeparator(uint8(r)) })
+	parts := splitPath(path[len(vol):])
 	if len(parts) == 0 || len(parts) > canonicalMaxParts {
 		return clean
 	}
@@ -616,45 +617,16 @@ func (c *canonicalPaths) resolve(path string) string {
 }
 
 // resolveDir returns the canonical form of the raw directory vol/parts, or ""
-// when it cannot be resolved.
+// when it cannot be resolved. It walks the components itself rather than call
+// filepath.EvalSymlinks, so every link target is checked with localResolvable
+// before it is followed: a link inside a local tree may point at the network.
 func (c *canonicalPaths) resolveDir(vol string, parts []string) string {
 	sep := string(filepath.Separator)
-	prefix := func(n int) string { return vol + sep + strings.Join(parts[:n], sep) }
-	key := prefix(len(parts))
+	key := vol + sep + strings.Join(parts, sep)
 	if resolved, ok := c.dirs[key]; ok {
 		return resolved
 	}
-	evalSymlinks, lstat := c.evalSymlinks, c.lstat
-	if evalSymlinks == nil {
-		evalSymlinks = filepath.EvalSymlinks
-	}
-	if lstat == nil {
-		lstat = os.Lstat
-	}
-	resolved, err := evalSymlinks(key)
-	if errors.Is(err, fs.ErrNotExist) {
-		resolved = ""
-		// Resolution fails from the first missing component on, so a binary
-		// search finds the longest resolvable prefix.
-		lo, hi := 0, len(parts)
-		if ancestor, err := evalSymlinks(prefix(0)); err == nil {
-			for hi-lo > 1 {
-				mid := (lo + hi) / 2
-				if r, err := evalSymlinks(prefix(mid)); err == nil {
-					lo, ancestor = mid, r
-				} else {
-					hi = mid
-				}
-			}
-			// A missing component cannot be a link, so the tail joins lexically;
-			// one that exists here is a dangling symlink and is not reattached.
-			if _, err := lstat(filepath.Join(ancestor, parts[lo])); errors.Is(err, fs.ErrNotExist) {
-				resolved = filepath.Join(append([]string{ancestor}, parts[lo:]...)...)
-			}
-		}
-	} else if err != nil {
-		resolved = ""
-	}
+	resolved := c.walk(vol, parts)
 	limit := c.limit
 	if limit <= 0 {
 		limit = canonicalCacheLimit
@@ -666,6 +638,85 @@ func (c *canonicalPaths) resolveDir(vol string, parts []string) string {
 		c.dirs[key] = resolved
 	}
 	return resolved
+}
+
+// canonicalMaxHops bounds followed links, as the OS does (ELOOP).
+const canonicalMaxHops = 40
+
+func splitPath(path string) []string {
+	return strings.FieldsFunc(path, func(r rune) bool { return r < 128 && os.IsPathSeparator(uint8(r)) })
+}
+
+// walk resolves one component at a time from the volume root. ".." pops the
+// already-resolved directory, so it applies after any link before it. A
+// missing component cannot be a link, so the rest joins lexically; one missing
+// inside a link's target means a dangling link, which is not reattached.
+func (c *canonicalPaths) walk(vol string, parts []string) string {
+	lstat, readlink := c.lstat, c.readlink
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	if readlink == nil {
+		readlink = os.Readlink
+	}
+	cur := vol + string(filepath.Separator)
+	pending := slices.Clone(parts)
+	fromLink, hops := 0, 0 // fromLink: leading pending components from link targets
+	for len(pending) > 0 {
+		if c.ctx != nil && c.ctx.Err() != nil {
+			return ""
+		}
+		comp, inLink := pending[0], fromLink > 0
+		pending = pending[1:]
+		if inLink {
+			fromLink--
+		}
+		switch comp {
+		case ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, comp)
+		if !localResolvable(next) {
+			return ""
+		}
+		info, err := lstat(next)
+		if errors.Is(err, fs.ErrNotExist) && !inLink {
+			return filepath.Join(append([]string{cur, comp}, pending...)...)
+		}
+		if err != nil {
+			return ""
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if hops++; hops > canonicalMaxHops {
+			return ""
+		}
+		target, err := readlink(next)
+		if err != nil {
+			return ""
+		}
+		if filepath.IsAbs(target) {
+			if !localResolvable(target) {
+				return ""
+			}
+			tvol := filepath.VolumeName(target)
+			cur, target = tvol+string(filepath.Separator), target[len(tvol):]
+		} else if target == "" || os.IsPathSeparator(target[0]) || filepath.VolumeName(target) != "" || !localResolvable(filepath.Join(cur, target)) {
+			return "" // empty, rooted without a volume (Windows), or not local
+		}
+		tparts := splitPath(target)
+		if len(tparts)+len(pending) > canonicalMaxParts {
+			return ""
+		}
+		pending = append(tparts, pending...)
+		fromLink += len(tparts)
+	}
+	return cur
 }
 
 func under(root, path string) bool {

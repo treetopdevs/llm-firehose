@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -740,8 +741,8 @@ func TestLocalResolvable(t *testing.T) {
 func TestCanonicalPathsSkipsNetworkPaths(t *testing.T) {
 	calls := 0
 	paths := canonicalPaths{
-		evalSymlinks: func(p string) (string, error) { calls++; return filepath.EvalSymlinks(p) },
-		lstat:        func(p string) (os.FileInfo, error) { calls++; return os.Lstat(p) },
+		lstat:    func(p string) (os.FileInfo, error) { calls++; return os.Lstat(p) },
+		readlink: func(p string) (string, error) { calls++; return os.Readlink(p) },
 	}
 	unc := "//host/share/dir/../x.go"
 	if filepath.Separator == '\\' {
@@ -758,5 +759,113 @@ func TestCanonicalPathsSkipsNetworkPaths(t *testing.T) {
 	paths.resolve(filepath.Join(t.TempDir(), "x.go"))
 	if calls == 0 {
 		t.Fatal("the injected filesystem funcs are not used")
+	}
+}
+
+// countingPaths records every path handed to lstat or readlink.
+func countingPaths(seen *[]string) canonicalPaths {
+	return canonicalPaths{
+		lstat:    func(p string) (os.FileInfo, error) { *seen = append(*seen, p); return os.Lstat(p) },
+		readlink: func(p string) (string, error) { *seen = append(*seen, p); return os.Readlink(p) },
+	}
+}
+
+// A symlink inside a local path may point at the network; the walk checks
+// each link target and never follows one that is not local. The host names
+// are reserved (.invalid) so a regression cannot reach a real host.
+func TestCanonicalPathsNeverFollowsNetworkLinks(t *testing.T) {
+	if filepath.Separator != '/' {
+		t.Skip("unix link targets")
+	}
+	for name, target := range map[string]string{
+		"automount": "/net/firehose-test.invalid/x",
+		"unc":       "//firehose-test.invalid/share",
+	} {
+		repo := canonicalTemp(t)
+		symlinkOrSkip(t, target, filepath.Join(repo, "docs"))
+		var seen []string
+		paths := countingPaths(&seen)
+		in := filepath.Join(repo, "docs", "a", "x.go")
+		if got := paths.resolve(in); got != in {
+			t.Errorf("%s: %q, want the captured text", name, got)
+		}
+		for _, p := range seen {
+			if !localResolvable(p) || strings.Contains(p, "firehose-test.invalid") {
+				t.Errorf("%s: filesystem call on %q", name, p)
+			}
+		}
+	}
+}
+
+func TestCanonicalPathsLinkLoopAndRelativeTarget(t *testing.T) {
+	dir := canonicalTemp(t)
+	symlinkOrSkip(t, filepath.Join(dir, "b"), filepath.Join(dir, "a"))
+	symlinkOrSkip(t, filepath.Join(dir, "a"), filepath.Join(dir, "b"))
+	var paths canonicalPaths
+	if in := filepath.Join(dir, "a", "x.go"); paths.resolve(in) != in {
+		t.Errorf("link loop: %q", paths.resolve(in))
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "real", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, filepath.Join("..", "real", "sub"), filepath.Join(dir, "d", "rel"))
+	link := filepath.Join(t.TempDir(), "l")
+	symlinkOrSkip(t, dir, link)
+	if got := paths.resolve(filepath.Join(link, "d", "rel", "x.go")); got != filepath.Join(dir, "real", "sub", "x.go") {
+		t.Errorf("relative target: %q", got)
+	}
+}
+
+type fakeInfo struct{ mode fs.FileMode }
+
+func (f fakeInfo) Name() string       { return "" }
+func (f fakeInfo) Size() int64        { return 0 }
+func (f fakeInfo) Mode() fs.FileMode  { return f.mode }
+func (f fakeInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeInfo) Sys() any           { return nil }
+
+// The walk does its own resolution through lstat and readlink, so a fake tree
+// proves both that links are followed and that a network target never is.
+func TestCanonicalPathsWalksThroughInjectedFilesystem(t *testing.T) {
+	if filepath.Separator != '/' {
+		t.Skip("unix fake tree")
+	}
+	links := map[string]string{"/v/ok": "real", "/v/docs": "/net/h/x", "/v/up": "/v/real/../real/sub", "/v/unc": "//h/share", "/v/up2": ".."}
+	dirs := map[string]bool{"/": true, "/v": true, "/v/real": true, "/v/real/sub": true}
+	var seen []string
+	paths := canonicalPaths{
+		lstat: func(p string) (os.FileInfo, error) {
+			seen = append(seen, p)
+			if _, ok := links[p]; ok {
+				return fakeInfo{fs.ModeSymlink}, nil
+			}
+			if dirs[p] {
+				return fakeInfo{fs.ModeDir}, nil
+			}
+			return nil, fs.ErrNotExist
+		},
+		readlink: func(p string) (string, error) { seen = append(seen, p); return links[p], nil },
+	}
+	for in, want := range map[string]string{
+		"/v/ok/x.go":          "/v/real/x.go",
+		"/v/up/x.go":          "/v/real/sub/x.go",
+		"/v/ok/new/x.go":      "/v/real/new/x.go",
+		"/v/docs/a/x.go":      "/v/docs/a/x.go",
+		"/v/unc/a/x.go":       "/v/unc/a/x.go",
+		"/v/up2/net/h/x.go":   "/v/up2/net/h/x.go", // ".." reaches / before /net
+		"/v/real/../../net/h": "/net/h",
+	} {
+		if got := paths.resolve(in); got != want {
+			t.Errorf("%s: %q want %q", in, got, want)
+		}
+	}
+	for _, p := range seen {
+		if !localResolvable(p) || strings.Contains(p, "/h/") {
+			t.Errorf("filesystem call on %q", p)
+		}
 	}
 }
