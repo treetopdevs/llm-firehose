@@ -10,6 +10,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -424,7 +426,7 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	snapshot, scanErr := s.graph.service.Snapshot(ctx, repoID, "", false)
 	cancel()
-	roots := activityRoots{}
+	roots := activityRoots{paths: canonicalPaths{ctx: r.Context()}}
 	if scanErr == nil && len(repoAliases) > 0 {
 		for _, ws := range snapshot.Workspaces {
 			_, aliases, _ := s.graph.service.EventScope(repoID, ws.ID)
@@ -471,6 +473,7 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 type activityRoots struct {
 	byAlias map[string]string
 	all     []string
+	paths   canonicalPaths
 }
 
 func (a *activityRoots) add(repoIdentity string, aliases []string) {
@@ -514,7 +517,7 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 		}
 		return ownID, path
 	}
-	clean := filepath.Clean(path)
+	clean := a.paths.resolve(path)
 	if !filepath.IsAbs(clean) {
 		if own == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return unresolved()
@@ -532,6 +535,188 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 	}
 	rel, _ := filepath.Rel(best, clean)
 	return "", filepath.ToSlash(rel)
+}
+
+// canonicalPaths resolves symlinks in captured absolute paths at match time
+// only, so a path reported through a symlinked checkout meets the canonical
+// worktree roots. Only ancestor directories are resolved, never the final
+// component. ".." applies after links are followed; a directory that no longer
+// exists resolves through its longest existing ancestor, unless the missing
+// component is a dangling symlink's target. Link targets that are not local are
+// never followed. Results are cached per directory for one request, up to
+// limit entries.
+type canonicalPaths struct {
+	ctx      context.Context
+	limit    int
+	dirs     map[string]string
+	lstat    func(string) (fs.FileInfo, error) // nil: os.Lstat
+	readlink func(string) (string, error)      // nil: os.Readlink
+}
+
+// localResolvable reports whether a captured path may be handed to the
+// filesystem. Captured paths are untrusted (any local process can emit or
+// ingest events), and resolving one can reach the network: on Windows a UNC or
+// device path (\\host\share, //host/share, \\?\UNC\, \\.\) makes the OS
+// contact the host over SMB and can leak NTLM credentials, and on macOS and
+// Linux the automount trees /net and /Network mount remote hosts on lookup.
+// Only a path under a local root is resolved: a single leading "/" on unix, a
+// drive letter on Windows. The automount check is case-insensitive, since a
+// case-insensitive volume finds /NET too, and also applies to the cleaned form.
+func localResolvable(path string) bool {
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") || strings.HasPrefix(path, `\/`) || strings.HasPrefix(path, `/\`) {
+		return false
+	}
+	vol := filepath.VolumeName(path)
+	if filepath.Separator == '\\' {
+		// A drive letter, then a separator: C:\x, never C:x or a UNC volume.
+		if len(vol) != 2 || vol[1] != ':' || len(path) < 3 || !os.IsPathSeparator(path[2]) {
+			return false
+		}
+		c := vol[0] | 0x20
+		return 'a' <= c && c <= 'z'
+	}
+	if vol != "" || !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for _, p := range []string{path, filepath.Clean(path)} {
+		first, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+		if strings.EqualFold(first, "net") || strings.EqualFold(first, "Network") {
+			return false
+		}
+	}
+	return true
+}
+
+const (
+	canonicalMaxBytes   = 4096
+	canonicalMaxParts   = 256
+	canonicalCacheLimit = 4096
+)
+
+// resolve returns path with its ancestor directories canonical, or
+// filepath.Clean(path) when it is relative, not local, oversized, cannot be
+// resolved, or the request is gone.
+func (c *canonicalPaths) resolve(path string) string {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) || !localResolvable(path) || len(path) > canonicalMaxBytes || c.ctx != nil && c.ctx.Err() != nil {
+		return clean
+	}
+	vol := filepath.VolumeName(path)
+	parts := splitPath(path[len(vol):])
+	if len(parts) == 0 || len(parts) > canonicalMaxParts {
+		return clean
+	}
+	dir, base := parts[:len(parts)-1], parts[len(parts)-1]
+	if base == "." || base == ".." {
+		dir, base = parts, ""
+	}
+	if resolved := c.resolveDir(vol, dir); resolved != "" {
+		return filepath.Join(resolved, base)
+	}
+	return clean
+}
+
+// resolveDir returns the canonical form of the raw directory vol/parts, or ""
+// when it cannot be resolved. It walks the components itself rather than call
+// filepath.EvalSymlinks, so every link target is checked with localResolvable
+// before it is followed: a link inside a local tree may point at the network.
+func (c *canonicalPaths) resolveDir(vol string, parts []string) string {
+	sep := string(filepath.Separator)
+	key := vol + sep + strings.Join(parts, sep)
+	if resolved, ok := c.dirs[key]; ok {
+		return resolved
+	}
+	resolved := c.walk(vol, parts)
+	limit := c.limit
+	if limit <= 0 {
+		limit = canonicalCacheLimit
+	}
+	if c.dirs == nil {
+		c.dirs = map[string]string{}
+	}
+	if len(c.dirs) < limit {
+		c.dirs[key] = resolved
+	}
+	return resolved
+}
+
+// canonicalMaxHops bounds followed links, as the OS does (ELOOP).
+const canonicalMaxHops = 40
+
+func splitPath(path string) []string {
+	return strings.FieldsFunc(path, func(r rune) bool { return r < 128 && os.IsPathSeparator(uint8(r)) })
+}
+
+// walk resolves one component at a time from the volume root. ".." pops the
+// already-resolved directory, so it applies after any link before it. A
+// missing component cannot be a link, so the rest joins lexically; one missing
+// inside a link's target means a dangling link, which is not reattached.
+func (c *canonicalPaths) walk(vol string, parts []string) string {
+	lstat, readlink := c.lstat, c.readlink
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	if readlink == nil {
+		readlink = os.Readlink
+	}
+	cur := vol + string(filepath.Separator)
+	pending := slices.Clone(parts)
+	fromLink, hops := 0, 0 // fromLink: leading pending components from link targets
+	for len(pending) > 0 {
+		if c.ctx != nil && c.ctx.Err() != nil {
+			return ""
+		}
+		comp, inLink := pending[0], fromLink > 0
+		pending = pending[1:]
+		if inLink {
+			fromLink--
+		}
+		switch comp {
+		case ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, comp)
+		if !localResolvable(next) {
+			return ""
+		}
+		info, err := lstat(next)
+		if errors.Is(err, fs.ErrNotExist) && !inLink {
+			return filepath.Join(append([]string{cur, comp}, pending...)...)
+		}
+		if err != nil {
+			return ""
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if hops++; hops > canonicalMaxHops {
+			return ""
+		}
+		target, err := readlink(next)
+		if err != nil {
+			return ""
+		}
+		if filepath.IsAbs(target) {
+			if !localResolvable(target) {
+				return ""
+			}
+			tvol := filepath.VolumeName(target)
+			cur, target = tvol+string(filepath.Separator), target[len(tvol):]
+		} else if target == "" || os.IsPathSeparator(target[0]) || filepath.VolumeName(target) != "" || !localResolvable(filepath.Join(cur, target)) {
+			return "" // empty, rooted without a volume (Windows), or not local
+		}
+		tparts := splitPath(target)
+		if len(tparts)+len(pending) > canonicalMaxParts {
+			return ""
+		}
+		pending = append(tparts, pending...)
+		fromLink += len(tparts)
+	}
+	return cur
 }
 
 func under(root, path string) bool {

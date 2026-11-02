@@ -166,9 +166,14 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 				out.UnreadableFileEvents++
 				return
 			}
+			counted := map[key]bool{} // two spellings of one file count once
 			for _, p := range paths {
 				group, rel := resolve(ev, p)
 				k := key{group, rel}
+				if counted[k] {
+					continue
+				}
+				counted[k] = true
 				if heat[k] == nil {
 					heat[k] = map[int]int{}
 				}
