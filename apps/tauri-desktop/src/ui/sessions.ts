@@ -7,7 +7,7 @@ import type { SessionDirectory } from "../session-directory";
 import { ERROR_MARK } from "../glyphs";
 import { idChip } from "./session-id";
 import { evidenceTime, needsLabel, pendingNow, stateWord } from "../needs";
-import { bucketCountsBySession, formatAge, sessionHue, sparkline } from "../spark";
+import { bucketCountsByKey, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventRows } from "./events";
 import { scopeEvents } from "./events/model";
 import type { CellScope } from "./workspace/model";
@@ -167,6 +167,8 @@ export function createSessions(
   let known = new Map<string, SessionSummary>();
   /** /attention entries by `source\0id`: a source-qualified open is named by its own source, not the aggregated row's. */
   let knownBySource = new Map<string, AttentionSession>();
+  /** The selected worktree's rows rebuilt from lifetime references, by `source\0id`: a history opened from one keeps its identity, not the aggregate's. */
+  let rebuiltRows = new Map<string, SessionSummary>();
   /** The session whose history is on screen, so a refreshed title updates its heading. */
   let shown: { id: string; source?: string; count: number } | null = null;
   /** The fetched history of the open session; re-scoped (not refetched) when the shared window moves. */
@@ -225,7 +227,7 @@ export function createSessions(
     return rows?.length ? rows : undefined;
   }
 
-  function worktreeItem(w: WorktreeRow, selected: boolean): HTMLElement {
+  function worktreeItem(w: WorktreeRow, selected: boolean, project: string): HTMLElement {
     const node = el(
       "div",
       {
@@ -247,18 +249,20 @@ export function createSessions(
       el("div", { class: "session-sub" }, el("span", { class: "session-facts" }, [w.sessionsText, w.badge].filter(Boolean).join(" · "))),
     );
     onActivate(node, () => {
-      store.narrow({ project: store.get().project, worktree: w.id, cell: undefined });
+      // The list on screen can outlive its project while the next refresh is pending; a worktree id means nothing under another.
+      if (store.get().project !== project) return;
+      store.narrow({ worktree: w.id, cell: undefined });
       void refresh();
     });
     return node;
   }
 
   /** Draws the list; hands focus to the row just widened from, unless focus left the panel or the user moved it. */
-  function drawWorktreeList(rows: readonly WorktreeLifetimeView[], now: number, willClear: (restore: () => void) => void) {
+  function drawWorktreeList(rows: readonly WorktreeLifetimeView[], project: string, now: number, willClear: (restore: () => void) => void) {
     willClear(captureFocus());
     clear(listBox);
     listBox.append(el("p", { class: "dim sessions-count" }, `${rows.length} worktree${rows.length === 1 ? "" : "s"}`));
-    for (const r of orderWorktrees(rows)) listBox.append(worktreeItem(describeWorktree(r, now), r.worktree_id === selectedWt));
+    for (const r of orderWorktrees(rows)) listBox.append(worktreeItem(describeWorktree(r, now), r.worktree_id === selectedWt, project));
     const back = returnFocusWt;
     returnFocusWt = undefined;
     const a = document.activeElement;
@@ -269,18 +273,17 @@ export function createSessions(
 
   /**
    * The rows of a selected worktree. /sessions holds one row per native id, aggregated over every
-   * source, so where another source is known for that id the row's counts, times and last summary
-   * may be that source's: it is rebuilt from this member's lifetime reference, and a member with no
-   * row at all gets one the same way. Only the title is bound to the row's source in the projection,
-   * so agent, repo and cwd come from the member's attention entry. Elsewhere rows stay as /sessions has them.
+   * source. A row is proven to be one source's only when that source's attention entry accounts for
+   * all its events (both count the same stream). Otherwise, including when /attention is down or
+   * another project holds the other source, a member's row is rebuilt from its lifetime reference,
+   * and a member with no row at all gets one the same way. Only the title is bound to the row's
+   * source in the projection, so agent, repo and cwd come from the member's attention entry.
+   * Elsewhere rows stay as /sessions has them.
    */
   function rowsInScope(sc: Scope, listed: readonly SessionSummary[], attended: ReadonlyMap<string, AttentionSession>): readonly SessionSummary[] {
     if (!sc.worktree) return listed;
-    const rows = store.resolver()?.lifetimes?.(sc);
-    const refs = rows?.find((r) => r.worktree_id === sc.worktree)?.sessions;
-    if (!rows || !refs) return listed;
-    const sharedWithAnother = (id: string, source: string): boolean =>
-      [...attended.values()].some((a) => a.id === id && a.source !== source) || rows.some((r) => r.sessions.some((m) => m.session_id === id && m.source !== source));
+    const refs = store.resolver()?.lifetimes?.(sc)?.find((r) => r.worktree_id === sc.worktree)?.sessions;
+    if (!refs) return listed;
     const fromRef = (r: WorktreeSessionRef, s: SessionSummary | undefined): SessionSummary => {
       const own = attended.get(sessionKey(r.source, r.session_id));
       const title = s?.title ?? own?.title;
@@ -302,7 +305,7 @@ export function createSessions(
       const key = sessionKey(s.source, s.id);
       have.add(key);
       const r = member.get(key);
-      return r && sharedWithAnother(s.id, s.source) ? fromRef(r, s) : s;
+      return r && attended.get(key)?.events !== s.events ? fromRef(r, s) : s;
     });
     return [...kept, ...refs.filter((r) => !have.has(sessionKey(r.source, r.session_id))).map((r) => fromRef(r, undefined))];
   }
@@ -320,7 +323,8 @@ export function createSessions(
     const version = ++historyVersion;
     historyRef = source === undefined ? { id } : { id, source };
     clear(eventsBox);
-    eventsBox.append(el("p", { class: "dim" }, `loading ${known.has(id) ? sessionName(known.get(id)!) : `session ${shortId(id)}`}…`));
+    const named = headingSubject(id, known.get(id), source);
+    eventsBox.append(el("p", { class: "dim" }, `loading ${named ? sessionName(named) : `session ${shortId(id)}`}…`));
     try {
       // Arriving from the graph, dwell or lanes, the list may not have loaded yet:
       // fetch the summary alongside the history so the heading is the name, not the id.
@@ -375,8 +379,10 @@ export function createSessions(
     renderEventRows(list, evs, onSelect);
   }
 
-  /** What names the history on screen: the matching source's attention entry when the open is source-qualified. */
+  /** What names the history on screen: the row itself when it was rebuilt, else the matching source's attention entry when the open is source-qualified. */
   function headingSubject(id: string, s: SessionSummary | undefined, source: string | undefined): SessionLike | undefined {
+    const row = source ? rebuiltRows.get(sessionKey(source, id)) : undefined;
+    if (row) return row;
     if (source && s && s.source !== source) return knownBySource.get(sessionKey(source, id)) ?? { id, source };
     if (source && !s) return knownBySource.get(sessionKey(source, id));
     return s;
@@ -550,25 +556,27 @@ export function createSessions(
         for (const a of inbox.value.sessions) attended.set(sessionKey(a.source, a.id), a);
         knownBySource = attended;
       }
+      // The scope may have moved while the requests were in flight: read it now.
+      const sc = store.get();
+      const scopedRows = list.status === "fulfilled" ? rowsInScope(sc, list.value, attended) : [];
       if (list.status === "fulfilled") {
+        if (sc.worktree) rebuiltRows = new Map(scopedRows.filter((s) => !list.value.includes(s)).map((s) => [sessionKey(s.source, s.id), s]));
         known = new Map(list.value.map((s) => [s.id, s]));
         directory?.remember([...list.value, ...(inbox.status === "fulfilled" ? inbox.value.sessions : [])]);
         // A title that arrived since the history was opened moves into its heading.
         const heading = eventsBox.querySelector(".session-heading");
         if (shown && heading) heading.replaceWith(sessionHeading(shown.id, known.get(shown.id), shown.source, shown.count));
       }
-      // The scope may have moved while the requests were in flight: read it now.
-      const sc = store.get();
       // The list needs only the resolver's rows, so it stands when /sessions is down.
       const worktrees = listRows(sc);
       if (worktrees) {
-        drawWorktreeList(worktrees, now, willClear);
+        drawWorktreeList(worktrees, sc.project!, now, willClear);
         return;
       }
       if (list.status === "rejected") throw list.reason;
       const scope = sc.cell ?? null;
       const members = sc.worktree || sc.project ? membership(store, sc) : undefined;
-      const all = rowsInScope(sc, list.value, attended)
+      const all = scopedRows
         .filter((s) => inCell(s, sc.cell) && (!members || members({ id: s.id, source: s.source })))
         .map((s) => ({ s, status: statusOf(attended.get(sessionKey(s.source, s.id)), now) }))
         .sort((a, b) => {
@@ -604,13 +612,15 @@ export function createSessions(
         listBox.append(el("p", { class: "dim sessions-scope-note" }, sc.worktree ? "This worktree's membership is unknown: showing sessions from all projects." : "No worktree rows for this project, so its membership is unknown: showing sessions from all projects."));
       }
       listBox.append(el("p", { class: "dim sessions-count" }, all.length > cap ? `Showing ${cap} of ${all.length} sessions` : `${all.length} session${all.length === 1 ? "" : "s"}`));
-      const counts = bucketCountsBySession(recentEvents(), now);
+      // Rows in a worktree are one source's, so their activity is too; elsewhere a row aggregates the native id, as its history does.
+      const sparkKey = sc.worktree ? (source: string, id: string) => sessionKey(source, id) : (_source: string, id: string) => id;
+      const counts = bucketCountsByKey(recentEvents(), (ev) => sparkKey(ev.source, ev.session_id!), now);
       let scale = 0;
       for (const c of counts.values()) {
         for (const n of c) scale = Math.max(scale, n);
       }
       for (const { s, status } of all.slice(0, cap)) {
-        listBox.append(sessionItem(s, status, counts.get(s.id) ?? [], scale, now));
+        listBox.append(sessionItem(s, status, counts.get(sparkKey(s.source, s.id)) ?? [], scale, now));
       }
       if (all.length > cap) {
         const more = el("button", { type: "button", class: "sessions-more" }, `Show ${Math.min(all.length - cap, SESSION_PAGE)} more`);

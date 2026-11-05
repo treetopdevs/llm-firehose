@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bucketCounts, formatAge, lastReported, sessionHue, sparkline, stateFresh } from "./spark";
+import { bucketCounts, bucketCountsByKey, formatAge, lastReported, sessionHue, sparkline, stateFresh } from "./spark";
 import type { FirehoseEvent } from "./api";
 
 const now = Date.parse("2026-07-02T10:10:00Z");
@@ -31,6 +31,17 @@ describe("bucketCounts", () => {
       ev("s1", 1000, { time: "garbage" }),
     ];
     expect(bucketCounts(events, "s1", now).every((n) => n === 0)).toBe(true);
+  });
+});
+
+describe("bucketCountsByKey", () => {
+  test("buckets under the caller's key, so one native id can split by source", () => {
+    const now = Date.parse("2026-11-05T12:00:00Z");
+    const at = (source: string) => ({ id: source, time: new Date(now - 1000).toISOString(), source, category: "tool", session_id: "same" }) as FirehoseEvent;
+    const counts = bucketCountsByKey([at("codex"), at("opencode"), at("opencode")], (ev) => `${ev.source}/${ev.session_id}`, now);
+    expect(counts.get("codex/same")!.reduce((a, b) => a + b)).toBe(1);
+    expect(counts.get("opencode/same")!.reduce((a, b) => a + b)).toBe(2);
+    expect(counts.has("same")).toBe(false);
   });
 });
 

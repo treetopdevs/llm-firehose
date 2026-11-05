@@ -179,6 +179,19 @@ describe("the list at the Worktree rung", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(panel.root.querySelector(".sessions-back")));
   });
 
+  test("a row left over from another project cannot narrow under the current one", async () => {
+    const { panel, store } = panelOver([wt("a1"), wt("b1", { repo_id: "repoB" })]);
+    await panel.refresh();
+    const stale = items(panel.root)[0];
+    expect(stale.getAttribute("data-wt")).toBe("a1");
+    store.narrow({ project: "repoB" });
+    for (const act of [() => stale.click(), () => stale.dispatchEvent(key("Enter"))]) {
+      act();
+      expect(store.get().project).toBe("repoB");
+      expect(store.get().worktree).toBeUndefined();
+    }
+  });
+
   test("a delayed widening leaves focus where the user moved it inside the panel", async () => {
     const { panel, store } = panelOver([wt("w1", { sessions: [ref("s1")], sessions_total: 1 })]);
     store.narrow({ worktree: "w1" });
@@ -449,8 +462,42 @@ describe("source identity in a selected worktree", () => {
     expect(panel.root.querySelector(".session-item")?.textContent).not.toContain("maybe theirs");
   });
 
-  test("a row no other source shares keeps its summary and event count", async () => {
+  describe("when isolation cannot be established, a member shows its lifetime facts", () => {
+    // Codex here has 1 event; OpenCode shares the id in another project, so this project's rows cannot see it.
+    const crossProject = async () => {
+      const old = ago(86_400_000);
+      sessions.mockResolvedValue([summary("same", { source: "codex", events: 101, has_error: true, last_summary: "opencode said this", last_time: ago(1000) })]);
+      const { panel, store } = panelOver([wt("w1", { sessions: [{ ...ref("same", "codex"), events: 1, first_time: old, last_time: old }], sessions_total: 1 })]);
+      store.narrow({ worktree: "w1" });
+      await panel.refresh();
+      return panel;
+    };
+    const expectLifetimeFacts = (panel: Awaited<ReturnType<typeof crossProject>>) => {
+      const row = panel.root.querySelector<HTMLElement>(".session-item")!;
+      expect(row.querySelector(".session-facts")?.textContent).toContain("1 events");
+      expect(row.querySelector(".age")?.textContent).toBe("1d");
+      expect(row.textContent).not.toContain("opencode said this");
+      expect(row.querySelector('[aria-label="error captured"]')).toBeNull();
+    };
+
+    test("/attention rejected", async () => {
+      attention.mockRejectedValue(new Error("attention down"));
+      expectLifetimeFacts(await crossProject());
+    });
+
+    test("/attention up but holding no entry for this source", async () => {
+      expectLifetimeFacts(await crossProject());
+    });
+
+    test("/attention up and its entry accounts for fewer events than the row", async () => {
+      attention.mockResolvedValue({ gaps: [], warnings: [], sessions: [{ id: "same", source: "codex", events: 1, state: "working", last: { time: ago(1000), observed_at: ago(1000) } } as unknown as AttentionSession] });
+      expectLifetimeFacts(await crossProject());
+    });
+  });
+
+  test("a row whose own attention entry accounts for all its events keeps its summary and event count", async () => {
     sessions.mockResolvedValue([summary("solo", { source: "codex", events: 9, last_summary: "own work" })]);
+    attention.mockResolvedValue({ gaps: [], warnings: [], sessions: [{ id: "solo", source: "codex", events: 9, state: "working", last: { time: ago(1000), observed_at: ago(1000) } } as unknown as AttentionSession] });
     const { panel, store } = panelOver([wt("w1", { sessions: [{ ...ref("solo", "codex"), events: 7 }], sessions_total: 1 })]);
     store.narrow({ worktree: "w1" });
     await panel.refresh();
@@ -478,6 +525,88 @@ describe("source identity in a selected worktree", () => {
     expect(panel.root.querySelector(".session-heading")?.textContent).toContain("1 events");
     expect(panel.root.querySelector(".sessions-events")?.textContent).toContain("from codex");
     expect(panel.root.querySelector(".sessions-events")?.textContent).not.toContain("from opencode");
+  });
+
+  test("a filtered history survives a context move that keeps its scoped session", async () => {
+    sessions.mockResolvedValue([summary("same", { source: "codex" })]);
+    sessionEvents.mockResolvedValue(["codex", "opencode"].map((source) => ({ id: source, time: ago(1000), source, category: "tool", session_id: "same", summary: `from ${source}` })));
+    const store = createScope();
+    store.setResolver(resolverOf(() => twoAgents));
+    store.narrow({ project: "repoA", worktree: "w1" });
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store, undefined, (r) => store.narrow({ session: r }));
+    await panel.refresh();
+    panel.root.querySelector<HTMLElement>(".session-item")!.click();
+    const history = () => panel.root.querySelector(".sessions-events")?.textContent;
+    await vi.waitFor(() => expect(history()).toContain("from codex"));
+    store.narrow({ project: "p2", session: { id: "same", source: "codex" } });
+    expect(history()).toContain("from codex");
+    expect(history()).not.toContain("from opencode");
+    store.narrow({ session: { id: "same", source: "opencode" } });
+    expect(history()).toBe("");
+  });
+
+  describe("a rebuilt row keeps one identity", () => {
+    const own = { id: "same", source: "codex", agent: "own-agent", cwd: "/w/ours", events: 1, state: "working", last: { time: ago(1000), observed_at: ago(1000) } } as unknown as AttentionSession;
+    const opened = async (remember = vi.fn()) => {
+      sessions.mockResolvedValue([summary("same", { source: "codex", agent: "foreign-agent", cwd: "/w/foreign", events: 101, first_time: ago(9_000_000) })]);
+      attention.mockResolvedValue({ gaps: [], warnings: [], sessions: [own] });
+      sessionEvents.mockResolvedValue([{ id: "e", time: ago(1000), source: "codex", category: "tool", session_id: "same" }]);
+      const store = createScope();
+      store.setResolver(resolverOf(() => twoAgents));
+      store.narrow({ project: "repoA", worktree: "w1" });
+      const directory = { remember, lookup: () => undefined } as unknown as SessionDirectory;
+      const panel = createSessions(() => {}, () => [], undefined, undefined, store, directory);
+      await panel.refresh();
+      expect(panel.root.querySelector(".session-facts")?.textContent).toContain("ours");
+      panel.root.querySelector<HTMLElement>(".session-item")!.click();
+      return panel;
+    };
+    const heading = (panel: Awaited<ReturnType<typeof opened>>) => panel.root.querySelector(".session-heading")?.textContent ?? "";
+
+    test("the loading line and the heading name the row, not the aggregate", async () => {
+      const panel = await opened();
+      expect(panel.root.querySelector(".sessions-events")?.textContent).not.toContain("foreign");
+      await vi.waitFor(() => expect(heading(panel)).toContain("ours"));
+      expect(heading(panel)).not.toContain("foreign");
+    });
+
+    test("a later heading update still does", async () => {
+      const panel = await opened();
+      await vi.waitFor(() => expect(heading(panel)).toContain("ours"));
+      await panel.refresh();
+      expect(heading(panel)).toContain("ours");
+      expect(heading(panel)).not.toContain("foreign");
+    });
+
+    test("the shared directory ends up with the row's identity", async () => {
+      const remember = vi.fn();
+      await opened(remember);
+      const list = remember.mock.calls[0][0] as Array<{ source: string; id: string; cwd?: string }>;
+      expect(list.filter((s) => s.source === "codex" && s.id === "same").at(-1)?.cwd).toBe("/w/ours");
+    });
+  });
+
+  describe("sparklines", () => {
+    const events = [{ id: "e1", time: ago(1000), source: "opencode", category: "tool", session_id: "same" }] as unknown as FirehoseEvent[];
+    const spark = (root: HTMLElement, source: string) => root.querySelector(`.session-item[data-source="${source}"] .spark`)?.textContent?.trim();
+
+    test("inside a worktree a row draws only its own source's activity", async () => {
+      sessions.mockResolvedValue([summary("same", { source: "codex" })]);
+      const store = createScope();
+      store.setResolver(resolverOf(() => [wt("w1", { sessions: [ref("same", "codex"), ref("same", "opencode")], sessions_total: 2 })]));
+      store.narrow({ project: "repoA", worktree: "w1" });
+      const panel = createSessions(() => {}, () => events, undefined, undefined, store);
+      await panel.refresh();
+      expect(spark(panel.root, "codex")).toBe("");
+      expect(spark(panel.root, "opencode")).not.toBe("");
+    });
+
+    test("outside one a row aggregates the native id, as its history does", async () => {
+      sessions.mockResolvedValue([summary("same", { source: "codex" })]);
+      const panel = createSessions(() => {}, () => events);
+      await panel.refresh();
+      expect(spark(panel.root, "codex")).not.toBe("");
+    });
   });
 
   test("a row with no source cannot qualify its history, so it opens all of it", async () => {
