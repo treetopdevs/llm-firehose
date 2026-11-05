@@ -163,7 +163,10 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
     function windowChanged() {
         if (!model) return;
         if (focus && !inWindow(focus.time, win)) clearFocus();
-        if (selectedGroup && !selectedGroup.members.some(id => { const e = model!.events.find(x => x.id === id); return !!e && inWindow(e.time, win); })) { selectedGroup = undefined; clear(membersRegion); }
+        if (selectedGroup) {
+            const byId = new Map(model.events.map(e => [e.id, e]));
+            if (!selectedGroup.members.some(id => { const e = byId.get(id); return !!e && inWindow(e.time, win); })) { selectedGroup = undefined; clear(membersRegion); }
+        }
         observationPage = 0; groupPage = 0; memberPage = 0;
         drawObservations(); drawGroups(); drawMembers();
     }

@@ -287,7 +287,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     if (!fromPlayback) sound.stop();
     at = next;
     // Follow the cursor when it leaves the window; this redraws once per window width.
-    if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
+    if (at < view.from || at > view.to) setView(panView(view, at, bounds()), !fromPlayback);
     updatePlayhead();
     const under = eventAt(score, at);
     if (!under) return;
@@ -469,11 +469,14 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     return LABEL_W + ((t - b.from) / span) * laneW();
   }
 
-  /** An explicit user action (zoom, pan, jump, reset) sets the view and publishes it. */
-  function setView(next: View) {
+  /**
+   * An explicit user action (zoom, pan, jump, reset) sets the view and publishes it.
+   * Playback following the playhead moves the view locally and never publishes.
+   */
+  function setView(next: View, publish = true) {
     view = clampView(next, bounds());
     draw();
-    publishWindow();
+    if (publish) publishWindow();
   }
 
   /**
