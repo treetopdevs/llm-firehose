@@ -82,7 +82,7 @@ export function createRunner(deps: RunnerDeps): Runner {
     const skipped = prev.skipped ?? [];
     if (entries.length === 0) {
       say(skipped.length > 0
-        ? { kind: "info", message: `Nothing to prune: ${skipped.length} stale ${skipped.length === 1 ? "entry was" : "entries were"} skipped as not plain admin directories` }
+        ? { kind: "info", message: `Nothing to prune: ${skipped.length} stale ${skipped.length === 1 ? "entry was" : "entries were"} skipped: ${[...new Set(skipped.map((s) => s.reason))].join("; ")}` }
         : { kind: "info", message: "Nothing to prune" });
       return;
     }
@@ -103,7 +103,7 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (remaining.length > 0) {
       say({ kind: "warn", message: `Pruned ${removed.length}, but ${remaining.length} stale ${remaining.length === 1 ? "entry" : "entries"} remain: ${remaining.join(", ")}` });
     } else {
-      say({ kind: "ok", message: `Pruned ${removed.length} stale worktree entries` });
+      say({ kind: "ok", message: `Pruned ${removed.length} stale worktree ${removed.length === 1 ? "entry" : "entries"}` });
     }
   }
 

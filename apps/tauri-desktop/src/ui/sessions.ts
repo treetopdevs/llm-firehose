@@ -453,11 +453,15 @@ export function createSessions(
     onActivate(
       item,
       () => {
-        onSelectSession(s.source ? { id: s.id, source: s.source } : { id: s.id });
+        const ref = s.source ? { id: s.id, source: s.source } : { id: s.id };
         // Inside a worktree each member has its own row, so a row opens only its source's events (no source
-        // cannot qualify). Elsewhere a row aggregates the native id: another agent sharing it has no row, so
-        // this is the only way to its history.
-        void openSession(s.id, store.get().worktree ? s.source || undefined : undefined);
+        // cannot qualify). Elsewhere s.source is only the first seen under an aggregated id: another agent
+        // sharing it has no row, so the unfiltered history is the only way to its events.
+        const filter = store.get().worktree ? s.source || undefined : undefined;
+        onSelectSession(ref);
+        void openSession(s.id, filter);
+        // The history tracks the scope's identity whether or not it is filtered.
+        historyRef = ref;
       },
       { self: true },
     );

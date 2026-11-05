@@ -445,6 +445,20 @@ test("ordinary aggregate session rows retain history from every source", async (
 });
 
 
+test("a row's history survives a context move that keeps its scoped session", async () => {
+  sessions.mockResolvedValue([summary({ id: "same", source: "codex", events: 1 })]);
+  sessionEvents.mockResolvedValue([{ ...ev("same", 0), source: "codex", summary: "row evidence" }]);
+  const store = createScope();
+  const panel = createSessions(() => {}, () => [], undefined, undefined, store, undefined, (ref) => store.narrow({ session: ref }));
+  await panel.refresh();
+  panel.root.querySelector<HTMLElement>(".session-item")!.click();
+  await vi.waitFor(() => expect(panel.root.textContent).toContain("row evidence"));
+  store.narrow({ project: "p2", session: { id: "same", source: "codex" } });
+  expect(panel.root.querySelector(".sessions-events")?.textContent).toContain("row evidence");
+  store.narrow({ session: { id: "same", source: "opencode" } });
+  expect(panel.root.querySelector(".sessions-events")?.textContent).toBe("");
+});
+
 test("a session row offers to open its score without opening the event list", async () => {
   sessions.mockResolvedValue([summary({ id: "s1" })]);
   const scored: string[] = [];

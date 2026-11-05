@@ -44,6 +44,18 @@ test("onPrivacyChanged never fires when setConfig fails", async () => {
   expect(s.root.textContent).toContain("nope");
 });
 
+test("a throwing onPrivacySaving does not block the save", async () => {
+  api.setConfig.mockResolvedValue({ restart_required: [] });
+  const onPrivacyChanged = vi.fn();
+  const s = createSettings({ onPrivacySaving: () => { throw new Error("boom"); }, onPrivacyChanged });
+  await s.refresh();
+  pick(s.root, "full");
+  await flush();
+  expect(api.setConfig).toHaveBeenCalledWith({ privacy_mode: "full" });
+  expect(s.root.textContent).toContain("privacy mode is now full");
+  expect(onPrivacyChanged).toHaveBeenCalledWith("full", undefined);
+});
+
 test("a throwing onPrivacyChanged does not break the saved status", async () => {
   api.setConfig.mockResolvedValue({ restart_required: [] });
   const s = createSettings({ onPrivacyChanged: () => { throw new Error("boom"); } });

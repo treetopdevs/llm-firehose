@@ -171,8 +171,23 @@ describe("prune", () => {
     const h = harness({ invoke: pruneInvoke(preview({ entries: [], token: "", skipped: [{ id: "s", reason: "symlink" }] }), {}) });
     await h.runner.run({ type: "prune", root: "/w/main" });
     expect(h.deps.confirm).not.toHaveBeenCalled();
-    expect(last(h.statuses).message).toContain("skipped");
-    expect(last(h.statuses).message).toContain("plain admin director");
+    expect(last(h.statuses).message).toBe("Nothing to prune: 1 stale entry was skipped: symlink");
+  });
+  test("only skipped: reports each distinct backend reason once", async () => {
+    const skipped = [
+      { id: "a", reason: "entry is locked" },
+      { id: "b", reason: "a git operation is in progress (lockfile present)" },
+      { id: "c", reason: "entry is locked" },
+    ];
+    const h = harness({ invoke: pruneInvoke(preview({ entries: [], token: "", skipped }), {}) });
+    await h.runner.run({ type: "prune", root: "/w/main" });
+    expect(last(h.statuses).message).toBe("Nothing to prune: 3 stale entries were skipped: entry is locked; a git operation is in progress (lockfile present)");
+    expect(last(h.statuses).message).not.toContain("plain admin director");
+  });
+  test("one pruned entry reads in the singular", async () => {
+    const h = harness({ invoke: pruneInvoke(preview(), { removed: ["a"], remaining: [], skipped: [] }) });
+    await h.runner.run({ type: "prune", root: "/w/main" });
+    expect(last(h.statuses)).toMatchObject({ kind: "ok", message: "Pruned 1 stale worktree entry" });
   });
   test("apply rejection: error, no onChanged", async () => {
     const h = harness({ invoke: pruneInvoke(preview(), new Error("changed")) });

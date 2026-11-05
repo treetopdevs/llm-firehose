@@ -21,7 +21,13 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
   const heading = el("h2", {}, "Settings");
 
   async function saveMode(mode: string, status: HTMLElement) {
-    const saving = opts.onPrivacySaving?.();
+    // The shell's failure must not stop the save, or the radio would misreport the mode.
+    let saving: unknown;
+    try {
+      saving = opts.onPrivacySaving?.();
+    } catch {
+      /* onPrivacyChanged falls back to its own snapshot */
+    }
     try {
       const res = await setConfig({ privacy_mode: mode });
       status.textContent =

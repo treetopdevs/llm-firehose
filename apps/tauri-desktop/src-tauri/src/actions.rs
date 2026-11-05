@@ -426,6 +426,13 @@ pub fn snapshot(common: &Path, id: &str) -> Result<EntrySnapshot, String> {
     tree.sort();
     let gitdir_bytes = fs::read(dir.join("gitdir")).unwrap_or_default();
     let target = String::from_utf8_lossy(&gitdir_bytes).trim().to_string();
+    // worktree.useRelativePaths writes a path relative to the admin directory,
+    // as git resolves it. Join leaves an absolute path as it is.
+    let target = if target.is_empty() {
+        target
+    } else {
+        dir.join(&target).to_string_lossy().into_owned()
+    };
     let locked = fs::symlink_metadata(dir.join("locked")).is_ok();
     let (dev, ino) = identity(&md);
     Ok(EntrySnapshot {
@@ -1288,6 +1295,60 @@ mod tests {
         prune_apply_impl(&tokens, rs(&repo), &p.token).unwrap();
         assert!(!a.exists());
         assert!(repo.join(".git/worktrees/live").exists());
+    }
+
+    #[test]
+    fn relative_gitdir_resolves_against_the_admin_dir() {
+        let t = TempDir::new();
+        let repo = make_repo(&t);
+        let common = repo.join(".git");
+        let a = stale_wt(&t, &repo, "a");
+
+        // <tmp>/repo/.git/worktrees/a/../../../../live is <tmp>/live.
+        let live = t.path.join("live");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join(".git"), "gitdir: x\n").unwrap();
+        fs::write(a.join("gitdir"), "../../../../live/.git\n").unwrap();
+        let snap = snapshot(&common, "a").unwrap();
+        assert_eq!(snapshot(&common, "a").unwrap(), snap);
+        assert!(eligible(&snap).is_err());
+
+        fs::write(a.join("gitdir"), "../../../../gone/.git\n").unwrap();
+        let snap = snapshot(&common, "a").unwrap();
+        assert_eq!(snapshot(&common, "a").unwrap(), snap);
+        assert!(eligible(&snap).is_ok());
+
+        // The re-check before deleting uses this snapshot: a restored worktree stops it.
+        let gone = t.path.join("gone");
+        fs::create_dir_all(&gone).unwrap();
+        fs::write(gone.join(".git"), "gitdir: x\n").unwrap();
+        assert!(eligible(&snap).is_err());
+
+        fs::write(a.join("gitdir"), "").unwrap();
+        assert!(eligible(&snapshot(&common, "a").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn a_live_worktree_added_with_relative_paths_is_not_eligible() {
+        let t = TempDir::new();
+        let repo = make_repo(&t);
+        let live = t.path.join("live");
+        // Git before 2.48 ignores this setting and writes an absolute path.
+        git(
+            &repo,
+            &[
+                "-c",
+                "worktree.useRelativePaths=true",
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "live",
+                rs(&live),
+            ],
+        );
+        let snap = snapshot(&repo.join(".git"), "live").unwrap();
+        assert!(eligible(&snap).is_err());
     }
 
     #[test]
