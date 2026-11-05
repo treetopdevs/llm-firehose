@@ -42,7 +42,7 @@ describe("roots store", () => {
     const roots = createRoots({ repos: async () => { if (fail) throw new Error("down"); return [repo("r1", "/w/a")]; } });
     await roots.refresh();
     fail = true;
-    await expect(roots.refresh()).resolves.toBeUndefined();
+    await expect(roots.refresh()).resolves.toMatchObject({ ok: false });
     expect(roots.resolved("r1")).toBe(true);
     expect(roots.rawLabel("r1")).toBe("/w/a");
   });
@@ -60,5 +60,50 @@ describe("roots store", () => {
     await roots.refresh();
     expect(roots.loaded()).toBe(true);
     expect(roots.resolved("r1")).toBe(true);
+  });
+
+  test("refresh resolves {ok,revision,repos} on success; list() returns id,label,vcs", async () => {
+    const roots = createRoots({ repos: async () => [repo("r1", "/w/a"), { ...repo("r2", "/w/b"), vcs: "jj" }] });
+    const r = await roots.refresh();
+    expect(r.ok).toBe(true);
+    expect(r.revision).toBeGreaterThan(0);
+    expect(r.repos).toEqual([{ id: "r1", label: "/w/a", vcs: "git" }, { id: "r2", label: "/w/b", vcs: "jj" }]);
+    expect(roots.list()).toEqual(r.repos);
+  });
+  test("a failed fetch resolves ok:false and keeps the cache", async () => {
+    let fail = false;
+    const roots = createRoots({ repos: async () => { if (fail) throw new Error("down"); return [repo("r1", "/w/a")]; } });
+    const first = await roots.refresh();
+    fail = true;
+    const r = await roots.refresh();
+    expect(r.ok).toBe(false);
+    expect(r.revision).toBe(first.revision);
+    expect(roots.list().map((x) => x.id)).toEqual(["r1"]);
+  });
+  test("a superseded call resolves ok:false", async () => {
+    const pending: Array<(l: ReturnType<typeof repo>[]) => void> = [];
+    const roots = createRoots({ repos: () => new Promise((res) => { pending.push(res); }) });
+    const first = roots.refresh();
+    const second = roots.refresh();
+    pending[1]!([repo("r2", "/w/b")]);
+    pending[0]!([repo("r1", "/w/a")]);
+    expect((await first).ok).toBe(false);
+    expect((await second).ok).toBe(true);
+    expect(roots.list().map((x) => x.id)).toEqual(["r2"]);
+  });
+  test("subscribe fires after each applied refresh only, and unsubscribes", async () => {
+    let fail = false;
+    const roots = createRoots({ repos: async () => { if (fail) throw new Error("down"); return [repo("r1", "/w/a")]; } });
+    const fn = vi.fn();
+    const off = roots.subscribe(fn);
+    await roots.refresh();
+    expect(fn).toHaveBeenCalledTimes(1);
+    fail = true;
+    await roots.refresh();
+    expect(fn).toHaveBeenCalledTimes(1);
+    fail = false;
+    off();
+    await roots.refresh();
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

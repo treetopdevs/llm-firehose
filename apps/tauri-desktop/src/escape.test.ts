@@ -76,7 +76,7 @@ test('graph-menu target ignored but hidden menu elsewhere does not block', () =>
   const { handler, store, afterAscend } = setup();
   handler(key(document.body));
   expect(store.get().project).toBeUndefined();
-  expect(afterAscend).toHaveBeenCalledWith('fleet', 'sessions');
+  expect(afterAscend).toHaveBeenCalledWith('fleet', 'sessions', expect.objectContaining({ project: 'p' }));
 });
 
 test('open graph-menu target ignored', () => {
@@ -137,7 +137,7 @@ test('ascend prevents default and calls afterAscend; works on focused button; ig
   handler(e);
   expect(e.defaultPrevented).toBe(true);
   expect(store.get().project).toBeUndefined();
-  expect(afterAscend).toHaveBeenCalledWith('fleet', 'score');
+  expect(afterAscend).toHaveBeenCalledWith('fleet', 'score', expect.objectContaining({ project: 'p' }));
 });
 
 test('action menu and action dialog are escape overlays', () => {
@@ -149,4 +149,36 @@ test('action menu and action dialog are escape overlays', () => {
     d.remove();
     expect(isEscapeEligible(key())).toBe(true);
   }
+});
+
+import { ascentTarget } from './escape';
+
+test('ascentTarget routes by the pre-ascend scope', () => {
+  const w = 'live' as const;
+  const s = { id: 's', source: 'codex' };
+  expect(ascentTarget({ window: w, project: 'p', worktree: 'w', session: s }, 'worktree', 'session')).toBe('sessions');
+  expect(ascentTarget({ window: w, project: 'p', session: s }, 'project', 'session')).toBe('project');
+  expect(ascentTarget({ window: w, session: s }, 'fleet', 'session')).toBe('fleet');
+  const pw = { window: w, project: 'p', worktree: 'w' } as const;
+  expect(ascentTarget(pw, 'project', 'sessions')).toBe('project');
+  expect(ascentTarget({ window: w, project: 'p' }, 'fleet', 'sessions')).toBe('fleet');
+  expect(ascentTarget({ ...pw, session: s }, 'worktree', 'sessions')).toBe('stay');
+  expect(ascentTarget({ window: w, cell: { kind: 'x' } as never }, 'fleet', 'sessions')).toBe('stay');
+  expect(ascentTarget({ window: w, project: 'p' }, 'fleet', 'project')).toBe('fleet');
+  expect(ascentTarget(pw, 'project', 'project')).toBe('stay');
+  expect(ascentTarget({ window: w, project: 'p' }, 'fleet', 'fleet')).toBe('stay');
+});
+
+test('afterAscend receives the pre-ascend scope; a session-only scope reaches fleet then ends', () => {
+  const store = createScope({ session: { id: 's', source: 'codex' } });
+  const afterAscend = vi.fn();
+  const handler = createEscapeHandler({ store, activePanel: () => 'session', scopePanels: new Set(['session']), afterAscend });
+  handler(key());
+  expect(afterAscend).toHaveBeenCalledTimes(1);
+  const [alt, active, prev] = afterAscend.mock.calls[0];
+  expect(alt).toBe('fleet');
+  expect(active).toBe('session');
+  expect(prev.session).toEqual({ id: 's', source: 'codex' });
+  expect(ascentTarget(prev, alt, active)).toBe('fleet');
+  expect(store.ascend()).toBeNull();
 });

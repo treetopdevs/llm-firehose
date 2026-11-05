@@ -190,6 +190,7 @@ export const LOCAL = {
   feedRows: local('live feed', '↑ ↓ Home End', 'move between events', 'ArrowUp', 'ArrowDown', 'Home', 'End'),
   sessionTabs: local('session tabs', '← → Home End', 'switch tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End'),
   projectViews: local('project views', '← → Home End', 'switch view', 'ArrowLeft', 'ArrowRight', 'Home', 'End'),
+  fleetViews: local('fleet views', '← → Home End', 'switch encoding', 'ArrowLeft', 'ArrowRight', 'Home', 'End'),
 } as const satisfies Record<string, LocalKeyDescriptor>;
 
 export const LOCAL_KEYS: readonly LocalKeyDescriptor[] = Object.values(LOCAL);

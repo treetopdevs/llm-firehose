@@ -503,3 +503,32 @@ test("onCount listeners run when the strip redraws, so a snooze reaches them at 
   expect(seen.at(-1)).toBe(0);
   expect(seen).toContain(1);
 });
+
+test("worktree filter and card line name through labels, never a 64-hex value; option value stays the id", async () => {
+  const HEX = "ab".repeat(32);
+  const REPO = "cd".repeat(32);
+  snapshot.sessions = [
+    { ...session("r1"), worktree_id: HEX, repo_id: REPO, cwd: undefined as unknown as string },
+    { ...session("r2", false), worktree_id: "/Users/n/develop/proj", cwd: undefined as unknown as string },
+  ] as typeof snapshot.sessions;
+  const panel = mount({ labels: { worktree: (id) => (id === HEX ? "alpha-wt" : undefined), project: (id) => (id === REPO ? "alpha" : undefined) } });
+  await panel.refresh();
+  const select = panel.root.querySelector<HTMLSelectElement>("select[aria-label=Worktree]")!;
+  const opts = [...select.options].map((o) => [o.value, o.textContent]);
+  expect(opts).toContainEqual([HEX, "alpha-wt"]);
+  expect(opts).toContainEqual(["/Users/n/develop/proj", "proj"]);
+  expect(panel.root.textContent).toContain("Worktree: alpha-wt");
+  expect(panel.root.textContent).not.toContain(HEX);
+  select.value = HEX;
+  select.dispatchEvent(new Event("change"));
+  expect(panel.root.querySelectorAll(".attention-row")).toHaveLength(1);
+});
+
+test("without labels a digest worktree shows its 8-character prefix, not 64 hex", async () => {
+  const HEX = "ab".repeat(32);
+  snapshot.sessions = [{ ...session("r1"), worktree_id: HEX }] as typeof snapshot.sessions;
+  const panel = mount();
+  await panel.refresh();
+  expect(panel.root.textContent).toContain(`Worktree: ${HEX.slice(0, 8)}`);
+  expect(panel.root.textContent).not.toContain(HEX);
+});

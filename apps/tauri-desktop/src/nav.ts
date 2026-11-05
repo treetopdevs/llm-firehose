@@ -30,3 +30,6 @@ export function resolveAlias(name: AliasName, sc: Scope, isRegistered?: (project
     case "attention": return { panel: "sessions", needsOnly: true };
   }
 }
+
+/** The shared detail pane's inspector belongs only to the Session panel; every other real panel change closes it. */
+export const inspectorBelongsTo = (panel: string): boolean => panel === "session";

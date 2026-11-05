@@ -275,6 +275,18 @@ describe('fallback resolver', () => {
     expect(r2.matcher!(sc)).toBe(fm);
   });
 
+  test('composeResolvers forwards the refresh signal to both parts', async () => {
+    const s = createScope();
+    const pr = vi.fn(() => Promise.resolve());
+    const fr = vi.fn(() => Promise.resolve());
+    s.setResolver(mk({ refresh: pr }));
+    s.setFallbackResolver(mk({ refresh: fr }));
+    const ctl = new AbortController();
+    await s.resolver()!.refresh!(ctl.signal);
+    expect((pr.mock.calls[0] as unknown[])[0]).toBe(ctl.signal);
+    expect((fr.mock.calls[0] as unknown[])[0]).toBe(ctl.signal);
+  });
+
   test('labels: undefined primary keys do not hide fallback', () => {
     const s = createScope();
     s.setResolver(mk({ labels: () => ({ project: undefined, worktree: 'pw' }) }));

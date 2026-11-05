@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 const tauri = vi.hoisted(() => ({ on: false, invoke: undefined as undefined | ((cmd: string, args?: unknown) => Promise<unknown>) }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -264,7 +264,7 @@ type Boot = {
 let tracked: Boot["keydownListeners"] = [];
 
 type BootOpts = {
-  sessions?: unknown[]; repos?: unknown[]; snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
+  sessions?: unknown[]; repos?: unknown[] | (() => unknown[] | Promise<unknown[]>); snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
   worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
   // /workspace-graph/timeline answers a valid EventPage; /workspace-graph/activity a valid ActivityResponse.
@@ -272,6 +272,13 @@ type BootOpts = {
   activity?: ActivityResponse | ((q: URLSearchParams) => ActivityResponse);
   // Also fake setTimeout (live-event debounce tests).
   fakeTimeout?: boolean;
+  // GET /config answers config(); a POST /config reaches onConfigPost (privacy-change tests).
+  config?: () => Record<string, unknown>;
+  onConfigPost?: (body: Record<string, unknown>) => void;
+  // Held before the POST /config response is returned.
+  configPostGate?: Promise<void>;
+  // GET /attention/event answers attentionEvent(id) (stale-inspection tests).
+  attentionEvent?: (id: string) => Promise<unknown>;
 };
 async function boot(opts: BootOpts = {}): Promise<Boot> {
   document.body.innerHTML = '<div id="app"></div>';
@@ -300,11 +307,12 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
       if (opts.healthGate) await opts.healthGate;
       return json({ status: "ok", version: "test", schema_version: 1 });
     }
+    if (p === "/attention/event" && opts.attentionEvent) return json(await opts.attentionEvent(u.searchParams.get("id") ?? ""));
     if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: [] });
     if (p === "/sessions") return json(opts.sessions ?? []);
     if (p.startsWith("/sessions/")) return json(opts.sessionEvents ?? scoreFixture);
     if (p === "/events") return json(opts.events ?? []);
-    if (p === "/workspace-graph/repos") return json(opts.repos ?? []);
+    if (p === "/workspace-graph/repos") return json(typeof opts.repos === "function" ? await opts.repos() : opts.repos ?? []);
     if (p === "/workspace-graph/timeline") {
       const t = opts.timeline ?? { events: [], has_more: false, order: "newest_first" };
       return json(typeof t === "function" ? t(u.searchParams) : t);
@@ -314,7 +322,14 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
       return json(typeof a === "function" ? a(u.searchParams) : a);
     }
     if (p === "/workspace-graph") return json(opts.snapshots?.[u.searchParams.get("repo_id") ?? ""] ?? {});
-    if (p === "/config") return json({ privacy_mode: "balanced" });
+    if (p === "/config") {
+      if (init?.method === "POST") {
+        opts.onConfigPost?.(JSON.parse(String(init.body)));
+        await opts.configPostGate;
+        return json({ restart_required: [] });
+      }
+      return json(opts.config?.() ?? { privacy_mode: "balanced" });
+    }
     return json([]);
   }));
   tracked = [];
@@ -467,11 +482,14 @@ test("Escape ascends session, worktree, project from score; fleet is a no-op", a
   esc();
   expect(b.scope.get().worktree).toBeUndefined();
   expect(b.scope.get().project).toBe("P");
+  // Routing is by the pre-ascend scope: Sessions with a worktree goes up to Project, then Fleet.
+  expect(b.active()).toBe("project");
   esc();
   expect(b.scope.get().project).toBeUndefined();
+  expect(b.active()).toBe("fleet");
   const e4 = esc();
   expect(e4.defaultPrevented).toBe(false);
-  expect(b.active()).toBe("sessions");
+  expect(b.active()).toBe("fleet");
 });
 
 test("a sessions row click only narrows scope: no refetch, the clicked row survives", async () => {
@@ -522,7 +540,16 @@ test("Escape from loops returns to sessions and ascends; Escape on sessions refe
   const before = listCalls();
   esc();
   expect(b.scope.get().worktree).toBeUndefined();
-  await vi.waitFor(() => expect(listCalls()).toBeGreaterThan(before));
+  expect(b.active()).toBe("project");
+  // A session still in scope on Sessions: Escape stays on the list and refetches it.
+  b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
+  b.nav("sessions").click();
+  const mid = listCalls();
+  esc();
+  expect(b.active()).toBe("sessions");
+  expect(b.scope.get().session).toBeUndefined();
+  await vi.waitFor(() => expect(listCalls()).toBeGreaterThan(mid));
+  expect(before).toBeGreaterThan(0);
 });
 
 test("Escape is a no-op on non-scope panels", async () => {
@@ -689,9 +716,9 @@ test.each([
 });
 
 function expectProjectInert(b: Boot) {
-  // Resolver refreshes fetch without a signal; the panel's own loads always carry one.
+  // Resolver refreshes carry a bounded (never-aborted-by-the-panel) signal since slice 17 T1; the panel's own load is the one that got aborted.
   const own = b.worktreeSignals.filter((x) => x !== undefined);
-  expect(own[own.length - 1]?.aborted).toBe(true);
+  expect(own.some((x) => x.aborted)).toBe(true);
   const before = b.scope.get();
   const n = b.worktreeSignals.length;
   document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true }));
@@ -1924,7 +1951,7 @@ test("exactly one sidebar button carries aria-current=page after every show() pa
   expect(b.active()).toBe("doctor");
   expectOneCurrent("onDoctor");
   // Escape ascent session -> sessions.
-  b.scope.set({ project: "r1", window: "live" });
+  b.scope.set({ project: "r1", worktree: "w1", window: "live" });
   b.nav("sessions").click();
   b.scope.narrow({ session: { id: S1, source: "codex" } });
   b.nav("session").click();
@@ -2211,7 +2238,7 @@ test("go('strata') lands on Fleet with Strata pressed and its own heading in the
   const b = await boot({ worktrees: [wtRow()] });
   b.go("strata");
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("strata").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("strata").getAttribute("aria-selected")).toBe("true");
   expect(document.querySelector(".fleet-body .strata h2")?.textContent).toBe("Session stratigraphy");
   expect(document.querySelector(".fleet-body .ecosystem")).toBeNull();
 });
@@ -2221,7 +2248,7 @@ test("go('ecosystem') lands on Fleet Patches; leaving it removes the panel", asy
   b.go("ecosystem");
   expect(b.active()).toBe("fleet");
   expect(fleetEnc("ecosystem").textContent).toBe("Patches");
-  expect(fleetEnc("ecosystem").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("ecosystem").getAttribute("aria-selected")).toBe("true");
   expect(document.querySelector(".fleet-body .ecosystem h2")?.textContent).toBe("Patch ecosystem");
   fleetEnc("map").click();
   expect(document.querySelector(".ecosystem")).toBeNull();
@@ -2304,7 +2331,7 @@ test("go('live') with an empty scope lands on Fleet Events with the feed rows vi
   b.go("live");
   expect(b.active()).toBe("fleet");
   expect(fleetEnc("events").textContent).toBe("Events");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
   await vi.waitFor(() => expect(feedRows().length).toBeGreaterThan(0));
   expect(document.querySelector(".fleet-body .feed h2")).toBeNull();
 });
@@ -2331,7 +2358,7 @@ test("go('live') with an unregistered project lands on Fleet Events, and the Pro
   b.scope.narrow({ project: "ghost" });
   b.go("live");
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
   await vi.waitFor(() => expect(feedRows().length).toBeGreaterThan(0));
   expect(b.scope.get().project).toBe("ghost");
 });
@@ -2343,7 +2370,7 @@ test("go('live') for a captured repo whose rows are all repo_unregistered lands 
   b.scope.narrow({ project: "r1" });
   b.go("live");
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
 });
 
 test("go('live') before Project has rows (worktrees failed to load) lands on Fleet Events and keeps the scope", async () => {
@@ -2351,7 +2378,7 @@ test("go('live') before Project has rows (worktrees failed to load) lands on Fle
   b.scope.narrow({ project: "r1" });
   b.go("live");
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
   expect(b.scope.get().project).toBe("r1");
 });
 
@@ -2361,7 +2388,7 @@ test("Project 'Open events' under an older daemon lands on the feed", async () =
   await vi.waitFor(() => expect(document.querySelector(".project-unsupported button")).not.toBeNull());
   document.querySelector<HTMLButtonElement>(".project-unsupported button")!.click();
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
   await vi.waitFor(() => expect(feedRows().length).toBeGreaterThan(0));
 });
 
@@ -2419,20 +2446,20 @@ test("Escape ascent lands on Fleet in the user's last encoding and writes nothin
   b.scope.narrow({ project: "repoA" });
   esc();
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("matrix").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("matrix").getAttribute("aria-selected")).toBe("true");
   // Explicit go('live') selects Events, and the later ascent keeps it.
   b.scope.replaceContext({});
   b.go("live");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
   b.nav("project").click();
   await vi.waitFor(() => expect(laneOrEmpty()).not.toBeNull());
   b.scope.narrow({ project: "repoA" });
   esc();
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
   b.nav("settings").click();
   b.nav("fleet").click();
-  expect(fleetEnc("events").getAttribute("aria-pressed")).toBe("true");
+  expect(fleetEnc("events").getAttribute("aria-selected")).toBe("true");
 });
 
 test("transport: hidden on Fleet Events, go('live') keeps a historical window, Project Events keeps the transport", async () => {
@@ -2518,6 +2545,7 @@ test("strip click opens Needs you on the Worktree rung without touching scope", 
   expect(document.querySelector(".sessions-needs[aria-pressed=false]")).not.toBeNull();
   expect(document.querySelector<HTMLElement>(".sessions-inbox")!.hidden).toBe(true);
   strip().click();
+  b.scope.narrow({ worktree: "w1" });
   b.nav("session").click();
   esc();
   expect(b.scope.get().session).toBeUndefined();
@@ -2664,4 +2692,287 @@ test("Fleet shares the one controller: its fork menu renders in the shell-owned 
   expect(document.querySelector(".actions-host .action-menu")).not.toBeNull();
   b.nav("sessions").click();
   expect(document.querySelector(".action-menu")).toBeNull();
+});
+
+
+// --- privacy-mode change: the shell is the single scope writer ---------------------------------------------------
+const OLD_ID = "/Users/n/develop/alpha";
+const NEW_ID = "sha256-0a1b2c3d4e5f";
+const FROZEN_WINDOW = { from: NOW - 7_200_000, to: NOW - 3_600_000 };
+const waitFor = (fn: () => void) => vi.waitFor(fn, { timeout: 4000 });
+type PrivacyState = { mode: string; repos: unknown[]; holdNext?: boolean; hangAll?: boolean; gate?: Promise<void>; failures?: number; calls: number };
+async function privacyBoot(state: PrivacyState, extra: BootOpts = {}) {
+  const b = await boot({
+    config: () => ({ privacy_mode: state.mode }),
+    onConfigPost: (body) => {
+      state.mode = String(body.privacy_mode);
+      state.repos = state.mode === "full" ? [repoOf(OLD_ID, "alpha")] : [repoOf(NEW_ID, "alpha")];
+    },
+    repos: async () => {
+      state.calls++;
+      if (state.hangAll) await new Promise<void>(() => {});
+      if (state.holdNext) {
+        state.holdNext = false;
+        await state.gate;
+      }
+      if (state.failures && state.failures > 0) {
+        state.failures--;
+        throw new TypeError("network down");
+      }
+      return state.repos;
+    },
+    ...extra,
+  });
+  await settle();
+  await waitFor(() => expect(state.calls).toBeGreaterThan(0));
+  await settle();
+  return b;
+}
+const pickMode = async (b: Boot, mode: string) => {
+  b.nav("settings").click();
+  await waitFor(() => expect(document.querySelector(`#mode-${mode}`)).not.toBeNull());
+  const input = document.querySelector<HTMLInputElement>(`#mode-${mode}`)!;
+  input.checked = true;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+};
+const shellNote = () => document.querySelector<HTMLElement>("p.shell-note[role=status]:not([hidden])");
+
+test("privacy change: project remaps to the new id, worktree and session clear, the frozen window survives, one scope write", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state);
+  b.scope.narrow({ project: OLD_ID, worktree: "wt-old", session: { id: "s1" } });
+  b.scope.narrow({ window: FROZEN_WINDOW });
+  expect(b.scope.get().window).toEqual(FROZEN_WINDOW);
+  const writes: unknown[] = [];
+  b.scope.subscribe((n) => writes.push(n));
+  await pickMode(b, "minimal");
+  await waitFor(() => expect(b.scope.get().project).toBe(NEW_ID));
+  await settle();
+  const sc = b.scope.get();
+  expect(sc.worktree).toBeUndefined();
+  expect(sc.session).toBeUndefined();
+  expect(sc.window).toEqual(FROZEN_WINDOW);
+  expect(writes).toHaveLength(1);
+  expect(shellNote()?.textContent).toMatch(/privacy mode changed/i);
+  expect(shellNote()?.textContent).toMatch(/worktree/i);
+  // the note goes with the next scope change
+  b.scope.narrow({ window: "live" });
+  expect(shellNote()).toBeNull();
+});
+
+test("privacy change with an unmatched label gives project undefined plus a note", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state, {
+    onConfigPost: (body) => {
+      state.mode = String(body.privacy_mode);
+      state.repos = [repoOf(NEW_ID, "renamed")];
+    },
+  });
+  b.scope.narrow({ project: OLD_ID, worktree: "wt-old", window: FROZEN_WINDOW });
+  const writes: unknown[] = [];
+  b.scope.subscribe((n) => writes.push(n));
+  await pickMode(b, "minimal");
+  await waitFor(() => expect(b.scope.get().project).toBeUndefined());
+  await settle();
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().window).toEqual(FROZEN_WINDOW);
+  expect(writes).toHaveLength(1);
+  expect(shellNote()?.textContent).toMatch(/privacy mode changed/i);
+});
+
+test("privacy change: a superseded first roots refresh is retried and the remap ends correct", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  let release!: () => void;
+  state.gate = new Promise<void>((r) => { release = r; });
+  const b = await privacyBoot(state);
+  b.scope.narrow({ project: OLD_ID, worktree: "wt-old", window: FROZEN_WINDOW });
+  await pickMode(b, "minimal");
+  // the handler's refresh is the next /workspace-graph/repos call: hold it, then supersede it
+  state.holdNext = true;
+  await waitFor(() => expect(state.holdNext).toBe(false));
+  b.nav("fleet").click(); // arriving on Fleet re-reads roots and supersedes the held call
+  await settle();
+  release();
+  await waitFor(() => expect(b.scope.get().project).toBe(NEW_ID));
+  expect(b.scope.get().window).toEqual(FROZEN_WINDOW);
+  expect(b.scope.get().worktree).toBeUndefined();
+});
+
+test("privacy change: a failed roots refresh is retried; it ends correct", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state);
+  b.scope.narrow({ project: OLD_ID, window: FROZEN_WINDOW });
+  state.failures = 1;
+  await pickMode(b, "minimal");
+  await waitFor(() => expect(b.scope.get().project).toBe(NEW_ID));
+});
+
+test("privacy change: identities that never verify clear the project with an 'identities could not be verified' note", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state);
+  b.scope.narrow({ project: OLD_ID, worktree: "wt-old", window: FROZEN_WINDOW });
+  state.failures = 1000;
+  await pickMode(b, "minimal");
+  await waitFor(() => expect(b.scope.get().project).toBeUndefined());
+  expect(b.scope.get().window).toEqual(FROZEN_WINDOW);
+  expect(shellNote()?.textContent).toMatch(/identities could not be verified/i);
+});
+
+test("privacy change: roots refreshed while the save is pending do not replace the 'before' snapshot", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  let release!: () => void;
+  const configPostGate = new Promise<void>((r) => { release = r; });
+  const b = await privacyBoot(state, {
+    configPostGate,
+    onConfigPost: (body) => {
+      state.mode = String(body.privacy_mode);
+      state.repos = [repoOf(NEW_ID, "alpha")];
+    },
+  });
+  b.scope.narrow({ project: OLD_ID, window: FROZEN_WINDOW });
+  await pickMode(b, "minimal");
+  await waitFor(() => expect(state.mode).toBe("minimal"));
+  b.nav("fleet").click(); // refreshes roots with the new ids while POST /config is still pending
+  await waitFor(() => expect(state.calls).toBeGreaterThan(1));
+  await settle();
+  release();
+  await waitFor(() => expect(b.scope.get().project).toBe(NEW_ID));
+  expect(shellNote()?.textContent ?? "").not.toMatch(/could not be verified/i);
+});
+
+test("privacy change: a hung roots request does not block reconciliation; a newer verified snapshot decides", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state);
+  b.scope.narrow({ project: OLD_ID, window: FROZEN_WINDOW });
+  await pickMode(b, "minimal");
+  state.holdNext = true;
+  state.gate = new Promise<void>(() => {}); // never settles
+  await waitFor(() => expect(state.holdNext).toBe(false));
+  b.nav("fleet").click();
+  await waitFor(() => expect(b.scope.get().project).toBe(NEW_ID));
+});
+
+test("privacy change: roots requests that never settle time out into the unverified note", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state);
+  b.scope.narrow({ project: OLD_ID, window: FROZEN_WINDOW });
+  state.hangAll = true; // every roots request hangs forever
+  await pickMode(b, "minimal");
+  await vi.waitFor(() => expect(b.scope.get().project).toBeUndefined(), { timeout: 15000 });
+  expect(shellNote()?.textContent).toMatch(/could not be verified/i);
+}, 20000);
+
+describe("detail pane ownership and stale inspection (slice 17 T4)", () => {
+  const openFixtureDetail = async () => {
+    const { renderDetail } = await import("./ui/detail");
+    const fixture = (await import("./ui/score/fixture.errsig.json")).default;
+    const pane = document.querySelector<HTMLElement>(".detail")!;
+    renderDetail(pane, fixture[0], () => {});
+    expect(pane.classList.contains("open")).toBe(true);
+    return { pane, fixture };
+  };
+
+  test("navigating from Worktree to Files clears the pane; a same-panel refresh and alias entries do not", async () => {
+    const b = await boot();
+    b.nav("sessions").click();
+    const { pane } = await openFixtureDetail();
+    b.nav("sessions").click();
+    expect(pane.classList.contains("open")).toBe(true);
+    const before = b.scope.get();
+    b.go("attention");
+    expect(b.active()).toBe("sessions");
+    expect(pane.classList.contains("open")).toBe(true);
+    expect(b.scope.get()).toBe(before);
+    b.nav("fleet").click();
+    await openFixtureDetail();
+    b.go("live");
+    expect(b.active()).toBe("fleet");
+    expect(pane.classList.contains("open")).toBe(true);
+    expect(b.scope.get()).toBe(before);
+    b.nav("files").click();
+    expect(pane.classList.contains("open")).toBe(false);
+    expect(pane.childElementCount).toBe(0);
+  });
+
+  test("an Inspect evidence request that resolves after navigation does not reopen the pane", async () => {
+    let release!: (v: unknown) => void;
+    const gate = new Promise((r) => { release = r; });
+    const fixture = (await import("./ui/score/fixture.errsig.json")).default;
+    const b = await boot({ attentionSessions: [needy("s-1", undefined)], attentionEvent: () => gate });
+    b.go("attention");
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>("[data-key^='inspect:']")).not.toBeNull());
+    document.querySelector<HTMLElement>("[data-key^='inspect:']")!.click();
+    b.nav("files").click();
+    release(fixture[0]);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    const pane = document.querySelector<HTMLElement>(".detail")!;
+    expect(pane.classList.contains("open")).toBe(false);
+    expect(pane.childElementCount).toBe(0);
+  });
+
+  test("an unrelated click (Working) after navigating away and back does not revalidate a stale inspection", async () => {
+    let release!: (v: unknown) => void;
+    const gate = new Promise((r) => { release = r; });
+    const fixture = (await import("./ui/score/fixture.errsig.json")).default;
+    const b = await boot({ attentionSessions: [needy("s-1", undefined)], attentionEvent: () => gate });
+    b.go("attention");
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>("[data-key^='inspect:']")).not.toBeNull());
+    document.querySelector<HTMLElement>("[data-key^='inspect:']")!.click();
+    b.nav("files").click();
+    b.go("attention");
+    await vi.waitFor(() => expect(document.querySelector(".attention-inbox, .attention-rows")).not.toBeNull());
+    (document.querySelector(".attention-inbox, .attention-rows") as HTMLElement).click();
+    const other = [...document.querySelectorAll<HTMLButtonElement>("button")].find((x) => /working/i.test(x.textContent ?? ""));
+    other?.click();
+    release(fixture[0]);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector<HTMLElement>(".detail")!.classList.contains("open")).toBe(false);
+  });
+
+  test("only the latest of two overlapping inspections opens", async () => {
+    const fixture = (await import("./ui/score/fixture.errsig.json")).default as Array<Record<string, unknown>>;
+    const gates = new Map<string, (v: unknown) => void>();
+    const b = await boot({
+      attentionSessions: [needy("s-1", undefined), needy("s-2", undefined)],
+      attentionEvent: (id) => new Promise((r) => gates.set(id, r)),
+    });
+    b.go("attention");
+    await vi.waitFor(() => expect(document.querySelectorAll("[data-key^='inspect:']").length).toBe(2));
+    const [first, second] = [...document.querySelectorAll<HTMLElement>("[data-key^='inspect:']")];
+    first.click();
+    second.click();
+    await vi.waitFor(() => expect(gates.size).toBe(2));
+    const ids = [...gates.keys()];
+    gates.get(ids[1])!({ ...fixture[0], summary: "SECOND" });
+    await new Promise((r) => setTimeout(r, 0));
+    gates.get(ids[0])!({ ...fixture[0], summary: "FIRST" });
+    await new Promise((r) => setTimeout(r, 0));
+    const pane = document.querySelector<HTMLElement>(".detail")!;
+    expect(pane.classList.contains("open")).toBe(true);
+    expect(pane.textContent).toContain("SECOND");
+    expect(pane.textContent).not.toContain("FIRST");
+  });
+});
+
+describe("attention worktree names resolve against the session's own repo (slice 17 trust pass)", () => {
+  const WT = "a".repeat(64);
+  const rows = () => [wtRow({ worktree_id: WT, label: "/w/alpha-open" }), wtRow({ repo_id: "repoB", worktree_id: "wt-b", label: "/w/beta" })];
+  const cardText = () => document.querySelector(".attention-row")?.textContent ?? "";
+  test("an unscoped inbox names the known worktree", async () => {
+    const b = await boot({ worktrees: rows(), attentionSessions: [needy("s-1", "repoA", { worktree_id: WT })] });
+    await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+    expect(b.scope.get().project).toBeUndefined();
+    b.go("attention");
+    await vi.waitFor(() => expect(cardText()).toContain("alpha-open"));
+    expect(cardText()).not.toContain(WT.slice(0, 8));
+  });
+  test("a different selected project does not change the label", async () => {
+    const b = await boot({ worktrees: rows(), attentionSessions: [needy("s-1", "repoA", { worktree_id: WT })] });
+    await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+    b.scope.narrow({ project: "repoB" });
+    b.go("attention");
+    await vi.waitFor(() => expect(cardText()).toContain("alpha-open"));
+  });
 });

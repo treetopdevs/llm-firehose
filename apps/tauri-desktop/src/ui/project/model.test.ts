@@ -1,4 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
+
+const ORIGINAL_TZ = process.env.TZ;
+process.env.TZ = "Pacific/Auckland";
+afterAll(() => { if (ORIGINAL_TZ === undefined) delete process.env.TZ; else process.env.TZ = ORIGINAL_TZ; });
 import type { WorktreeCommit } from "../../api";
 import { FIXTURE_ROWS, NOW, ROW_ORDER_A, iso, row } from "./model.fixtures";
 import {
@@ -274,6 +278,25 @@ describe("axisTicks", () => {
   });
 });
 
+describe("axisTicks local time", () => {
+  const z = Date.UTC(2026, 10, 5, 0, 0);
+  test("short ranges label local HH:MM, not the UTC slice", () => {
+    const t = axisTicks({ from: z, to: z + 12 * H }, X0, X1);
+    expect(t[0].label).toBe("13:00");
+    expect(t.map((x) => x.label)).not.toContain(new Date(z).toISOString().slice(11, 16));
+    for (const x of t) expect(x.label).not.toBe(new Date(x.t).toISOString().slice(11, 16));
+  });
+  test("multi-day ranges label local MM-DD", () => {
+    const t = axisTicks({ from: z + 11 * H, to: z + 11 * H + 6 * D }, X0, X1);
+    expect(t[0].label).toBe("11-06");
+    expect(t[0].label).not.toBe(new Date(t[0].t).toISOString().slice(5, 10));
+  });
+  test("non-finite input does not throw", () => {
+    expect(() => axisTicks({ from: NaN, to: NaN }, X0, X1)).not.toThrow();
+    expect(axisTicks({ from: NaN, to: NaN }, X0, X1)[0].label).toBe("?");
+  });
+});
+
 describe("review regressions: landing, outcome, dirty", () => {
   const week = 7 * 24 * 3_600_000;
   const win = { from: NOW - week, to: NOW };
@@ -288,10 +311,35 @@ describe("review regressions: landing, outcome, dirty", () => {
     expect(layoutLanes([r], ["x"], friday, 0, 100, NOW)).toHaveLength(0);
     const merged = row({ worktree_id: "x", state: "landed", first_time: iso(NOW - 5 * 86_400_000), last_time: iso(NOW - 4 * 86_400_000),
       marks: [{ kind: "pr_merge", time: iso(NOW - 3_600_000), event_id: "pm" }], marks_total: 1 });
-    const [m] = layoutLanes([merged], ["x"], friday, 0, 100, NOW);
-    expect(m!.rejoinKnown).toBe(true);
-    expect(m!.rejoinX).toBeGreaterThan(m!.endX);
-    expect(m!.tooltip).toContain("pr_merge mark time");
+    // The mark does not pull the lane into a window its activity never reached.
+    expect(layoutLanes([merged], ["x"], friday, 0, 100, NOW)).toHaveLength(0);
+    const [m] = layoutLanes([merged], ["x"], win, 0, 100, NOW);
+    // A pr_merge mark is a command issued from the worktree, never proof of landing (D95).
+    expect(m!.rejoinKnown).toBe(false);
+    expect(m!.rejoinX).toBe(m!.endX);
+    expect(m!.tooltip).toContain("landed (time unknown)");
+    expect(m!.tooltip).not.toContain("landed at");
+    expect(m!.tooltip).not.toContain("pr_merge mark time");
+  });
+  test("wt-landed: the pr_merge glyph keeps its own t but never moves the rejoin", () => {
+    const mark = byId("wt-landed").marks.find((m) => m.kind === "pr_merge")!;
+    const l = lane("wt-landed");
+    const g = l!.glyphs.find((x) => x.kind === "pr_merge")!;
+    expect(g.t).toBe(Date.parse(mark.time));
+    expect(l!.rejoinKnown).toBe(false);
+    expect(l!.rejoinX).toBe(l!.endX);
+    expect(l!.tooltip).toContain("landed (time unknown)");
+    expect(l!.tooltip).not.toContain("landed at");
+    expect(l!.tooltip).not.toContain("pr_merge mark time");
+  });
+  test("a pr_merge mark later than last_time does not extend the lane", () => {
+    const base = row({ worktree_id: "x", state: "landed", first_time: iso(NOW - 5 * 86_400_000), last_time: iso(NOW - 4 * 86_400_000) });
+    const late = { ...base, marks: [{ kind: "pr_merge" as const, time: iso(NOW + 3_600_000), event_id: "pm" }], marks_total: 1 };
+    const [a] = layoutLanes([base], ["x"], win, 0, 100, NOW);
+    const [b] = layoutLanes([late], ["x"], win, 0, 100, NOW);
+    expect(b!.clippedRight).toBe(a!.clippedRight);
+    expect(b!.endX).toBe(a!.endX);
+    expect(b!.rejoinX).toBe(b!.endX);
   });
   test("outcome is carried into the geometry", () => {
     const [l] = layoutLanes([row({ worktree_id: "g", state: "gone", outcome: "landed" })], ["g"], win, 0, 100, NOW);

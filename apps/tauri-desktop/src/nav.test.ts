@@ -40,3 +40,10 @@ test("every alias resolves to a landing", () => {
     expect(["fleet", "project", "sessions"]).toContain(resolveAlias(n, sc).panel);
   }
 });
+
+import { inspectorBelongsTo } from "./nav";
+
+test("inspectorBelongsTo is true only for the session panel", () => {
+  expect(inspectorBelongsTo("session")).toBe(true);
+  for (const n of ["fleet", "project", "sessions", "files", "attention", "live", "doctor"]) expect(inspectorBelongsTo(n), n).toBe(false);
+});

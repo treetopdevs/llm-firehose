@@ -1,6 +1,6 @@
 // Escape-to-ascend plumbing. Anything that consumes Escape for itself calls
 // claimEscape(e); the document-level handler then leaves the event alone.
-import type { Altitude, ScopeStore } from './scope';
+import type { Altitude, Scope, ScopeStore } from './scope';
 
 const claimed = new WeakSet<Event>();
 
@@ -50,15 +50,39 @@ export function createEscapeHandler(deps: {
   store: ScopeStore;
   activePanel(): string;
   scopePanels: ReadonlySet<string>;
-  afterAscend(alt: Altitude, active: string): void;
+  afterAscend(alt: Altitude, active: string, prev: Scope): void;
 }): (e: KeyboardEvent) => void {
   return (e) => {
     if (e.key !== 'Escape' || !isEscapeEligible(e)) return;
     const active = deps.activePanel();
     if (!deps.scopePanels.has(active)) return;
+    const prev = deps.store.get();
     const alt = deps.store.ascend();
     if (alt === null) return;
     e.preventDefault();
-    deps.afterAscend(alt, active);
+    deps.afterAscend(alt, active, prev);
   };
+}
+
+export type PanelName = 'fleet' | 'project' | 'sessions' | 'session';
+export type AscentTarget = PanelName | 'stay';
+
+/**
+ * Where an Escape lands, decided only from the scope held before the ascend and the
+ * panel it came from; nothing is inferred about how the user arrived.
+ */
+export function ascentTarget(prev: Scope, alt: Altitude, from: string): AscentTarget {
+  if (from === 'session') {
+    if (prev.worktree !== undefined) return 'sessions';
+    if (prev.project !== undefined) return 'project';
+    return 'fleet';
+  }
+  if (from === 'sessions') {
+    if (prev.session !== undefined) return 'stay';
+    if (alt === 'project') return 'project';
+    if (alt === 'fleet' && prev.project !== undefined) return 'fleet';
+    return 'stay';
+  }
+  if (from === 'project' && alt === 'fleet') return 'fleet';
+  return 'stay';
 }

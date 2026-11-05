@@ -280,6 +280,7 @@ const NAMED: Record<keyof typeof LOCAL, string[]> = {
   feedRows: ['ArrowUp', 'ArrowDown', 'Home', 'End'],
   sessionTabs: ['ArrowLeft', 'ArrowRight', 'Home', 'End'],
   projectViews: ['ArrowLeft', 'ArrowRight', 'Home', 'End'],
+  fleetViews: ['ArrowLeft', 'ArrowRight', 'Home', 'End'],
 };
 const PROBE = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', ' ', 'Escape', 'Tab', 'PageUp', '+', '=', '-', '_', '0', '1', 'a', 'k', '/', '?'];
 
@@ -398,7 +399,7 @@ describe('local key descriptors', () => {
     'ui/events/view.ts': { keydown: 1, uses: ['feedRows'] },
     'ui/session/index.ts': { keydown: 1, uses: ['sessionTabs'] },
     'ui/project/index.ts': { keydown: 2, uses: ['projectViews', 'laneClear'] },
-    'ui/fleet/index.ts': { keydown: 1, uses: ['fleetClear'] },
+    'ui/fleet/index.ts': { keydown: 2, uses: ['fleetClear', 'fleetViews'] },
     'ui/actions/index.ts': { keydown: 2, uses: ['actionMenu', 'actionDialog'] },
   };
   const count = (src: string): number => (src.match(/(addEventListener|\bon)\(\s*(\w+,\s*)?["']keydown["']|\.onkeydown\s*=/g) ?? []).length;

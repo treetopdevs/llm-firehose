@@ -4,7 +4,7 @@
 // attention observes, so a repo seen only by attention is drawn as fog (known:
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
-import { displayRepoLabel, idLabel, sessionName } from "../../format";
+import { displayRepoLabel, idLabel, projectName, sessionName } from "../../format";
 import { FORK_GLYPH, IDLE_MARK } from "../../glyphs";
 import { isFailure, needYouCount } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
@@ -265,7 +265,7 @@ export function buildFleet(input: FleetInput): FleetResult {
       try { resolved = input.resolveLabel?.(id) || undefined; } catch { resolved = undefined; }
       const named = resolved ?? (a.repoName || undefined);
       digest = named === undefined && looksDigest(id);
-      label = displayRepoLabel(named ?? idLabel(id));
+      label = projectName(id, named).label;
     }
     rows.set(id, {
       id, label, known: byRepo.has(id), ...(noRepo ? { noRepo: true } : {}), digest, forks, needs,

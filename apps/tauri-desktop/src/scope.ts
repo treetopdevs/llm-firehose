@@ -55,7 +55,7 @@ export interface ScopeResolver {
   /** Source-qualified membership; preferred over sessions() when present. undefined = unrestricted. */
   matcher?(scope: Scope): ((ref: SessionRef) => boolean) | undefined;
   /** Re-reads membership data independently of whether the owning panel is visible. */
-  refresh?(): Promise<void>;
+  refresh?(signal?: AbortSignal): Promise<void>;
   /**
    * Whether this resolver can authoritatively answer for the scope's project/worktree.
    * Absent means it can. A composed primary that does not know a worktree defers to a
@@ -278,7 +278,7 @@ function composeResolvers(p: ScopeResolver, f: ScopeResolver): ScopeResolver {
       return matcherOf(b, sc) ? b.partial?.(sc) : undefined;
     },
     knows: (sc) => (p.knows?.(sc) ?? true) || (f.knows?.(sc) ?? false),
-    refresh: () => Promise.all([p.refresh?.(), f.refresh?.()]).then(() => undefined),
+    refresh: (signal) => Promise.all([p.refresh?.(signal), f.refresh?.(signal)]).then(() => undefined),
     labels(sc) {
       const out: { project?: string; worktree?: string } = { ...f.labels(sc) };
       for (const [k, v] of Object.entries(p.labels(sc)) as Array<['project' | 'worktree', string | undefined]>) {

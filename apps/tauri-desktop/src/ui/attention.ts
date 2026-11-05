@@ -6,7 +6,7 @@ import type {
   FirehoseEvent,
 } from "../api";
 import { clear, el, keepFocus } from "../dom";
-import { disambiguateSessionLabel, sessionName, workspaceLabel } from "../format";
+import { disambiguateSessionLabel, projectName, sessionName, workspaceLabel, worktreeName } from "../format";
 import { needYouCount } from "../needs";
 import { formatAge } from "../spark";
 import { idChip } from "./session-id";
@@ -26,6 +26,11 @@ export type AttentionOptions = {
   onOpenInbox(): void;
   /** Every load hands over the sessions it names, so other panels can name them too. */
   onSessions?(list: readonly AttentionSession[]): void;
+  /** Names from the scope resolver (roots, rows); a miss falls back to the format.ts folder/prefix rule. */
+  labels?: {
+    worktree(id?: string, repoId?: string): string | undefined;
+    project(id?: string): string | undefined;
+  };
 };
 
 export function createAttention(options: AttentionOptions) {
@@ -89,6 +94,23 @@ export function createAttention(options: AttentionOptions) {
   const eventTime = (ev: AttentionEvidence) =>
     Date.parse(ev.source_time ?? ev.time);
   const where = (s: AttentionSession) => s.worktree_id || s.cwd || s.repo || "";
+  const resolved = (f: ((id?: string, repoId?: string) => string | undefined) | undefined, id: string | undefined, repoId?: string): string | undefined => {
+    if (!f || !id) return undefined;
+    try { return f(id, repoId) || undefined; } catch { return undefined; }
+  };
+  /** The name of what where() returns: resolver, else the folder/prefix fallback. Never a bare 64-hex id. */
+  const whereName = (s: AttentionSession): string => {
+    const id = where(s);
+    if (!id) return "";
+    if (s.worktree_id) return worktreeName(id, resolved(options.labels?.worktree, id, s.repo_id)).label;
+    if (s.cwd) return workspaceLabel(undefined, s.cwd);
+    return s.repo ?? "";
+  };
+  const repoName = (s: AttentionSession): string => {
+    if (s.repo) return s.repo;
+    if (s.repo_id) return projectName(s.repo_id, resolved(options.labels?.project, s.repo_id)).label;
+    return "";
+  };
   working.addEventListener("click", () => {
     history = false;
     render();
@@ -187,12 +209,12 @@ export function createAttention(options: AttentionOptions) {
       el(
         "p",
         {},
-        workspaceLabel(s.repo, s.worktree_id || s.cwd) || "Worktree unknown",
+        repoName(s) || whereName(s) || "Worktree unknown",
       ),
       el(
         "p",
         { class: "dim" },
-        `Worktree: ${workspaceLabel(undefined, s.worktree_id || s.cwd) || "unknown"}`,
+        `Worktree: ${whereName(s) || "unknown"}`,
       ),
       el(
         "p",
@@ -266,12 +288,13 @@ export function createAttention(options: AttentionOptions) {
       select: HTMLSelectElement,
       values: string[],
       label: string,
+      text: (v: string) => string = (v) => v,
     ) {
       const value = select.value;
       clear(select);
       select.append(el("option", { value: "" }, label));
       for (const v of [...new Set(values)].filter(Boolean).sort())
-        select.append(el("option", { value: v }, v));
+        select.append(el("option", { value: v }, text(v)));
       select.value = value;
     }
     choices(
@@ -279,7 +302,8 @@ export function createAttention(options: AttentionOptions) {
       snapshot.sessions.map((s) => s.source),
       "All sources",
     );
-    choices(workspace, snapshot.sessions.map(where), "All worktrees");
+    const nameById = new Map(snapshot.sessions.map((s) => [where(s), whereName(s)]));
+    choices(workspace, snapshot.sessions.map(where), "All worktrees", (v) => nameById.get(v) || v);
     const term = search.value.trim().toLocaleLowerCase();
     const rank = (s: AttentionSession) =>
       s.pending
@@ -490,6 +514,8 @@ export function createAttention(options: AttentionOptions) {
     /** Calls fn whenever the strip is redrawn (so a snooze or refresh reaches other displays at once). */
     onCount(fn: () => void) { countListeners.add(fn); },
     setConnected,
+    /** Redraws from the last snapshot (names changed; nothing is refetched). */
+    redraw() { if (!disposed) render(); },
     dispose() {
       disposed = true;
       epoch++;

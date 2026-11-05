@@ -1399,29 +1399,44 @@ test("scope: a snapshot whose repository id is not the current repository is not
   expect(panel.root.textContent).not.toContain("ws wX");
 });
 
-test("scope F7: privacy remap narrows atomically to a valid pair or clears", async () => {
+test("scope F7: a privacy change never rewrites scope; the shell is the sole writer", async () => {
   const store = createScope();
   const panel = await scoped(store);
   store.narrow({ project: "r1", worktree: "w1" });
   await flush();
   const seen: unknown[] = [];
   store.subscribe((n) => seen.push(n));
+  // ids replaced by the privacy change: the old project is gone from the registry
   vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "minimal" } as never);
   vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1p")]);
   vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1p", ["w1p"]));
   await panel.refresh();
   await flush();
-  expect(store.get()).toMatchObject({ project: "r1p" });
-  expect(store.get().worktree).toBeUndefined();
-  expect(seen).toHaveLength(1);
-  // nothing valid at all
-  store.narrow({ project: "r1p", worktree: "w1p" });
+  expect(seen).toHaveLength(0);
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w1" });
+  // nothing valid at all: still no write
   vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "full" } as never);
   vi.mocked(graphAPI.repos).mockResolvedValue([]);
   await panel.refresh();
   await flush();
-  expect(store.get().project).toBeUndefined();
-  expect(store.get().worktree).toBeUndefined();
+  expect(seen).toHaveLength(0);
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w1" });
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "balanced" } as never);
+});
+
+test("scope F7: on a privacy change the graph discards topology and re-requests the snapshot for the current project when registered", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ project: "r1" });
+  await flush();
+  vi.mocked(graphAPI.snapshot).mockClear();
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "minimal" } as never);
+  vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1")]);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w9"]));
+  await panel.refresh();
+  await flush();
+  expect(vi.mocked(graphAPI.snapshot).mock.calls.some((c) => c[0] === "r1")).toBe(true);
+  expect(store.get().project).toBe("r1");
   vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "balanced" } as never);
 });
 

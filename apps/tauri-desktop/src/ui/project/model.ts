@@ -37,9 +37,9 @@ export interface LaneGeom {
   forkX: number;
   /** Where captured activity ends (last_time). Never a landing time. */
   endX: number;
-  /** Rejoin position for a landed lane: the pr_merge mark's time when one exists, else the lane end. */
+  /** Rejoin position for a landed lane: last activity (no verified landing time exists today). */
   rejoinX: number;
-  /** True only when rejoinX comes from a pr_merge mark; otherwise the landing time is unknown. */
+  /** True only when rejoinX comes from a daemon-verified landing time; always false today. */
   rejoinKnown: boolean;
   outcome?: WorktreeOutcome;
   tailX?: number;
@@ -139,8 +139,13 @@ export function axisTicks(range: TimeRange, x0: number, x1: number, n = 6): Arra
   return Array.from({ length: count }, (_, i) => {
     const f = i / (count - 1);
     const t = range.from + f * span;
-    const iso = new Date(t).toISOString();
-    const label = Number.isFinite(t) ? (short ? iso.slice(11, 16) : iso.slice(5, 10)) : "?";
+    // Local time, matching the time bar; the readout title stays UTC.
+    const pad = (n: number) => String(n).padStart(2, "0");
+    let label = "?";
+    if (Number.isFinite(t)) {
+      const d = new Date(t);
+      label = short ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
     return { x: x0 + f * (x1 - x0), t, label };
   });
 }
@@ -191,10 +196,10 @@ export function layoutLanes(
     const lastT = Number.isFinite(lastRaw) ? Math.max(forkT, lastRaw) : forkT;
     const end = END[r.state] ?? "hatched";
     const open = end === "open";
-    // Landing evidence is only a pr_merge mark's own time; last_time is activity, not a landing.
-    const mergeTimes = end === "rejoin" ? r.marks.filter((m) => m.kind === "pr_merge").map((m) => time(m.time)).filter(Number.isFinite) : [];
-    const mergeT = mergeTimes.length ? Math.max(...mergeTimes) : undefined;
-    const extentT = mergeT === undefined ? lastT : Math.max(lastT, mergeT);
+    // pr_merge marks are commands issued from the worktree (D95), not proof of landing. A landing
+    // time needs verified daemon evidence and WorktreeLifetimeView carries none today, so the
+    // extent is last activity and rejoinKnown stays false (kept in LaneGeom for a future verified field).
+    const extentT = lastT;
     if (forkT > range.to) continue;
     if (!open && extentT < range.from) continue;
     const label = worktreeName(r.worktree_id, r.label).label;
@@ -234,7 +239,7 @@ export function layoutLanes(
     }
     ticks.sort((a, b) => a.t - b.t);
     if (end === "rejoin") {
-      extra.unshift(mergeT === undefined ? "landed (time unknown)" : `landed at ${new Date(mergeT).toISOString()} (pr_merge mark time)`);
+      extra.unshift("landed (time unknown)");
       extra.push(`activity ended ${r.last_time}`);
     }
     const lane: LaneGeom = {
@@ -246,8 +251,8 @@ export function layoutLanes(
       end,
       forkX: X(forkT),
       endX: X(lastT),
-      rejoinX: X(mergeT ?? lastT),
-      rejoinKnown: mergeT !== undefined,
+      rejoinX: X(lastT),
+      rejoinKnown: false,
       ...(r.outcome ? { outcome: r.outcome } : {}),
       clippedLeft: forkT < range.from,
       clippedRight: open ? now > range.to : extentT > range.to,

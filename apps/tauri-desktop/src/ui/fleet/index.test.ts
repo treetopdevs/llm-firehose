@@ -581,7 +581,7 @@ describe("Fleet host encodings", () => {
     q(".fleet-enc[data-enc='strata']")[0]!.click();
     expect(q(".fleet-body > .fake-host-strata")).toHaveLength(1);
     expect(strata.activate).toHaveBeenCalledTimes(1);
-    expect(q(".fleet-enc[aria-pressed='true']").map((b) => b.textContent)).toEqual(["Strata"]);
+    expect(q(".fleet-enc[aria-selected='true']").map((b) => b.textContent)).toEqual(["Strata"]);
     expect(q(".fleet-hint")[0]!.hidden).toBe(true);
     q(".fleet-enc[data-enc='ecosystem']")[0]!.click();
     expect(strata.deactivate).toHaveBeenCalledTimes(1);
@@ -640,12 +640,54 @@ describe("Fleet host encodings", () => {
   });
 });
 
+describe("encoding tablist", () => {
+  test("strip is a tablist of role=tab buttons with aria-selected and a roving tabindex", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const strip = q(".fleet-encs")[0]!;
+    expect(strip.getAttribute("role")).toBe("tablist");
+    expect(strip.getAttribute("aria-label")).toBe("Encoding");
+    const tabs = q(".fleet-enc");
+    expect(tabs.every((b) => b.getAttribute("role") === "tab")).toBe(true);
+    expect(tabs.some((b) => b.hasAttribute("aria-pressed"))).toBe(false);
+    expect(tabs.filter((b) => b.getAttribute("aria-selected") === "true").map((b) => b.dataset.enc)).toEqual(["map"]);
+    expect(tabs.filter((b) => b.tabIndex === 0).map((b) => b.dataset.enc)).toEqual(["map"]);
+    expect(tabs.filter((b) => b.getAttribute("tabindex") === "-1")).toHaveLength(tabs.length - 1);
+  });
+
+  test("arrows, Home and End move the selection and focus; the tab stop follows", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const key = (enc: string, k: string) => q(`.fleet-enc[data-enc='${enc}']`)[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    key("map", "ArrowRight");
+    expect(panel.encoding).toBe("dwell");
+    expect(q(".fleet-enc[tabindex='0']").map((b) => b.dataset.enc)).toEqual(["dwell"]);
+    key("dwell", "End");
+    expect(panel.encoding).toBe("airspace");
+    key("airspace", "ArrowRight");
+    expect(panel.encoding).toBe("map");
+    key("map", "ArrowLeft");
+    expect(panel.encoding).toBe("airspace");
+    key("airspace", "Home");
+    expect(panel.encoding).toBe("map");
+  });
+
+  test("click, Enter and Space on a tab select it", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const t = q(".fleet-enc[data-enc='matrix']")[0]!;
+    t.click();
+    expect(panel.encoding).toBe("matrix");
+    expect(t.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
 describe("encodings", () => {
   test("map is the default and encoding switches via the header", async () => {
     const { panel, q } = setup();
     expect(panel.encoding).toBe("map");
     await panel.activate();
-    expect(q(".fleet-enc[aria-pressed='true']").map((b) => b.getAttribute("data-enc"))).toEqual(["map"]);
+    expect(q(".fleet-enc[aria-selected='true']").map((b) => b.getAttribute("data-enc"))).toEqual(["map"]);
     q(".fleet-enc[data-enc='dwell']")[0]!.click();
     expect(panel.encoding).toBe("dwell");
     expect(q(".fleet-row")).toHaveLength(0);
@@ -1349,6 +1391,60 @@ describe("lane names from the session directory", () => {
   });
 });
 
+describe("one name for a repo row (T5)", () => {
+  const HEX = "3f9a1c0de5b7a2446f1d8e9c0b7a6d5e4c3b2a190f8e7d6c5b4a39281706f5e4";
+  const label = (byKey: (k: string) => HTMLElement, id: string) => byKey(key("row", id)).querySelector(".fleet-row-label")!.textContent;
+
+  test("a 64-hex repo id takes the resolver (roots) name and is not a digest", async () => {
+    const { store, panel, data, byKey } = setup();
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === HEX ? { project: "alpha" } : {}) });
+    data.wt = [row({ repo_id: HEX, worktree_id: "w", label: "/x/w" })];
+    data.sessions = [];
+    await panel.activate();
+    expect(label(byKey, HEX)).toBe("alpha");
+    expect(byKey(key("row", HEX)).querySelector(".fleet-row-head")!.getAttribute("title")).not.toContain("digest");
+  });
+
+  test("an unnamed digest fork shows the 8-char prefix, the same form as the header", async () => {
+    const { panel, data, byKey } = setup();
+    data.wt = [row({ repo_id: HEX, worktree_id: HEX, label: undefined })];
+    data.sessions = [];
+    await panel.activate();
+    expect(label(byKey, HEX)).toBe(HEX.slice(0, 8));
+    const fork = byKey(key("row", HEX)).querySelector("[aria-label]:not(.fleet-row-head)");
+    void fork;
+    expect(byKey(key("row", HEX)).textContent).toContain(HEX.slice(0, 8));
+  });
+
+  test("full-mode path ids show their folder name, never a path prefix, and distinct folders do not collide", async () => {
+    const { panel, data, byKey } = setup();
+    data.wt = [];
+    data.sessions = [
+      att({ id: "p1", repo_id: "/Users/nicholas/develop/proj" }),
+      att({ id: "p2", repo_id: "/Users/nicholas/work/other" }),
+    ];
+    await panel.activate();
+    expect(label(byKey, "/Users/nicholas/develop/proj")).toBe("proj");
+    expect(label(byKey, "/Users/nicholas/work/other")).toBe("other");
+  });
+});
+
+describe("lanes feed the session directory (T5)", () => {
+  test("a successful sessions load remembers the summaries and ensures lanes it cannot name", async () => {
+    const remember = vi.fn();
+    const ensure = vi.fn();
+    const dir = { remember, ensure, lookup: () => undefined, subscribe: () => () => {} } as unknown as SessionDirectory;
+    const { panel, data } = setup({ directory: dir });
+    data.summaries = [{ id: "sum-1", source: "codex", agent: "codex", state: "working" } as unknown as SessionSummary];
+    data.events = [ev({ id: "e1", session_id: "unnamed-1", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    expect(remember).toHaveBeenCalledWith(data.summaries);
+    expect(ensure).toHaveBeenCalledWith(expect.objectContaining({ id: "unnamed-1" }));
+  });
+});
+
 describe("fork aria labels", () => {
   test("idle and needs show in the fork's accessible name and follow changes", async () => {
     const { panel, data, byKey } = setup();
@@ -1376,7 +1472,7 @@ describe("Fleet Events host", () => {
     q(".fleet-enc[data-enc='events']")[0]!.click();
     expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
     expect(events.activate).toHaveBeenCalledTimes(1);
-    expect(q(".fleet-enc[data-enc='events']")[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect(q(".fleet-enc[data-enc='events']")[0]!.getAttribute("aria-selected")).toBe("true");
     q(".fleet-enc[data-enc='map']")[0]!.click();
     expect(events.deactivate).toHaveBeenCalledTimes(1);
     expect(q(".fake-host-events")).toHaveLength(0);

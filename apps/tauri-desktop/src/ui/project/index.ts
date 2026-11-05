@@ -231,17 +231,28 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       const sel = scopedRows(sc);
       return sel ? partialOf(sel) : undefined;
     },
-    refresh: () => (active ? load() : refreshRows()),
+    refresh: (signal) => (active ? load() : refreshRows(signal)),
     labels(sc) {
       const sel = scopedRows(sc);
       const first = sc.worktree !== undefined ? sel?.[0] : undefined;
       const label = first?.label ? worktreeName(first.worktree_id, first.label).label : undefined;
       const out: { project?: string; worktree?: string } = label ? { worktree: label } : {};
       // A project the rows do not know (registered only): a short id, marked, never a guess at a name.
-      if (graph && sc.project !== undefined && status === "ready" && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
+      // The roots-backed folder name (D126f) answers ahead of any placeholder, so Worktree, Fleet and the crumb read one name.
+      const rooted = rootsName(sc.project);
+      if (rooted !== undefined) out.project = rooted;
+      else if (graph && sc.project !== undefined && status === "ready" && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
       return out;
     },
   });
+
+  /** The folder name roots holds for a repo id (format.ts projectName rule), or undefined. */
+  function rootsName(id: string | undefined): string | undefined {
+    if (id === undefined) return undefined;
+    let raw: string | undefined;
+    try { raw = deps.roots?.rawLabel(id) || undefined; } catch { raw = undefined; }
+    return raw === undefined ? undefined : projectName(id, raw).label;
+  }
 
   select.addEventListener("change", () => {
     if (select.value) store.narrow({ project: select.value, cell: undefined });
@@ -342,10 +353,12 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     // only the fallback form (which a later resolved name must be able to outrank).
     const nameOf = (id: string): string => {
       const fallback = projectName(id).label;
+      const rooted = rootsName(id);
       let resolved: string | undefined;
       try { resolved = store.resolver()?.labels({ project: id, window: "live" } as Scope).project || undefined; } catch { resolved = undefined; }
       // The panel's own "<shortid> (unknown)" placeholder is not a name: fall through to the host's label.
       if (resolved !== undefined && !resolved.endsWith(" (unknown)")) return projectName(id, resolved).label;
+      if (rooted !== undefined) return rooted;
       let hosted: string | undefined;
       try { hosted = deps.projectLabel?.(id) || undefined; } catch { hosted = undefined; }
       const named = hosted !== undefined ? projectName(id, hosted).label : fallback;
@@ -683,12 +696,20 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
 
   // Scope membership must stay fresh while Project is not visible (the resolver
   // is read by Sessions, Score and Loops). Updates rows only: no render, no detail.
-  async function refreshRows(): Promise<void> {
+  const labelSignature = (list: readonly WorktreeLifetimeView[]): string =>
+    JSON.stringify(list.map((r) => [r.repo_id, r.worktree_id, r.label ?? ""]));
+
+  async function refreshRows(signal?: AbortSignal): Promise<void> {
     // Shares loadToken with load(): only the newest rows request may apply.
     const token = ++loadToken;
     try {
-      const data = await api.worktrees();
-      if (token === loadToken && !active) rows = data;
+      const data = await api.worktrees(signal);
+      if (token === loadToken && !active && !signal?.aborted) {
+        const changed = labelSignature(data) !== labelSignature(rows);
+        rows = data;
+        // Views drawn from the old names (Worktree header, Fleet, crumb) must redraw.
+        if (changed) store.touchResolver();
+      }
     } catch {
       // keep the last known membership
     }

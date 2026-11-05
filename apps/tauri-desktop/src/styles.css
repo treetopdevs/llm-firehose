@@ -534,6 +534,8 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 }
 .workspace-graph .dim { color: var(--text-dim); }
 .workspace-graph h3, .workspace-graph h4 { font-family: var(--font-sans); }
+/* Event rows are columns of ids, times and tool names: same monospace stack as the standalone Events view. */
+.workspace-graph .feed-row { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .workspace-graph button, .workspace-graph select, .workspace-graph input {
   font: inherit;
   color: var(--text);
@@ -1155,7 +1157,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-encs { display: flex; gap: 4px; }
 .fleet-enc { background: var(--bg-panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 10px; cursor: pointer; font: inherit; }
 .fleet-enc:hover { background: var(--bg-hover); }
-.fleet-enc[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.fleet-enc[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 .fleet-flags { display: inline-flex; gap: 8px; }
 .fleet-stale { color: var(--warn); font-size: var(--fs-sm); border: 1px solid var(--warn); border-radius: 999px; padding: 0 8px; }
 .fleet-status:empty, .fleet-foot:empty { display: none; }

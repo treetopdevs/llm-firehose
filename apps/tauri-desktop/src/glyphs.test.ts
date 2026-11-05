@@ -178,6 +178,14 @@ describe("geometry", () => {
     expect(entryById("fork", "never diverged").meaning).toMatch(/observed/);
     expect(entryById("fork", "landed").meaning).toMatch(/reachable/);
   });
+  test("landing legend copy claims no verified landing time", () => {
+    expect(entryById("lane-marks", "pr merge").meaning).toMatch(/not evidence of landing/);
+    for (const [g, n] of [["rejoin", "rejoin"], ["rejoin", "landed, merge time unknown"]] as const) {
+      const m = entryById(g, n).meaning;
+      expect(m, n).toMatch(/no verified landing time is available/);
+      expect(m, n).not.toMatch(/no merge was recorded|at the merge/);
+    }
+  });
   test("legend swatches draw the table path", () => {
     for (const kind of ["push", "pr_merge"] as const) {
       const svg = swatchSvg(entryById("lane-marks", kind === "push" ? "push" : "pr merge"))!;
@@ -202,7 +210,8 @@ describe("geometry", () => {
     const { lane, panel } = await mount(rows);
     expect(lane("wt-nomerge").querySelector(".project-rejoin")!.getAttribute("stroke-dasharray")).toBe(DASH.unknownRejoin);
     expect(lane("wt-nomerge").querySelector(".project-landed-unknown")!.textContent).toBe(LANDED_UNKNOWN);
-    expect(lane("wt-landed").querySelector(".project-rejoin")!.getAttribute("stroke-dasharray")).toBeNull();
+    // A pr_merge command mark does not make the rejoin known: wt-landed is dashed too.
+    expect(lane("wt-landed").querySelector(".project-rejoin")!.getAttribute("stroke-dasharray")).toBe(DASH.unknownRejoin);
     const flat = panel.root.querySelector(".project-lane.flat .project-run");
     if (flat) expect(flat.getAttribute("stroke-dasharray")).toBe(DASH.flat);
     const tail = panel.root.querySelector(".project-tail");

@@ -170,3 +170,14 @@ describe("worktreeName", () => {
 test("displayRepoLabel is exported from format", () => {
   expect(displayRepoLabel("/Users/n/browser-life/.git")).toBe("/Users/n/browser-life");
 });
+
+describe("name fallbacks (T5)", () => {
+  test("projectName/worktreeName: folder name for path ids, 8-char prefix only for digest ids", () => {
+    const hex = "0123456789abcdef".repeat(4);
+    expect(projectName("/Users/nicholas/develop/proj").label).toBe("proj");
+    expect(worktreeName("/Users/nicholas/develop/proj").label).toBe("proj");
+    expect(projectName(hex).label).toBe("01234567");
+    expect(worktreeName(hex).label).toBe("01234567");
+    expect(projectName(hex, "alpha").label).toBe("alpha");
+  });
+});

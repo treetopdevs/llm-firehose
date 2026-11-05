@@ -715,7 +715,10 @@ export function createWorkspaceGraph(
       sc.project &&
       sc.project !== repo &&
       !repos.some((r) => r.id === sc.project) &&
-      (knownRepos.has(sc.project) || privacyChanged)
+      // A privacy-mode change is NOT handled here: main.ts is the sole scope writer for it
+      // (verified label+vcs remap, or clear). The graph only discards topology and re-requests.
+      !privacyChanged &&
+      knownRepos.has(sc.project)
     )
       patch = { project: repo || undefined, worktree: undefined };
     else if (
@@ -771,10 +774,10 @@ export function createWorkspaceGraph(
       return (ref) => (ref.source !== undefined ? keys.has(`${ref.source}\0${ref.id}`) : ids.has(ref.id));
     },
     knows: (sc) => !hidden() && (!sc.worktree || ((sc.project ?? repo) === repo && !!snapshot?.workspaces.some((w) => w.id === sc.worktree))),
-    async refresh() {
+    async refresh(signal?: AbortSignal) {
       if (hidden()) return;
       try {
-        sessions = (await attention()).sessions ?? sessions;
+        sessions = (await attention(signal)).sessions ?? sessions;
       } catch {
         /* keep the last membership */
       }

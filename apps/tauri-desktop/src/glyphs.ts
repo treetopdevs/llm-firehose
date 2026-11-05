@@ -114,7 +114,7 @@ export const GLYPH_GROUPS: GlyphGroup[] = [
     title: "Lane marks",
     entries: [
       { swatch: { kind: "mark", id: "push" }, name: "push", meaning: "A push command was observed." },
-      { swatch: { kind: "mark", id: "pr_merge" }, name: "pr merge", meaning: "A pull-request merge command was observed." },
+      { swatch: { kind: "mark", id: "pr_merge" }, name: "pr merge", meaning: "A pull-request merge command was observed. It is not evidence of landing." },
       { swatch: { kind: "mark", id: "pr_create" }, name: "pr create", meaning: "A pull-request creation command was observed." },
       { swatch: { kind: "mark", id: "commit" }, name: "commit", meaning: "A commit was made (a vertical tick)." },
     ],
@@ -123,8 +123,8 @@ export const GLYPH_GROUPS: GlyphGroup[] = [
     id: "rejoin",
     title: "Rejoin",
     entries: [
-      { swatch: { kind: "dash", id: "rejoin" }, name: "rejoin", meaning: "The lane curves back to the main line at the merge.", hook: ".project-rejoin" },
-      { glyph: LANDED_UNKNOWN, swatch: { kind: "dash", id: "unknown_rejoin" }, name: "landed, merge time unknown", meaning: "It landed, but no merge was recorded: the dashed rejoin sits at the last activity." },
+      { swatch: { kind: "dash", id: "rejoin" }, name: "rejoin", meaning: "The lane curves back to the main line at its last activity: no verified landing time is available.", hook: ".project-rejoin" },
+      { glyph: LANDED_UNKNOWN, swatch: { kind: "dash", id: "unknown_rejoin" }, name: "landed, merge time unknown", meaning: "It landed, but no verified landing time is available, whatever commands were observed: the dashed rejoin sits at the last activity." },
     ],
   },
   {
@@ -144,7 +144,7 @@ export const GLYPH_GROUPS: GlyphGroup[] = [
       { swatch: { kind: "dash", id: "tail" }, name: "dashed tail", meaning: "An open worktree, quiet since its last activity.", hook: ".project-tail" },
       { swatch: { kind: "dash", id: "flat" }, name: "dotted run", meaning: "No divergence from the main line was observed.", hook: ".project-lane.flat" },
       { swatch: { kind: "dash", id: "hatched" }, name: "hatched", meaning: "State unknown: the span is only approximate.", hook: ".project-lane.hatched" },
-      { swatch: { kind: "dash", id: "landgap" }, name: "land gap", meaning: "Time between the last activity and the recorded merge.", hook: ".project-landgap" },
+      { swatch: { kind: "dash", id: "landgap" }, name: "land gap", meaning: "Reserved for a daemon-verified landing time after the last activity; none is drawn today.", hook: ".project-landgap" },
     ],
   },
   {

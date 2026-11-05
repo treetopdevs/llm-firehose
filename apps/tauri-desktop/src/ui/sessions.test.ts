@@ -12,6 +12,9 @@ vi.mock("../api", () => ({
 
 import { createSessions } from "./sessions";
 import { createScope } from "../scope";
+import { createProject } from "./project";
+import { row as wtRow } from "./project/model.fixtures";
+import type { Roots } from "./actions/roots";
 import type { Scope } from "../scope";
 import type { AttentionEvidence, AttentionSession, FirehoseEvent, SessionSummary } from "../api";
 
@@ -198,6 +201,62 @@ describe("sessions band", () => {
     await done;
     expect(panel.root.querySelector(".error")?.textContent).toContain("deadline exceeded");
     timeout.mockRestore();
+  });
+
+  describe("resolver refresh deadline", () => {
+    function scopedPanel(refresh: (signal?: AbortSignal) => Promise<void>) {
+      const store = createScope();
+      store.setResolver({ sessions: () => undefined, labels: () => ({}), refresh });
+      store.narrow({ project: "p" });
+      return createSessions(() => {}, () => [], undefined, undefined, store);
+    }
+
+    test("a hanging resolver refresh does not block the list or the next poll", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      try {
+        sessions.mockResolvedValue([summary({ id: "s1" })]);
+        const refresh = vi.fn(() => new Promise<void>(() => {}));
+        const panel = scopedPanel(refresh);
+        void panel.refresh();
+        await vi.advanceTimersByTimeAsync(15_001);
+        expect(panel.root.querySelector(".band-row")).not.toBeNull();
+        expect(panel.root.textContent).not.toContain("loading sessions");
+        const before = sessions.mock.calls.length;
+        void panel.refresh();
+        await vi.advanceTimersByTimeAsync(15_001);
+        expect(sessions.mock.calls.length).toBeGreaterThan(before);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("passes the request deadline signal to the resolver refresh", async () => {
+      sessions.mockResolvedValue([summary({ id: "s1" })]);
+      const refresh = vi.fn(() => Promise.resolve());
+      const panel = scopedPanel(refresh);
+      await panel.refresh();
+      expect(refresh).toHaveBeenCalledTimes(1);
+      const given = sessions.mock.calls[0]![0] as AbortSignal;
+      expect((refresh.mock.calls[0] as unknown[])[0]).toBe(given);
+    });
+
+    test("a late resolver result after the deadline is discarded", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      try {
+        sessions.mockResolvedValue([summary({ id: "s1" })]);
+        let fail!: (e: Error) => void;
+        const panel = scopedPanel(() => new Promise<void>((_, rej) => (fail = rej)));
+        void panel.refresh();
+        await vi.advanceTimersByTimeAsync(15_001);
+        const html = panel.root.innerHTML;
+        fail(new Error("late"));
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(panel.root.querySelector(".error")).toBeNull();
+        expect(panel.root.innerHTML).toBe(html);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   test("flags errors inline and opens the session on click", async () => {
@@ -645,6 +704,55 @@ describe("sessions history is invalidated by scope (F5)", () => {
     const panel = createSessions(() => {}, () => [], undefined, undefined, store);
     await panel.refresh();
     expect(panel.root.querySelector(".sessions-scope-note")!.textContent).toContain("200 of 350 sessions known");
+  });
+});
+
+describe("Worktree header names through the Project fallback resolver", () => {
+  const HEX = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  function rig(raw: Record<string, string>) {
+    const subs = new Set<() => void>();
+    const roots: Roots = {
+      refresh: async () => ({ ok: true, revision: 1, repos: [] }),
+      loaded: () => true,
+      resolved: (id) => id !== undefined && id in raw,
+      rawLabel: (id) => (id === undefined ? undefined : raw[id]),
+      list: () => Object.entries(raw).map(([id, label]) => ({ id, label })),
+      subscribe: (fn) => { subs.add(fn); return () => void subs.delete(fn); },
+    };
+    const rows = vi.fn(async () => [wtRow({ repo_id: HEX, worktree_id: "w1" })]);
+    const store = createScope();
+    createProject({ store, go: vi.fn(), roots, api: { worktrees: rows, worktree: vi.fn() } as never });
+    sessions.mockResolvedValue([]);
+    attentionSays([]);
+    return { store, roots, subs, rows, panel: createSessions(() => {}, () => [], undefined, undefined, store) };
+  }
+
+  test("a roots label reads as the folder name, not eight hex", () => {
+    const { store, panel } = rig({ [HEX]: "/Users/n/alpha/.git" });
+    store.narrow({ project: HEX });
+    expect(panel.root.querySelector(".sessions-scope")!.textContent).toBe("alpha");
+  });
+
+  test("late hydration: roots applying later redraws the header via resolver invalidation, no scope change", () => {
+    const raw: Record<string, string> = {};
+    const { store, panel } = rig(raw);
+    store.narrow({ project: HEX });
+    const line = () => panel.root.querySelector(".sessions-scope")!.textContent;
+    expect(line()).toBe(HEX.slice(0, 8));
+    raw[HEX] = "alpha";
+    store.touchResolver();
+    expect(line()).toBe("alpha");
+  });
+
+  test("Project refreshRows changing label-bearing rows redraws the header", async () => {
+    const { store, panel, rows } = rig({});
+    store.narrow({ project: HEX, worktree: "w1" });
+    const line = () => panel.root.querySelector(".sessions-scope")!.textContent;
+    await store.resolver()!.refresh!();
+    expect(line()).not.toBe("renamed");
+    rows.mockResolvedValue([wtRow({ repo_id: HEX, worktree_id: "w1", label: "renamed" })]);
+    await store.resolver()!.refresh!();
+    expect(line()).toBe("renamed");
   });
 });
 

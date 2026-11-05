@@ -270,6 +270,43 @@ describe("cadence", () => {
   });
 });
 
+describe("resolver refresh signal", () => {
+  test("inactive Project passes the signal to /worktrees", async () => {
+    const { store, panel, keys } = setup();
+    const ctl = new AbortController();
+    await store.resolver()!.refresh!(ctl.signal);
+    expect(worktreesMock.mock.calls.at(-1)![0]).toBe(ctl.signal);
+    // aborted: rows are not applied
+    const d = deferred<WorktreeLifetimeView[]>();
+    worktreesMock.mockReturnValueOnce(d.promise);
+    const ctl2 = new AbortController();
+    const p = store.resolver()!.refresh!(ctl2.signal);
+    ctl2.abort();
+    d.resolve([row({ worktree_id: "late" })]);
+    await p;
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    expect(keys()).not.toContain("late");
+  });
+
+  test("active Project load is NOT aborted by a consumer deadline", async () => {
+    const { store, panel } = setup();
+    await panel.activate();
+    const ctl = new AbortController();
+    const d = deferred<WorktreeLifetimeView[]>();
+    worktreesMock.mockReturnValueOnce(d.promise);
+    const p = store.resolver()!.refresh!(ctl.signal);
+    ctl.abort();
+    const loadSignal = worktreesMock.mock.calls.at(-1)![0] as AbortSignal;
+    expect(loadSignal).not.toBe(ctl.signal);
+    expect(loadSignal.aborted).toBe(false);
+    d.resolve([row({ worktree_id: "fresh" })]);
+    await p;
+    expect(panel.root.querySelector(".error")).toBeNull();
+    expect(panel.root.querySelector('.project-lane[data-key="fresh"]')).not.toBeNull();
+  });
+});
+
 describe("stale guards", () => {
   test("overlapping loads: the last started wins even when it resolves first", async () => {
     const d1 = deferred<WorktreeLifetimeView[]>();
@@ -1051,8 +1088,10 @@ describe("review regressions", () => {
     const laneOf = (id: string) => q(".project-lane").find((l) => l.getAttribute("data-key") === id)!;
     expect(laneOf("l-unk").querySelector(".project-rejoin.unknown-time")).not.toBeNull();
     expect(laneOf("l-unk").textContent).toContain("landed ?");
-    expect(laneOf("l-mark").querySelector(".project-rejoin.unknown-time")).toBeNull();
-    expect(laneOf("l-mark").querySelector(".project-landgap")).not.toBeNull();
+    // A pr_merge command mark is not landing evidence: the lane still reads "landed ?".
+    expect(laneOf("l-mark").querySelector(".project-rejoin.unknown-time")).not.toBeNull();
+    expect(laneOf("l-mark").textContent).toContain("landed ?");
+    expect(laneOf("l-mark").querySelector(".project-landgap")).toBeNull();
   });
 });
 
@@ -1151,6 +1190,62 @@ describe("picker names and idle semantics", () => {
     store.narrow({ project: DIGEST });
     await panel.activate();
     expect(optionsOf(panel)[0]!.textContent).toBe("llm-firehose");
+  });
+
+  const rootsOf = (raw: Record<string, string>, subs?: Set<() => void>): Roots => ({
+    refresh: async () => ({ ok: true, revision: 1, repos: [] }),
+    loaded: () => true,
+    resolved: (id) => id !== undefined && id in raw,
+    rawLabel: (id) => (id === undefined ? undefined : raw[id]),
+    list: () => Object.entries(raw).map(([id, label]) => ({ id, label })),
+    subscribe: (fn) => { subs?.add(fn); return () => void subs?.delete(fn); },
+  });
+  const graphStub = () => ({ root: document.createElement("div"), show() {}, hide() {}, setWorktreeOrder() {}, onEvent() {}, onView() {} });
+
+  test("fallback resolver labels({project}) answers the roots folder name ahead of the unknown placeholder", async () => {
+    const { store, panel } = setupWith([row({ repo_id: "other", worktree_id: "w2" })], { graph: graphStub(), roots: rootsOf({ [DIGEST]: "/Users/n/alpha/.git" }) });
+    await panel.activate();
+    expect(store.resolver()!.labels({ ...store.get(), project: DIGEST }).project).toBe("alpha");
+    // No roots label, graph ready, row unknown: the placeholder stays.
+    const unnamed = "f".repeat(64);
+    expect(store.resolver()!.labels({ ...store.get(), project: unnamed }).project).toBe("ffffffff (unknown)");
+  });
+
+  test("selector option text stays 'alpha' while graph labels flip, and shows the displayName fallback without a roots label", async () => {
+    let graphLabel: string | undefined;
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })], { roots: rootsOf({ [DIGEST]: "alpha" }) });
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === DIGEST && graphLabel ? { project: graphLabel } : {}) });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe("alpha");
+    graphLabel = "alpha";
+    store.touchResolver();
+    expect(optionsOf(panel)[0]!.textContent).toBe("alpha");
+    graphLabel = undefined;
+    store.touchResolver();
+    expect(optionsOf(panel)[0]!.textContent).toBe("alpha");
+    // No roots label: displayName fallback on every render.
+    const bare = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })]);
+    bare.store.narrow({ project: DIGEST });
+    await bare.panel.activate();
+    expect(optionsOf(bare.panel).at(-1)!.textContent).toBe(DIGEST.slice(0, 8));
+    bare.store.setResolver({ sessions: () => undefined, labels: () => ({}) });
+    bare.store.touchResolver();
+    expect(optionsOf(bare.panel).at(-1)!.textContent).toBe(DIGEST.slice(0, 8));
+  });
+
+  test("a refreshRows that changes label-bearing rows touches the resolver", async () => {
+    const { store, panel } = setupWith([row({ repo_id: "repoA", worktree_id: "w1", label: "one" })]);
+    const touched = vi.fn();
+    store.onResolver(touched);
+    await store.resolver()!.refresh!();
+    expect(touched).toHaveBeenCalledTimes(1);
+    await store.resolver()!.refresh!();
+    expect(touched).toHaveBeenCalledTimes(1);
+    worktreesMock.mockImplementation(() => Promise.resolve([row({ repo_id: "repoA", worktree_id: "w1", label: "two" })]));
+    await store.resolver()!.refresh!();
+    expect(touched).toHaveBeenCalledTimes(2);
+    void panel;
   });
 
   test("a throwing resolver falls back instead of breaking the picker", async () => {

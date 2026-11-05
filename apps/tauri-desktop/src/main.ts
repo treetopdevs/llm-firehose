@@ -38,13 +38,15 @@ import { createTransport } from "./transport";
 import { graphAPI } from "./ui/graph/api";
 import { createActions } from "./ui/actions";
 import { createRoots } from "./ui/actions/roots";
+import { remapScope } from "./privacy-remap";
+import type { IdentitySet } from "./privacy-remap";
 import type { Scope, ScopePatch, SessionRef } from "./scope";
-import { createEscapeHandler } from "./escape";
+import { ascentTarget, createEscapeHandler } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
 import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
 import { createSessionDirectory } from "./session-directory";
-import { isAlias, resolveAlias } from "./nav";
+import { inspectorBelongsTo, isAlias, resolveAlias } from "./nav";
 import type { AliasName } from "./nav";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -79,8 +81,24 @@ function openLoops(id: string, source?: string) {
 
 // The one place sessions are named: /sessions and /attention feed it, the lens head and crumb read it.
 const sessionDirectory = createSessionDirectory(() => sessions());
-const attentionPanel=createAttention({onSelect:showDetail,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>go("attention"),onSessions:(l)=>sessionDirectory.remember(l)});
+// Bumped on every real panel change and every scope change. A delayed inspection (Attention's
+// evidence fetch) is dropped unless it was started in the current generation.
+let navGeneration = 0;
+scope.subscribe(() => {
+  navGeneration++;
+});
+// Attention's evidence fetch resolves later: remember the generation at click time (capture phase,
+// before the panel's own handler) and drop the pane if the user has navigated since.
+let inspectClickGeneration = navGeneration;
+const showInspected = (ev: FirehoseEvent): void => {
+  if (inspectClickGeneration === navGeneration) showDetail(ev);
+};
+const attentionPanel=createAttention({onSelect:showInspected,onOpenSession:openSessionAltitude,onDoctor:()=>show("doctor"),onOpenInbox:()=>go("attention"),onSessions:(l)=>sessionDirectory.remember(l),labels:{worktree:(id,repoId)=>id?scope.resolver()?.labels({...scope.get(),project:repoId,worktree:id}).worktree:undefined,project:(id)=>id?scope.resolver()?.labels({...scope.get(),project:id,worktree:undefined}).project:undefined}});
 attentionPanel.setConnected(false);
+attentionPanel.root.addEventListener("click", (e) => {
+  // Only an Inspect click starts an inspection; Working, Snooze and the rest must not revalidate a stale one.
+  if ((e.target as Element | null)?.closest?.('[data-key^="inspect:"], [data-key^="warning:"]')) inspectClickGeneration = navGeneration;
+}, true);
 const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel });
 
 // Opening a session from elsewhere keeps the project/worktree parents only
@@ -124,6 +142,9 @@ const actions = createActions({
   },
 });
 void roots.refresh();
+// A roots refresh can rename a project without any scope change: redraw every name drawn from the resolver.
+roots.subscribe(() => scope.touchResolver());
+scope.onResolver(() => attentionPanel.redraw());
 
 // Altitudes (D94-D98): Fleet > Project > Worktree (sessions) > Session (score).
 // The nav is those four plus Files, Doctor and Settings; the retired lens names
@@ -167,9 +188,6 @@ const projectPanel = createProject({
   onEncoding: () => syncTransport(),
 });
 projectPanel.setConnected(false);
-// Sessions reached by clicking a Fleet fork: Escape retraces Project then Fleet
-// instead of widening scope while the panel stays on Sessions.
-let sessionsViaFleet = false;
 // The lens panels Fleet hosts as its Strata and Patches encodings.
 const strataPanel = createStrata(openLoops, openScore, sessionDirectory);
 const ecosystemPanel = createEcosystem(openScore);
@@ -189,7 +207,6 @@ const fleetPanel = createFleet({
   roots,
   go: (name, patch): void => {
     go(name, patch);
-    sessionsViaFleet = name === "sessions";
   },
   events: () => feedState.events(),
   directory: sessionDirectory,
@@ -249,11 +266,79 @@ const panels = {
   session: sessionPanel,
   files: createFiles(sessionDirectory),
   doctor: createDoctor(),
-  settings: createSettings(),
+  settings: createSettings({ onPrivacySaving: () => snapshotBeforeSave(), onPrivacyChanged: (_mode, before) => handlePrivacyChange(before as IdentitySet | undefined) }),
 } as const;
 
 type PanelName = keyof typeof panels;
 type GoName = PanelName | "score" | "loops" | AliasName;
+
+// --- privacy-mode change: the shell is the single scope writer -------------------------------------------------
+// Repository ids change with the mode (service.go identity()) while labels stay raw. After a verified
+// roots snapshot, the project is remapped by unique raw label+vcs (see privacy-remap.ts); worktree and
+// session are always cleared and the window is preserved. Panels refresh only after the one narrow.
+const shellNote = el("p", { class: "shell-note dim", role: "status" });
+shellNote.hidden = true;
+const showShellNote = (text: string): void => {
+  shellNote.textContent = text;
+  shellNote.hidden = false;
+};
+// Cleared on the next scope change; the privacy narrow itself fires before the note is set.
+scope.subscribe(() => {
+  if (!shellNote.hidden) {
+    shellNote.textContent = "";
+    shellNote.hidden = true;
+  }
+});
+const REMAP_ATTEMPTS = 4;
+const REMAP_RETRY_MS = 150;
+let privacyGeneration = 0;
+const identitySet = (repos: { id: string; label: string; vcs?: string }[]): IdentitySet => ({
+  repos: repos.map((r) => ({ id: r.id, label: r.label, vcs: r.vcs ?? "" })),
+});
+
+// Taken when the save STARTS: a roots refresh landing while POST /config is pending already carries new ids.
+const snapshotBeforeSave = (): IdentitySet => identitySet(roots.loaded() ? roots.list() : []);
+// One bounded attempt: the first applied roots snapshot (this call's or a newer refresh's) wins; a hung
+// request or a failure resolves undefined so the caller retries. Late responses are ignored.
+const REMAP_REFRESH_TIMEOUT_MS = 1200;
+function verifiedRoots(): Promise<IdentitySet | undefined> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: IdentitySet | undefined): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      unsub();
+      resolve(v);
+    };
+    const unsub = roots.subscribe(() => finish(identitySet(roots.list())));
+    const timer = setTimeout(() => finish(undefined), REMAP_REFRESH_TIMEOUT_MS);
+    roots.refresh().then((r) => finish(r.ok ? identitySet(r.repos) : undefined), () => finish(undefined));
+  });
+}
+
+async function handlePrivacyChange(before: IdentitySet = snapshotBeforeSave()): Promise<void> {
+  const mine = ++privacyGeneration;
+  let after: IdentitySet | undefined;
+  for (let attempt = 0; attempt < REMAP_ATTEMPTS && !after; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, REMAP_RETRY_MS * attempt));
+    if (mine !== privacyGeneration) return; // a newer privacy change owns the remap
+    after = await verifiedRoots();
+  }
+  if (mine !== privacyGeneration) return;
+  const current = scope.get();
+  const result = after
+    ? remapScope(current, before, after)
+    : current.project || current.worktree || current.session
+      ? { kind: "cleared" as const, note: "Privacy mode changed: project identities could not be verified, so the selection was cleared." }
+      : { kind: "unchanged" as const };
+  if (result.kind === "remapped") scope.narrow(result.patch);
+  else if (result.kind === "cleared") scope.narrow({ project: undefined, worktree: undefined, session: undefined, window: current.window });
+  if (result.kind !== "unchanged") showShellNote(result.note);
+  // Panels re-read only after the scope is settled.
+  void projectPanel.refresh();
+  void workspacePanel.refresh();
+}
 
 const content = el("main", { class: "content" });
 const statusDot = el("span", { class: "status-dot" });
@@ -306,7 +391,6 @@ export function go(name: GoName, rawPatch?: ScopePatch & { encoding?: ProjectEnc
     // Only an explicit alias landing on Fleet selects its encoding; ascent never writes it.
     if (land.fleetEncoding) fleetPanel.encoding = land.fleetEncoding;
     // The strip and the alias are the same entry as the Worktree nav button: no stale Fleet retrace.
-    if (land.panel === "sessions") sessionsViaFleet = false;
     const o = { ...(land.encoding ? { encoding: land.encoding as ProjectEncoding } : {}), ...(land.needsOnly ? { needsOnly: true } : {}) };
     show(land.panel, Object.keys(o).length > 0 ? o : undefined);
     return;
@@ -322,10 +406,11 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if ((name === "fleet" || name === "project") && name !== active) void roots.refresh();
   // Any navigation other than the boot landing decides the landing rule.
   if (name !== "project") landingPending = false;
-  if (!["fleet", "project", "sessions", "session"].includes(name)) sessionsViaFleet = false;
   if (active === "project" && name !== "project") projectPanel.deactivate();
   if (active === "fleet" && name !== "fleet") fleetPanel.deactivate();
-  if (name === "project" || name === "fleet") renderDetail(detailPane, null, () => {});
+  // Only a real panel change closes the shared pane, and not on the panel the inspector belongs to.
+  if (name !== active) navGeneration++;
+  if (name !== active && !inspectorBelongsTo(name)) renderDetail(detailPane, null, () => {});
   if (active === "session" && name !== "session") sessionPanel.deactivate();
   if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
@@ -351,17 +436,10 @@ const ascendOnEscape = createEscapeHandler({
   // Only the Score and Loops tabs are scope lenses; the notebook tabs own Escape.
   activePanel: () => (active === "session" && !sessionPanel.escapes() ? "session-nonscope" : active),
   scopePanels: SCOPE_PANELS,
-  afterAscend: (alt, from) => {
-    if (from === "session" && alt !== "session") show("sessions");
-    else if (from === "sessions" && sessionsViaFleet && alt === "project") show("project");
-    else if (from === "sessions" && sessionsViaFleet && alt === "fleet") {
-      sessionsViaFleet = false;
-      show("fleet");
-    } else if (from === "sessions") void sessionsPanel.refresh();
-    else if (from === "project" && alt === "fleet") {
-      sessionsViaFleet = false;
-      show("fleet");
-    }
+  afterAscend: (alt, from, prev) => {
+    const target = ascentTarget(prev, alt, from);
+    if (target !== "stay") show(target);
+    else if (from === "sessions") void sessionsPanel.refresh();
   },
 });
 /** The panel and encoding the legend scopes its key lists to. */
@@ -399,7 +477,6 @@ for (const [heading, names] of NAV_GROUPS) {
   for (const name of names) {
     const btn = el("button", { class: "nav-btn", "data-panel": name }, NAV_LABELS[name]);
     btn.addEventListener("click", () => {
-      sessionsViaFleet = false;
       show(name);
     });
     navButtons.set(name, btn);
@@ -413,7 +490,7 @@ legendBtn.addEventListener("click", () => {
   openLegend({ opener: legendBtn, fallbackFocus: legendBtn, context: legendContext });
 });
 const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount, legendBtn);
-app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), statusBar, actions.root);
+app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), shellNote, statusBar, actions.root);
 
 // --- live data -------------------------------------------------------------
 

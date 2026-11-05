@@ -220,10 +220,10 @@ describe("labels", () => {
     expect(buildFleet(input({ sessions: [att({ id: "g", repo_id: "ghost-repo-id-123", state: "working" })] })).rows[2].label).toBe("ghost-re");
     expect(buildFleet(input()).rows[0].label).toBe("repoB".slice(0, 8));
   });
-  test("raw-path ids (full privacy) fall back to their last two segments, never an eight-character prefix", () => {
+  test("raw-path ids (full privacy) fall back to their folder name (D126f), never an eight-character prefix or a path prefix", () => {
     const raw = "/Users/me/develop/proj";
     const r = buildFleet(input({ sessions: [att({ id: "p", repo_id: raw, state: "working" })] }));
-    expect(r.rows.find((x) => x.id === raw)!.label).toBe("develop/proj");
+    expect(r.rows.find((x) => x.id === raw)!.label).toBe("proj");
     const fork = forkOf({ ...FIXTURE_ROWS[0]!, label: undefined, worktree_id: "/w/x/alpha-open" } as WorktreeLifetimeView, NOW);
     expect(fork.label).toBe("x/alpha-open");
   });

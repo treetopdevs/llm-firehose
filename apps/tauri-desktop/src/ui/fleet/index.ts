@@ -19,7 +19,7 @@ import { formatAge } from "../../spark";
 import { deriveAirspace } from "../airspace/model";
 import { buildDwell, sessionKey } from "../dwell/model";
 import type { DwellRow } from "../dwell/model";
-import { LANE_WINDOWS_MS, SEP, buildLanes } from "../lanes/model";
+import { LANE_WINDOWS_MS, SEP, buildLanes, decodeLaneId } from "../lanes/model";
 import type { SessionDirectory } from "../../session-directory";
 import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
@@ -200,8 +200,20 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   // Header, built once.
   const encButtons = ENCODINGS.filter((enc) => !isHostEncoding(enc) || deps.hosts?.[enc] !== undefined).map((enc) => {
-    const b = el("button", { class: "fleet-enc", type: "button", "data-enc": enc, "aria-pressed": "false" }, ENCODING_LABEL[enc]);
+    const b = el("button", { class: "fleet-enc", type: "button", "data-enc": enc, role: "tab", "aria-selected": "false", tabindex: "-1" }, ENCODING_LABEL[enc]);
     b.addEventListener("click", () => setEncoding(enc));
+    b.addEventListener("keydown", (ev) => {
+      if (!LOCAL.fleetViews.matches(ev)) return;
+      const i = encButtons.indexOf(b);
+      const n = encButtons.length;
+      const j = ev.key === "ArrowRight" ? (i + 1) % n : ev.key === "ArrowLeft" ? (i + n - 1) % n : ev.key === "Home" ? 0 : ev.key === "End" ? n - 1 : -1;
+      if (j < 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const target = encButtons[j]!;
+      setEncoding(target.getAttribute("data-enc") as Encoding);
+      target.focus();
+    });
     return b;
   });
   const staleChip = el("span", { class: "fleet-stale", title: "Showing the last data received; a refresh is overdue" }, "stale");
@@ -216,7 +228,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
-    el("header", { class: "fleet-header" }, el("h2", {}, "Fleet"), el("div", { class: "fleet-encs", role: "group", "aria-label": "Encoding" }, ...encButtons), flags),
+    el("header", { class: "fleet-header" }, el("h2", {}, "Fleet"), el("div", { class: "fleet-encs", role: "tablist", "aria-label": "Encoding" }, ...encButtons), flags),
     statusBox,
     toast,
     body,
@@ -307,7 +319,11 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   // ---- header / status --------------------------------------------------
 
   function syncButtons(): void {
-    for (const b of encButtons) setAttr(b, "aria-pressed", b.getAttribute("data-enc") === encoding ? "true" : "false");
+    for (const b of encButtons) {
+      const on = b.getAttribute("data-enc") === encoding;
+      setAttr(b, "aria-selected", on ? "true" : "false");
+      setAttr(b, "tabindex", on ? "0" : "-1");
+    }
     hint.hidden = isHostEncoding(encoding) && encoding !== "events";
     const wantHint = encoding === "events" ? EVENTS_HINT : TABLE_HINT;
     if (hint.textContent !== wantHint) hint.textContent = wantHint;
@@ -633,6 +649,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const windowMs = live ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : Math.max(w.to - w.from, 1);
     const qualified = summaries.map((s) => ({ ...s, id: `${s.source}${SEP}${s.id}` }));
     const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => live || !(Date.parse(e.time) > end))), qualified, end, windowMs, deps.directory ? (ref) => deps.directory!.lookup(ref) : undefined);
+    // A lane nothing has named asks the directory (rate-limited there) so it is named once it is known.
+    if (deps.directory) for (const l of lanes) { const ref = decodeLaneId(l.id); try { if (!deps.directory.lookup(ref)) deps.directory.ensure(ref); } catch { /* ignore */ } }
     body.append(lanesStrip(lanes, end, windowMs, body.clientWidth || FALLBACK_W, (id, source) => openSession(id, source)));
     restore();
   }
@@ -776,6 +794,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       const d = await guard(Promise.resolve().then(() => undefined).then(() => api.sessions(ctl.signal)), ctl.signal);
       if (!live()) return;
       summaries = d; sessStale = false;
+      // The same summaries name sessions everywhere else (crumb, lens heads); a directory sink must not break the view.
+      try { deps.directory?.remember(d); } catch { /* ignore */ }
     } catch {
       if (!live()) return;
       sessStale = true;

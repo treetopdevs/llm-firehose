@@ -39,6 +39,20 @@ const REFRESH_MS = 5000;
 /** A refresh request that has not settled by now is abandoned, so the periodic poll is never starved by a hung one. */
 const REQUEST_DEADLINE_MS = 15_000;
 
+/** Settles with p, or with undefined once the deadline signal aborts (or the same deadline elapses on the clock): a consumer must not outlive its deadline on a collaborator that ignores the signal. */
+function bounded<T>(p: Promise<T> | undefined, signal: AbortSignal): Promise<T | undefined> | undefined {
+  if (!p) return p;
+  return new Promise<T | undefined>((resolve, reject) => {
+    if (signal.aborted) return resolve(undefined);
+    const timer = setTimeout(() => resolve(undefined), REQUEST_DEADLINE_MS);
+    signal.addEventListener("abort", () => resolve(undefined), { once: true });
+    p.then(
+      (v) => (clearTimeout(timer), resolve(v)),
+      (e) => (clearTimeout(timer), reject(e)),
+    );
+  });
+}
+
 // Session explorer: a small-multiples band from /sessions (one row per
 // session, same encoding every row), drill-down via /sessions/{id}. Who needs
 // you comes from /attention, so this list agrees with the strip and dwell.
@@ -404,7 +418,7 @@ export function createSessions(
       const now = Date.now();
       const scoped = !!(store.get().worktree || store.get().project);
       const signal = AbortSignal.timeout(REQUEST_DEADLINE_MS);
-      const [list, inbox] = await Promise.allSettled([sessions(signal), attention(signal), scoped ? store.resolver()?.refresh?.() : undefined]);
+      const [list, inbox] = await Promise.allSettled([sessions(signal), attention(signal), scoped ? bounded(store.resolver()?.refresh?.(signal), signal) : undefined]);
       // A newer refresh started while these requests were in flight: it owns the DOM and the maps.
       if (gen !== refreshGen) return;
       if (list.status === "rejected") throw list.reason;

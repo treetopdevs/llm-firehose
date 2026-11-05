@@ -1,4 +1,4 @@
-import { exportNDJSON, getConfig, setConfig } from "../api";
+import { DAEMON_URL, exportNDJSON, getConfig, setConfig } from "../api";
 import { el } from "../dom";
 
 const MODES: Array<{ mode: string; blurb: string }> = [
@@ -9,11 +9,19 @@ const MODES: Array<{ mode: string; blurb: string }> = [
 
 // Engine settings: privacy mode (applied live via POST /config), spool
 // location, and NDJSON export.
-export function createSettings(): { root: HTMLElement; refresh(): void } {
+export interface SettingsOptions {
+  /** Fired once after a privacy-mode save succeeded; never when setConfig fails. */
+  onPrivacyChanged?: (mode: string, saving?: unknown) => void | Promise<void>;
+  /** Called synchronously before the save starts; its result is handed to onPrivacyChanged. */
+  onPrivacySaving?: () => unknown;
+}
+
+export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement; refresh(): void } {
   const root = el("section", { class: "settings" });
   const heading = el("h2", {}, "Settings");
 
   async function saveMode(mode: string, status: HTMLElement) {
+    const saving = opts.onPrivacySaving?.();
     try {
       const res = await setConfig({ privacy_mode: mode });
       status.textContent =
@@ -23,6 +31,13 @@ export function createSettings(): { root: HTMLElement; refresh(): void } {
     } catch (err) {
       status.textContent = String(err);
       status.classList.add("error");
+      return;
+    }
+    // After the save landed. The listener's own failure must not read as a failed save.
+    try {
+      await (opts.onPrivacySaving ? opts.onPrivacyChanged?.(mode, saving) : opts.onPrivacyChanged?.(mode));
+    } catch {
+      /* the shell reports its own remap failures */
     }
   }
 
@@ -88,7 +103,10 @@ export function createSettings(): { root: HTMLElement; refresh(): void } {
         info.append(el("dt", {}, label), el("dd", { class: "mono" }, value));
       };
       add("spool directory", cfg.spool_dir);
-      add("daemon address", cfg.daemon_addr);
+      // The address this app actually talks to; the configured one only shows when it differs.
+      const actual = (() => { try { return new URL(DAEMON_URL).host; } catch { return DAEMON_URL; } })();
+      add("daemon address", actual);
+      if (cfg.daemon_addr && cfg.daemon_addr !== actual) add("configured address", cfg.daemon_addr);
       add("codex sessions", cfg.codex_sessions_dir);
       root.append(el("h3", {}, "engine"), info);
 
