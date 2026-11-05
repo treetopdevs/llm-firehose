@@ -85,6 +85,7 @@ describe("focus visibility", () => {
     [".session-item:focus-visible", "outline"],
     [".project-bead:focus-visible", "stroke"],
     [".project-lane:focus-visible .project-hit", "stroke"],
+    [".fleet-lane-row:focus-visible .fleet-lane-focus", "stroke"],
   ])("%s sets %s with var(--focus)", (sel, prop) => {
     const r = rules.find((x) => items(x).includes(sel) && new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*[^;]*var\\(--focus\\)`).test(x.body));
     expect(r).toBeTruthy();
