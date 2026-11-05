@@ -13,15 +13,21 @@ import (
 
 // NewEngine constructs the shared local Capture Engine used by both hosts.
 func NewEngine(cfg cli.Config, home string) (*capture.Engine, error) {
-	policy, err := privacy.ParseMode(cfg.PrivacyMode)
-	if err != nil {
-		policy = privacy.ModeBalanced
-	}
 	sources := capture.LocalSources(capture.LocalSourceOptions{
 		CodexDir:       cfg.CodexDir,
 		CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
 		OwnershipPath:  filepath.Join(home, ".agentfirehose", "state", "engine.lock"),
 	})
+	return NewEngineWithSources(cfg, home, sources)
+}
+
+// NewEngineWithSources is NewEngine with an explicit Source set, so tests and
+// embedders can avoid the production Sources.
+func NewEngineWithSources(cfg cli.Config, _ string, sources []capture.Source) (*capture.Engine, error) {
+	policy, err := privacy.ParseMode(cfg.PrivacyMode)
+	if err != nil {
+		policy = privacy.ModeBalanced
+	}
 	return capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: policy, Sources: sources})
 }
 

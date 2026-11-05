@@ -7,6 +7,7 @@ import (
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/livesubscription"
+	"agentfirehose/internal/tui"
 )
 
 // Feed is the daemonless view's Live Subscription.
@@ -14,6 +15,8 @@ type Feed struct {
 	Events   <-chan event.Event
 	History  []event.Event
 	Sessions []livesubscription.Session
+	// Worktrees lists the engine's spool-derived worktree lifetimes.
+	Worktrees tui.WorktreeSource
 }
 
 // OpenLocalFeed composes the same production Capture Engine used by the
@@ -23,6 +26,11 @@ func OpenLocalFeed(ctx context.Context, cfg cli.Config, home string) (Feed, erro
 	if err != nil {
 		return Feed{}, err
 	}
+	return OpenFeedForEngine(ctx, engine)
+}
+
+// OpenFeedForEngine opens the daemonless Feed over an already-built engine.
+func OpenFeedForEngine(ctx context.Context, engine *capture.Engine) (Feed, error) {
 	return openEngineFeed(ctx, engine, 500, 10000)
 }
 
@@ -37,7 +45,8 @@ func openEngineFeed(ctx context.Context, engine *capture.Engine, initialLimit, r
 		_ = engine.Run(ctx)
 		stopFeed()
 	}()
-	return Feed{Events: sub.Events, History: sub.History, Sessions: sub.Sessions}, nil
+	return Feed{Events: sub.Events, History: sub.History, Sessions: sub.Sessions,
+		Worktrees: EngineWorktrees(engine)}, nil
 }
 
 type engineSource struct{ engine *capture.Engine }
