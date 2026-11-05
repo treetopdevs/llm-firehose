@@ -565,6 +565,28 @@ test("the inspector shows branch, agents, comparison, changes, activity and the 
   void panel;
 });
 
+test("Filter Timeline from the inspector clears a source filter that names another source", async () => {
+  const sessions = [agentSession("same", "codex", "fix"), agentSession("same", "claude-code", "fix", "idle")];
+  const { root } = await richSetup({ sessions });
+  label(root, "fix").dispatchEvent(new MouseEvent("click"));
+  await flush();
+  click(root, "Timeline");
+  await flush();
+  const src = q(root, "select[title='source filter']") as unknown as HTMLSelectElement;
+  src.value = "codex";
+  src.dispatchEvent(new Event("change"));
+  await flush();
+  click(root, "Graph");
+  await flush();
+  qa(root, ".agent-filter")[1].click();
+  await flush();
+  await flush();
+  const last = vi.mocked(graphAPI.timeline).mock.calls.at(-1)![0];
+  expect(last.source).toBe("claude-code");
+  expect(last.session_id).toBe("same");
+  expect((q(root, "select[title='source filter']") as unknown as HTMLSelectElement).value).toBe("");
+});
+
 test("detached checkouts read Detached HEAD with the short commit", async () => {
   const snap = richSnapshot();
   snap.workspaces.push(workspace("det", "m2", { refs: ["detached"] }));

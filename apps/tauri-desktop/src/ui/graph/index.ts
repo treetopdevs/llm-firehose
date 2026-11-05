@@ -464,6 +464,8 @@ export function createWorkspaceGraph(
     openSession: (id, src) => onOpenSession(id, src),
     filterTimeline: (src, id) => {
       session = `${src}\0${id}`;
+      // A source filter naming another source would drop this session in setQuery; the session wins.
+      if (source && source !== src) source = "";
       switchTab("timeline");
       queryFired = false;
       eventList.setFilter(eventQuery());

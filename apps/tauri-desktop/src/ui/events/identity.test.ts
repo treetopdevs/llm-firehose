@@ -22,7 +22,7 @@ function walk(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
-const sources = walk(SRC).map((p) => ({ rel: p.slice(SRC.length + 1), text: readFileSync(p, "utf8") }));
+const sources = walk(SRC).map((p) => ({ rel: p.slice(SRC.length + 1).replace(/\\/g, "/"), text: readFileSync(p, "utf8") }));
 const read = (rel: string) => sources.find((s) => s.rel === rel)!.text;
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 
