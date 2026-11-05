@@ -4,18 +4,21 @@
 // attention observes, so a repo seen only by attention is drawn as fog (known:
 // false), never dropped and never invented a fork.
 import type { AttentionSession, WorktreeLifetimeView, WorktreeState } from "../../api";
-import { idLabel, sessionName } from "../../format";
-import { isFailure } from "../../needs";
+import { displayRepoLabel, idLabel, sessionName } from "../../format";
+import { FORK_GLYPH, IDLE_MARK } from "../../glyphs";
+import { isFailure, needYouCount } from "../../needs";
 import { liveSessions, sessionKey } from "../dwell/model";
 import { IDLE_AFTER_MS, isIdleWorker, orderLanes } from "../project/model";
 
-export type Encoding = "map" | "dwell" | "matrix" | "lanes" | "airspace";
-export const ENCODINGS: readonly Encoding[] = ["map", "dwell", "matrix", "lanes", "airspace"];
+export type Encoding = "map" | "dwell" | "matrix" | "lanes" | "airspace" | "strata" | "ecosystem" | "events";
+export const ENCODINGS: readonly Encoding[] = ["map", "dwell", "matrix", "lanes", "airspace", "strata", "ecosystem", "events"];
+/** Encodings whose body is a hosted lens panel rather than a Fleet drawing. */
+export type HostEncoding = "strata" | "ecosystem" | "events";
+export const isHostEncoding = (e: Encoding): e is HostEncoding => e === "strata" || e === "ecosystem" || e === "events";
 
 /** One glyph per worktree state; Project and Fleet share the vocabulary. */
-export const FORK_GLYPH: Record<WorktreeState, string> = { open: "●", landed: "✓", gone: "×", never_diverged: "·", unknown: "?" };
+export { FORK_GLYPH, IDLE_MARK };
 /** Appended to an open fork that is ahead of main with nothing recent. */
-export const IDLE_MARK = "…";
 /** Row id for sessions waiting on you that carry no repo_id. */
 export const NOREPO_KEY = "__no_repo__";
 
@@ -105,11 +108,7 @@ export interface FleetResult {
   unattributed: AttentionSession[];
 }
 
-/** Display-only: drops a trailing "/.git" (repo ids are git common dirs). Never applied to ids. */
-export function displayRepoLabel(label: string): string {
-  const stripped = label.replace(/[/\\]\.git[/\\]?$/, "");
-  return stripped === "" ? label : stripped;
-}
+export { displayRepoLabel };
 
 const lastSegment = (s: string): string => idLabel(s).split("/").pop() || s;
 const looksDigest = (id: string): boolean => !/[/\\]/.test(id) && /^[0-9a-f]{8,}$/i.test(id);
@@ -130,6 +129,11 @@ function tooltipOf(r: WorktreeLifetimeView, label: string): string {
   return lines.join("\n");
 }
 
+/** The fork's accessible name: its state and idleness, plus how many sessions wait on you. */
+export function forkAriaLabel(f: Pick<FleetFork, "ariaLabel" | "needs">): string {
+  return f.needs > 0 ? `${f.ariaLabel}, ${needYouCount(f.needs)}` : f.ariaLabel;
+}
+
 export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
   const label = r.label ?? idLabel(r.worktree_id);
   // A gone worktree's age is when the daemon last saw it, not when it last produced a signal:
@@ -140,16 +144,17 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
     .map((s) => ({ first: time(s.first_time), last: time(s.last_time) }))
     .filter((s) => Number.isFinite(s.first) && Number.isFinite(s.last))
     .map((s) => ({ first: Math.min(s.first, s.last), last: Math.max(s.first, s.last) }));
+  const idle = isIdleWorker(r, now);
   return {
     id: r.worktree_id,
     label,
     short: lastSegment(label),
     state: r.state,
     glyph: FORK_GLYPH[r.state] ?? FORK_GLYPH.unknown,
-    idle: isIdleWorker(r, now),
+    idle,
     old: goneKnown && !(now - removedAt <= GONE_RECENT_MS),
     ageUnknown: r.state === "gone" && !goneKnown,
-    ariaLabel: `${label}, ${r.state}`,
+    ariaLabel: `${label}, ${r.state}${idle ? ", idle" : ""}`,
     tooltip: tooltipOf(r, label),
     needs: 0,
     lastMs: finiteOr(time(r.last_time), 0),
@@ -253,7 +258,7 @@ export function buildFleet(input: FleetInput): FleetResult {
     const noRepo = id === NOREPO_KEY;
     let label: string;
     let digest = false;
-    if (noRepo) label = "No repo id";
+    if (noRepo) label = "No project";
     else {
       let resolved: string | undefined;
       try { resolved = input.resolveLabel?.(id) || undefined; } catch { resolved = undefined; }

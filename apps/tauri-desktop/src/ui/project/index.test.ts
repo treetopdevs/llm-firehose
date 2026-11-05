@@ -8,6 +8,7 @@ import { shortId } from "../../format";
 import { FIXTURE_ROWS, NOW, iso, row } from "./model.fixtures";
 import { layoutLanes, orderLanes, resolveWindow, xToTime } from "./model";
 import { isEscapeClaimed } from "../../escape";
+import { __resetKeysForTests, listKeys, registerKeys } from "../../keys";
 import { createProject } from "./index";
 import type { ProjectPanel } from "./index";
 import type { ActionsUi } from "../actions";
@@ -58,11 +59,13 @@ function setup(goImpl?: (store: ScopeStore, getPanel: () => ProjectPanel) => (n:
 }
 
 beforeEach(() => {
+  __resetKeysForTests();
   worktreesMock.mockReset().mockImplementation(() => Promise.resolve(FIXTURE_ROWS));
   worktreeMock.mockReset().mockImplementation((id: string) => Promise.resolve(detail(id)));
 });
 afterEach(() => {
   for (const p of panels.splice(0)) p.deactivate();
+  __resetKeysForTests();
   document.body.replaceChildren();
   vi.useRealTimers();
   for (const s of spies.splice(0)) s.mockRestore();
@@ -204,24 +207,35 @@ describe("repository choice", () => {
 });
 
 describe("window", () => {
-  test("live and explicit windows", async () => {
+  test("no private Live control", async () => {
     const { store, panel, q, keys } = setup();
     store.narrow({ project: "repoA" });
     await panel.activate();
-    const live = q("button.project-live")[0]!;
-    expect(live.getAttribute("aria-pressed")).toBe("true");
-    expect(q(".project-window")[0]!.textContent).not.toContain("2026-10-30");
+    expect(q("button.project-live")).toHaveLength(0);
+    expect(q(".project-window")).toHaveLength(0);
     const before = worktreesMock.mock.calls.length;
     store.narrow({ window: { from: NOW - D, to: NOW } });
     expect(keys()).not.toContain("wt-landed");
     expect(keys()).not.toContain("wt-gone");
     expect(keys()).toContain("wt-open");
     expect(worktreesMock.mock.calls.length).toBe(before);
-    expect(live.getAttribute("aria-pressed")).toBe("false");
-    expect(q(".project-window")[0]!.textContent).toContain("2026-10-30");
-    live.click();
-    expect(store.get().window).toBe("live");
+    store.narrow({ window: "live" });
     expect(keys()).toContain("wt-landed");
+    expect(worktreesMock.mock.calls.length).toBe(before);
+  });
+
+  test("live follows liveSpanMs", async () => {
+    const { store, panel, keys } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const all = keys();
+    const before = worktreesMock.mock.calls.length;
+    store.narrow({ liveSpanMs: D });
+    expect(keys()).not.toContain("wt-landed");
+    expect(keys()).toContain("wt-open");
+    expect(worktreesMock.mock.calls.length).toBe(before);
+    store.narrow({ liveSpanMs: 7 * D });
+    expect(keys()).toEqual(all);
   });
 });
 
@@ -424,6 +438,7 @@ describe("empty and degraded states", () => {
     expect(q(".project-unsupported")[0]!.textContent).toContain("/worktrees");
     expect(q(".project-unsupported")[0]!.textContent).toContain("older daemon");
     expect(q(".project-lane")).toHaveLength(0);
+    expect(q(".project-unsupported button")[0]!.textContent).toBe("Open events");
     q(".project-unsupported button")[0]!.click();
     expect(go).toHaveBeenCalledWith("live");
     expect(err).not.toHaveBeenCalled();
@@ -634,7 +649,7 @@ describe("interaction", () => {
       expect(go).toHaveBeenCalledTimes(1);
       go.mockClear();
       key("2");
-      const btn = panel.root.querySelector("button.project-live")!;
+      const btn = panel.root.querySelector("select.project-repo")!;
       key("Enter", btn);
       expect(go).not.toHaveBeenCalled();
     });
@@ -661,6 +676,26 @@ describe("interaction", () => {
       panel.deactivate();
       expect(remove.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(2);
       expect(key("2").defaultPrevented).toBe(false);
+    });
+
+    test("when the shared dispatcher already exists Project adds and removes one capture listener", async () => {
+      registerKeys([{ scope: "global", keys: ["F9"], display: "F9", label: "other", handler: () => {} }]);
+      const add = vi.spyOn(document, "addEventListener");
+      const remove = vi.spyOn(document, "removeEventListener");
+      spies.push(add, remove);
+      const { panel } = await ready();
+      expect(add.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+      panel.deactivate();
+      expect(remove.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+    });
+
+    test("Project keys are listed while the lanes encoding is active", async () => {
+      const { panel, q } = await ready();
+      document.body.append(panel.root);
+      expect(listKeys().filter((r) => r.scope === "project").map((r) => r.display)).toEqual(["Enter", "1–9", "↑ / ↓"]);
+      expect(q(".project-chip")).toHaveLength(0); // no graph here, so no other encoding to switch to (see main.test.ts)
+      panel.deactivate();
+      expect(listKeys().filter((r) => r.scope === "project")).toEqual([]);
     });
 
     test("a second panel does not react after the first is deactivated", async () => {
@@ -704,7 +739,7 @@ describe("interaction", () => {
     test("drag sets the shared window", async () => {
       const { store, q } = await ready();
       const svg = q("svg.project-svg")[0]!;
-      const range = resolveWindow(store.get().window, NOW);
+      const range = resolveWindow(store.get().window, NOW, store.get().liveSpanMs);
       mouse("mousedown", 550, svg);
       mouse("mousemove", 325, document);
       expect(q(".project-brush")).toHaveLength(1);
@@ -713,10 +748,51 @@ describe("interaction", () => {
       expect(q(".project-brush")).toHaveLength(0);
       expect(store.get().window).toEqual({ from: xToTime(325, range, X0, 870), to: xToTime(550, range, X0, 870) });
       expect(q(".project-lane").length).toBeGreaterThan(0);
-      expect(q("button.project-live")[0]!.getAttribute("aria-pressed")).toBe("false");
-      q("button.project-live")[0]!.click();
+      store.narrow({ window: "live" });
       expect(store.get().window).toBe("live");
-      expect(q("button.project-live")[0]!.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    test("brush keeps liveSpanMs", async () => {
+      const { store, q } = await ready();
+      store.narrow({ liveSpanMs: 2 * H });
+      const svg = q("svg.project-svg")[0]!;
+      mouse("mousedown", 550, svg);
+      mouse("mousemove", 325, document);
+      mouse("mouseup", 325, document);
+      expect(store.get().liveSpanMs).toBe(2 * H);
+      const w = store.get().window;
+      expect(w).not.toBe("live");
+      if (w !== "live") {
+        expect(Number.isFinite(w.from) && Number.isFinite(w.to)).toBe(true);
+        expect(w.from).toBeLessThan(w.to);
+        expect(w.to).toBeLessThanOrEqual(NOW);
+      }
+    });
+
+    test("brush uses the span the user sees", async () => {
+      const { store, q } = await ready();
+      store.narrow({ liveSpanMs: 2 * H });
+      const range = { from: NOW - 2 * H, to: NOW };
+      const svg = q("svg.project-svg")[0]!;
+      mouse("mousedown", 550, svg);
+      mouse("mousemove", 325, document);
+      mouse("mouseup", 325, document);
+      expect(store.get().window).toEqual({ from: xToTime(325, range, X0, 870), to: xToTime(550, range, X0, 870) });
+    });
+
+    test("Enter and digit keys still act after a transport button blurs to body", async () => {
+      const { q, go } = await ready();
+      const stub = document.createElement("button");
+      document.body.append(stub);
+      stub.focus();
+      stub.click();
+      stub.blur();
+      expect(document.activeElement).toBe(document.body);
+      key("1");
+      expect(q(".project-lane.selected")).toHaveLength(1);
+      key("Enter");
+      expect(go).toHaveBeenCalled();
+      stub.remove();
     });
 
     test("tiny drag changes nothing", async () => {
@@ -809,7 +885,7 @@ describe("interaction", () => {
       expect(store.get().window).toEqual(win);
       panel.deactivate();
       await panel.activate();
-      expect(q(".project-window")[0]!.textContent).toContain("→");
+      expect(store.get().window).toEqual(win);
       q(".project-bead[data-session=s-o1]")[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       expect(store.get().session).toEqual({ id: "s-o1", source: "codex" });
       expect(store.get().window).toBe("live");
@@ -852,7 +928,7 @@ describe("scope membership", () => {
     await panel.activate();
     await flush();
     const r = store.resolver()!;
-    expect(r.labels({ project: "repoA", worktree: "wt-open", window: "live" })).toEqual({ worktree: "/w/alpha-open" });
+    expect(r.labels({ project: "repoA", worktree: "wt-open", window: "live" })).toEqual({ worktree: "alpha-open" });
     expect(r.labels({ project: "repoA", worktree: "wt-unk", window: "live" })).toEqual({});
   });
 
@@ -1014,6 +1090,146 @@ describe("fleet hooks", () => {
     expect(opts.find((o) => o.getAttribute("value") === "repoA")!.textContent).toBe("Alpha");
     const other = opts.find((o) => o.getAttribute("value") !== "repoA")!;
     expect(other.textContent).toBe(other.getAttribute("value"));
+  });
+});
+
+describe("picker names and idle semantics", () => {
+  const optionsOf = (panel: ProjectPanel) => [...panel.root.querySelectorAll<HTMLOptionElement>(".project-header select option")];
+  const DIGEST = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  function setupWith(rows: WorktreeLifetimeView[], over: Partial<Parameters<typeof createProject>[0]> = {}) {
+    worktreesMock.mockImplementation(() => Promise.resolve(rows));
+    const store = createScope();
+    const panel = createProject({ store, go: vi.fn(), now: () => NOW, refreshMs: 15000, ...over });
+    document.body.append(panel.root);
+    panels.push(panel);
+    return { store, panel };
+  }
+
+  test("option text is never a raw repo id; value is always the raw id", async () => {
+    const gitDir = "/Users/n/develop/llm-firehose/.git";
+    const { store, panel } = setupWith([row({ repo_id: gitDir, worktree_id: "w1" }), row({ repo_id: DIGEST, worktree_id: "w2" })]);
+    store.narrow({ project: gitDir });
+    await panel.activate();
+    const opts = optionsOf(panel);
+    expect(opts.map((o) => o.value).sort()).toEqual([DIGEST, gitDir].sort());
+    expect(opts.find((o) => o.value === gitDir)!.textContent).toBe("llm-firehose");
+    expect(opts.find((o) => o.value === DIGEST)!.textContent).toBe(DIGEST.slice(0, 8));
+  });
+
+  test("the picker reduces a git-dir repo id to its folder and keeps the full id as the title", async () => {
+    const gitDir = "/Users/n/develop/repo-x/.git";
+    for (const over of [{}, { projectLabel: () => gitDir }]) {
+      const { store, panel } = setupWith([row({ repo_id: gitDir, worktree_id: "w1" })], over);
+      store.setResolver({ sessions: () => undefined, labels: () => ({ project: gitDir }) });
+      store.narrow({ project: gitDir });
+      await panel.activate();
+      const o = optionsOf(panel)[0]!;
+      expect(o.textContent).toBe("repo-x");
+      expect(o.title).toBe(gitDir);
+      panel.root.remove();
+    }
+  });
+
+  test("a resolved name outranks a fallback-form projectLabel and follows the resolver without a scope change", async () => {
+    const stale = DIGEST.slice(0, 8);
+    let name: string | undefined;
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })], { projectLabel: () => stale });
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === DIGEST && name ? { project: name } : {}) });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe(stale);
+    name = "llm-firehose";
+    store.touchResolver();
+    expect(optionsOf(panel)[0]!.textContent).toBe("llm-firehose");
+    expect(optionsOf(panel)[0]!.value).toBe(DIGEST);
+  });
+
+  test("the resolver's '(unknown)' placeholder does not outrank the host's real name", async () => {
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })], { projectLabel: () => "llm-firehose" });
+    store.setResolver({ sessions: () => undefined, labels: (sc) => (sc.project === DIGEST ? { project: `${DIGEST.slice(0, 8)} (unknown)` } : {}) });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe("llm-firehose");
+  });
+
+  test("a throwing resolver falls back instead of breaking the picker", async () => {
+    const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })]);
+    store.setResolver({ sessions: () => undefined, labels: () => { throw new Error("boom"); } });
+    store.narrow({ project: DIGEST });
+    await panel.activate();
+    expect(optionsOf(panel)[0]!.textContent).toBe(DIGEST.slice(0, 8));
+  });
+
+  test("the idle mark is an image named idle with a titled reason, and the lane says idle", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const mark = q(".project-idle");
+    expect(mark).toHaveLength(1);
+    expect([...mark[0]!.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("")).toBe("!");
+    expect(mark[0]!.getAttribute("role")).toBe("img");
+    expect(mark[0]!.getAttribute("aria-label")).toBe("idle");
+    expect(mark[0]!.querySelector("title")!.textContent).toBe("idle: ahead of the default branch and quiet for hours");
+    expect(q(".project-lane.idle")[0]!.getAttribute("aria-label")!.endsWith(", idle")).toBe(true);
+  });
+});
+
+describe("beads are keyboard operable", () => {
+  const press = (target: Element, k: string): KeyboardEvent => {
+    const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  };
+
+  test("each bead is a focusable button naming its session and the lane state", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const beads = q(".project-bead");
+    expect(beads.length).toBeGreaterThan(0);
+    for (const b of beads) {
+      expect(b.getAttribute("tabindex")).toBe("0");
+      expect(b.getAttribute("role")).toBe("button");
+      const lane = b.closest(".project-lane")!;
+      const state = [...lane.classList].find((c) => c.startsWith("state-"))!.slice("state-".length);
+      expect(b.getAttribute("aria-label")).toContain(shortId(b.getAttribute("data-session")!));
+      expect(b.getAttribute("aria-label")).toContain(state);
+    }
+  });
+
+  test.each(["Enter", " "])("%j on a bead goes to score once and never to sessions", async (k) => {
+    const { store, panel, q, go } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const bead = q(".project-bead[data-session=s-o1]")[0]!;
+    bead.focus();
+    expect(press(bead, k).defaultPrevented).toBe(true);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith("score", { project: "repoA", worktree: "wt-open", session: { id: "s-o1", source: "codex" }, cell: undefined });
+    expect(go.mock.calls.some((c) => c[0] === "sessions")).toBe(false);
+  });
+
+  test("a focused bead keeps focus across a redraw (the same bead, rebuilt)", async () => {
+    const { store, panel, q } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    const bead = q(".project-bead[data-session=s-o1]")[0]!;
+    bead.focus();
+    expect(document.activeElement).toBe(bead);
+    await panel.refresh();
+    const fresh = q(".project-bead[data-session=s-o1]")[0]!;
+    expect(fresh).not.toBe(bead);
+    expect(document.activeElement).toBe(fresh);
+  });
+
+  test("Enter on the lane itself still goes to sessions once", async () => {
+    const { store, panel, q, go } = setup();
+    store.narrow({ project: "repoA" });
+    await panel.activate();
+    press(q(".project-lane[data-key=wt-open]")[0]!, "Enter");
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith("sessions", { project: "repoA", worktree: "wt-open", cell: undefined });
   });
 });
 

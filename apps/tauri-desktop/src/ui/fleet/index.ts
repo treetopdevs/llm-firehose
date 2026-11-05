@@ -6,6 +6,9 @@ import { ApiError, attention as fetchAttention, sessions as fetchSessions, workt
 import type { AttentionSession, AttentionSnapshot, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { claimEscape, isEscapeEligible } from "../../escape";
+import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
+import type { KeyBinding } from "../../keys";
+import { DEFAULT_LIVE_SPAN_MS, isLive } from "../../scope";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import type { CellScope } from "../workspace/model";
 import type { ActionsUi } from "../actions";
@@ -16,12 +19,22 @@ import { formatAge } from "../../spark";
 import { deriveAirspace } from "../airspace/model";
 import { buildDwell, sessionKey } from "../dwell/model";
 import type { DwellRow } from "../dwell/model";
-import { LANE_WINDOWS_MS, buildLanes } from "../lanes/model";
+import { LANE_WINDOWS_MS, SEP, buildLanes } from "../lanes/model";
+import type { SessionDirectory } from "../../session-directory";
+import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
-import { ENCODINGS, IDLE_MARK, NOREPO_KEY, buildFleet, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
-import type { Encoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
+import { FORK_GLYPH, IDLE_MARK, NEEDS_MARK, NO_DATA_MARK, NO_PROJECT_MARK } from "../../glyphs";
+import { ENCODINGS, NOREPO_KEY, isHostEncoding, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
+import type { Encoding, HostEncoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
-export type { Encoding } from "./model";
+export type { Encoding, HostEncoding } from "./model";
+
+/** A lens panel Fleet mounts as an encoding body; Fleet owns its activate/deactivate lifetime. */
+export interface FleetHost {
+  root: HTMLElement;
+  activate?(): unknown;
+  deactivate(): unknown;
+}
 
 export interface FleetApi {
   worktrees(signal?: AbortSignal): Promise<WorktreeLifetimeView[]>;
@@ -34,6 +47,8 @@ export interface FleetDeps {
   go(name: "project" | "sessions" | "score" | "live", patch?: ScopePatch): void;
   /** The live event buffer; lanes are drawn from it. */
   events: () => readonly FirehoseEvent[];
+  /** Names lane sessions the summaries do not cover; optional, so lanes fall back to agent names. */
+  directory?: SessionDirectory;
   api?: FleetApi;
   now?: () => number;
   refreshMs?: number;
@@ -41,6 +56,10 @@ export interface FleetDeps {
   loadTimeoutMs?: number;
   /** Repo id to display label, whenever the set changes. */
   onLabels?: (labels: Record<string, string>) => void;
+  /** The encoding changed, so effectiveLiveSpan may have too. */
+  onEncoding?: () => void;
+  /** Lens panels mounted as the Strata and Patches encodings. */
+  hosts?: Partial<Record<HostEncoding, FleetHost>>;
   /** The app-owned actions controller; without it the view offers no actions. */
   actions?: ActionsUi;
   /** The app-owned repo-roots store (graph resolver raw labels). */
@@ -55,15 +74,18 @@ export interface FleetPanel {
   setConnected(connected: boolean): void;
   onEvent(ev: FirehoseEvent): void;
   encoding: Encoding;
+  /** The trailing span the live view draws now: the user-set span for Lanes, else the default. */
+  effectiveLiveSpan(): number;
+  /** The stable fork order for a repository (Project seeds its lanes from it); undefined before the first load or for an unknown repo. */
+  forkOrder(repo: string): readonly string[] | undefined;
 }
 
-const SEP = "\u0000"; // matches qualifyLaneInput
 const CHANGE_MS = 1600;
 const EVENT_REFRESH_MS = 1000;
 const LANES_REDRAW_MS = 250;
 const AIRSPACE_WINDOW_MS = 15 * 60_000;
 const BLOCKS = "▁▂▃▄▅▆▇█";
-const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Dwell", matrix: "Matrix", lanes: "Lanes", airspace: "Airspace" };
+const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Waiting", matrix: "Table", lanes: "Lanes", airspace: "By state", strata: "Strata", ecosystem: "Patches", events: "Events" };
 const FALLBACK_W = 800;
 const TOAST_MS = 2500;
 const NO_NEEDS = "no sessions need you";
@@ -78,7 +100,6 @@ const setAttr = (n: Element, k: string, v: string | null): void => {
   else n.setAttribute(k, v);
 };
 const setClass = (n: Element, c: string, on: boolean): void => { if (n.classList.contains(c) !== on) n.classList.toggle(c, on); };
-const day = (t: number): string => new Date(t).toISOString().slice(0, 16).replace("T", " ");
 const sparkText = (counts: number[]): string => {
   const max = Math.max(...counts, 0);
   return counts.map((c) => BLOCKS[max === 0 ? 0 : Math.min(BLOCKS.length - 1, Math.ceil((c / max) * (BLOCKS.length - 1)))]).join("");
@@ -110,6 +131,8 @@ interface RowRefs { head: HTMLElement; glyph: HTMLElement; label: HTMLElement; n
 interface NeedRefs { label: HTMLElement; dwell: HTMLElement; summary: HTMLElement }
 
 type StatusKind = "" | "loading" | "error" | "connecting" | "unsupported" | "empty";
+
+let activeFleetKeys: (() => void) | undefined;
 
 export function createFleet(deps: FleetDeps): FleetPanel {
   const { store, go } = deps;
@@ -158,10 +181,12 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let sessToken = 0;
   let sessInflight = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let unregisterOwnKeys: (() => void) | undefined;
   let eventTimer: ReturnType<typeof setTimeout> | undefined;
   let lanesTimer: ReturnType<typeof setTimeout> | undefined;
   let unsub: (() => void) | undefined;
   let unsubResolver: (() => void) | undefined;
+  let unsubDirectory: (() => void) | undefined;
 
   // Keyed nodes and transition memory. prevStates survives deactivate on purpose.
   const nodes = new Map<string, Element>();
@@ -174,19 +199,20 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let mapEntries: Array<{ row: FleetRow; refs: RowRefs; needs: Array<{ need: FleetNeed; refs: NeedRefs; node: Element }> }> = [];
 
   // Header, built once.
-  const encButtons = ENCODINGS.map((enc) => {
+  const encButtons = ENCODINGS.filter((enc) => !isHostEncoding(enc) || deps.hosts?.[enc] !== undefined).map((enc) => {
     const b = el("button", { class: "fleet-enc", type: "button", "data-enc": enc, "aria-pressed": "false" }, ENCODING_LABEL[enc]);
     b.addEventListener("click", () => setEncoding(enc));
     return b;
   });
-  const windowChip = el("span", { class: "fleet-window", title: "Scope window; kept when you open a project, fork or session" });
   const staleChip = el("span", { class: "fleet-stale", title: "Showing the last data received; a refresh is overdue" }, "stale");
   const flags = el("span", { class: "fleet-flags" });
   const statusBox = el("div", { class: "fleet-status", role: "status" });
   const toast = el("div", { class: "fleet-toast", role: "status" });
   const body = el("div", { class: "fleet-body" });
   const foot = el("div", { class: "fleet-foot" });
-  const hint = el("p", { class: "fleet-hint" }, "Click a row to open the project, a fork glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick.");
+  const TABLE_HINT = "Click a row to open the project, a worktree glyph to list that worktree's sessions, a ? unit to open its session. Keys 1-9 pick a row, n and N walk the queue, Space jumps to the longest wait, Enter opens the pick. Press ? for all keys and symbols.";
+  const EVENTS_HINT = "The live list of every captured event, newest at the bottom. Space pauses it. Press ? for all keys and symbols.";
+  const hint = el("p", { class: "fleet-hint" }, TABLE_HINT);
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
@@ -208,7 +234,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   const windowPatch = (): ScopePatch["window"] => {
     const w = store.get().window;
-    return w === "live" ? "live" : { from: w.from, to: w.to };
+    return isLive(w) ? "live" : { from: w.from, to: w.to };
   };
   function nav(name: "project" | "sessions" | "score", p: { project?: string; worktree?: string; session?: { id: string; source?: string }; cell?: CellScope }): void {
     go(name, { project: p.project, worktree: p.worktree, session: p.session, cell: p.cell, window: windowPatch() });
@@ -232,7 +258,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     return [sc.project ?? "", sc.worktree ?? "", sc.session?.source ?? "", sc.session?.id ?? ""].join(SEP);
   }
 
-  const lastText = (r: FleetRow, now: number): string => (r.lastMs > 0 ? formatAge(Math.max(0, now - r.lastMs)) : "–");
+  const lastText = (r: FleetRow, now: number): string => (r.lastMs > 0 ? formatAge(Math.max(0, now - r.lastMs)) : NO_DATA_MARK);
 
   function encodingKey(now: number): string {
     if (encoding === "matrix") return JSON.stringify(result.rows.map((r) => [r.id, lastText(r, now)]));
@@ -282,15 +308,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   function syncButtons(): void {
     for (const b of encButtons) setAttr(b, "aria-pressed", b.getAttribute("data-enc") === encoding ? "true" : "false");
+    hint.hidden = isHostEncoding(encoding) && encoding !== "events";
+    const wantHint = encoding === "events" ? EVENTS_HINT : TABLE_HINT;
+    if (hint.textContent !== wantHint) hint.textContent = wantHint;
   }
 
   function syncFlags(): void {
-    const w = store.get().window;
-    if (w !== "live") setText(windowChip, `window ${day(w.from)} → ${day(w.to)} UTC`);
     const hasData = wt !== undefined || att !== undefined;
     const stale = hasData && (wtStale || attStale || sessStale);
     const wanted: Element[] = [];
-    if (w !== "live") wanted.push(windowChip);
     if (stale) wanted.push(staleChip);
     reconcile(flags, wanted);
   }
@@ -305,14 +331,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   }
 
   function renderStatus(): void {
-    const kind = statusFor();
+    const kind = isHostEncoding(encoding) ? "" : statusFor();
     if (kind === statusKind) return;
     statusKind = kind;
     clear(statusBox);
     if (kind === "loading") statusBox.append(el("div", { class: "fleet-loading" }, "Loading…"));
     else if (kind === "connecting") statusBox.append(el("div", { class: "fleet-connecting" }, "Connecting to daemon…"));
     else if (kind === "empty") statusBox.append(el("div", { class: "fleet-empty" }, "No live sessions or worktrees captured yet."));
-    else if (kind === "unsupported") statusBox.append(el("div", { class: "fleet-unsupported" }, "This daemon does not serve /worktrees (older daemon). Showing attention only; update Agent Firehose to see forks."));
+    else if (kind === "unsupported") statusBox.append(el("div", { class: "fleet-unsupported" }, "This daemon does not serve /worktrees (older daemon). Showing sessions that need you only; update Agent Firehose to see worktrees."));
     else if (kind === "error") {
       const retry = el("button", { class: "fleet-retry", type: "button" }, "Retry");
       retry.addEventListener("click", () => void load());
@@ -383,7 +409,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       // repository region, a sibling of the head (never nested in role=button).
       const ui = deps.actions;
       if (ui && !row.noRepo) {
-        const btn = el("button", { class: "unit-actions", type: "button", "aria-haspopup": "menu", title: "Repository actions" }, "Actions");
+        const btn = el("button", { class: "unit-actions", type: "button", "aria-haspopup": "menu", title: "Project actions" }, "Actions");
         btn.addEventListener("click", () => ui.openMenu(repoActions(row.id), btn, { returnFocus: btn }));
         node.append(btn);
       }
@@ -397,15 +423,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setClass(node, "current", sc.project === row.id);
     setClass(node, "selected", selRow === row.id);
     setAttr(refs.head, "aria-disabled", navigable ? null : "true");
-    setAttr(refs.head, "aria-label", `${row.label}${row.needsCount ? `, ${row.needsCount} need you` : ""}`);
+    setAttr(refs.head, "aria-label", `${row.label}${row.needsCount ? `, ${needYouCount(row.needsCount)}` : ""}`);
     setClass(node, "unregistered", row.digest);
-    const base = row.noRepo ? "Sessions waiting on you that carry no repository id" : row.known ? `${row.forks.length} worktrees` : "Seen by attention only: no worktree data captured for this repository";
-    setAttr(refs.head, "title", row.digest ? `${base}\nunregistered: only a digest was recorded (balanced/minimal privacy, or the repository is not registered)` : base);
-    setText(refs.glyph, row.noRepo ? "–" : row.known ? "●" : "?");
+    const base = row.noRepo ? "Sessions waiting on you that carry no project" : row.known ? `${row.forks.length} worktrees` : "Seen in the needs-you snapshot only: no worktree data captured for this project";
+    setAttr(refs.head, "title", row.digest ? `${base}\nunregistered: only a digest was recorded (balanced/minimal privacy, or the project is not registered)` : base);
+    setText(refs.glyph, row.noRepo ? NO_PROJECT_MARK : row.known ? FORK_GLYPH.open : FORK_GLYPH.unknown);
     setText(refs.label, row.label);
     setText(refs.needs, row.needsCount > 0 ? `${row.needsCount}?` : "");
-    setText(refs.counts, row.known ? `${row.openForks}● ${row.idleForks}${IDLE_MARK}` : "");
-    setAttr(refs.counts, "title", "open forks, idle forks (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
+    setText(refs.counts, row.known ? `${row.openForks}${FORK_GLYPH.open} ${row.idleForks}${IDLE_MARK}` : "");
+    setAttr(refs.counts, "title", "open worktrees, idle worktrees (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
@@ -428,7 +454,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setClass(k.node, "current", sc.project === row.id && sc.worktree === f.id);
       for (const st of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${st}`, f.state === st);
       setAttr(k.node, "title", f.tooltip);
-      setAttr(k.node, "aria-label", f.ariaLabel);
+      setAttr(k.node, "aria-label", forkAriaLabel(f));
       setText(fr.glyph, f.glyph + (f.idle ? IDLE_MARK : ""));
       setText(fr.label, f.state === "open" ? f.short : "");
       setText(fr.needs, f.needs > 0 ? `${f.needs}?` : "");
@@ -453,7 +479,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       }
       setText(m.node, open ? "collapse" : `+${strip.more}`);
       setAttr(m.node, "aria-expanded", open ? "true" : "false");
-      setAttr(m.node, "aria-label", open ? "collapse forks" : `show ${strip.more} more forks`);
+      setAttr(m.node, "aria-label", open ? "collapse worktrees" : `show ${strip.more} more worktrees`);
       forkNodes.push(m.node);
     }
     reconcile(refs.forks, forkNodes);
@@ -463,7 +489,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       let nr = needRefs.get(k.node);
       if (k.fresh || !nr) {
         nr = { label: el("span", { class: "fleet-need-label" }), dwell: el("span", { class: "fleet-need-dwell" }), summary: el("span", { class: "fleet-need-summary" }) };
-        k.node.append(el("span", { class: "fleet-need-mark", "aria-hidden": "true" }, "?"), nr.label, nr.dwell, nr.summary);
+        k.node.append(el("span", { class: "fleet-need-mark", "aria-hidden": "true" }, NEEDS_MARK), nr.label, nr.dwell, nr.summary);
         needRefs.set(k.node, nr);
         onActivate(k.node, () => { const cur = result.needs.find((x) => x.key === n.key); if (cur) openNeed(cur); });
       }
@@ -548,7 +574,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     clear(body);
     nodes.clear();
     const table = el("table", { class: "fleet-matrix" });
-    table.append(el("thead", {}, el("tr", {}, ...["repository", "open", "idle", "needs you", "gone (7d)", "last activity"].map((h) => el("th", {}, h)))));
+    table.append(el("thead", {}, el("tr", {}, ...["project", "open", "idle", "needs you", "gone (7d)", "last activity"].map((h) => el("th", {}, h)))));
     const tbody = el("tbody");
     for (const r of result.rows) {
       const head = el("th", { scope: "row", "data-key": "matrix:" + r.id + "|head" }, r.label);
@@ -563,7 +589,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       const count = (n: number): HTMLElement => el("td", { class: n === 0 ? "zero" : "" }, String(n));
       // Fork counts come from /worktrees only; without a row there they are unknown, not zero.
       const forkCount = (n: number, title?: string): HTMLElement => {
-        if (!r.known || r.noRepo) return el("td", { class: "zero unknown", title: NO_WORKTREE_DATA }, "–");
+        if (!r.known || r.noRepo) return el("td", { class: "zero unknown", title: NO_WORKTREE_DATA }, NO_DATA_MARK);
         const c = count(n);
         if (title) c.setAttribute("title", title);
         return c;
@@ -576,7 +602,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         needs.setAttribute("role", "button");
         needs.setAttribute("tabindex", "0");
         needs.setAttribute("data-key", `matrix:${r.id}|needs`);
-        needs.setAttribute("aria-label", `${r.label}, ${r.needsCount} need you, open the longest-waiting`);
+        needs.setAttribute("aria-label", `${r.label}, ${needYouCount(r.needsCount)}, open the longest-waiting`);
         onActivate(needs, () => { const cur = result.rows.find((x) => x.id === r.id)?.needs[0]; if (cur) openNeed(cur); });
       }
       tbody.append(el("tr", { "data-key": "matrix:" + r.id }, head, forkCount(r.openForks), forkCount(r.idleForks), needs, forkCount(r.goneRecent, goneTitle), el("td", { class: "dim" }, lastText(r, now))));
@@ -592,7 +618,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const d = deriveAirspace(att ?? [], { now, windowMs: AIRSPACE_WINDOW_MS });
     body.append(
       airspaceBands(d),
-      el("p", { class: "dim fleet-note" }, "Captured observations from the latest attention snapshot, not process monitoring. Recent activity means a working session with an event in the last 15 minutes. No observation is not proof of absence."),
+      el("p", { class: "dim fleet-note" }, "Captured observations from the latest needs-you snapshot, not process monitoring. Recent activity means a working session with an event in the last 15 minutes. No observation is not proof of absence."),
     );
   }
 
@@ -602,22 +628,48 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     nodes.clear();
     // The shared scope window bounds the lanes; live keeps the trailing five minutes.
     const w = store.get().window;
-    const end = w === "live" ? now : w.to;
-    const windowMs = w === "live" ? LANE_WINDOWS_MS[1] : Math.max(w.to - w.from, 1);
+    const live = isLive(w);
+    const end = live ? now : w.to;
+    const windowMs = live ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : Math.max(w.to - w.from, 1);
     const qualified = summaries.map((s) => ({ ...s, id: `${s.source}${SEP}${s.id}` }));
-    const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => w === "live" || !(Date.parse(e.time) > end))), qualified, end, windowMs);
+    const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => live || !(Date.parse(e.time) > end))), qualified, end, windowMs, deps.directory ? (ref) => deps.directory!.lookup(ref) : undefined);
     body.append(lanesStrip(lanes, end, windowMs, body.clientWidth || FALLBACK_W, (id, source) => openSession(id, source)));
     restore();
   }
 
+  let mountedHost: HostEncoding | undefined;
+  function deactivateHosts(): void {
+    const h = mountedHost;
+    if (h === undefined) return;
+    mountedHost = undefined;
+    const host = deps.hosts?.[h];
+    try { host?.deactivate(); } catch { /* a host must not break Fleet */ }
+    if (host && host.root.parentNode === body) host.root.remove();
+  }
+
+  function drawHost(h: HostEncoding): void {
+    const host = deps.hosts?.[h];
+    clear(body);
+    nodes.clear();
+    mapEntries = [];
+    setText(foot, "");
+    if (!host) return;
+    body.append(host.root);
+    mountedHost = h;
+    try { void host.activate?.(); } catch { /* a host must not break Fleet */ }
+  }
+
   function draw(now: number): void {
+    if (isHostEncoding(encoding) && mountedHost === encoding) return; // already mounted: a refresh must not restart the host
+    deactivateHosts();
+    if (isHostEncoding(encoding)) { drawHost(encoding); return; }
     if (encoding !== "map") body.querySelector(":scope > .fleet-map")?.remove();
     if (encoding === "map") renderMap(now);
     else if (encoding === "dwell") renderDwell(now);
     else if (encoding === "matrix") renderMatrix(now);
     else if (encoding === "airspace") renderAirspace(now);
     else renderLanes(now);
-    setText(foot, result.unattributed.length > 0 ? `${result.unattributed.length} live sessions with no repository id` : "");
+    setText(foot, result.unattributed.length > 0 ? `${result.unattributed.length} live sessions with no project` : "");
   }
 
   // ---- encodings --------------------------------------------------------
@@ -625,7 +677,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function setEncoding(next: Encoding): void {
     if (next === encoding || !ENCODINGS.includes(next)) return;
     const wasLanes = encoding === "lanes";
+    deactivateHosts();
     encoding = next;
+    try { deps.onEncoding?.(); } catch { /* a sink must not break the view */ }
     if (wasLanes) stopSessions();
     clear(body);
     nodes.clear();
@@ -734,15 +788,16 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   // ---- scope / keys / events -------------------------------------------
 
+  const windowKey = (s: Scope): string => JSON.stringify([s.window, s.liveSpanMs ?? null]);
   let seenWindow = "";
   function onScope(next: Scope, prev: Scope): void {
     const ctx = (s: Scope) => scopeKey(s);
     if (ctx(next) !== ctx(prev)) recompute();
     else {
-      const w = JSON.stringify(next.window);
+      const w = windowKey(next);
       if (w !== seenWindow) { syncFlags(); if (encoding === "lanes") recompute(); }
     }
-    seenWindow = JSON.stringify(next.window);
+    seenWindow = windowKey(next);
   }
 
   /** Needs the active encoding actually draws; Dwell caps its list. */
@@ -804,9 +859,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   }
   root.addEventListener("contextmenu", onContextMenu);
 
-  function onActionKey(e: KeyboardEvent, t: Element | null): void {
+  function onActionKey(e: KeyboardEvent, t: Element | null): boolean {
     const ui = deps.actions;
-    if (!ui || e.repeat) return;
+    if (!ui || e.repeat) return false;
     const own = t?.closest?.<HTMLElement>("[data-unit]") ?? null;
     let unit: HTMLElement | null = own && root.contains(own) ? own : null;
     let actions: UnitAction[] | undefined = unit ? actionsOfUnit(unit) : undefined;
@@ -824,62 +879,86 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         if (head && head.hasAttribute("data-unit")) { unit = head; actions = repoActions(selRow); }
       }
     }
-    if (!unit || !actions) return;
+    if (!unit || !actions) return false;
     e.preventDefault();
     ui.openMenu(actions, unit, { returnFocus: unit });
+    return true;
   }
 
-  function onDocKey(e: KeyboardEvent): void {
-    if (e.key === "Escape" || e.key === "Tab") return;
+  /** Menu, Shift+F10 and "." open the actions menu for the focused (or selected) unit. */
+  function onActions(e: KeyboardEvent): boolean {
+    if (e.key === "F10" && !e.shiftKey) return false;
     const t = inScope(e);
-    if (t === false) return;
-    if (e.key === "." || e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
-      onActionKey(e, t);
-      return;
-    }
-    const onControl = !!t?.closest?.('button, a, select, [role="button"]');
-    const inside = t !== document.body;
-    const selectable = encoding === "map" || encoding === "dwell";
-    if (e.key === "Enter") {
-      if (onControl) return;
-      const need = selNeed !== undefined && selectable ? result.needs.find((n) => n.key === selNeed) : undefined;
-      const row = selRow !== undefined && encoding === "map" ? result.rows.find((r) => r.id === selRow) : undefined;
-      if (need) { e.preventDefault(); openNeed(need); }
-      else if (row && row.known && !row.noRepo) { e.preventDefault(); openRow(row); }
-      return;
-    }
-    if (/^[1-9]$/.test(e.key)) {
-      if (encoding !== "map") return;
-      const row = result.rows[Number(e.key) - 1];
-      if (!row) return;
-      e.preventDefault();
-      selRow = row.id; selNeed = undefined;
-      recompute();
-      if (inside) focusKey("row:" + row.id);
-      return;
-    }
-    if (e.key === "n" || e.key === "N") {
-      if (!selectable) return;
-      const n = nextNeed(visibleNeeds(nowFn()), selNeed, e.key === "n" ? 1 : -1);
-      if (!n) { e.preventDefault(); notify(NO_NEEDS); return; }
-      e.preventDefault();
-      selNeed = n.key; selRow = undefined;
-      recompute();
-      if (inside) focusKey(needNodeKey(n.key));
-      return;
-    }
-    if (e.key === " ") {
-      if (onControl) return;
-      const n = longestWaiting(result.needs);
-      if (!n) { e.preventDefault(); notify(NO_NEEDS); return; }
-      e.preventDefault();
-      openNeed(n);
-    }
+    if (t === false) return false;
+    return onActionKey(e, t);
   }
+
+
+  /** Each handler returns false when the key is not Fleet's to act on, so dispatch can fall through. */
+  function onEnter(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false) return false;
+    if (t?.closest?.('button, a, select, [role="button"]')) return false;
+    const selectable = encoding === "map" || encoding === "dwell";
+    const need = selNeed !== undefined && selectable ? result.needs.find((n) => n.key === selNeed) : undefined;
+    const row = selRow !== undefined && encoding === "map" ? result.rows.find((r) => r.id === selRow) : undefined;
+    if (need) { e.preventDefault(); openNeed(need); return true; }
+    if (row && row.known && !row.noRepo) { e.preventDefault(); openRow(row); return true; }
+    return false;
+  }
+
+  function onPick(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false || encoding !== "map") return false;
+    const row = result.rows[Number(e.key) - 1];
+    if (!row) return false;
+    e.preventDefault();
+    selRow = row.id; selNeed = undefined;
+    recompute();
+    if (t !== document.body) focusKey("row:" + row.id);
+    return true;
+  }
+
+  function onWalk(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false || !(encoding === "map" || encoding === "dwell")) return false;
+    const n = nextNeed(visibleNeeds(nowFn()), selNeed, e.key === "n" ? 1 : -1);
+    e.preventDefault();
+    if (!n) { notify(NO_NEEDS); return true; }
+    selNeed = n.key; selRow = undefined;
+    recompute();
+    if (t !== document.body) focusKey(needNodeKey(n.key));
+    return true;
+  }
+
+  function onJump(e: KeyboardEvent): boolean {
+    const t = inScope(e);
+    if (t === false || t?.closest?.('button, a, select, [role="button"]')) return false;
+    const n = longestWaiting(result.needs);
+    e.preventDefault();
+    if (!n) { notify(NO_NEEDS); return true; }
+    openNeed(n);
+    return true;
+  }
+
+  const fleetKeys = (): KeyBinding[] => {
+    const enabled = (): boolean => active && root.isConnected;
+    // Each predicate mirrors its handler's encoding gate, so the legend lists only live commands.
+    const notHost = (): boolean => enabled() && !isHostEncoding(encoding);
+    const inMapOrDwell = (): boolean => enabled() && (encoding === "map" || encoding === "dwell");
+    const inMap = (): boolean => enabled() && encoding === "map";
+    return [
+      { scope: "fleet", ...QUEUE_KEYS.open, label: "open the selected session or lane", handler: onEnter, enabled: inMapOrDwell },
+      { scope: "fleet", ...QUEUE_KEYS.pick, label: "select a project row by number", handler: onPick, enabled: inMap },
+      { scope: "fleet", ...QUEUE_KEYS.walk, label: "next / previous need", handler: onWalk, enabled: inMapOrDwell },
+      { scope: "fleet", ...QUEUE_KEYS.jump, label: "open the longest-waiting need", handler: onJump, enabled: notHost },
+      { scope: "fleet", ...QUEUE_KEYS.actions, label: "open the actions menu for the focused or selected item", handler: onActions, enabled: () => notHost() && !!deps.actions },
+    ];
+  };
 
   // Capture phase so the claim lands before the shared bubble-phase ascent handler.
   function onEscapeCapture(e: KeyboardEvent): void {
-    if (e.key !== "Escape" || !active || !root.isConnected || !isEscapeEligible(e)) return;
+    if (!LOCAL.fleetClear.matches(e) || !active || !root.isConnected || !isEscapeEligible(e)) return;
     if (selRow === undefined && selNeed === undefined) return;
     selRow = undefined; selNeed = undefined;
     recompute();
@@ -898,15 +977,21 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   return {
     root,
     get encoding() { return encoding; },
+    forkOrder: (repo: string): readonly string[] | undefined => order.forks[repo],
+    effectiveLiveSpan: (): number => (encoding === "lanes" ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : DEFAULT_LIVE_SPAN_MS),
     set encoding(e: Encoding) { setEncoding(e); },
     refresh: () => (active ? load() : Promise.resolve()),
     activate() {
       if (!active) {
         active = true;
-        seenWindow = JSON.stringify(store.get().window);
+        seenWindow = windowKey(store.get());
         unsub = store.subscribe(onScope);
         unsubResolver = store.onResolver(() => { if (active) recompute(); });
-        document.addEventListener("keydown", onDocKey);
+        // A session named late relabels the lanes in place; nothing is refetched.
+        unsubDirectory = deps.directory?.subscribe(() => { if (active && encoding === "lanes") renderLanes(nowFn()); });
+        // One Fleet owns the "fleet" scope at a time; a stale instance is displaced.
+        activeFleetKeys?.();
+        unregisterOwnKeys = activeFleetKeys = registerKeys(fleetKeys());
         document.addEventListener("keydown", onEscapeCapture, true);
         timer = setInterval(() => { void load(true); void loadSessions(true); }, refreshMs);
       }
@@ -916,11 +1001,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     },
     deactivate() {
       active = false;
+      deactivateHosts();
       unsub?.();
       unsub = undefined;
       unsubResolver?.();
       unsubResolver = undefined;
-      document.removeEventListener("keydown", onDocKey);
+      unsubDirectory?.();
+      unsubDirectory = undefined;
+      unregisterOwnKeys?.();
+      unregisterOwnKeys = undefined;
       document.removeEventListener("keydown", onEscapeCapture, true);
       if (timer !== undefined) clearInterval(timer);
       timer = undefined;

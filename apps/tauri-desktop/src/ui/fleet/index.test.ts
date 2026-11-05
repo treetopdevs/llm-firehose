@@ -1,12 +1,17 @@
 // @vitest-environment happy-dom
+import { createSessionDirectory } from "../../session-directory";
+import type { SessionDirectory } from "../../session-directory";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { isEscapeClaimed } from "../../escape";
-import { createScope } from "../../scope";
+import { __resetKeysForTests, listKeys, registerKeys } from "../../keys";
+import { DEFAULT_LIVE_SPAN_MS, createScope } from "../../scope";
 import type { ScopePatch, ScopeStore } from "../../scope";
 import { FIXTURE_ROWS, NOW, att, ev, iso, row } from "./model.fixtures";
+import { orderLanes } from "../project/model";
 import { createFleet } from "./index";
+import type { FleetDeps } from "./index";
 import type { FleetApi, FleetPanel } from "./index";
 import type { ActionsUi } from "../actions";
 import type { Roots } from "../actions/roots";
@@ -37,7 +42,7 @@ interface Rig {
   data: { wt: WorktreeLifetimeView[]; sessions: AttentionSession[]; summaries: SessionSummary[]; events: FirehoseEvent[] };
 }
 
-function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; actions?: ActionsUi; roots?: Roots } = {}) {
+function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boolean; onLabels?: (l: Record<string, string>) => void; onEncoding?: () => void; directory?: SessionDirectory; hosts?: FleetDeps["hosts"]; actions?: ActionsUi; roots?: Roots } = {}) {
   const store: ScopeStore = createScope(opts.scope);
   const data: Rig["data"] = { wt: FIXTURE_ROWS, sessions: baseSessions(), summaries: [], events: [] };
   const api = {
@@ -48,7 +53,7 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const go = vi.fn((_n: string, p?: ScopePatch) => { if (opts.realGo && p) store.narrow(p); });
   const panel = createFleet({
     store, go: go as never, events: () => data.events, api: api as unknown as FleetApi,
-    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels,
+    now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, onLabels: opts.onLabels, onEncoding: opts.onEncoding, directory: opts.directory, hosts: opts.hosts,
     actions: opts.actions, roots: opts.roots,
   });
   document.body.append(panel.root);
@@ -66,11 +71,13 @@ const press = (k: string, init: KeyboardEventInit = {}, target: EventTarget = do
 };
 
 beforeEach(() => {
+  __resetKeysForTests();
   vi.useFakeTimers();
   nowMs = NOW;
 });
 afterEach(() => {
   for (const p of panels.splice(0)) p.deactivate();
+  __resetKeysForTests();
   document.body.replaceChildren();
   vi.useRealTimers();
   for (const s of spies.splice(0)) s.mockRestore();
@@ -257,23 +264,99 @@ describe("navigation", () => {
     expect((go.mock.calls[0]![1] as ScopePatch).project).toBeUndefined();
   });
 
-  test("a window-only store change neither refetches nor re-renders rows, and updates the chip", async () => {
+  test("a window-only store change neither refetches nor re-renders rows, and draws no chip", async () => {
     const { panel, store, api, q } = setup();
     await panel.activate();
     expect(q(".fleet-window")).toHaveLength(0);
     const calls = api.worktrees.mock.calls.length;
+    const rows = q(".fleet-row");
     const seen: MutationRecord[] = [];
     const mo = new MutationObserver((r) => seen.push(...r));
     mo.observe(panel.root.querySelector(".fleet-body")!, { subtree: true, childList: true, attributes: true, characterData: true });
     store.narrow({ window: hist });
     await flush();
-    expect(q(".fleet-window")).toHaveLength(1);
-    expect(q(".fleet-window")[0]!.textContent).toContain("→");
+    expect(q(".fleet-window")).toHaveLength(0);
     expect(api.worktrees.mock.calls.length).toBe(calls);
     expect(seen.length + mo.takeRecords().length).toBe(0);
     mo.disconnect();
     store.narrow({ window: "live" });
     expect(q(".fleet-window")).toHaveLength(0);
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+    const after = q(".fleet-row");
+    expect(after).toHaveLength(rows.length);
+    after.forEach((r, i) => expect(r).toBe(rows[i]));
+  });
+
+  test("Lanes live span defaults to 5 min and follows a user-set liveSpanMs", async () => {
+    const H = 3_600_000;
+    const { panel, store, data, api, q } = setup();
+    data.events = [ev({ id: "old", session_id: "sa", time: iso(NOW - 90 * MIN) }), ev({ id: "new", session_id: "sa", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(1);
+    const calls = api.worktrees.mock.calls.length;
+    store.narrow({ liveSpanMs: 2 * H });
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(2);
+    expect(api.worktrees.mock.calls.length).toBe(calls);
+    store.narrow({ liveSpanMs: H });
+    await flush();
+    expect(q("rect.lane-tick")).toHaveLength(1);
+  });
+
+  test("effectiveLiveSpan reports what Fleet draws", async () => {
+    const { panel, store } = setup();
+    await panel.activate();
+    expect(panel.effectiveLiveSpan()).toBe(DEFAULT_LIVE_SPAN_MS);
+    store.narrow({ liveSpanMs: 2 * 3_600_000 });
+    expect(panel.effectiveLiveSpan()).toBe(DEFAULT_LIVE_SPAN_MS);
+    panel.encoding = "lanes";
+    expect(panel.effectiveLiveSpan()).toBe(2 * 3_600_000);
+    store.reset();
+    expect(panel.effectiveLiveSpan()).toBe(300_000);
+  });
+
+  test("navigation patches keep the remembered span and carry the window", async () => {
+    const { panel, store, go, byKey } = setup({ realGo: true });
+    store.narrow({ liveSpanMs: 2 * 3_600_000 });
+    await panel.activate();
+    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    const patch = go.mock.calls[0]![1] as ScopePatch;
+    expect(patch.window).toBe("live");
+    expect(Object.keys(patch).sort()).toEqual(["cell", "project", "session", "window", "worktree"]);
+    expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
+    store.narrow({ window: hist });
+    byKey(key("row", "repoA")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    expect((go.mock.calls[1]![1] as ScopePatch).window).toEqual(hist);
+    expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
+  });
+
+  test("a preset window set in the shell survives a Fleet lane click", async () => {
+    const { panel, store, data } = setup({ realGo: true });
+    data.events = [ev({ id: "e1", session_id: "sa", time: iso(NOW - 10 * MIN) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    const win = { from: NOW - 2 * 3_600_000, to: NOW };
+    store.narrow({ window: win, liveSpanMs: 2 * 3_600_000 });
+    await flush();
+    panel.root.querySelector<HTMLElement>(".fleet-lane-row")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(store.get().window).toEqual(win);
+    expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
+  });
+
+  test("digit and Enter still act after a transport button blurs to body", async () => {
+    const { panel, go } = setup();
+    await panel.activate();
+    const b = document.createElement("button");
+    document.body.append(b);
+    b.focus();
+    b.blur();
+    expect(document.activeElement).toBe(document.body);
+    press("1");
+    press("Enter");
+    expect(go).toHaveBeenCalled();
   });
 
   test("a project change updates highlight without refetching", async () => {
@@ -422,6 +505,139 @@ describe("keys", () => {
     }
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  test("when the shared dispatcher already exists Fleet adds only its capture claimer, and removes it", async () => {
+    registerKeys([{ scope: "global", keys: ["F9"], display: "F9", label: "other", handler: () => {} }]);
+    const add = vi.spyOn(document, "addEventListener");
+    const rem = vi.spyOn(document, "removeEventListener");
+    spies.push(add, rem);
+    const { panel } = setup();
+    await panel.activate();
+    expect(add.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+    panel.deactivate();
+    expect(rem.mock.calls.filter((c) => c[0] === "keydown")).toHaveLength(1);
+  });
+
+  test("Fleet's four queue keys are listed while active and gone after deactivate", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    document.body.append(panel.root);
+    expect(listKeys().filter((r) => r.scope === "fleet").map((r) => r.display)).toEqual(["Enter", "1–9", "n / N", "Space"]);
+    panel.deactivate();
+    expect(listKeys().filter((r) => r.scope === "fleet")).toEqual([]);
+  });
+
+  test("the legend lists only the fleet keys the current encoding can act on", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    document.body.append(panel.root);
+    const shown = () => listKeys().filter((r) => r.scope === "fleet").map((r) => r.display);
+    expect(shown()).toEqual(["Enter", "1–9", "n / N", "Space"]);
+    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    expect(shown()).toEqual(["Enter", "n / N", "Space"]);
+    for (const enc of ["lanes", "matrix", "airspace"]) {
+      panel.encoding = enc as never;
+      expect(shown(), enc).toEqual(["Space"]);
+    }
+  });
+});
+
+describe("Fleet encoding buttons", () => {
+  test("visible labels in order are Map, Waiting, Table, Lanes, By state; ids unchanged", async () => {
+    const { panel, q } = setup();
+    await panel.activate();
+    const btns = q(".fleet-enc");
+    expect(btns.map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state"]);
+    expect(btns.map((b) => b.getAttribute("data-enc"))).toEqual(["map", "dwell", "matrix", "lanes", "airspace"]);
+  });
+});
+
+const fakeHost = (name: string) => {
+  const root = document.createElement("section");
+  root.className = `fake-host-${name}`;
+  return { root, activate: vi.fn(), deactivate: vi.fn() };
+};
+const hostRig = () => {
+  const strata = fakeHost("strata");
+  const ecosystem = fakeHost("ecosystem");
+  const events = fakeHost("events");
+  return { strata, ecosystem, events, ...setup({ hosts: { strata, ecosystem, events } }) };
+};
+const NON_HOST = ["map", "dwell", "matrix", "lanes", "airspace"] as const;
+
+describe("Fleet host encodings", () => {
+  test("hosts add Strata and Patches buttons; without hosts they are absent", async () => {
+    const { panel, q } = hostRig();
+    await panel.activate();
+    expect(q(".fleet-enc").map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state", "Strata", "Patches", "Events"]);
+    expect(q(".fleet-enc").map((b) => b.getAttribute("data-enc")).slice(5)).toEqual(["strata", "ecosystem", "events"]);
+    const bare = setup();
+    expect(bare.q(".fleet-enc")).toHaveLength(5);
+  });
+
+  test("clicking Strata mounts its root in .fleet-body and activates once; Patches swaps it", async () => {
+    const { panel, q, strata, ecosystem } = hostRig();
+    await panel.activate();
+    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    expect(q(".fleet-body > .fake-host-strata")).toHaveLength(1);
+    expect(strata.activate).toHaveBeenCalledTimes(1);
+    expect(q(".fleet-enc[aria-pressed='true']").map((b) => b.textContent)).toEqual(["Strata"]);
+    expect(q(".fleet-hint")[0]!.hidden).toBe(true);
+    q(".fleet-enc[data-enc='ecosystem']")[0]!.click();
+    expect(strata.deactivate).toHaveBeenCalledTimes(1);
+    expect(q(".fleet-body > .fake-host-strata")).toHaveLength(0);
+    expect(q(".fleet-body > .fake-host-ecosystem")).toHaveLength(1);
+    expect(ecosystem.activate).toHaveBeenCalledTimes(1);
+    // A data refresh does not restart a mounted host.
+    await panel.refresh();
+    expect(ecosystem.activate).toHaveBeenCalledTimes(1);
+    expect(ecosystem.deactivate).not.toHaveBeenCalled();
+  });
+
+  test.each(["strata", "ecosystem", "events"] as const)("leaving %s deactivates it exactly once and leaves nothing mounted", async (host) => {
+    for (const dest of [...NON_HOST, host === "strata" ? "ecosystem" : "strata", "deactivate"] as const) {
+      const rig = hostRig();
+      await rig.panel.activate();
+      rig.q(`.fleet-enc[data-enc='${host}']`)[0]!.click();
+      expect(rig[host].activate).toHaveBeenCalledTimes(1);
+      if (dest === "deactivate") rig.panel.deactivate();
+      else rig.q(`.fleet-enc[data-enc='${dest}']`)[0]!.click();
+      expect(rig[host].deactivate, dest).toHaveBeenCalledTimes(1);
+      expect(rig.q(`.fake-host-${host}`), dest).toHaveLength(0);
+      rig.panel.deactivate();
+      expect(rig[host].deactivate, dest).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test("the jump and row keys are absent in host encodings and Space does not navigate", async () => {
+    const { panel, q, go } = hostRig();
+    await panel.activate();
+    expect(listKeys().filter((r) => r.scope === "fleet").map((r) => r.display)).toEqual(["Enter", "1–9", "n / N", "Space"]);
+    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    expect(listKeys().filter((r) => r.scope === "fleet")).toEqual([]);
+    press(" ");
+    press("1");
+    press("n");
+    press("Enter");
+    expect(go).not.toHaveBeenCalled();
+    q(".fleet-enc[data-enc='map']")[0]!.click();
+    expect(listKeys().filter((r) => r.scope === "fleet")).toHaveLength(4);
+  });
+
+  test("a hosted encoding survives deactivate and reactivate; unknown values fall back to map", async () => {
+    const { panel, strata } = hostRig();
+    await panel.activate();
+    panel.encoding = "strata";
+    panel.deactivate();
+    expect(strata.deactivate).toHaveBeenCalledTimes(1);
+    await panel.activate();
+    expect(panel.encoding).toBe("strata");
+    expect(strata.activate).toHaveBeenCalledTimes(2);
+    panel.encoding = "bogus" as never;
+    expect(panel.encoding).toBe("strata");
+    const fresh = setup();
+    expect(fresh.panel.encoding).toBe("map");
+  });
 });
 
 describe("encodings", () => {
@@ -434,6 +650,19 @@ describe("encodings", () => {
     expect(panel.encoding).toBe("dwell");
     expect(q(".fleet-row")).toHaveLength(0);
     expect(q(".fleet-dwell-row").length).toBeGreaterThan(0);
+  });
+
+  test("an encoding change notifies the shell after effectiveLiveSpan has moved", async () => {
+    const seen: number[] = [];
+    let p: ReturnType<typeof setup>["panel"] | undefined;
+    const { panel, q } = setup({ onEncoding: () => seen.push(p!.effectiveLiveSpan()) });
+    p = panel;
+    await panel.activate();
+    const before = panel.effectiveLiveSpan();
+    q(".fleet-enc[data-enc='lanes']")[0]!.click();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(panel.effectiveLiveSpan());
+    expect(seen[0]).not.toBe(before);
   });
 
   test("dwell shows a bar per live session and opens its score", async () => {
@@ -460,12 +689,12 @@ describe("encodings", () => {
 
   // Replaced (fleet-altitude item 4): Matrix was a repository x agent grid with only a "repository" header
   // on real data. It is now the state matrix the plan names: open / idle / needs-you / gone (7d) / last activity.
-  test("matrix is a real matrix: repository, open, idle, needs-you, gone (7d), last activity", async () => {
+  test("matrix is a real matrix: project, open, idle, needs-you, gone (7d), last activity", async () => {
     const { panel, q } = setup();
     panel.encoding = "matrix";
     await panel.activate();
     expect(q("table.fleet-matrix")).toHaveLength(1);
-    expect(q(".fleet-matrix thead th").map((t) => t.textContent)).toEqual(["repository", "open", "idle", "needs you", "gone (7d)", "last activity"]);
+    expect(q(".fleet-matrix thead th").map((t) => t.textContent)).toEqual(["project", "open", "idle", "needs you", "gone (7d)", "last activity"]);
     expect(q(".fleet-matrix tbody tr")).toHaveLength(4);
   });
 
@@ -922,7 +1151,7 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     expect(byKey(needKey("claude-code", "orphan")).getAttribute("title")).toContain("stale");
   });
 
-  test("a pending session with no repo_id lands on the No repo id row", async () => {
+  test("a pending session with no repo_id lands on the No project row", async () => {
     const { panel, data, byKey } = setup();
     data.sessions = [att({ id: "norepo", waitMs: 2 * D, lastAgoMs: 2 * D })];
     await panel.activate();
@@ -1066,6 +1295,110 @@ describe("adversarial review round 2", () => {
     r().querySelector<HTMLElement>(".fleet-more")!.click();
     r().querySelector<HTMLElement>(".fleet-more")!.click();
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
+  });
+});
+
+describe("forkOrder (shared with Project lanes)", () => {
+  const repoA = () => FIXTURE_ROWS.filter((r) => r.repo_id === "repoA");
+  test("undefined before the first load and for an unknown repo", async () => {
+    const { panel } = setup();
+    expect(panel.forkOrder("repoA")).toBeUndefined();
+    await panel.activate();
+    expect(panel.forkOrder("nope")).toBeUndefined();
+  });
+
+  test("equals orderLanes(undefined, rows) after load", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    expect(panel.forkOrder("repoA")).toEqual(orderLanes(undefined, repoA()));
+  });
+
+  test("stable under reversed rows; a new worktree is appended last", async () => {
+    const { panel, data } = setup();
+    await panel.activate();
+    const first = [...panel.forkOrder("repoA")!];
+    data.wt = [...FIXTURE_ROWS].reverse();
+    await panel.refresh();
+    expect(panel.forkOrder("repoA")).toEqual(first);
+    data.wt = [...FIXTURE_ROWS, { ...repoA()[0]!, worktree_id: "wt-brand-new", first_time: iso(NOW - 1000) }];
+    await panel.refresh();
+    const next = panel.forkOrder("repoA")!;
+    expect(next.slice(0, first.length)).toEqual(first);
+    expect(next[next.length - 1]).toBe("wt-brand-new");
+  });
+});
+
+describe("lane names from the session directory", () => {
+  test("lanes read the directory late, in place, and stop after deactivate", async () => {
+    const dir = createSessionDirectory();
+    const { panel, data, q } = setup({ directory: dir });
+    data.events = [ev({ id: "e1", session_id: "2385e3bc-1111-2222-3333-444444444444", time: iso(NOW - 10_000) })];
+    panel.encoding = "lanes";
+    await panel.activate();
+    await flush();
+    const label = () => q("text.lane-label").map((n) => n.textContent);
+    expect(label()).toHaveLength(1);
+    expect(label()[0]).not.toContain("Fix login bug");
+    const calls = data.events.length;
+    dir.remember([{ id: "2385e3bc-1111-2222-3333-444444444444", source: data.events[0]!.source, agent: "codex", title: "Fix login bug" }]);
+    expect(label()).toEqual(["Fix login bug"]);
+    expect(data.events).toHaveLength(calls);
+    panel.deactivate();
+    dir.remember([{ id: "2385e3bc-1111-2222-3333-444444444444", source: data.events[0]!.source, agent: "codex", title: "Renamed later" }]);
+    expect(label()).toEqual(["Fix login bug"]);
+  });
+});
+
+describe("fork aria labels", () => {
+  test("idle and needs show in the fork's accessible name and follow changes", async () => {
+    const { panel, data, byKey } = setup();
+    await panel.activate();
+    expect(byKey(key("fork", "repoA", "wt-idle")).getAttribute("aria-label")).toContain("idle");
+    expect(byKey(key("fork", "repoA", "wt-open")).getAttribute("aria-label")).toContain("1 needs you");
+    data.sessions = [...baseSessions(), att({ id: "sx", repo_id: "repoA", worktree_id: "wt-open", waitMs: 5 * MIN })];
+    const node = byKey(key("fork", "repoA", "wt-open"));
+    await vi.advanceTimersByTimeAsync(REFRESH + 1);
+    await flush();
+    expect(byKey(key("fork", "repoA", "wt-open"))).toBe(node);
+    expect(node.getAttribute("aria-label")).toContain("2 need you");
+  });
+});
+
+describe("Fleet Events host", () => {
+  test("ENCODINGS lists the host encodings last", async () => {
+    const { ENCODINGS } = await import("./model");
+    expect([...ENCODINGS]).toEqual(["map", "dwell", "matrix", "lanes", "airspace", "strata", "ecosystem", "events"]);
+  });
+
+  test("clicking Events mounts the host, activates once and presses the button; leaving detaches and deactivates", async () => {
+    const { panel, q, events } = hostRig();
+    await panel.activate();
+    q(".fleet-enc[data-enc='events']")[0]!.click();
+    expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
+    expect(events.activate).toHaveBeenCalledTimes(1);
+    expect(q(".fleet-enc[data-enc='events']")[0]!.getAttribute("aria-pressed")).toBe("true");
+    q(".fleet-enc[data-enc='map']")[0]!.click();
+    expect(events.deactivate).toHaveBeenCalledTimes(1);
+    expect(q(".fake-host-events")).toHaveLength(0);
+    q(".fleet-enc[data-enc='events']")[0]!.click();
+    panel.deactivate();
+    expect(events.deactivate).toHaveBeenCalledTimes(2);
+    expect(q(".fake-host-events")).toHaveLength(0);
+  });
+
+  test("with scope.project set the host still shows (the host decides, not the scope); jump and row keys are off", async () => {
+    const { panel, q, events } = (() => {
+      const e = fakeHost("events");
+      return { events: e, ...setup({ scope: { project: "repoA", window: "live" }, hosts: { events: e } }) };
+    })();
+    await panel.activate();
+    panel.encoding = "events";
+    expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
+    expect(events.activate).toHaveBeenCalledTimes(1);
+    const { listKeys } = await import("../../keys");
+    for (const r of listKeys().filter((k) => k.scope === "fleet")) expect(r.label).not.toMatch(/longest-waiting/);
+    for (const key of ["1", "n", " ", "Enter"]) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
   });
 });
 
@@ -1280,7 +1613,7 @@ describe("actions", () => {
     const btn = repoRows[0]!.querySelector<HTMLElement>("button.unit-actions")!;
     expect(btn.textContent).toBe("Actions");
     expect(btn.getAttribute("aria-haspopup")).toBe("menu");
-    expect(btn.getAttribute("title")).toBe("Repository actions");
+    expect(btn.getAttribute("title")).toBe("Project actions");
     expect(btn.hasAttribute("data-unit")).toBe(false);
     expect(btn.closest(".fleet-row-head")).toBeNull();
     btn.click();

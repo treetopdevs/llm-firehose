@@ -48,11 +48,11 @@ describe("buildDwell", () => {
     );
     expect(more).toBe(0);
     expect(rows.map((r) => r.id)).toEqual(["n", "w"]);
-    expect(rows[0]).toMatchObject({ needs: true, status: "NEEDS YOU", dwellMs: 7 * 60_000, fraction: 0.7, text: "approve Bash", source: "codex" });
+    expect(rows[0]).toMatchObject({ needs: true, status: "needs you", dwellMs: 7 * 60_000, fraction: 0.7, text: "approve Bash", source: "codex" });
     expect(rows[1]).toMatchObject({ needs: false, status: "working", dwellMs: 120_000, fraction: 0.2, text: "edit view.go" });
   });
 
-  test("a bare notification is not a request: no NEEDS YOU, and the uncertainty is shown", () => {
+  test("a bare notification is not a request: no needs-you label, and the uncertainty is shown", () => {
     const { rows } = buildDwell(
       [
         session({
@@ -74,7 +74,7 @@ describe("buildDwell", () => {
       ],
       now,
     );
-    expect(rows[0]).toMatchObject({ id: "f", needs: true, status: "FAILED", hasError: true, text: "StopFailure" });
+    expect(rows[0]).toMatchObject({ id: "f", needs: true, status: "failed", hasError: true, text: "StopFailure" });
   });
 
   test("longest wait first among pending sessions, then most recent activity, then id", () => {

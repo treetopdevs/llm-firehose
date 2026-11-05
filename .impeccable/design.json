@@ -1,0 +1,701 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-01T21:00:00+00:00",
+  "title": "Design System: Agent Firehose",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "Bg",
+        "canonical": "oklch(17.0% 0.006 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.006 60)",
+          "oklch(25.0% 0.006 60)",
+          "oklch(35.0% 0.006 60)",
+          "oklch(45.0% 0.006 60)",
+          "oklch(55.0% 0.006 60)",
+          "oklch(65.0% 0.006 60)",
+          "oklch(80.0% 0.006 60)",
+          "oklch(95.0% 0.006 60)"
+        ]
+      },
+      "bg-panel": {
+        "role": "neutral",
+        "displayName": "Bg Panel",
+        "canonical": "oklch(20.5% 0.007 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.007 60)",
+          "oklch(25.0% 0.007 60)",
+          "oklch(35.0% 0.007 60)",
+          "oklch(45.0% 0.007 60)",
+          "oklch(55.0% 0.007 60)",
+          "oklch(65.0% 0.007 60)",
+          "oklch(80.0% 0.007 60)",
+          "oklch(95.0% 0.007 60)"
+        ]
+      },
+      "bg-hover": {
+        "role": "neutral",
+        "displayName": "Bg Hover",
+        "canonical": "oklch(25.0% 0.008 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.008 60)",
+          "oklch(25.0% 0.008 60)",
+          "oklch(35.0% 0.008 60)",
+          "oklch(45.0% 0.008 60)",
+          "oklch(55.0% 0.008 60)",
+          "oklch(65.0% 0.008 60)",
+          "oklch(80.0% 0.008 60)",
+          "oklch(95.0% 0.008 60)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Border",
+        "canonical": "oklch(52.0% 0.010 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.010 60)",
+          "oklch(25.0% 0.010 60)",
+          "oklch(35.0% 0.010 60)",
+          "oklch(45.0% 0.010 60)",
+          "oklch(55.0% 0.010 60)",
+          "oklch(65.0% 0.010 60)",
+          "oklch(80.0% 0.010 60)",
+          "oklch(95.0% 0.010 60)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "canonical": "oklch(93.0% 0.006 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.006 60)",
+          "oklch(25.0% 0.006 60)",
+          "oklch(35.0% 0.006 60)",
+          "oklch(45.0% 0.006 60)",
+          "oklch(55.0% 0.006 60)",
+          "oklch(65.0% 0.006 60)",
+          "oklch(80.0% 0.006 60)",
+          "oklch(95.0% 0.006 60)"
+        ]
+      },
+      "text-dim": {
+        "role": "neutral",
+        "displayName": "Text Dim",
+        "canonical": "oklch(72.0% 0.010 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.010 60)",
+          "oklch(25.0% 0.010 60)",
+          "oklch(35.0% 0.010 60)",
+          "oklch(45.0% 0.010 60)",
+          "oklch(55.0% 0.010 60)",
+          "oklch(65.0% 0.010 60)",
+          "oklch(80.0% 0.010 60)",
+          "oklch(95.0% 0.010 60)"
+        ]
+      },
+      "accent": {
+        "role": "role",
+        "displayName": "Accent",
+        "canonical": "oklch(72.0% 0.190 50)",
+        "tonalRamp": [
+          "oklch(15.0% 0.041 50)",
+          "oklch(25.0% 0.067 50)",
+          "oklch(35.0% 0.093 50)",
+          "oklch(45.0% 0.119 50)",
+          "oklch(55.0% 0.146 50)",
+          "oklch(65.0% 0.172 50)",
+          "oklch(80.0% 0.127 50)",
+          "oklch(95.0% 0.028 50)"
+        ]
+      },
+      "needs": {
+        "role": "role",
+        "displayName": "Needs",
+        "canonical": "oklch(80.0% 0.160 80)",
+        "tonalRamp": [
+          "oklch(15.0% 0.032 80)",
+          "oklch(25.0% 0.052 80)",
+          "oklch(35.0% 0.073 80)",
+          "oklch(45.0% 0.093 80)",
+          "oklch(55.0% 0.114 80)",
+          "oklch(65.0% 0.135 80)",
+          "oklch(80.0% 0.160 80)",
+          "oklch(95.0% 0.046 80)"
+        ]
+      },
+      "selected": {
+        "role": "role",
+        "displayName": "Selected",
+        "canonical": "oklch(82.0% 0.130 190)",
+        "tonalRamp": [
+          "oklch(15.0% 0.027 190)",
+          "oklch(25.0% 0.043 190)",
+          "oklch(35.0% 0.061 190)",
+          "oklch(45.0% 0.078 190)",
+          "oklch(55.0% 0.095 190)",
+          "oklch(65.0% 0.112 190)",
+          "oklch(80.0% 0.130 190)",
+          "oklch(95.0% 0.073 190)"
+        ]
+      },
+      "focus": {
+        "role": "role",
+        "displayName": "Focus",
+        "canonical": "oklch(76.0% 0.120 235)",
+        "tonalRamp": [
+          "oklch(15.0% 0.033 235)",
+          "oklch(25.0% 0.053 235)",
+          "oklch(35.0% 0.074 235)",
+          "oklch(45.0% 0.096 235)",
+          "oklch(55.0% 0.117 235)",
+          "oklch(65.0% 0.120 235)",
+          "oklch(80.0% 0.119 235)",
+          "oklch(95.0% 0.028 235)"
+        ]
+      },
+      "stale": {
+        "role": "role",
+        "displayName": "Stale",
+        "canonical": "oklch(68.0% 0.015 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.015 60)",
+          "oklch(25.0% 0.015 60)",
+          "oklch(35.0% 0.015 60)",
+          "oklch(45.0% 0.015 60)",
+          "oklch(55.0% 0.015 60)",
+          "oklch(65.0% 0.015 60)",
+          "oklch(80.0% 0.015 60)",
+          "oklch(95.0% 0.015 60)"
+        ]
+      },
+      "fog": {
+        "role": "role",
+        "displayName": "Fog",
+        "canonical": "oklch(42.0% 0.020 250)",
+        "tonalRamp": [
+          "oklch(15.0% 0.020 250)",
+          "oklch(25.0% 0.020 250)",
+          "oklch(35.0% 0.020 250)",
+          "oklch(45.0% 0.020 250)",
+          "oklch(55.0% 0.020 250)",
+          "oklch(65.0% 0.020 250)",
+          "oklch(80.0% 0.020 250)",
+          "oklch(95.0% 0.020 250)"
+        ]
+      },
+      "ok": {
+        "role": "role",
+        "displayName": "Ok",
+        "canonical": "oklch(72.0% 0.170 150)",
+        "tonalRamp": [
+          "oklch(15.0% 0.043 150)",
+          "oklch(25.0% 0.069 150)",
+          "oklch(35.0% 0.097 150)",
+          "oklch(45.0% 0.124 150)",
+          "oklch(55.0% 0.152 150)",
+          "oklch(65.0% 0.170 150)",
+          "oklch(80.0% 0.170 150)",
+          "oklch(95.0% 0.083 150)"
+        ]
+      },
+      "warn": {
+        "role": "role",
+        "displayName": "Warn",
+        "canonical": "oklch(76.0% 0.140 85)",
+        "tonalRamp": [
+          "oklch(15.0% 0.032 85)",
+          "oklch(25.0% 0.052 85)",
+          "oklch(35.0% 0.072 85)",
+          "oklch(45.0% 0.092 85)",
+          "oklch(55.0% 0.113 85)",
+          "oklch(65.0% 0.133 85)",
+          "oklch(80.0% 0.140 85)",
+          "oklch(95.0% 0.053 85)"
+        ]
+      },
+      "err": {
+        "role": "role",
+        "displayName": "Err",
+        "canonical": "oklch(68.0% 0.190 25)",
+        "tonalRamp": [
+          "oklch(15.0% 0.062 25)",
+          "oklch(25.0% 0.102 25)",
+          "oklch(35.0% 0.142 25)",
+          "oklch(45.0% 0.183 25)",
+          "oklch(55.0% 0.190 25)",
+          "oklch(65.0% 0.190 25)",
+          "oklch(80.0% 0.114 25)",
+          "oklch(95.0% 0.025 25)"
+        ]
+      },
+      "on-err": {
+        "role": "fill",
+        "displayName": "On Err",
+        "canonical": "oklch(16.0% 0.010 25)",
+        "tonalRamp": [
+          "oklch(15.0% 0.010 25)",
+          "oklch(25.0% 0.010 25)",
+          "oklch(35.0% 0.010 25)",
+          "oklch(45.0% 0.010 25)",
+          "oklch(55.0% 0.010 25)",
+          "oklch(65.0% 0.010 25)",
+          "oklch(80.0% 0.010 25)",
+          "oklch(95.0% 0.010 25)"
+        ]
+      },
+      "on-fill": {
+        "role": "fill",
+        "displayName": "On Fill",
+        "canonical": "oklch(98.5% 0.004 60)",
+        "tonalRamp": [
+          "oklch(15.0% 0.004 60)",
+          "oklch(25.0% 0.004 60)",
+          "oklch(35.0% 0.004 60)",
+          "oklch(45.0% 0.004 60)",
+          "oklch(55.0% 0.004 60)",
+          "oklch(65.0% 0.004 60)",
+          "oklch(80.0% 0.004 60)",
+          "oklch(95.0% 0.004 60)"
+        ]
+      },
+      "map-zero": {
+        "role": "fill",
+        "displayName": "Map Zero",
+        "canonical": "oklch(24.0% 0.015 235)",
+        "tonalRamp": [
+          "oklch(15.0% 0.015 235)",
+          "oklch(25.0% 0.015 235)",
+          "oklch(35.0% 0.015 235)",
+          "oklch(45.0% 0.015 235)",
+          "oklch(55.0% 0.015 235)",
+          "oklch(65.0% 0.015 235)",
+          "oklch(80.0% 0.015 235)",
+          "oklch(95.0% 0.015 235)"
+        ]
+      },
+      "map-heat": {
+        "role": "fill",
+        "displayName": "Map Heat",
+        "canonical": "oklch(52.0% 0.100 190)",
+        "tonalRamp": [
+          "oklch(15.0% 0.027 190)",
+          "oklch(25.0% 0.043 190)",
+          "oklch(35.0% 0.061 190)",
+          "oklch(45.0% 0.078 190)",
+          "oklch(55.0% 0.095 190)",
+          "oklch(65.0% 0.100 190)",
+          "oklch(80.0% 0.100 190)",
+          "oklch(95.0% 0.073 190)"
+        ]
+      },
+      "attention": {
+        "role": "status",
+        "displayName": "Attention",
+        "canonical": "oklch(80.4% 0.156 83)",
+        "tonalRamp": [
+          "oklch(15.0% 0.032 83)",
+          "oklch(25.0% 0.052 83)",
+          "oklch(35.0% 0.072 83)",
+          "oklch(45.0% 0.093 83)",
+          "oklch(55.0% 0.113 83)",
+          "oklch(65.0% 0.134 83)",
+          "oklch(80.0% 0.156 83)",
+          "oklch(95.0% 0.049 83)"
+        ]
+      },
+      "working": {
+        "role": "status",
+        "displayName": "Working",
+        "canonical": "oklch(77.3% 0.153 163)",
+        "tonalRamp": [
+          "oklch(15.0% 0.033 163)",
+          "oklch(25.0% 0.054 163)",
+          "oklch(35.0% 0.076 163)",
+          "oklch(45.0% 0.097 163)",
+          "oklch(55.0% 0.119 163)",
+          "oklch(65.0% 0.140 163)",
+          "oklch(80.0% 0.153 163)",
+          "oklch(95.0% 0.075 163)"
+        ]
+      },
+      "observed": {
+        "role": "status",
+        "displayName": "Observed",
+        "canonical": "oklch(58.6% 0.212 287)",
+        "tonalRamp": [
+          "oklch(15.0% 0.088 287)",
+          "oklch(25.0% 0.144 287)",
+          "oklch(35.0% 0.202 287)",
+          "oklch(45.0% 0.212 287)",
+          "oklch(55.0% 0.212 287)",
+          "oklch(65.0% 0.198 287)",
+          "oklch(80.0% 0.106 287)",
+          "oklch(95.0% 0.025 287)"
+        ]
+      },
+      "none": {
+        "role": "status",
+        "displayName": "None",
+        "canonical": "oklch(63.1% 0.036 261)",
+        "tonalRamp": [
+          "oklch(15.0% 0.036 261)",
+          "oklch(25.0% 0.036 261)",
+          "oklch(35.0% 0.036 261)",
+          "oklch(45.0% 0.036 261)",
+          "oklch(55.0% 0.036 261)",
+          "oklch(65.0% 0.036 261)",
+          "oklch(80.0% 0.036 261)",
+          "oklch(95.0% 0.024 261)"
+        ]
+      },
+      "series-1": {
+        "role": "series",
+        "displayName": "Series 1",
+        "canonical": "oklch(71.0% 0.119 244)",
+        "tonalRamp": [
+          "oklch(15.0% 0.038 244)",
+          "oklch(25.0% 0.062 244)",
+          "oklch(35.0% 0.086 244)",
+          "oklch(45.0% 0.111 244)",
+          "oklch(55.0% 0.119 244)",
+          "oklch(65.0% 0.119 244)",
+          "oklch(80.0% 0.109 244)",
+          "oklch(95.0% 0.026 244)"
+        ]
+      },
+      "series-2": {
+        "role": "series",
+        "displayName": "Series 2",
+        "canonical": "oklch(76.2% 0.120 65)",
+        "tonalRamp": [
+          "oklch(15.0% 0.035 65)",
+          "oklch(25.0% 0.057 65)",
+          "oklch(35.0% 0.079 65)",
+          "oklch(45.0% 0.101 65)",
+          "oklch(55.0% 0.120 65)",
+          "oklch(65.0% 0.120 65)",
+          "oklch(80.0% 0.120 65)",
+          "oklch(95.0% 0.034 65)"
+        ]
+      },
+      "series-3": {
+        "role": "series",
+        "displayName": "Series 3",
+        "canonical": "oklch(76.9% 0.127 144)",
+        "tonalRamp": [
+          "oklch(15.0% 0.050 144)",
+          "oklch(25.0% 0.081 144)",
+          "oklch(35.0% 0.113 144)",
+          "oklch(45.0% 0.127 144)",
+          "oklch(55.0% 0.127 144)",
+          "oklch(65.0% 0.127 144)",
+          "oklch(80.0% 0.127 144)",
+          "oklch(95.0% 0.090 144)"
+        ]
+      },
+      "series-4": {
+        "role": "series",
+        "displayName": "Series 4",
+        "canonical": "oklch(72.4% 0.134 315)",
+        "tonalRamp": [
+          "oklch(15.0% 0.076 315)",
+          "oklch(25.0% 0.124 315)",
+          "oklch(35.0% 0.134 315)",
+          "oklch(45.0% 0.134 315)",
+          "oklch(55.0% 0.134 315)",
+          "oklch(65.0% 0.134 315)",
+          "oklch(80.0% 0.134 315)",
+          "oklch(95.0% 0.034 315)"
+        ]
+      },
+      "series-5": {
+        "role": "series",
+        "displayName": "Series 5",
+        "canonical": "oklch(85.0% 0.128 106)",
+        "tonalRamp": [
+          "oklch(15.0% 0.033 106)",
+          "oklch(25.0% 0.054 106)",
+          "oklch(35.0% 0.075 106)",
+          "oklch(45.0% 0.096 106)",
+          "oklch(55.0% 0.117 106)",
+          "oklch(65.0% 0.128 106)",
+          "oklch(80.0% 0.128 106)",
+          "oklch(95.0% 0.128 106)"
+        ]
+      },
+      "replay-alt": {
+        "role": "series",
+        "displayName": "Replay Alt",
+        "canonical": "oklch(70.8% 0.128 306)",
+        "tonalRamp": [
+          "oklch(15.0% 0.079 306)",
+          "oklch(25.0% 0.128 306)",
+          "oklch(35.0% 0.128 306)",
+          "oklch(45.0% 0.128 306)",
+          "oklch(55.0% 0.128 306)",
+          "oklch(65.0% 0.128 306)",
+          "oklch(80.0% 0.127 306)",
+          "oklch(95.0% 0.030 306)"
+        ]
+      },
+      "replay-alt-bg": {
+        "role": "series",
+        "displayName": "Replay Alt Bg",
+        "canonical": "oklch(24.2% 0.030 306)",
+        "tonalRamp": [
+          "oklch(15.0% 0.030 306)",
+          "oklch(25.0% 0.030 306)",
+          "oklch(35.0% 0.030 306)",
+          "oklch(45.0% 0.030 306)",
+          "oklch(55.0% 0.030 306)",
+          "oklch(65.0% 0.030 306)",
+          "oklch(80.0% 0.030 306)",
+          "oklch(95.0% 0.030 306)"
+        ]
+      },
+      "selected-wash": {
+        "role": "role",
+        "displayName": "Selected Wash",
+        "canonical": "oklch(82.0% 0.130 190 / 0.18)",
+        "tonalRamp": [
+          "oklch(15.0% 0.027 190)",
+          "oklch(25.0% 0.043 190)",
+          "oklch(35.0% 0.061 190)",
+          "oklch(45.0% 0.078 190)",
+          "oklch(55.0% 0.095 190)",
+          "oklch(65.0% 0.112 190)",
+          "oklch(80.0% 0.130 190)",
+          "oklch(95.0% 0.073 190)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Body",
+        "purpose": "Rows, cells, controls and data at --fs-base (13px) monospace."
+      },
+      "prose": {
+        "displayName": "Prose",
+        "purpose": "--font-sans at --fs-base for notes, help text, notices, onboarding and the workspace graph."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel h2 at --fs-base in --font-sans, browser-default 700."
+      },
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "Graph inspector h3 at --fs-lg (16px) 600, the largest declared size."
+      },
+      "subtitle": {
+        "displayName": "Subtitle",
+        "purpose": "Session heading in the Sessions list, --fs-md (14px) 600 in --font-sans."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "h3 inside content panels, --fs-sm in --font-sans and --text-dim, dimmed rather than enlarged."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "--fs-sm (12px) secondary facts, crumbs, lane labels, the transport."
+      },
+      "axis": {
+        "displayName": "Axis",
+        "purpose": "--fs-xs (11px) axis ticks, state words, copyable ids, map tile labels."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "--fs-xs uppercase badges and nav group headings."
+      }
+    },
+    "shadows": [
+      {
+        "name": "popover-lift",
+        "value": "0 12px 32px color-mix(in srgb, var(--bg) 75%, transparent)",
+        "purpose": "Graph search results and overflow menu floating over the canvas."
+      },
+      {
+        "name": "ring-focus",
+        "value": "inset 0 0 0 2px var(--selected)",
+        "purpose": "Graph canvas and map strip focus, where an outline cannot wrap the target. Elsewhere focus is a 2px var(--focus) outline."
+      },
+      {
+        "name": "overlay-scrim",
+        "value": "color-mix(in srgb, var(--bg) 86%, transparent)",
+        "purpose": "Onboarding overlay backdrop; the only modal."
+      }
+    ],
+    "motion": [
+      {
+        "name": "transport-slide",
+        "value": "left 0.12s ease, width 0.12s ease",
+        "purpose": "Transport thumb follows the window; off under prefers-reduced-motion."
+      },
+      {
+        "name": "fleet-change",
+        "value": "fleet-change 1.6s ease-out 1",
+        "purpose": "Row flash from --bg-hover plus a 2px --text-dim ring to transparent on a state change; off under prefers-reduced-motion."
+      },
+      {
+        "name": "detail-open",
+        "value": "width 0.15s ease",
+        "purpose": "Detail pane opening."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "graph-labels",
+        "value": "1320px"
+      },
+      {
+        "name": "map-stack",
+        "value": "1100px"
+      },
+      {
+        "name": "narrow",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default shell button: --bg-panel, --border hairline, 6px radius, --focus ring.",
+      "html": "<button class=\"ds-btn\">Open session</button>",
+      "css": ".ds-btn{background:var(--bg-panel,#1a1614);color:var(--text,#ebe7e4);border:1px solid var(--border,#6d6863);border-radius:6px;padding:.35rem .8rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer}.ds-btn:hover{background:var(--bg-hover,#25211e)}.ds-btn:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:3px}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "--accent border and text; the only accent button. Never filled.",
+      "html": "<button class=\"ds-btn-primary\">Live</button>",
+      "css": ".ds-btn-primary{background:var(--bg-panel,#1a1614);color:var(--accent,#fe7802);border:1px solid var(--accent,#fe7802);border-radius:6px;padding:.35rem .8rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer}.ds-btn-primary:hover{background:var(--bg-hover,#25211e)}.ds-btn-primary:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:3px}"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "--bg-panel field with a --border hairline and a --focus ring.",
+      "html": "<input class=\"ds-input\" type=\"search\" placeholder=\"filter events\">",
+      "css": ".ds-input{background:var(--bg-panel,#1a1614);color:var(--text,#ebe7e4);border:1px solid var(--border,#6d6863);border-radius:6px;padding:.3rem .5rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-width:14rem}.ds-input::placeholder{color:var(--text-dim,#a9a39e)}.ds-input:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:3px}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "130px rail with grouped lowercase items; the brand is --text, active is --accent on --bg-panel.",
+      "html": "<nav class=\"ds-nav\"><div class=\"ds-brand\">AGENT<br>FIREHOSE</div><div class=\"ds-nav-h\">Altitudes</div><button class=\"ds-nav-btn\">Fleet</button><button class=\"ds-nav-btn ds-active\" aria-current=\"page\">Project</button><button class=\"ds-nav-btn\">Sessions</button><div class=\"ds-nav-h\">Housekeeping</div><button class=\"ds-nav-btn\">Doctor</button></nav>",
+      "css": ".ds-nav{width:130px;background:var(--bg,#110f0d);border-right:1px solid var(--border,#6d6863);padding:.8rem .5rem;display:flex;flex-direction:column;gap:.3rem;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#ebe7e4)}.ds-brand{color:var(--text,#ebe7e4);font-weight:700;letter-spacing:.08em;margin-bottom:1rem;line-height:1.3}.ds-nav-h{margin:10px 0 2px;padding:0 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim,#a9a39e)}.ds-nav-btn{text-align:left;border:0;background:none;color:inherit;font:inherit;padding:.35rem .8rem;border-radius:6px;cursor:pointer}.ds-nav-btn:hover{background:var(--bg-hover,#25211e)}.ds-nav-btn.ds-active{color:var(--accent,#fe7802);background:var(--bg-panel,#1a1614)}.ds-nav-btn:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:2px}"
+    },
+    {
+      "name": "Session Lens Tabs",
+      "kind": "nav",
+      "refersTo": "segment-group",
+      "description": "Segmented tablist; the selected segment is an 18% --selected wash with --text.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">Score</button><button role=\"tab\" aria-selected=\"false\">Loops</button><button role=\"tab\" aria-selected=\"false\">Loom</button><button role=\"tab\" aria-selected=\"false\">Replay</button></div>",
+      "css": ".ds-tabs{display:inline-flex;border:1px solid var(--border,#6d6863);border-radius:8px;overflow:hidden;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ds-tabs button{border:0;border-radius:0;background:transparent;color:var(--text-dim,#a9a39e);padding:7px 16px;cursor:pointer;font:inherit}.ds-tabs button+button{border-left:1px solid var(--border,#6d6863)}.ds-tabs button[aria-selected=true]{background:color-mix(in srgb,var(--selected,#3adfd7) 18%,transparent);color:var(--text,#ebe7e4)}.ds-tabs button:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:-2px}"
+    },
+    {
+      "name": "Badges",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "--fs-xs uppercase state tags; needs is --bg on --needs, error is --on-err on --err, idle is dim.",
+      "html": "<span class=\"ds-badge ds-needs\">needs you</span> <span class=\"ds-badge ds-err\">error</span> <span class=\"ds-badge ds-idle\">idle</span>",
+      "css": ".ds-badge{display:inline-block;font:700 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#6d6863);color:var(--text,#ebe7e4)}.ds-needs{color:var(--bg,#110f0d);background:var(--needs,#f3b01d);border-color:var(--needs,#f3b01d)}.ds-err{color:var(--on-err,#110c0b);background:var(--err,#f75d59);border-color:var(--err,#f75d59)}.ds-idle{color:var(--text-dim,#a9a39e)}"
+    },
+    {
+      "name": "Fleet Unit Row",
+      "kind": "card",
+      "refersTo": "unit-row",
+      "description": "A bordered row per worktree; border style encodes state, an --accent outline marks selection.",
+      "html": "<div class=\"ds-row ds-current\" aria-selected=\"true\"><span class=\"ds-row-label\">llm-firehose · feat/shell-transport</span><span class=\"ds-row-dim\">claude-code · 2 min ago</span><span class=\"ds-row-badge ds-row-needs\">needs you</span></div><div class=\"ds-row ds-fog\"><span class=\"ds-row-label\">lorain-data · main</span><span class=\"ds-row-dim\">no evidence 3h</span></div>",
+      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;border:1px solid var(--border,#6d6863);border-radius:6px;background:var(--bg-panel,#1a1614);padding:4px 10px;margin:4px 0;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#ebe7e4)}.ds-row:hover{background:var(--bg-hover,#25211e)}.ds-row.ds-current{border-color:var(--accent,#fe7802)}.ds-row[aria-selected=true]{outline:1px solid var(--accent,#fe7802);outline-offset:1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#a9a39e)}.ds-row-label{flex:0 0 22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-dim{color:var(--text-dim,#a9a39e);font-size:12px}.ds-row-badge{font:700 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;text-transform:uppercase;padding:.1rem .35rem;border-radius:3px;border:1px solid var(--border,#6d6863)}.ds-row-needs{color:var(--bg,#110f0d);background:var(--needs,#f3b01d);border-color:var(--needs,#f3b01d)}"
+    },
+    {
+      "name": "Transport",
+      "kind": "custom",
+      "refersTo": "transport-control",
+      "description": "Shell-owned time control: presets, Live, Hold, a tabular readout and a slider track with a --text-dim thumb.",
+      "html": "<div class=\"ds-transport\" role=\"group\" aria-label=\"Time window\"><div class=\"ds-presets\"><button aria-pressed=\"false\">2h</button><button aria-pressed=\"true\">8h</button><button aria-pressed=\"false\">24h</button><button aria-pressed=\"false\">7d</button></div><button class=\"ds-live\" aria-pressed=\"true\">Live</button><button>Hold</button><span class=\"ds-range\">Live · last 8h</span><div class=\"ds-track\" role=\"slider\" tabindex=\"0\" aria-valuenow=\"100\"><div class=\"ds-thumb\"></div></div></div>",
+      "css": ".ds-transport{display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border,#6d6863);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text,#ebe7e4);background:var(--bg,#110f0d)}.ds-presets{display:flex;gap:4px}.ds-transport button{background:var(--bg-panel,#1a1614);color:var(--text,#ebe7e4);border:1px solid var(--border,#6d6863);border-radius:4px;padding:3px 8px;font:inherit;cursor:pointer}.ds-transport button[aria-pressed=true]{border-color:var(--accent,#fe7802);color:var(--accent,#fe7802)}.ds-transport button:focus-visible,.ds-track:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:1px}.ds-range{color:var(--text-dim,#a9a39e);font-variant-numeric:tabular-nums;white-space:nowrap}.ds-track{position:relative;flex:1;min-width:80px;height:14px;background:var(--bg-panel,#1a1614);border:1px solid var(--border,#6d6863);border-radius:7px;cursor:ew-resize}.ds-thumb{position:absolute;top:1px;bottom:1px;left:70%;width:30%;background:var(--text-dim,#a9a39e);opacity:.7;border-radius:6px;transition:left .12s ease,width .12s ease}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Operations Board",
+    "overview": "**Creative North Star: \"The Operations Board\"**\n\nAgent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense, flat and dark, and colour is spent on state, not decoration. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, \"unknown\"), never as a guess.\n\nOne token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for location, pressed state and the primary action, `--needs` for \"needs you\", `--selected` for selection in the graph and session tabs, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.\n\nProduct intent (register, users, tone) lives in [PRODUCT.md](PRODUCT.md).\n\nThis system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI tiles, gradient accents, identical card grids), the observability \"dark blue with neon\" skin, glassmorphism and gradient text, chat-app friendliness (avatars, bubbles, emoji status), and any surface that identifies a thing by its hash when a human name exists.",
+    "keyCharacteristics": [
+      "Monospace for data, sans for prose; tabular numerals on clocks and ranges.",
+      "Flat surfaces, 1px hairlines; shadows only on the two graph popovers (search results, overflow menu), the selected workspace pill and the onboarding scrim.",
+      "Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).",
+      "Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.",
+      "Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.",
+      "Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. The matrix cells, dwell rows, lane rows, fleet lane rows and score tracks now draw a `--focus` indicator (tested); feed rows and session items take focus but have no styled focus-visible yet and fall back to the browser ring."
+    ],
+    "rules": [
+      {
+        "name": "The Accent Budget Rule",
+        "body": "`--accent` marks location, pressed state and the primary action, nothing else. If a screen shows accent on more than one thing the operator did not just choose, something is miscoloured. Selection in the graph and session tabs is `--selected`, and the keyboard ring is `--focus`, so the accent is never doing three jobs at once.",
+        "section": "colors"
+      },
+      {
+        "name": "The Word Beside the Dot Rule",
+        "body": "No hue carries state alone. `--needs`, `--ok`, `--warn` and `--err` always sit next to the word they mean (\"needs you\", \"landed\", \"paused\", \"failed\"), because the user may be colour-blind, the display may be dimmed, or the badge may be the only thing in view.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Palette Rule",
+        "body": "New surfaces, the graph included, use the `:root` tokens. There is no second palette: `--g-*` and `--muted` are gone (tested), and no colour literal may appear outside `:root`.",
+        "section": "colors"
+      },
+      {
+        "name": "The No Display Rule",
+        "body": "Nothing declared in the shell is larger than `--fs-lg`. Emphasis is weight or a role colour, never size.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Clock Rule",
+        "body": "Any time, range, count or hash is set with `font-variant-numeric: tabular-nums` so columns do not shiver as values change.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hairline Rule",
+        "body": "Separate with a 1px `--border` line, a `color-mix()` of it, or a tonal step, never a shadow. If a new surface needs a shadow to be seen, its background step is wrong.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Border Speaks Rule",
+        "body": "On a unit row the border style is data (solid, dashed, dotted, accent, error). Do not reuse those styles decoratively.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do build every new surface from the `:root` tokens and the `--fs-*` scale; add a token (see Adding a token) before reaching for a literal.",
+      "Do spend `--accent` only on location, pressed state and the primary action (The Accent Budget Rule).",
+      "Do put a word beside every state colour: \"needs you\", \"landed\", \"paused\", \"failed\", \"unknown\".",
+      "Do set data in the monospace face and prose in `--font-sans`.",
+      "Do name sessions and worktrees the way the user would (what was asked, where, by which agent, when) and show the hash only as a copyable detail in the `--fs-xs` id style.",
+      "Do keep scope and selection when moving between Fleet, Project, Worktree and Session; Escape ascends one rung.",
+      "Do give every clickable row a keyboard path and a visible focus state: a 2px `--focus` outline, or a `--focus` stroke on an SVG hit area.",
+      "Do separate with hairlines and tonal steps; draw missing evidence as dashed or dotted borders and the word \"unknown\".",
+      "Do respect `prefers-reduced-motion`; motion only conveys a state change and eases out.",
+      "Do set clocks, counts and ranges in tabular numerals and truncate long summaries with an ellipsis at a fixed `ch` width."
+    ],
+    "donts": [
+      "Don't build SaaS analytics dashboards: no hero metrics, no KPI tiles, no gradient accents, no identical card grids.",
+      "Don't reach for the observability \"dark blue with neon\" skin, glassmorphism or gradient text.",
+      "Don't add chat-app friendliness: no avatars, no rounded bubbles, no emoji status.",
+      "Don't identify a thing by its hash when a human name exists; a UUID is never a label, a heading or a breadcrumb crumb.",
+      "Don't add new `border-left` or `border-right` stripes wider than 1px on rows, bands or warnings; use a full border, a background tint or a leading badge. Existing 3px stripes (the identity hue on band rows, the five airspace band markers, the capture warning, the loops disclosure, and the court, airspace and loom notices) are recorded debt, not a precedent.",
+      "Don't write `outline: none` on anything focusable without a replacement focus treatment for `:focus-visible`.",
+      "Don't add a second time control, repository picker or event list to a view; the transport, the scope store and the shared lists already exist.",
+      "Don't introduce colour literals (hex, `rgb()`, `hsl()`, `oklch()` and the rest) outside `:root`, in CSS or TypeScript; the test fails.",
+      "Don't dim text with `opacity`; use `--text-dim`.",
+      "Don't nest containers or wrap rows in cards; a unit row is already the container.",
+      "Don't use pure `#000` or `#fff`; text on a coloured fill uses `--on-err`, `--on-fill` or `--bg`.",
+      "Don't use em dashes in interface copy."
+    ]
+  }
+}

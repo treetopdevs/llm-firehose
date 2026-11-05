@@ -19,3 +19,12 @@ test("diagram discloses clipped references and never draws endpoints outside bou
  expect(root.querySelectorAll('[data-parent]')).toHaveLength(0);
  expect(root.textContent).toContain("0 of 1 parent references");
 });
+test("conflicting arrows use --warn and emitted tokens are declared on :root",async()=>{
+ const {readFileSync}=await import("node:fs");const {parseTokens}=await import("../../tokens-helpers");
+ const declared=Object.keys(parseTokens(readFileSync("src/styles.css","utf8")).base);
+ const root=renderLoomMap(focus,groups,[{key:"c",parentKey:"1",childKey:"0",status:"conflicting",evidenceIds:[focus.id]}],()=>{});
+ expect(root.querySelector("path[data-parent=c]")?.getAttribute("stroke")).toBe("var(--warn)");
+ const used=[...root.innerHTML.matchAll(/var\(\s*(--[\w-]+)/g)].map(m=>m[1]);
+ expect(used.filter(n=>!declared.includes(n))).toEqual([]);
+ expect(root.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+});

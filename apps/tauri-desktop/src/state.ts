@@ -7,6 +7,12 @@ import type { FirehoseEvent } from "./api";
 export interface Row {
   event: FirehoseEvent;
   count: number;
+  /**
+   * Stable logical identity of the row: the id of the first event folded into it.
+   * Coalescing replaces `event` (so its id changes, e.g. hook id to rollout id) but
+   * never this key, so a view can keep focus on the same row across redraws.
+   */
+  key: string;
 }
 
 export interface Filter {
@@ -61,7 +67,7 @@ export function coalesce(evs: FirehoseEvent[], windowMs = CORRELATION_WINDOW_MS)
       }
     }
 
-    rows.push({ event: ev, count: 1 });
+    rows.push({ event: ev, count: 1, key: ev.id || `${correlatedKey ?? "row"}#${rows.length}` });
     if (correlatedKey) correlated.set(correlatedKey, rows.length - 1);
   }
   return rows;
@@ -74,16 +80,20 @@ function matches(ev: FirehoseEvent, f: Filter): boolean {
   return true;
 }
 
+/** Live feed ring size; equal to the Project timeline cap so both event lists hold the same history. */
+export const FEED_RING = 5000;
+
 export class FeedState {
   private buf: FirehoseEvent[] = [];
   private seenIds = new Set<string>();
   private frozen: FirehoseEvent[] | null = null;
+  private arrived: FirehoseEvent[] = [];
   private filter: Filter = {};
   private seenSources: string[] = [];
   paused = false;
   unread = 0;
 
-  constructor(private cap = 5000) {}
+  constructor(private cap = FEED_RING) {}
 
   push(ev: FirehoseEvent): void {
     if (ev.id && this.seenIds.has(ev.id)) return;
@@ -100,6 +110,8 @@ export class FeedState {
     }
     if (this.paused) {
       this.unread++;
+      this.arrived.push(ev);
+      if (this.arrived.length > this.cap) this.arrived.splice(0, this.arrived.length - this.cap);
     }
   }
 
@@ -107,13 +119,25 @@ export class FeedState {
     if (this.paused) return;
     this.paused = true;
     this.unread = 0;
+    this.arrived = [];
     this.frozen = [...this.buf];
   }
 
   resume(): void {
     this.paused = false;
     this.unread = 0;
+    this.arrived = [];
     this.frozen = null;
+  }
+
+  /** Events held for display: the frozen copy while paused, else the live buffer. Oldest first. */
+  snapshot(): readonly FirehoseEvent[] {
+    return this.frozen ?? this.buf;
+  }
+
+  /** Events that arrived since pause() (bounded by the ring size), for scoped unread counts. */
+  arrivals(): readonly FirehoseEvent[] {
+    return this.arrived;
   }
 
   setFilter(f: Filter): void {

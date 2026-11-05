@@ -1,5 +1,16 @@
 import { describe, expect, test, vi } from 'vitest';
-import { createScope, sameSession, selectSession, scope, type Scope, type ScopeResolver } from './scope';
+import {
+  DEFAULT_LIVE_SPAN_MS,
+  PRESETS,
+  formatRange,
+  formatSpan,
+  isLive,
+  liveSpanOf,
+  presetWindow,
+  resolveRange,
+  shiftWindow,
+  spanOf,
+  createScope, sameSession, selectSession, scope, type Scope, type ScopeResolver } from './scope';
 
 const cell = { where: 'w', agent: 'a', label: 'l' };
 
@@ -306,5 +317,133 @@ describe("composed resolvers: knowledge", () => {
     store.setResolver({ sessions: () => new Set<string>(), knows: () => false, labels: () => ({}) });
     expect([...store.resolver()!.sessions(sc)!]).toEqual([]);
     expect(store.resolver()!.knows!(sc)).toBe(false);
+  });
+});
+
+describe('window helpers', () => {
+  test('presets', () => {
+    expect(PRESETS.map((p) => p.id)).toEqual(['2h', '8h', '24h', '7d']);
+    expect(presetWindow('2h', 1e9)).toEqual({ from: 1e9 - 7.2e6, to: 1e9 });
+    expect(presetWindow('8h', 1e9)).toEqual({ from: 1e9 - 8 * 3.6e6, to: 1e9 });
+    expect(presetWindow('24h', 1e9)).toEqual({ from: 1e9 - 24 * 3.6e6, to: 1e9 });
+    expect(presetWindow('7d', 1e9)).toEqual({ from: 1e9 - 7 * 864e5, to: 1e9 });
+  });
+  test('isLive/spanOf/resolveRange', () => {
+    expect(isLive('live')).toBe(true);
+    expect(isLive({ from: 1, to: 2 })).toBe(false);
+    expect(spanOf('live', 5)).toBe(DEFAULT_LIVE_SPAN_MS);
+    expect(DEFAULT_LIVE_SPAN_MS).toBe(7 * 864e5);
+    expect(spanOf('live', 5, 7_200_000)).toBe(7_200_000);
+    expect(spanOf({ from: 100, to: 400 }, 5)).toBe(300);
+    expect(resolveRange('live', 10_000, 4000)).toEqual({ from: 6000, to: 10_000 });
+  });
+  test('shiftWindow', () => {
+    expect(shiftWindow({ from: 1000, to: 2000 }, -500, 5000)).toEqual({ from: 500, to: 1500 });
+    expect(shiftWindow({ from: 1000, to: 2000 }, 10_000, 1800)).toEqual({ from: 800, to: 1800 });
+    expect(shiftWindow({ from: 1000, to: 2000 }, 10_000, 2000, 1000)).toBe('live');
+    expect(shiftWindow({ from: 1000, to: 2000 }, 10_000, 2000, 5000)).toEqual({ from: 1000, to: 2000 });
+    const now = 100_000_000;
+    expect(shiftWindow('live', -3_600_000, now, 7_200_000)).toEqual({ from: now - 10_800_000, to: now - 3_600_000 });
+    expect(shiftWindow('live', 0, now, 7_200_000)).toBe('live');
+    const w = { from: 1, to: 2 };
+    expect(shiftWindow(w, NaN, 5)).toBe(w);
+    expect(shiftWindow(w, Infinity, 5)).toBe(w);
+  });
+  test('formatSpan', () => {
+    expect(formatSpan(30_000)).toBe('30 s');
+    expect(formatSpan(45 * 60_000)).toBe('45 min');
+    expect(formatSpan(2 * 3.6e6)).toBe('2 h');
+    expect(formatSpan(90 * 60_000)).toBe('1 h 30 min');
+    expect(formatSpan(30 * 3.6e6)).toBe('1 d 6 h');
+    expect(formatSpan(7 * 864e5)).toBe('7 d');
+  });
+  test('formatRange', () => {
+    const now = new Date(2026, 10, 1, 12, 0).getTime();
+    expect(formatRange('live', now).text).toBe('Live');
+    expect(formatRange('live', now, 7_200_000).text).toBe('Live · last 2 h');
+    expect(formatRange('live', now, undefined, { wholeSession: true }).text).toBe('Live · whole session');
+    const w = { from: new Date(2026, 9, 31, 9, 0).getTime(), to: new Date(2026, 9, 31, 17, 0).getTime() };
+    const r = formatRange(w, now);
+    expect(r.text).toBe('Oct 31, 09:00 › Oct 31, 17:00 · 8 h');
+    expect(r.title).toContain(r.text);
+    expect(r.title).toContain('UTC');
+    const short = formatRange({ from: w.from, to: w.from + 10 * 60_000 + 5000 }, now);
+    expect(short.text).toContain('09:00:00');
+    const yr = formatRange({ from: new Date(2025, 11, 31, 23, 0).getTime(), to: new Date(2026, 0, 1, 1, 0).getTime() }, now);
+    expect(yr.text).toContain('2025');
+    expect(yr.text).toContain('2026');
+  });
+  test('UTC part of the title is timezone independent', () => {
+    const w = { from: Date.UTC(2026, 9, 31, 13, 0), to: Date.UTC(2026, 9, 31, 21, 0) };
+    const orig = process.env.TZ;
+    const utcPart = (tz: string) => {
+      process.env.TZ = tz;
+      const t = formatRange(w, w.to).title;
+      return t.slice(t.indexOf('UTC'));
+    };
+    try {
+      expect(utcPart('America/New_York')).toBe(utcPart('UTC'));
+      expect(utcPart('UTC')).toBe('UTC Oct 31, 13:00 › Oct 31, 21:00');
+    } finally {
+      if (orig === undefined) delete process.env.TZ;
+      else process.env.TZ = orig;
+    }
+  });
+});
+
+describe('liveSpanMs', () => {
+  test('absent by default; narrow stores; invalid ignored', () => {
+    const s = createScope();
+    expect(s.get()).toEqual({ window: 'live' });
+    expect(liveSpanOf(s.get())).toBe(DEFAULT_LIVE_SPAN_MS);
+    s.narrow({ liveSpanMs: 7_200_000 });
+    expect(s.get()).toEqual({ window: 'live', liveSpanMs: 7_200_000 });
+    expect(liveSpanOf(s.get())).toBe(7_200_000);
+    for (const bad of [0, -1, NaN, Infinity]) s.narrow({ liveSpanMs: bad });
+    expect(s.get().liveSpanMs).toBe(7_200_000);
+    const fresh = createScope();
+    const fn = vi.fn();
+    fresh.subscribe(fn);
+    fresh.narrow({ liveSpanMs: undefined });
+    expect(fresh.get()).toEqual({ window: 'live' });
+    expect('liveSpanMs' in fresh.get()).toBe(false);
+    expect(fn).not.toHaveBeenCalled();
+  });
+  test('window and span notify once; identical does not; span-only notifies', () => {
+    const s = createScope();
+    const fn = vi.fn();
+    s.subscribe(fn);
+    s.narrow({ window: { from: 1, to: 2 }, liveSpanMs: 3_600_000 });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(s.get()).toEqual({ window: { from: 1, to: 2 }, liveSpanMs: 3_600_000 });
+    s.narrow({ liveSpanMs: 3_600_000 });
+    expect(fn).toHaveBeenCalledTimes(1);
+    s.narrow({ liveSpanMs: 7_200_000 });
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+  test('kept by narrow, replaceContext, ascend; cleared by reset/set', () => {
+    const s = createScope();
+    s.narrow({ liveSpanMs: 7_200_000, window: { from: 1, to: 2 } });
+    s.narrow({ project: 'p' });
+    expect(s.get().liveSpanMs).toBe(7_200_000);
+    s.replaceContext({ project: 'q' });
+    expect(s.get()).toEqual({ project: 'q', window: { from: 1, to: 2 }, liveSpanMs: 7_200_000 });
+    s.ascend();
+    expect(s.get().liveSpanMs).toBe(7_200_000);
+    s.reset();
+    expect(s.get()).toEqual({ window: 'live' });
+    expect('liveSpanMs' in s.get()).toBe(false);
+    s.narrow({ liveSpanMs: 7_200_000 });
+    s.set({ window: 'live' });
+    expect('liveSpanMs' in s.get()).toBe(false);
+  });
+  test('session change resets window, keeps span; explicit window carries', () => {
+    const s = createScope();
+    s.narrow({ liveSpanMs: 7_200_000, window: { from: 1, to: 2 } });
+    s.narrow({ session: { id: 'a' } });
+    expect(s.get()).toMatchObject({ window: 'live', liveSpanMs: 7_200_000 });
+    s.narrow({ session: { id: 'b' }, window: { from: 5, to: 9 } });
+    expect(s.get().window).toEqual({ from: 5, to: 9 });
+    expect(s.get().liveSpanMs).toBe(7_200_000);
   });
 });

@@ -3,8 +3,9 @@
 // updated in place, so typing in search is never interrupted by a refresh.
 
 import { clear, el } from "../../dom";
-import { claimEscape, isEscapeClaimed } from "../../escape";
+import { claimEscape, isEscapeClaimed, yieldsToModal } from "../../escape";
 import { stateDescription, type AgentState } from "./names";
+import { LOCAL } from "../../keys";
 
 const svgNS = "http://www.w3.org/2000/svg";
 
@@ -79,7 +80,13 @@ export interface ToolbarHandlers {
 
 let listboxSeq = 0;
 
-export function createToolbar(h: ToolbarHandlers) {
+export interface ToolbarOptions {
+  /** Hosted by Project: the repository picker and the Graph/Timeline/Map tabs belong to the host. */
+  hosted?: boolean;
+}
+
+export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
+  const hosted = !!opts.hosted;
   const root = el("header", { class: "graph-toolbar" });
 
   // Repository picker: icon, name and chevron over a native select.
@@ -126,7 +133,7 @@ export function createToolbar(h: ToolbarHandlers) {
         "data-kind": r.kind,
       });
       if (r.state) {
-        const dot = el("span", { class: `agent-dot state-${r.state}`, title: stateDescription(r.state) });
+        const dot = el("span", { class: `agent-dot state-${r.state}`, role: "img", "aria-label": stateDescription(r.state), title: stateDescription(r.state) });
         li.append(dot);
       } else li.append(el("span", { class: "result-kind" }, r.kind === "revision" ? "◆" : "•"));
       li.append(el("span", { class: "result-title" }, r.title), el("span", { class: "result-detail" }, r.detail));
@@ -176,6 +183,7 @@ export function createToolbar(h: ToolbarHandlers) {
     if (!input.value) h.search("");
   });
   input.addEventListener("keydown", (e) => {
+    if (!LOCAL.graphSearch.matches(e)) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (!open) show();
@@ -214,7 +222,7 @@ export function createToolbar(h: ToolbarHandlers) {
   fitGroup.append(fitBtn, allBtn);
 
   // Graph / Timeline / Map.
-  const tabs = el("div", { class: "graph-tabs", role: "tablist", "aria-label": "Workspace view" });
+  const tabs = el("div", { class: "graph-tabs", role: "tablist", "aria-label": "Worktree view" });
   const tabButtons = {
     graph: el("button", { type: "button", role: "tab" }, "Graph"),
     timeline: el("button", { type: "button", role: "tab" }, "Timeline"),
@@ -235,8 +243,8 @@ export function createToolbar(h: ToolbarHandlers) {
   const form = el("form", { class: "graph-register" });
   form.hidden = true;
   const rootInput = el("input", {
-    placeholder: "Local repository root",
-    "aria-label": "Local repository root",
+    placeholder: "Local project root",
+    "aria-label": "Local project root",
     required: "true",
   });
   const vcsSelect = el("select", { "aria-label": "VCS" });
@@ -250,7 +258,8 @@ export function createToolbar(h: ToolbarHandlers) {
   };
   // An open menu owns Escape wherever focus is; closes it before anything else reacts.
   const closeOnEscape = (e: KeyboardEvent) => {
-    if (e.key !== "Escape" || menu.hidden || e.isComposing || isEscapeClaimed(e)) return;
+    if (!LOCAL.graphMenu.matches(e) || menu.hidden || e.isComposing || isEscapeClaimed(e)) return;
+    if (yieldsToModal(e, more)) return;
     claimEscape(e);
     e.preventDefault();
     const hadFocus = more.contains(document.activeElement);
@@ -272,7 +281,7 @@ export function createToolbar(h: ToolbarHandlers) {
   }
   moreBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
   more.onkeydown = (e) => {
-    if (e.key === "Escape" && !menu.hidden) {
+    if (LOCAL.graphMenu.matches(e) && !menu.hidden) {
       if (e.isComposing || isEscapeClaimed(e)) return;
       claimEscape(e);
       e.preventDefault();
@@ -299,11 +308,12 @@ export function createToolbar(h: ToolbarHandlers) {
       registerError.textContent =
         err instanceof Error && err.message
           ? err.message
-          : "Unable to register repository. Check the local root and VCS availability.";
+          : "Unable to register project. Check the local root and VCS availability.";
     }
   };
 
-  root.append(repoWrap, count, searchWrap, fitGroup, tabs, more);
+  if (hosted) root.append(count, searchWrap, fitGroup, more);
+  else root.append(repoWrap, count, searchWrap, fitGroup, tabs, more);
 
   let reposSig = "";
   function update(s: ToolbarState) {
@@ -344,6 +354,10 @@ export function createToolbar(h: ToolbarHandlers) {
       input.select();
     },
     input,
+    /** Closes the More menu and releases its document listeners. */
+    closeMenu,
+    /** Releases every document listener the toolbar holds. */
+    dispose: closeMenu,
   };
 }
 

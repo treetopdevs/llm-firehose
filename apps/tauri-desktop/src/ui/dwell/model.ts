@@ -16,7 +16,7 @@ export type DwellRow = {
   source: string;
   label: string;
   where: string;
-  /** NEEDS YOU, FAILED, or the attention state as reported. */
+  /** "needs you", "failed", or the session state in the same words. */
   status: string;
   needs: boolean;
   dwellMs: number;

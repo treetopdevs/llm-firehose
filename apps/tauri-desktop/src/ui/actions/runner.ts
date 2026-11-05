@@ -139,7 +139,7 @@ export function createRunner(deps: RunnerDeps): Runner {
           case "register":
             await deps.registerRoot(req.path);
             deps.onChanged();
-            say({ kind: "ok", message: "Registered repository root" });
+            say({ kind: "ok", message: "Registered project root" });
             break;
           case "prune":
             await prune(req.root, live, say);

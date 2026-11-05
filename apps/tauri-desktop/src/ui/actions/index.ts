@@ -3,6 +3,7 @@
 // runner. All text goes through el()/textContent; nothing here uses innerHTML.
 import { el } from "../../dom";
 import { claimEscape } from "../../escape";
+import { LOCAL } from "../../keys";
 import type { ActionRequest, UnitAction } from "./model";
 import { createRunner, type ActionStatus, type PruneConfirmInfo, type RunnerDeps } from "./runner";
 
@@ -98,6 +99,7 @@ export function createActions(deps: ActionsDeps): ActionsUi {
         if (e.target === node) closeDialog(false);
       });
       node.addEventListener("keydown", (e) => {
+        if (!LOCAL.actionDialog.matches(e)) return;
         if (e.key === "Escape") {
           claimEscape(e);
           e.preventDefault();
@@ -142,6 +144,7 @@ export function createActions(deps: ActionsDeps): ActionsUi {
       });
     });
     m.addEventListener("keydown", (e) => {
+      if (!LOCAL.actionMenu.matches(e)) return;
       const cur = buttons.indexOf(document.activeElement as HTMLButtonElement);
       if (e.key === "ArrowDown") {
         e.preventDefault();

@@ -107,14 +107,14 @@ test("all workspace labels remain selectable; Graph and Timeline retain scope an
   click(panel.root, "Open scoped Timeline");
   await flush();
   expect(
-    panel.root.querySelector<HTMLSelectElement>('[aria-label="Workspace"]')!
+    panel.root.querySelector<HTMLSelectElement>('[aria-label="Worktree"]')!
       .value,
   ).toBe("w");
-  panel.root.querySelector<HTMLElement>('[data-key="event:e"]')!.click();
+  panel.root.querySelector<HTMLElement>('[data-key="e"]')!.click();
   expect(
     panel.root.querySelector(".graph-event-detail")!.textContent,
   ).toContain("captured");
-  click(panel.root, "● Live · pause");
+  click(panel.root, "pause");
   panel.onEvent({
     id: "new",
     time: "2026-10-05T00:00:00Z",
@@ -123,8 +123,8 @@ test("all workspace labels remain selectable; Graph and Timeline retain scope an
     repo_id: "r",
     worktree_id: "w",
   });
-  expect(panel.root.textContent).toContain("Resume · 1 arrivals");
-  expect(panel.root.querySelectorAll(".graph-events tbody tr")).toHaveLength(1);
+  expect(panel.root.textContent).toContain("resume (1 new)");
+  expect(panel.root.querySelectorAll(".feed-row")).toHaveLength(1);
   click(panel.root, "Graph");
   click(panel.root, "Timeline");
   expect(
@@ -150,10 +150,10 @@ test("Show in Graph reports deleted workspace and failed scans keep successful t
   click(panel.root, "Timeline");
   await flush();
   panel.root
-    .querySelector<HTMLButtonElement>('[data-key="event:gone"] button')!
+    .querySelector<HTMLButtonElement>('[data-key="gone\0action"]')!
     .click();
   expect(panel.root.querySelector(".graph-status")!.textContent).toContain(
-    "Workspace unavailable",
+    "Worktree unavailable",
   );
   vi.mocked(graphAPI.snapshot).mockRejectedValueOnce(new Error("failed"));
   await panel.refresh();
@@ -177,7 +177,7 @@ test("paused live arrivals preserve timeline scroll position", async () => {
   const panel = await setup();
   click(panel.root, "Timeline");
   await flush();
-  click(panel.root, "● Live · pause");
+  click(panel.root, "pause");
   panel.root.querySelector<HTMLElement>(".graph-timeline")!.scrollTop = 240;
   panel.onEvent({
     id: "arrival",
@@ -215,7 +215,7 @@ test("Timeline workspace change updates revision and Show in Graph centers its a
   click(panel.root, "Timeline");
   await flush();
   const ws = panel.root.querySelector<HTMLSelectElement>(
-    '[aria-label="Workspace"]',
+    '[aria-label="Worktree"]',
   )!;
   ws.value = "w2";
   ws.dispatchEvent(new Event("change"));
@@ -239,7 +239,7 @@ test("Timeline workspace change updates revision and Show in Graph centers its a
   click(panel.root, "Timeline");
   await flush();
   panel.root
-    .querySelector<HTMLButtonElement>('[data-key="event:second"] button')!
+    .querySelector<HTMLButtonElement>('[data-key="second\0action"]')!
     .click();
   expect(
     panel.root.querySelector(".graph-canvas > g")!.getAttribute("transform"),
@@ -427,7 +427,7 @@ test("more than three labels on a revision show a counted cluster that expands o
   const { root } = await richSetup();
   expect(qa(root, ".workspace-label")).toHaveLength(3);
   const cluster = q(root, ".workspace-cluster");
-  expect(cluster.textContent).toContain("5 workspaces");
+  expect(cluster.textContent).toContain("5 worktrees");
   cluster.dispatchEvent(new MouseEvent("click"));
   await flush();
   expect(qa(root, ".workspace-label")).toHaveLength(8);
@@ -557,12 +557,34 @@ test("the inspector shows branch, agents, comparison, changes, activity and the 
   expect(activity[0].textContent).toContain("event a");
   expect(activity[0].textContent).toContain("2m ago");
   expect(pane.querySelector(".origin-value")!.textContent).toBe("unknown");
-  expect(pane.textContent).toContain("does not infer or record which workspace created another");
-  expect(pane.textContent).not.toContain("Origin workspace: ");
+  expect(pane.textContent).toContain("does not infer or record which worktree created another");
+  expect(pane.textContent).not.toContain("Origin worktree: ");
   click(root, "Highlight ancestry");
   click(root, "Inspect changes");
   expect(pane.querySelector(".graph-comparison")).toBeTruthy();
   void panel;
+});
+
+test("Filter Timeline from the inspector clears a source filter that names another source", async () => {
+  const sessions = [agentSession("same", "codex", "fix"), agentSession("same", "claude-code", "fix", "idle")];
+  const { root } = await richSetup({ sessions });
+  label(root, "fix").dispatchEvent(new MouseEvent("click"));
+  await flush();
+  click(root, "Timeline");
+  await flush();
+  const src = q(root, "select[title='source filter']") as unknown as HTMLSelectElement;
+  src.value = "codex";
+  src.dispatchEvent(new Event("change"));
+  await flush();
+  click(root, "Graph");
+  await flush();
+  qa(root, ".agent-filter")[1].click();
+  await flush();
+  await flush();
+  const last = vi.mocked(graphAPI.timeline).mock.calls.at(-1)![0];
+  expect(last.source).toBe("claude-code");
+  expect(last.session_id).toBe("same");
+  expect((q(root, "select[title='source filter']") as unknown as HTMLSelectElement).value).toBe("");
 });
 
 test("detached checkouts read Detached HEAD with the short commit", async () => {
@@ -603,7 +625,7 @@ test("axis annotations, depth ticks and an honest footer", async () => {
   expect(text).toContain("Depth in loaded history");
   expect(text).toContain("Revision parent links");
   expect(text).toContain("Merge (multiple parents)");
-  expect(q(root, ".graph-footer-status").textContent).toMatch(/^All 8 workspaces labelled .* · \d+ in view$/);
+  expect(q(root, ".graph-footer-status").textContent).toMatch(/^All 8 worktrees labelled .* · \d+ in view$/);
   expect(q(root, ".graph-expand").hidden).toBe(true);
 });
 
@@ -702,7 +724,7 @@ test("arrow keys move focus between labels and Escape clears the selection", asy
   expect(label(root, "fix").classList.contains("selected")).toBe(true);
   label(root, "fix").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(label(root, "fix").classList.contains("selected")).toBe(false);
-  expect(q(root, ".graph-inspector").textContent).toContain("Select a workspace or revision");
+  expect(q(root, ".graph-inspector").textContent).toContain("Select a worktree or revision");
 });
 
 test("2,000 revisions with 50 labels: no per-node listeners, selection stays fast", async () => {
@@ -742,7 +764,7 @@ test("Show in Graph reveals a workspace hidden in a cluster and the expansion ou
   });
   click(root, "Timeline");
   await flush();
-  root.querySelector<HTMLButtonElement>('[data-key="event:ev-c3"] button')!.click();
+  root.querySelector<HTMLButtonElement>('[data-key="ev-c3\0action"]')!.click();
   await flush();
   expect(label(root, "c3").classList.contains("selected")).toBe(true);
   label(root, "c3").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -774,7 +796,7 @@ test("the Workspace filter keeps names readable and only adds a tail when two ch
   const { root } = await richSetup({ snapshot: snap });
   click(root, "Timeline");
   await flush();
-  const options = qa(root, '[aria-label="Workspace"] option').map((o) => o.textContent);
+  const options = qa(root, '[aria-label="Worktree"] option').map((o) => o.textContent);
   expect(options).toContain("tip");
   expect(options.filter((o) => o!.startsWith("main"))).toHaveLength(2);
   expect(options.filter((o) => o!.startsWith("main ·"))).toHaveLength(2);
@@ -830,12 +852,12 @@ test("More holds Register local root and Refresh", async () => {
   expect(root.querySelector(".graph-menu")!.hasAttribute("hidden")).toBe(false);
   click(root, "Register local root");
   const form = q(root, ".graph-register") as unknown as HTMLFormElement;
-  const input = form.querySelector<HTMLInputElement>('[aria-label="Local repository root"]')!;
+  const input = form.querySelector<HTMLInputElement>('[aria-label="Local project root"]')!;
   input.value = "/work/repo";
   vi.mocked(graphAPI.register).mockRejectedValueOnce(new Error("no"));
   form.dispatchEvent(new Event("submit", { cancelable: true }));
   await flush();
-  expect(form.querySelector('[role="alert"]')!.textContent).toContain("Unable to register repository");
+  expect(form.querySelector('[role="alert"]')!.textContent).toContain("Unable to register project");
   vi.mocked(graphAPI.register).mockResolvedValueOnce({ id: "r", vcs: "git", label: "x", status: "ok", observed_at: "" });
   form.dispatchEvent(new Event("submit", { cancelable: true }));
   await flush();
@@ -853,7 +875,7 @@ test("JJ repositories count workspaces and name pills after the workspace label"
   snap.repository.vcs = "jj";
   snap.workspaces = snap.workspaces.map((w) => ({ ...w, label: `ws-${w.id}`, refs: ["main"] }));
   const { root } = await richSetup({ snapshot: snap });
-  expect(q(root, ".graph-count").textContent).toBe("8 workspaces");
+  expect(q(root, ".graph-count").textContent).toBe("8 worktrees");
   expect(label(root, "tip").querySelector("text")!.textContent).toBe("ws-tip");
 });
 
@@ -892,7 +914,7 @@ test("Escape clears the selection from anywhere in the graph, not only from the 
   fit.click();
   fit.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(label(root, "fix").classList.contains("selected")).toBe(false);
-  expect(q(root, ".graph-inspector").textContent).toContain("Select a workspace or revision");
+  expect(q(root, ".graph-inspector").textContent).toContain("Select a worktree or revision");
   // typing in a field keeps its own Escape behaviour: the selection stays
   label(root, "fix").dispatchEvent(new MouseEvent("click"));
   await flush();
@@ -948,7 +970,7 @@ test("the first render does not wait for a slow attention endpoint", async () =>
     void panel.refresh();
     await vi.advanceTimersByTimeAsync(3000);
     expect(panel.root.querySelectorAll(".workspace-label").length).toBeGreaterThan(0);
-    expect(panel.root.textContent).not.toContain("Loading repository topology");
+    expect(panel.root.textContent).not.toContain("Loading project topology");
   } finally {
     vi.useRealTimers();
   }
@@ -1308,7 +1330,7 @@ test("scope: Workspace filter select publishes worktree and project", async () =
   const panel = await scoped(store);
   click(panel.root, "Timeline");
   await flush();
-  const sel = panel.root.querySelector<HTMLSelectElement>('[aria-label="Workspace"]')!;
+  const sel = panel.root.querySelector<HTMLSelectElement>('[aria-label="Worktree"]')!;
   sel.value = "w2";
   sel.onchange!(new Event("change"));
   await flush();
@@ -1436,6 +1458,21 @@ test("scope: a worktree another resolver knows (Project history) survives a snap
   await panel.refresh();
   await flush();
   expect(store.get().worktree).toBeUndefined();
+});
+
+test("scope: resolver reduces a git-dir project label to its folder", async () => {
+  const store = createScope();
+  const id = "/x/repo-x/.git";
+  vi.mocked(attention).mockResolvedValue({ sessions: [] } as never);
+  await scoped(
+    store,
+    (st) => {
+      vi.mocked(graphAPI.repos).mockResolvedValue([repoRow(id)] as never);
+      st.narrow({ project: id });
+    },
+    { [id]: snapFor(id, ["w1"]) },
+  );
+  expect(store.resolver()!.labels({ project: id, window: "live" }).project).toBe("repo-x");
 });
 
 test("scope: resolver answers sessions and labels, touched after each snapshot", async () => {
@@ -1601,4 +1638,99 @@ test("scope review: Escape with the More menu open closes only the menu, whereve
     expect(selectedIds(panel.root), where).toBeGreaterThan(0);
     panel.root.remove();
   }
+});
+
+async function timelineWithRow() {
+  const panel = await setup();
+  const snap = await graphAPI.snapshot("r");
+  panel.root
+    .querySelector<SVGGElement>('[data-key="workspace:w"]')!
+    .dispatchEvent(new MouseEvent("click"));
+  panel.onEvent({
+    id: "keyed",
+    time: "2026-10-05T00:00:00Z",
+    source: "codex",
+    category: "tool",
+    repo_id: "r",
+    worktree_id: snap.workspaces[0].id,
+  });
+  click(panel.root, "Timeline");
+  await flush();
+  return panel;
+}
+const keyEv = (target: Element, key: string) => {
+  const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  target.dispatchEvent(e);
+  return e;
+};
+
+test("keys on the nested Show in Graph button do not select or re-render the timeline row", async () => {
+  const panel = await timelineWithRow();
+  const row = panel.root.querySelector<HTMLElement>('[data-key="keyed"]')!;
+  expect(row).not.toBeNull();
+  const btn = panel.root.querySelector<HTMLButtonElement>('[data-key="keyed\0action"]')!;
+  expect(row.contains(btn)).toBe(false); // the action is a sibling, not nested in the row
+  btn.focus();
+  for (const k of ["Enter", " "]) {
+    const e = keyEv(btn, k);
+    expect(e.defaultPrevented).toBe(false);
+  }
+  expect(panel.root.querySelector('[data-key="keyed"]')).toBe(row);
+  expect(row.classList.contains("selected")).toBe(false);
+  expect(panel.root.querySelector(".graph-event-detail")?.textContent ?? "").not.toContain("keyed");
+  // the browser turns Enter/Space on a button into one click: that shows it in the graph without selecting the row
+  btn.click();
+  expect(panel.root.querySelector('[data-key="keyed"]')).toBeNull();
+  expect(panel.root.querySelector(".graph-canvas")).not.toBeNull();
+});
+
+test("clicking the timeline row elsewhere selects it, and Enter on the row itself selects", async () => {
+  const panel = await timelineWithRow();
+  const cell = panel.root.querySelector<HTMLElement>('[data-key="keyed"] .cell.summary')!;
+  cell.click();
+  expect(panel.root.querySelector('[data-key="keyed"]')!.classList.contains("selected")).toBe(true);
+  // unselect by re-rendering through another selection is out of scope: use a fresh panel for Enter
+  document.body.replaceChildren();
+  const second = await timelineWithRow();
+  const row = second.root.querySelector<HTMLElement>('[data-key="keyed"]')!;
+  expect(keyEv(row, "Enter").defaultPrevented).toBe(true);
+  expect(second.root.querySelector('[data-key="keyed"]')!.classList.contains("selected")).toBe(true);
+});
+
+test("/ focuses search from the body and is ignored while typing in a field", async () => {
+  const { root } = await richSetup();
+  const input = q(root, 'input[aria-label="Search graph"]');
+  const other = document.createElement("input");
+  document.body.append(other);
+  const slash = (target: EventTarget) => {
+    const e = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  };
+  expect(slash(other).defaultPrevented).toBe(false);
+  expect(document.activeElement).not.toBe(input);
+  expect(slash(document.body).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  // Typing "/" into the search box itself is a character, not a command.
+  expect(slash(input).defaultPrevented).toBe(false);
+});
+
+test("Cmd/Ctrl+K focuses search from the body and from inside another field; plain k does nothing", async () => {
+  const { root } = await richSetup();
+  const input = q(root, 'input[aria-label="Search graph"]');
+  const other = document.createElement("input");
+  document.body.append(other);
+  const k = (target: EventTarget, init: KeyboardEventInit) => {
+    const e = new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(e);
+    return e;
+  };
+  expect(k(document.body, {}).defaultPrevented).toBe(false);
+  expect(document.activeElement).not.toBe(input);
+  other.focus();
+  expect(k(other, { metaKey: true }).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  (document.activeElement as HTMLElement).blur();
+  expect(k(document.body, { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
 });

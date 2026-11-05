@@ -102,7 +102,7 @@ describe("register", () => {
     await h.runner.run({ type: "register", path: "/w/a" });
     expect(h.deps.registerRoot).toHaveBeenCalledWith("/w/a");
     expect(h.deps.onChanged).toHaveBeenCalledTimes(1);
-    expect(last(h.statuses)).toMatchObject({ kind: "ok", message: "Registered repository root" });
+    expect(last(h.statuses)).toMatchObject({ kind: "ok", message: "Registered project root" });
   });
   test("rejection: error, no onChanged", async () => {
     const h = harness({ registerRoot: vi.fn(async () => { throw new Error("nope"); }) });

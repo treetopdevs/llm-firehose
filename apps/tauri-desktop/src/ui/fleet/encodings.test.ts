@@ -81,7 +81,7 @@ describe("airspaceBands", () => {
   test("one chip per band in order, zero chips marked, labelled, no running/idle claims", () => {
     const d = deriveAirspace([att({ id: "a", waitMs: 5_000 }), att({ id: "b", state: "done" })], { now: NOW, windowMs: 900_000 });
     const el = airspaceBands(d);
-    expect(el.getAttribute("aria-label")).toBe("Attention bands");
+    expect(el.getAttribute("aria-label")).toBe("Needs-you bands");
     const chips = [...el.querySelectorAll(".fleet-band")];
     expect(chips.length).toBe(BANDS.length);
     chips.forEach((c, i) => {
@@ -105,5 +105,28 @@ describe("qualifyLaneInput origin", () => {
 
   test("non-transition meta events are dropped", () => {
     expect(qualifyLaneInput([ev({ id: "m", session_id: "s", category: "meta", name: "PreCompact" })])).toHaveLength(0);
+  });
+});
+
+describe("lane aria-label names the state", () => {
+  test("needs_input lane says needs you; working lane is unchanged", () => {
+    const lanes = lanesOf([ev({ id: "1", session_id: "s1", time: iso(NOW - 5_000) })]);
+    const working = lanesStrip(lanes, NOW, W, 600, () => {}).querySelector(".fleet-lane-row")!;
+    expect(working.getAttribute("aria-label")).toBe(`open session ${lanes[0]!.label}`);
+    const needy = [{ ...lanes[0]!, state: "needs_input" }];
+    const row = lanesStrip(needy, NOW, W, 600, () => {}).querySelector(".fleet-lane-row")!;
+    expect(row.getAttribute("aria-label")).toBe(`open session ${needy[0]!.label}, needs you`);
+    expect(row.querySelector("title")!.textContent).toContain("needs you");
+  });
+});
+
+describe("lane stripe identity", () => {
+  test("stays the data-derived session hue, never a state token", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("src/ui/fleet/encodings.ts", "utf8");
+    expect(src).toContain("hsl(${sessionHue(lane.id)} 55% 55%)");
+    expect(src).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+    const stripe = src.split("\n").find((l) => l.includes("width: 3"))!;
+    expect(stripe).not.toMatch(/var\(--/);
   });
 });

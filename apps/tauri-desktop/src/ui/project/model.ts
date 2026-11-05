@@ -2,10 +2,12 @@
 // leave and rejoin main through a time window. DOM-free. It never infers
 // causality or handoffs; commit-to-session attribution is a labelled time join.
 import type { WorktreeCommit, WorktreeLifetimeView, WorktreeMark, WorktreeOutcome, WorktreeState } from "../../api";
+import { DEFAULT_LIVE_SPAN_MS, resolveRange } from "../../scope";
 import type { ScopeWindow } from "../../scope";
-import { idLabel } from "../../format";
+import { worktreeName } from "../../format";
+import { BADGE } from "../../glyphs";
 
-export const LIVE_SPAN_MS = 7 * 24 * 3_600_000;
+export const LIVE_SPAN_MS = DEFAULT_LIVE_SPAN_MS;
 export const IDLE_AFTER_MS = 4 * 3_600_000;
 export const MIN_BEAD_PX = 6;
 export const MIN_BRUSH_PX = 4;
@@ -54,8 +56,8 @@ export interface LaneGeom {
 const time = (s: string | undefined): number => (s === undefined ? NaN : Date.parse(s));
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
-export function resolveWindow(w: ScopeWindow, now: number): TimeRange {
-  return w === "live" ? { from: now - LIVE_SPAN_MS, to: now } : { from: w.from, to: w.to };
+export function resolveWindow(w: ScopeWindow, now: number, liveSpanMs: number = DEFAULT_LIVE_SPAN_MS): TimeRange {
+  return resolveRange(w, now, liveSpanMs);
 }
 
 export function timeToX(t: number, range: TimeRange, x0: number, x1: number): number {
@@ -146,12 +148,7 @@ export function axisTicks(range: TimeRange, x0: number, x1: number, n = 6): Arra
 const END: Record<WorktreeState, LaneEnd> = { landed: "rejoin", open: "open", gone: "gone", never_diverged: "flat", unknown: "hatched" };
 
 function badgeOf(r: WorktreeLifetimeView): string {
-  if (r.state !== "open") return r.dirty ? "±" : "";
-  const parts: string[] = [];
-  if ((r.ahead ?? 0) > 0) parts.push(`↑${r.ahead}`);
-  if ((r.behind ?? 0) > 0) parts.push(`↓${r.behind}`);
-  if (r.dirty) parts.push("±");
-  return parts.join(" ");
+  return BADGE.format(r.state === "open", r.ahead, r.behind, r.dirty);
 }
 
 function tooltipOf(r: WorktreeLifetimeView, label: string, extra: string[]): string {
@@ -196,7 +193,8 @@ export function layoutLanes(
     const extentT = mergeT === undefined ? lastT : Math.max(lastT, mergeT);
     if (forkT > range.to) continue;
     if (!open && extentT < range.from) continue;
-    const label = r.label ?? idLabel(r.worktree_id);
+    const label = worktreeName(r.worktree_id, r.label).label;
+    const idle = isIdleWorker(r, now);
     const beads: LaneBead[] = [];
     for (const s of r.sessions) {
       const t0 = time(s.first_time);
@@ -239,7 +237,7 @@ export function layoutLanes(
       id,
       repoId: r.repo_id,
       label,
-      ariaLabel: `${label}, ${r.state}`,
+      ariaLabel: `${label}, ${r.state}${idle ? ", idle" : ""}`,
       state: r.state,
       end,
       forkX: X(forkT),
@@ -253,7 +251,7 @@ export function layoutLanes(
       ticks,
       glyphs,
       badge: badgeOf(r),
-      idle: isIdleWorker(r, now),
+      idle,
       tooltip: tooltipOf(r, label, extra),
     };
     if (open) lane.tailX = x1;

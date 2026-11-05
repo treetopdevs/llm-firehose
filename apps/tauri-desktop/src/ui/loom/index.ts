@@ -4,6 +4,8 @@ import { clear, el } from "../../dom";
 import { buildLoom, loomTraversal } from "./model";
 import type { LoomModel, LoomGroup, LoomDirection } from "./model";
 import { renderLoomMap } from "./map";
+import { activeRange, inWindow, sessionKey } from "../session/context";
+import type { Range, SessionTabContext } from "../session/context";
 export function createLoom(openScore: (id: string, source: string) => void = () => { }) {
     const choices = el("select", { "aria-label": "Known session" }), source = el("input", { "aria-label": "Source", placeholder: "Exact source" }), session = el("input", { "aria-label": "Session ID", placeholder: "Exact session ID" }), search = el("input", { "aria-label": "Search observations", type: "search" }), errors = el("input", { "aria-label": "Errors only", type: "checkbox" });
     const direction = el("select", {"aria-label": "Reference direction"}, ...["both", "upstream", "downstream"].map(value => el("option", {value}, value === "both" ? "Both directions" : value === "upstream" ? "Upstream (parents)" : "Downstream (children)")));
@@ -13,6 +15,7 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
     const root = el("section", { class: "loom" }, el("h2", {}, "Causal Loom"), el("p", { class: "dim" }, "Inspect native identifiers within one exact source/session. Group membership is association, not a causal arrow. Native parent message references do not establish root cause or successful resolution."), el("div", { class: "loom-controls" }, el("label", {}, "Known session ", choices), button("Refresh session choices", () => void refresh())), choiceStatus, el("div", { class: "loom-controls" }, el("label", {}, "Source ", source), el("label", {}, "Session ID ", session), button("Load relationships", () => void load())), status, focusRegion, evidence, traversalControls, el("div", { class: "loom-controls" }, el("label", {}, "Search ", search), el("label", {}, errors, " Errors only")), body, groupsRegion, membersRegion);
     let model: LoomModel | undefined, loadedSource = "", loadedSession = "", loadedAt = "", focus: FirehoseEvent | undefined, selectedGroup: LoomGroup | undefined;
     let neighborhoodCache: {model: LoomModel; id: string; direction: string; depth: string; result: ReturnType<typeof loomTraversal>} | undefined;
+    let win: Range | null = null, lastRef: string | null = null;
     let observationPage = 0, groupPage = 0, parentPage = 0, memberPage = 0, choiceVersion = 0, loadVersion = 0, receiptVersion = 0;
     let choiceAbort: AbortController | undefined, loadAbort: AbortController | undefined, receiptAbort: AbortController | undefined;
     function button(text: string, action: () => void, accessible?: string) { const b = el("button", accessible ? { "aria-label": accessible } : {}, text); b.addEventListener("click", action); return b; }
@@ -26,9 +29,10 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
         if (!model)
             return;
         const needle = search.value.toLocaleLowerCase();
-        const filtered = model.events.filter(e => (!errors.checked || e.category === "error" || e.severity === "error") && [e.id, e.name, e.summary, e.category, e.call_id, e.turn_id, e.message_id].join(" ").toLocaleLowerCase().includes(needle));
+        const scoped = model.events.filter(e => inWindow(e.time, win));
+        const filtered = scoped.filter(e => (!errors.checked || e.category === "error" || e.severity === "error") && [e.id, e.name, e.summary, e.category, e.call_id, e.turn_id, e.message_id].join(" ").toLocaleLowerCase().includes(needle));
         observationPage = Math.min(observationPage, Math.max(0, Math.ceil(filtered.length / 40) - 1));
-        body.append(el("p", {}, `${filtered.length} filtered / ${model.events.length} scoped observations; showing ${filtered.length ? observationPage * 40 + 1 : 0}–${Math.min((observationPage + 1) * 40, filtered.length)}`));
+        body.append(el("p", {}, `${filtered.length} filtered / ${scoped.length} scoped observations; showing ${filtered.length ? observationPage * 40 + 1 : 0}–${Math.min((observationPage + 1) * 40, filtered.length)}`));
         if (!filtered.length)
             body.append(el("p", {}, "No observations match this snapshot and filters."));
         const list = el("ol", { start: String(observationPage * 40 + 1) });
@@ -44,14 +48,16 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
             return;
         if (!neighborhoodCache || neighborhoodCache.model !== model || neighborhoodCache.id !== focus.id || neighborhoodCache.direction !== direction.value || neighborhoodCache.depth !== depth.value)
             neighborhoodCache = {model, id: focus.id, direction: direction.value, depth: depth.value, result: loomTraversal(model, focus.id, direction.value as LoomDirection, Number(depth.value))};
-        const neighborhood = neighborhoodCache.result;
+        const byId = new Map(model.events.map(e => [e.id, e]));
+        const memberCount = (g: LoomGroup) => g.members.filter(id => { const e = byId.get(id); return !!e && inWindow(e.time, win); }).length;
+        const neighborhood = { ...neighborhoodCache.result, groups: neighborhoodCache.result.groups.filter(g => !win || memberCount(g) > 0) };
         groupsRegion.append(el("h3", {}, "Native reference neighborhood"), el("p", { class: "dim" }, `Map shows up to 20 groups and 20 references from the selected pages. ${neighborhood.groups.length} groups; ${neighborhood.parents.length} native references total. Direction: ${direction.value}; maximum ${depth.value} reference ${depth.value === "1" ? "hop" : "hops"}. Missing/conflicting references are terminal; only resolved references expand the neighborhood.${direction.value === "both" ? " Both directions may include siblings through a shared parent." : ""} Resolved means a captured receipt carries the referenced message ID. References beyond the selected depth are not explored; this is not a complete ancestry claim. The map may omit arrows whose endpoints fall on other group pages; complete reference text remains in the paginated list. No inferred causality or chronological layout. Depth limits traversal, not loaded history or memory.`));
         groupsRegion.append(renderLoomMap(focus, neighborhood.groups.slice(groupPage * 20, groupPage * 20 + 20), neighborhood.parents.slice(parentPage * 20, parentPage * 20 + 20), selectGroup));
         if (!neighborhood.groups.length)
             groupsRegion.append(el("p", {}, "No supported identifiers for this observation. Its captured receipt is still inspectable."));
         const groups = el("ul", { class: "loom-groups" });
         for (const group of neighborhood.groups.slice(groupPage * 20, groupPage * 20 + 20))
-            groups.append(el("li", {}, button(`${group.kind}: ${group.id} · ${group.members.length} members`, () => selectGroup(group), `Native group ${loadedSource} / ${loadedSession} / ${group.kind} / ${group.id}`)));
+            groups.append(el("li", {}, button(`${group.kind}: ${group.id} · ${win ? memberCount(group) : group.members.length} members`, () => selectGroup(group), `Native group ${loadedSource} / ${loadedSession} / ${group.kind} / ${group.id}`)));
         groupsRegion.append(groups);
         pager(groupsRegion, groupPage, neighborhood.groups.length, 20, "groups", page => { cancelReceipt(); selectedGroup = undefined; clear(membersRegion); groupPage = page; drawGroups(); });
         const parents = el("ul", { class: "loom-parents" });
@@ -62,12 +68,12 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
     }
     function selectGroup(group: LoomGroup) { cancelReceipt(); selectedGroup = group; memberPage = 0; drawMembers(); membersRegion.focus(); }
     function drawMembers() { clear(membersRegion); if (!model || !selectedGroup)
-        return; const group = selectedGroup; membersRegion.append(el("h3", {}, `${group.kind}: ${group.id}`), el("p", {}, `${group.members.length} captured members. Membership alone does not prove a start/end pair or causal relationship.`)); if (!group.members.length)
-        membersRegion.append(el("p", {}, "No captured members available for this native reference.")); const list = el("ul", { class: "loom-members" }); const byID = new Map(model.events.map(e => [e.id, e])); for (const id of group.members.slice(memberPage * 40, memberPage * 40 + 40)) {
+        return; const group = selectedGroup; const byID = new Map(model.events.map(e => [e.id, e])); const members = group.members.filter(id => { const e = byID.get(id); return !win || (!!e && inWindow(e.time, win)); }); membersRegion.append(el("h3", {}, `${group.kind}: ${group.id}`), el("p", {}, `${members.length} captured members. Membership alone does not prove a start/end pair or causal relationship.`)); if (!members.length)
+        membersRegion.append(el("p", {}, "No captured members available for this native reference.")); const list = el("ul", { class: "loom-members" }); for (const id of members.slice(memberPage * 40, memberPage * 40 + 40)) {
         const event = byID.get(id);
         if (event)
             list.append(el("li", {}, button(`Focus member ${id}`, () => selectFocus(event), `Focus member ${event.source} / ${event.session_id} / ${id}`)));
-    } membersRegion.append(list); pager(membersRegion, memberPage, group.members.length, 40, "members", page => { cancelReceipt(); memberPage = page; drawMembers(); }); }
+    } membersRegion.append(list); pager(membersRegion, memberPage, members.length, 40, "members", page => { cancelReceipt(); memberPage = page; drawMembers(); }); }
     async function inspect(event: FirehoseEvent) { cancelReceipt(); const token = receiptVersion, scopeVersion = loadVersion, ctl = new AbortController(); receiptAbort = ctl; evidence.append(el("p", { role: "status" }, "Loading captured receipt…")); try {
         const full = await capturedEvent(event.id, ctl.signal);
         if (ctl.signal.aborted || token !== receiptVersion || scopeVersion !== loadVersion || focus?.id !== event.id)
@@ -131,9 +137,35 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
     const filter = () => { clearFocus(); observationPage = 0; drawObservations(); };
     search.addEventListener("input", filter);
     errors.addEventListener("change", filter);
-    function deactivate() { choiceVersion++; choiceAbort?.abort(); loadVersion++; loadAbort?.abort(); cancelReceipt(); if (!model)
+    function deactivate() { lastRef = null; choiceVersion++; choiceAbort?.abort(); loadVersion++; loadAbort?.abort(); cancelReceipt(); if (!model)
         status.textContent = "No loaded metadata snapshot. Load relationships explicitly."; }
     choices.append(el("option", { value: "" }, "Choose a source/session"));
     status.textContent = "Choose or enter exact source/session, then load relationships.";
-    return { root, refresh, deactivate };
+    /** Session-tab context: the scope session is loaded once per key; window changes filter without refetching. */
+    function setContext(ctx: SessionTabContext) {
+        const next = activeRange(ctx.window);
+        const changed = (next?.from ?? null) !== (win?.from ?? null) || (next?.to ?? null) !== (win?.to ?? null);
+        win = next;
+        const ref = ctx.session;
+        session.disabled = !!ref; choices.disabled = !!ref; source.disabled = !!ref?.source;
+        if (!ref) { lastRef = null; if (changed) windowChanged(); return; }
+        const key = sessionKey(ref);
+        if (key !== lastRef) {
+            lastRef = key;
+            const keepSource = !ref.source && session.value === ref.id ? source.value : "";
+            clearScope();
+            session.value = ref.id; source.value = ref.source ?? keepSource;
+            if (ref.source) void load(); else status.textContent = "Choose the source for this session";
+            return;
+        }
+        if (changed) windowChanged();
+    }
+    function windowChanged() {
+        if (!model) return;
+        if (focus && !inWindow(focus.time, win)) clearFocus();
+        if (selectedGroup && !selectedGroup.members.some(id => { const e = model!.events.find(x => x.id === id); return !!e && inWindow(e.time, win); })) { selectedGroup = undefined; clear(membersRegion); }
+        observationPage = 0; groupPage = 0; memberPage = 0;
+        drawObservations(); drawGroups(); drawMembers();
+    }
+    return { root, refresh, deactivate, setContext };
 }
