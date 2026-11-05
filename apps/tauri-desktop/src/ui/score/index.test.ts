@@ -1117,6 +1117,17 @@ describe("score reads scope.window", () => {
     expect(narrow).not.toHaveBeenCalled();
   });
 
+  test("playback panning past the window edge does not write scope.window", async () => {
+    const w = { from: START, to: START + 1000 };
+    const { store, panel, narrow } = await mount(w);
+    button(panel.root, "play").click();
+    narrow.mockClear();
+    panel.tick(5000); // the playhead crosses the window's right edge and the view follows
+    expect(panel.playhead()).toBeGreaterThan(w.to);
+    expect(narrow).not.toHaveBeenCalled();
+    expect(store.get().window).toEqual(w);
+  });
+
   test("window store changes move the view with no refetch", async () => {
     const { store, panel, narrow } = await mount();
     const whole = viewW(panel.root);
