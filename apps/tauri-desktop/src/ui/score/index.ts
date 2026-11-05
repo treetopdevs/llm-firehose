@@ -11,6 +11,8 @@ import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
 import { formatClockMs, formatDuration } from "../../format";
+import { createScope, sameSession } from "../../scope";
+import type { ScopeStore, ScopeWindow, SessionRef } from "../../scope";
 import type { Siblings } from "../detail";
 import {
   SPEEDS,
@@ -34,6 +36,7 @@ import {
   zoomView,
 } from "./model";
 import type { DrawnTrack, Score, ScoreEvent, View } from "./model";
+import { LOCAL } from "../../keys";
 
 export type ScorePanel = {
   root: HTMLElement;
@@ -45,6 +48,16 @@ export type ScorePanel = {
   tick(elapsedMs: number): void;
   playhead(): number;
   deactivate(): void;
+  /** The (id, source) whose events are drawn; null before any successful load. */
+  loadedSession(): SessionRef | null;
+  /** Called on every show: refetches scope.session (history may have grown); the selected window is kept. */
+  activate(): void;
+  /** Re-reads scope.window into the drawn viewport (no fetch, no store write); clears the departed flag. */
+  followWindow(): void;
+  /** Hosted with no session in scope: clears the drawn session and drops any pending load. */
+  showEmpty(): void;
+  /** The loaded session's full span, or null before any successful load. */
+  fullRange(): { from: number; to: number } | null;
 };
 
 /** How long the optional GET /errors fetch may take before it is aborted; the score then renders without daemon signatures. */
@@ -91,7 +104,10 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
  * `onSelect` renders the detail pane; `dismiss` is the score's half of that
  * pane's close button, so a fetch still in flight never reopens it.
  */
-export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void): ScorePanel {
+const sameWindowValue = (a: ScopeWindow, b: ScopeWindow): boolean =>
+  a === "live" || b === "live" ? a === b : a.from === b.from && a.to === b.to;
+
+export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void, store: ScopeStore = createScope()): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
   const bar = el("div", { class: "score-bar" });
@@ -110,7 +126,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   soundButton.addEventListener("click", () => { if (soundState === "on" || soundState === "enabling") sound.disable(); else void sound.enable(); });
   const soundControls = el("details", {}, el("summary", {}, "Optional replay sound"), soundButton, soundStatus,
     el("p", {}, `Quiet local tones during playback only; off by default. ${Object.entries(REPLAY_PITCHES).map(([category, hz]) => `${category} ${hz} Hz`).join(", ")}; other 196 Hz. At most one latest crossed observation every 150 ms; dense events and first/final observations may be silent. This is not an error detector. Tones describe captured categories, not success. Leaving Score, hiding the page, or opening another session switches sound off.`));
-  const root = el("section", { class: "score", tabindex: "0" }, head, bar, soundControls, overview, chart);
+  const windowNote = el("p", { class: "dim score-window-note", hidden: "" });
+  const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, soundControls, overview, chart);
   const clipId = `score-clip-${++clipSeq}`;
 
   let sessionId = "";
@@ -131,6 +148,10 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let playing = false;
   let speed: number = SPEEDS[0];
   let version = 0;
+  // Set on deactivate: a response landing after the user left must not write the shared window.
+  let departed = false;
+  let loadedKey: SessionRef | null = null;
+  let inflight: { id: string; source: string | undefined; promise: Promise<void> } | null = null;
   /** Drawn tick per track, kind, and pixel column; the current event's node is found by its column. */
   let tickNodes = new Map<string, SVGElement>();
   /** Lane width the chart was last drawn at; columns are computed against it, not the live width. */
@@ -229,21 +250,14 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     const target = e.target as HTMLElement | null;
     if (target?.closest("summary")) return;
     const inControl = target?.tagName === "BUTTON" || target?.tagName === "SELECT";
-    switch (e.key) {
-      case "ArrowRight":
-        e.preventDefault();
-        jump(nextEventAfter(score, at));
-        break;
-      case "ArrowLeft":
-        e.preventDefault();
-        jump(prevEventBefore(score, at));
-        break;
-      case " ":
-        if (inControl) return;
-        e.preventDefault();
-        if (playing) setPlaying(false);
-        else play();
-        break;
+    if (LOCAL.scoreStep.matches(e)) {
+      e.preventDefault();
+      jump(e.key === "ArrowRight" ? nextEventAfter(score, at) : prevEventBefore(score, at));
+    } else if (LOCAL.scorePlay.matches(e)) {
+      if (inControl) return;
+      e.preventDefault();
+      if (playing) setPlaying(false);
+      else play();
     }
   });
 
@@ -267,7 +281,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     if (!fromPlayback) sound.stop();
     at = next;
     // Follow the cursor when it leaves the window; this redraws once per window width.
-    if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
+    if (at < view.from || at > view.to) setView(panView(view, at, bounds()), !fromPlayback);
     updatePlayhead();
     const under = eventAt(score, at);
     if (!under) return;
@@ -449,10 +463,58 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     return LABEL_W + ((t - b.from) / span) * laneW();
   }
 
-  function setView(next: View) {
+  /**
+   * An explicit user action (zoom, pan, jump, reset) sets the view and publishes it.
+   * Playback following the playhead moves the view locally and never publishes.
+   */
+  function setView(next: View, publish = true) {
     view = clampView(next, bounds());
     draw();
+    if (publish) publishWindow();
   }
+
+  /**
+   * Score is the writer and a reader of scope.window. Writes happen only on
+   * explicit user actions, for the session the scope names: a view covering the
+   * whole session publishes 'live' (the canonical whole-session value), any
+   * other view publishes its range. Loads and reconciles never write.
+   */
+  function publishWindow() {
+    if (departed) return;
+    if (!loadedKey || !sameSession(loadedKey, store.get().session)) return;
+    if (!Number.isFinite(view.from) || !Number.isFinite(view.to) || view.from > view.to) return;
+    const b = bounds();
+    store.narrow({ window: view.from <= b.from && view.to >= b.to ? "live" : { from: view.from, to: view.to } });
+  }
+
+  /** scope.window as a view, when it applies to the loaded session and is not the whole session. */
+  function scopedWindow(): { from: number; to: number } | null {
+    if (!loadedKey || !sameSession(loadedKey, store.get().session)) return null;
+    const w = store.get().window;
+    return w === "live" ? null : w;
+  }
+  const scopedView = (): View | null => scopedWindow();
+
+  function syncNote(w: ScopeWindow) {
+    const b = bounds();
+    const outside = loaded() && w !== "live" && (w.to < b.from || w.from > b.to);
+    windowNote.hidden = !outside;
+    windowNote.textContent = outside ? "window outside this session's span" : "";
+  }
+
+  /** Draws the viewport scope.window names; never writes the store. */
+  function applyScopeWindow() {
+    if (departed || !loaded() || !loadedKey || !sameSession(loadedKey, store.get().session)) return;
+    const w = store.get().window;
+    view = w === "live" ? bounds() : clampView(w, bounds());
+    syncNote(w);
+    draw();
+  }
+
+  store.subscribe((next, prev) => {
+    if (sameWindowValue(next.window, prev.window)) return;
+    applyScopeWindow();
+  });
 
   // --- drawing --------------------------------------------------------------------
 
@@ -534,8 +596,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     // Enter or Space on a row steps to that category's next event after the
     // cursor; a click on the row puts the cursor where it landed (see drawChart).
     g.addEventListener("keydown", (e) => {
-      const key = (e as KeyboardEvent).key;
-      if (key !== "Enter" && key !== " ") return;
+      if (!LOCAL.scoreTrack.matches(e as KeyboardEvent)) return;
       e.preventDefault();
       e.stopPropagation();
       const next = score.events.find((e) => e.at > at && e.event.category === tr.category);
@@ -652,9 +713,20 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   // --- data -----------------------------------------------------------------------
 
-  async function open(id: string, source?: string) {
+  function open(id: string, source?: string): Promise<void> {
+    departed = false;
+    if (inflight && inflight.id === id && inflight.source === source) return inflight.promise;
+    const entry: { id: string; source: string | undefined; promise: Promise<void> } = { id, source, promise: undefined as unknown as Promise<void> };
+    entry.promise = load(id, source).finally(() => { if (inflight === entry) inflight = null; });
+    inflight = entry;
+    return entry.promise;
+  }
+
+  async function load(id: string, source?: string) {
     sound.disable();
     const v = ++version;
+    const priorKey = loadedKey, priorAt = at;
+    loadedKey = null;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.
     cancelDetail();
@@ -705,10 +777,16 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       byId = new Map(evs.map((e) => [e.id, e]));
       score = buildScore(evs, memberKeys);
       ready = true;
-      view = bounds();
+      loadedKey = source === undefined ? { id } : { id, source };
+      const scoped = scopedView();
+      view = scoped ? clampView(scoped, bounds()) : bounds();
+      syncNote(store.get().window);
       currentId = undefined;
       kinSig = undefined;
-      at = score.start;
+      // With an applied scope window the playhead starts inside the viewport (keeping the
+      // previous position when it already lies there), so Play never pans away from it.
+      const keep = scoped && priorKey && sameSession(priorKey, loadedKey) && Number.isFinite(priorAt) && priorAt >= view.from && priorAt <= view.to;
+      at = scoped ? (keep ? priorAt : view.from) : score.start;
       drawHead();
       draw();
       // A load that lands after the user left the Score, or closed the pane,
@@ -735,8 +813,35 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   }
 
   function deactivate() {
+    departed = true;
     playing = false; playBtn.setAttribute("aria-pressed", "false"); playBtn.textContent = "▶";
     sound.disable(); cancelDetail();
   }
-  return { root, refresh, open, tick, playhead: () => at, deactivate };
+  function activate() {
+    departed = false;
+    const want = store.get().session;
+    if (!want) {
+      // Session tabs do not call refresh() on entry; show the empty state.
+      draw();
+      return;
+    }
+    // An explicit reopen refetches (history may have grown); open() dedups a request already in flight.
+    void open(want.id, want.source);
+  }
+  /** Hosted Session tab with no session in scope: drop the drawn session and invalidate any pending load. */
+  function showEmpty() {
+    departed = false;
+    version++; inflight = null; loadedKey = null;
+    sound.disable(); cancelDetail(); setPlaying(false);
+    sessionId = ""; events = []; byId = new Map(); fullById = new Map(); sigs = new Map(); memberKeys = new Map();
+    score = buildScore([]); view = { from: NaN, to: NaN }; at = NaN; currentId = undefined; kinSig = undefined;
+    clear(head); syncNote("live");
+    draw();
+  }
+  function followWindow() {
+    departed = false;
+    applyScopeWindow();
+  }
+  const fullRange = () => (loadedKey && loaded() ? bounds() : null);
+  return { root, refresh, open, tick, playhead: () => at, deactivate, loadedSession: () => loadedKey, activate, followWindow, fullRange, showEmpty };
 }

@@ -164,8 +164,8 @@ describe("activity map view", () => {
     expect(map.root.querySelector(".map-crumb.current")!.textContent).toBe(name);
     const inside = map.root.querySelectorAll(".map-tile").length;
     expect(inside).toBeLessThan(real.paths.length);
-    button(map.root, "Repository").click();
-    expect(map.root.querySelector(".map-crumb.current")!.textContent).toBe("Repository");
+    button(map.root, "Project").click();
+    expect(map.root.querySelector(".map-crumb.current")!.textContent).toBe("Project");
     expect(map.root.querySelectorAll(".map-tile")).toHaveLength(real.paths.length);
   });
 
@@ -205,7 +205,7 @@ describe("activity map view", () => {
     expect(map.root.querySelector(".map-tile")).toBeNull();
     last.resolve(structuredClone(real));
     await flush();
-    expect(map.root.querySelector(".map-crumb.current")!.textContent).toBe("Repository");
+    expect(map.root.querySelector(".map-crumb.current")!.textContent).toBe("Project");
     expect(strip(map.root).getAttribute("aria-valuenow")).toBe("0");
     expect(button(map.root, "Whole window").disabled).toBe(true);
     expect(map.root.querySelector<HTMLSelectElement>('select[aria-label="Worktree"]')!.value).toBe("");

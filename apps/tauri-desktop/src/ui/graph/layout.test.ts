@@ -786,9 +786,9 @@ describe("label placement", () => {
     const nodes = commits("n", 4);
     const crowd = Array.from({ length: 7 }, (_, i) => ws(`w${i}`, "n3", [], `wt-${i}`));
     const chip = layoutWorkspaceGraph(nodes, crowd).clusters[0];
-    expect(chip.w).toBeGreaterThanOrEqual(10 + 6.7 * [..."7 workspaces ▸"].length + 22);
+    expect(chip.w).toBeGreaterThanOrEqual(10 + 6.7 * [..."7 worktrees ▸"].length + 22);
     const big = layoutWorkspaceGraph(nodes, Array.from({ length: 25 }, (_, i) => ws(`w${i}`, "n3", [], `wt-${i}`))).clusters[0];
-    expect(big.w).toBeGreaterThanOrEqual(10 + 6.7 * [..."25 workspaces ▸"].length + 22);
+    expect(big.w).toBeGreaterThanOrEqual(10 + 6.7 * [..."25 worktrees ▸"].length + 22);
   });
 
   test("estimateLabelWidth grows with the name, clamps to 60..200 and accounts for badges", () => {

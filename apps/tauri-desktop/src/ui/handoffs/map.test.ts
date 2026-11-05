@@ -26,3 +26,23 @@ test("transfer arrows stop outside station dots", () => {
     const path = root.querySelector("path[data-transfer]")!;
     expect(path.getAttribute("d")).toBe("M 305 162 C 210 162, 210 90, 117 90");
 });
+test("names session lanes and station labels but never renames event ids", () => {
+    const named = (ref: { id: string; source: string }) => ref.id === 'departure' ? 'Fix login bug' : ref.id;
+    const root = renderHandoffMap([links[0], { ...links[1], from: { ...links[1].from, id: 'from-other', session_id: 'departure' } }], vi.fn(), named);
+    expect(root.textContent).toContain('codex · Fix login bug');
+    const labels = [...root.querySelectorAll('button')].map(b => b.getAttribute('aria-label'));
+    expect(labels.filter(l => l!.includes('Fix login bug'))).toHaveLength(2);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.some(l => l!.includes('from-other'))).toBe(true);
+    expect([...root.querySelectorAll('button')].map(b => b.textContent)).toContain('from-0');
+});
+test('series colours are tokens declared on :root', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { parseTokens } = await import('../../tokens-helpers');
+    const declared = Object.keys(parseTokens(readFileSync("src/styles.css", 'utf8')).base);
+    const root = renderHandoffMap(links, vi.fn());
+    const used = [...root.innerHTML.matchAll(/var\(\s*(--[\w-]+)/g)].map(m => m[1]);
+    expect(used.length).toBeGreaterThan(0);
+    expect(used.filter(n => !declared.includes(n))).toEqual([]);
+    expect(root.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+});

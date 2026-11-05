@@ -34,6 +34,7 @@ const (
 // Server adapts an injected capture engine to the local API.
 type Server struct {
 	graph           graphHost
+	worktrees       worktreeStates
 	graphResponseMu sync.RWMutex
 	mu              sync.RWMutex // guards cfg
 	cfg             cli.Config
@@ -72,6 +73,7 @@ func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
 		return cli.DefaultDaemonAddr
 	}, server.shutdown, server.warnForwardFailure)
 	server.loadGraphRoots()
+	server.loadWorktreeStates()
 	return server
 }
 
@@ -118,6 +120,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /workspace-graph/compare", s.graphResponse(s.handleGraphCompare))
 	mux.HandleFunc("GET /workspace-graph/timeline", s.graphResponse(s.handleGraphTimeline))
 	mux.HandleFunc("GET /workspace-graph/activity", s.graphResponse(s.handleGraphActivity))
+	mux.HandleFunc("GET /worktrees", s.graphResponse(s.handleWorktrees))
+	mux.HandleFunc("GET /worktrees/{id}", s.graphResponse(s.handleWorktreeByID))
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /config", s.handleConfig)
 	mux.HandleFunc("POST /config", s.handleConfigUpdate)

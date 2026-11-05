@@ -4,6 +4,8 @@ import { createWorkspaceGraph } from "./index";
 import { graphAPI, type Snapshot, type Workspace } from "./api";
 import { perfBudget } from "./layout.fixtures";
 import { attention, getConfig, type AttentionSession } from "../../api";
+import { createScope, type ScopeStore } from "../../scope";
+import { claimEscape, isEscapeClaimed } from "../../escape";
 vi.mock("../../api", () => ({
   DAEMON_URL: "http://127.0.0.1:4517",
   attention: vi.fn(async () => ({ sessions: [] })),
@@ -105,14 +107,14 @@ test("all workspace labels remain selectable; Graph and Timeline retain scope an
   click(panel.root, "Open scoped Timeline");
   await flush();
   expect(
-    panel.root.querySelector<HTMLSelectElement>('[aria-label="Workspace"]')!
+    panel.root.querySelector<HTMLSelectElement>('[aria-label="Worktree"]')!
       .value,
   ).toBe("w");
-  panel.root.querySelector<HTMLElement>('[data-key="event:e"]')!.click();
+  panel.root.querySelector<HTMLElement>('[data-key="e"]')!.click();
   expect(
     panel.root.querySelector(".graph-event-detail")!.textContent,
   ).toContain("captured");
-  click(panel.root, "● Live · pause");
+  click(panel.root, "pause");
   panel.onEvent({
     id: "new",
     time: "2026-10-05T00:00:00Z",
@@ -121,8 +123,8 @@ test("all workspace labels remain selectable; Graph and Timeline retain scope an
     repo_id: "r",
     worktree_id: "w",
   });
-  expect(panel.root.textContent).toContain("Resume · 1 arrivals");
-  expect(panel.root.querySelectorAll(".graph-events tbody tr")).toHaveLength(1);
+  expect(panel.root.textContent).toContain("resume (1 new)");
+  expect(panel.root.querySelectorAll(".feed-row")).toHaveLength(1);
   click(panel.root, "Graph");
   click(panel.root, "Timeline");
   expect(
@@ -148,10 +150,10 @@ test("Show in Graph reports deleted workspace and failed scans keep successful t
   click(panel.root, "Timeline");
   await flush();
   panel.root
-    .querySelector<HTMLButtonElement>('[data-key="event:gone"] button')!
+    .querySelector<HTMLButtonElement>('[data-key="gone\0action"]')!
     .click();
   expect(panel.root.querySelector(".graph-status")!.textContent).toContain(
-    "Workspace unavailable",
+    "Worktree unavailable",
   );
   vi.mocked(graphAPI.snapshot).mockRejectedValueOnce(new Error("failed"));
   await panel.refresh();
@@ -175,7 +177,7 @@ test("paused live arrivals preserve timeline scroll position", async () => {
   const panel = await setup();
   click(panel.root, "Timeline");
   await flush();
-  click(panel.root, "● Live · pause");
+  click(panel.root, "pause");
   panel.root.querySelector<HTMLElement>(".graph-timeline")!.scrollTop = 240;
   panel.onEvent({
     id: "arrival",
@@ -213,7 +215,7 @@ test("Timeline workspace change updates revision and Show in Graph centers its a
   click(panel.root, "Timeline");
   await flush();
   const ws = panel.root.querySelector<HTMLSelectElement>(
-    '[aria-label="Workspace"]',
+    '[aria-label="Worktree"]',
   )!;
   ws.value = "w2";
   ws.dispatchEvent(new Event("change"));
@@ -237,7 +239,7 @@ test("Timeline workspace change updates revision and Show in Graph centers its a
   click(panel.root, "Timeline");
   await flush();
   panel.root
-    .querySelector<HTMLButtonElement>('[data-key="event:second"] button')!
+    .querySelector<HTMLButtonElement>('[data-key="second\0action"]')!
     .click();
   expect(
     panel.root.querySelector(".graph-canvas > g")!.getAttribute("transform"),
@@ -425,7 +427,7 @@ test("more than three labels on a revision show a counted cluster that expands o
   const { root } = await richSetup();
   expect(qa(root, ".workspace-label")).toHaveLength(3);
   const cluster = q(root, ".workspace-cluster");
-  expect(cluster.textContent).toContain("5 workspaces");
+  expect(cluster.textContent).toContain("5 worktrees");
   cluster.dispatchEvent(new MouseEvent("click"));
   await flush();
   expect(qa(root, ".workspace-label")).toHaveLength(8);
@@ -555,12 +557,34 @@ test("the inspector shows branch, agents, comparison, changes, activity and the 
   expect(activity[0].textContent).toContain("event a");
   expect(activity[0].textContent).toContain("2m ago");
   expect(pane.querySelector(".origin-value")!.textContent).toBe("unknown");
-  expect(pane.textContent).toContain("does not infer or record which workspace created another");
-  expect(pane.textContent).not.toContain("Origin workspace: ");
+  expect(pane.textContent).toContain("does not infer or record which worktree created another");
+  expect(pane.textContent).not.toContain("Origin worktree: ");
   click(root, "Highlight ancestry");
   click(root, "Inspect changes");
   expect(pane.querySelector(".graph-comparison")).toBeTruthy();
   void panel;
+});
+
+test("Filter Timeline from the inspector clears a source filter that names another source", async () => {
+  const sessions = [agentSession("same", "codex", "fix"), agentSession("same", "claude-code", "fix", "idle")];
+  const { root } = await richSetup({ sessions });
+  label(root, "fix").dispatchEvent(new MouseEvent("click"));
+  await flush();
+  click(root, "Timeline");
+  await flush();
+  const src = q(root, "select[title='source filter']") as unknown as HTMLSelectElement;
+  src.value = "codex";
+  src.dispatchEvent(new Event("change"));
+  await flush();
+  click(root, "Graph");
+  await flush();
+  qa(root, ".agent-filter")[1].click();
+  await flush();
+  await flush();
+  const last = vi.mocked(graphAPI.timeline).mock.calls.at(-1)![0];
+  expect(last.source).toBe("claude-code");
+  expect(last.session_id).toBe("same");
+  expect((q(root, "select[title='source filter']") as unknown as HTMLSelectElement).value).toBe("");
 });
 
 test("detached checkouts read Detached HEAD with the short commit", async () => {
@@ -601,7 +625,7 @@ test("axis annotations, depth ticks and an honest footer", async () => {
   expect(text).toContain("Depth in loaded history");
   expect(text).toContain("Revision parent links");
   expect(text).toContain("Merge (multiple parents)");
-  expect(q(root, ".graph-footer-status").textContent).toMatch(/^All 8 workspaces labelled .* · \d+ in view$/);
+  expect(q(root, ".graph-footer-status").textContent).toMatch(/^All 8 worktrees labelled .* · \d+ in view$/);
   expect(q(root, ".graph-expand").hidden).toBe(true);
 });
 
@@ -700,7 +724,7 @@ test("arrow keys move focus between labels and Escape clears the selection", asy
   expect(label(root, "fix").classList.contains("selected")).toBe(true);
   label(root, "fix").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(label(root, "fix").classList.contains("selected")).toBe(false);
-  expect(q(root, ".graph-inspector").textContent).toContain("Select a workspace or revision");
+  expect(q(root, ".graph-inspector").textContent).toContain("Select a worktree or revision");
 });
 
 test("2,000 revisions with 50 labels: no per-node listeners, selection stays fast", async () => {
@@ -740,7 +764,7 @@ test("Show in Graph reveals a workspace hidden in a cluster and the expansion ou
   });
   click(root, "Timeline");
   await flush();
-  root.querySelector<HTMLButtonElement>('[data-key="event:ev-c3"] button')!.click();
+  root.querySelector<HTMLButtonElement>('[data-key="ev-c3\0action"]')!.click();
   await flush();
   expect(label(root, "c3").classList.contains("selected")).toBe(true);
   label(root, "c3").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -772,7 +796,7 @@ test("the Workspace filter keeps names readable and only adds a tail when two ch
   const { root } = await richSetup({ snapshot: snap });
   click(root, "Timeline");
   await flush();
-  const options = qa(root, '[aria-label="Workspace"] option').map((o) => o.textContent);
+  const options = qa(root, '[aria-label="Worktree"] option').map((o) => o.textContent);
   expect(options).toContain("tip");
   expect(options.filter((o) => o!.startsWith("main"))).toHaveLength(2);
   expect(options.filter((o) => o!.startsWith("main ·"))).toHaveLength(2);
@@ -828,12 +852,12 @@ test("More holds Register local root and Refresh", async () => {
   expect(root.querySelector(".graph-menu")!.hasAttribute("hidden")).toBe(false);
   click(root, "Register local root");
   const form = q(root, ".graph-register") as unknown as HTMLFormElement;
-  const input = form.querySelector<HTMLInputElement>('[aria-label="Local repository root"]')!;
+  const input = form.querySelector<HTMLInputElement>('[aria-label="Local project root"]')!;
   input.value = "/work/repo";
   vi.mocked(graphAPI.register).mockRejectedValueOnce(new Error("no"));
   form.dispatchEvent(new Event("submit", { cancelable: true }));
   await flush();
-  expect(form.querySelector('[role="alert"]')!.textContent).toContain("Unable to register repository");
+  expect(form.querySelector('[role="alert"]')!.textContent).toContain("Unable to register project");
   vi.mocked(graphAPI.register).mockResolvedValueOnce({ id: "r", vcs: "git", label: "x", status: "ok", observed_at: "" });
   form.dispatchEvent(new Event("submit", { cancelable: true }));
   await flush();
@@ -851,7 +875,7 @@ test("JJ repositories count workspaces and name pills after the workspace label"
   snap.repository.vcs = "jj";
   snap.workspaces = snap.workspaces.map((w) => ({ ...w, label: `ws-${w.id}`, refs: ["main"] }));
   const { root } = await richSetup({ snapshot: snap });
-  expect(q(root, ".graph-count").textContent).toBe("8 workspaces");
+  expect(q(root, ".graph-count").textContent).toBe("8 worktrees");
   expect(label(root, "tip").querySelector("text")!.textContent).toBe("ws-tip");
 });
 
@@ -890,7 +914,7 @@ test("Escape clears the selection from anywhere in the graph, not only from the 
   fit.click();
   fit.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(label(root, "fix").classList.contains("selected")).toBe(false);
-  expect(q(root, ".graph-inspector").textContent).toContain("Select a workspace or revision");
+  expect(q(root, ".graph-inspector").textContent).toContain("Select a worktree or revision");
   // typing in a field keeps its own Escape behaviour: the selection stays
   label(root, "fix").dispatchEvent(new MouseEvent("click"));
   await flush();
@@ -946,7 +970,7 @@ test("the first render does not wait for a slow attention endpoint", async () =>
     void panel.refresh();
     await vi.advanceTimersByTimeAsync(3000);
     expect(panel.root.querySelectorAll(".workspace-label").length).toBeGreaterThan(0);
-    expect(panel.root.textContent).not.toContain("Loading repository topology");
+    expect(panel.root.textContent).not.toContain("Loading project topology");
   } finally {
     vi.useRealTimers();
   }
@@ -1206,4 +1230,522 @@ test("⌘K from the Map returns to the Graph and focuses search", async () => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
   expect(root.querySelector(".graph-canvas")).toBeTruthy();
   expect(document.activeElement).toBe(q(root, 'input[aria-label="Search graph"]'));
+});
+
+// ---- shared scope ---------------------------------------------------------
+const repoRow = (id: string, label = id) => ({ id, vcs: "git" as const, label, status: "ok", observed_at: "" });
+const wsRow = (id: string, repo_id: string, revision = "a"): Workspace => ({
+  id,
+  repo_id,
+  label: `ws ${id}`,
+  revision,
+  refs: [],
+  dirty: false,
+  conflicted: false,
+  availability: "available",
+  unborn: false,
+});
+const snapFor = (repoId: string, wsIds: string[], extra: Partial<Snapshot> = {}): Snapshot => ({
+  repository: repoRow(repoId),
+  generation: "1",
+  nodes: [{ key: "a", commit_id: "a", parents: [], description: "root", timestamp: "" }],
+  workspaces: wsIds.map((id) => wsRow(id, repoId)),
+  boundaries: [],
+  warnings: [],
+  stale: false,
+  ...extra,
+});
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+async function scoped(
+  store: ScopeStore,
+  init?: (s: ScopeStore) => void,
+  snaps: Record<string, Snapshot | Promise<Snapshot>> = {
+    r1: snapFor("r1", ["w1", "w2"]),
+    r2: snapFor("r2", ["x1"]),
+  },
+) {
+  vi.stubGlobal("setInterval", () => 0);
+  vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1"), repoRow("r2")]);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async (id: string) => snaps[id]);
+  vi.mocked(graphAPI.timeline).mockResolvedValue({ events: [], has_more: false, order: "newest_first" } as never);
+  vi.mocked(graphAPI.activity).mockResolvedValue({ buckets: [] } as never);
+  init?.(store);
+  const panel = createWorkspaceGraph(() => {}, store);
+  document.body.append(panel.root);
+  await panel.refresh();
+  await flush();
+  return panel;
+}
+const selectedIds = (root: HTMLElement) =>
+  [...root.querySelectorAll(".workspace-label.selected, .workspace.selected")].length;
+const esc = (target: EventTarget = document.body, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(e);
+  return e;
+};
+
+test("scope: opening with an empty scope does not publish and fetches once each", async () => {
+  const store = createScope();
+  const seen: unknown[] = [];
+  store.subscribe((n) => seen.push(n));
+  const panel = await scoped(store);
+  expect(seen).toHaveLength(0);
+  expect(store.get().project).toBeUndefined();
+  expect(graphAPI.repos).toHaveBeenCalledTimes(1);
+  expect(graphAPI.snapshot).toHaveBeenCalledTimes(1);
+  expect(panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!.value).toBe("r1");
+});
+
+test("scope: picker publishes project and clears worktree; workspace pick publishes both; revision select removes worktree", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const pick = panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!;
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  pick.value = "r2";
+  pick.onchange!(new Event("change"));
+  await flush();
+  expect(store.get().project).toBe("r2");
+  expect(store.get().worktree).toBeUndefined();
+  pick.value = "r1";
+  pick.onchange!(new Event("change"));
+  await flush();
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().project).toBe("r1");
+  expect(store.get().worktree).toBe("w1");
+  panel.root.querySelector<SVGGElement>('[data-key="revision:a"]')!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+  expect(store.get().project).toBe("r1");
+});
+
+test("scope: Workspace filter select publishes worktree and project", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  click(panel.root, "Timeline");
+  await flush();
+  const sel = panel.root.querySelector<HTMLSelectElement>('[aria-label="Worktree"]')!;
+  sel.value = "w2";
+  sel.onchange!(new Event("change"));
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w2" });
+});
+
+test("scope: a project set before open loads that repository; an unknown one is ignored", async () => {
+  const store = createScope();
+  await scoped(store, (s) => s.narrow({ project: "r2" }));
+  expect(graphAPI.snapshot).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(graphAPI.snapshot).mock.calls[0][0]).toBe("r2");
+  document.body.replaceChildren();
+  vi.clearAllMocks();
+  const store2 = createScope();
+  const panel = await scoped(store2, (s) => s.narrow({ project: "nope" }));
+  expect(vi.mocked(graphAPI.snapshot).mock.calls[0][0]).toBe("r1");
+  store2.narrow({ project: "alsonope" });
+  await flush();
+  expect(graphAPI.snapshot).toHaveBeenCalledTimes(1);
+  expect(panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!.value).toBe("r1");
+});
+
+test("scope: reconciles both ways under the applying guard without echoing", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const changes: unknown[] = [];
+  store.subscribe((n) => changes.push(n));
+  store.narrow({ project: "r1", worktree: "w2" });
+  await flush();
+  expect(selectedIds(panel.root)).toBe(1);
+  expect(panel.root.querySelector(".workspace.selected, .workspace-label.selected")).not.toBeNull();
+  expect(changes).toHaveLength(1); // only our own narrow: nothing echoed back
+  store.ascend();
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+  expect(store.get().project).toBe("r1");
+  expect(selectedIds(panel.root)).toBe(0);
+  store.narrow({ project: "r1", worktree: "w1" });
+  store.narrow({ worktree: undefined });
+  await flush();
+  expect(selectedIds(panel.root)).toBe(0);
+  expect(changes).toHaveLength(4);
+});
+
+test("scope F1: a store-driven switch discards the late snapshot of the old repository and fetches the new one at once", async () => {
+  const store = createScope();
+  const slow = deferred<Snapshot>();
+  const panel = await scoped(store, undefined, { r1: snapFor("r1", ["w1"]), r2: snapFor("r2", ["x1"]) });
+  vi.mocked(graphAPI.snapshot).mockImplementation(async (id: string) =>
+    id === "r1" ? slow.promise : snapFor("r2", ["x1"]),
+  );
+  void panel.refresh();
+  await flush();
+  store.narrow({ project: "r2" });
+  await flush();
+  expect(vi.mocked(graphAPI.snapshot).mock.calls.at(-1)![0]).toBe("r2");
+  slow.resolve(snapFor("r1", ["w1"]));
+  await flush();
+  expect(panel.root.querySelector<HTMLSelectElement>('[aria-label="Repository"]')!.value).toBe("r2");
+  expect(panel.root.textContent).not.toContain("ws w1");
+});
+
+test("scope: a snapshot whose repository id is not the current repository is not committed", async () => {
+  const store = createScope();
+  const panel = await scoped(store, undefined, { r1: snapFor("rX", ["wX"]), r2: snapFor("r2", []) });
+  expect(panel.root.textContent).not.toContain("ws wX");
+});
+
+test("scope F7: a privacy change never rewrites scope; the shell is the sole writer", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ project: "r1", worktree: "w1" });
+  await flush();
+  const seen: unknown[] = [];
+  store.subscribe((n) => seen.push(n));
+  // ids replaced by the privacy change: the old project is gone from the registry
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "minimal" } as never);
+  vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1p")]);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1p", ["w1p"]));
+  await panel.refresh();
+  await flush();
+  expect(seen).toHaveLength(0);
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w1" });
+  // nothing valid at all: still no write
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "full" } as never);
+  vi.mocked(graphAPI.repos).mockResolvedValue([]);
+  await panel.refresh();
+  await flush();
+  expect(seen).toHaveLength(0);
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w1" });
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "balanced" } as never);
+});
+
+test("scope F7: on a privacy change the graph discards topology and re-requests the snapshot for the current project when registered", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ project: "r1" });
+  await flush();
+  vi.mocked(graphAPI.snapshot).mockClear();
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "minimal" } as never);
+  vi.mocked(graphAPI.repos).mockResolvedValue([repoRow("r1")]);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w9"]));
+  await panel.refresh();
+  await flush();
+  expect(vi.mocked(graphAPI.snapshot).mock.calls.some((c) => c[0] === "r1")).toBe(true);
+  expect(store.get().project).toBe("r1");
+  vi.mocked(getConfig).mockResolvedValue({ privacy_mode: "balanced" } as never);
+});
+
+test("scope: no remap while ids are still valid; a vanished worktree is cleared", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ project: "r1", worktree: "w1" });
+  await flush();
+  const seen: unknown[] = [];
+  store.subscribe((n) => seen.push(n));
+  await panel.refresh();
+  await flush();
+  expect(seen).toHaveLength(0);
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w2"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1" });
+  expect(store.get().worktree).toBeUndefined();
+});
+
+test("scope: a worktree another resolver knows (Project history) survives a snapshot that lacks it", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.setFallbackResolver({ sessions: (sc) => (sc.worktree === "w-gone" ? new Set(["g1"]) : undefined), labels: () => ({}), knows: (sc) => sc.worktree === "w-gone" });
+  store.narrow({ project: "r1", worktree: "w-gone" });
+  await flush();
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w2"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get()).toMatchObject({ project: "r1", worktree: "w-gone" });
+  // The graph snapshot lacks it, so the real graph resolver defers rather than answering an empty set.
+  expect([...store.resolver()!.sessions(store.get())!]).toEqual(["g1"]);
+  store.narrow({ worktree: "w-other" });
+  await panel.refresh();
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+});
+
+test("scope: resolver reduces a git-dir project label to its folder", async () => {
+  const store = createScope();
+  const id = "/x/repo-x/.git";
+  vi.mocked(attention).mockResolvedValue({ sessions: [] } as never);
+  await scoped(
+    store,
+    (st) => {
+      vi.mocked(graphAPI.repos).mockResolvedValue([repoRow(id)] as never);
+      st.narrow({ project: id });
+    },
+    { [id]: snapFor(id, ["w1"]) },
+  );
+  expect(store.resolver()!.labels({ project: id, window: "live" }).project).toBe("repo-x");
+});
+
+test("scope: resolver answers sessions and labels, touched after each snapshot", async () => {
+  const store = createScope();
+  const touch = vi.spyOn(store, "touchResolver");
+  const mk = (id: string, ws: string): AttentionSession =>
+    ({ id, source: "codex", repo_id: "r1", worktree_id: ws, state: "idle", last: undefined }) as unknown as AttentionSession;
+  vi.mocked(attention).mockResolvedValue({
+    sessions: [mk("s1", "w1"), mk("s2", "w2"), { ...mk("s3", "w1"), repo_id: "r2" }],
+  } as never);
+  await scoped(store);
+  const r = store.resolver()!;
+  expect(r).not.toBeNull();
+  expect(touch).toHaveBeenCalled();
+  const n = touch.mock.calls.length;
+  expect(r.sessions({ window: "live" })).toBeUndefined();
+  expect([...r.sessions({ project: "r1", window: "live" })!].sort()).toEqual(["s1", "s2"]);
+  expect([...r.sessions({ project: "r1", worktree: "w1", window: "live" })!]).toEqual(["s1"]);
+  const labels = r.labels({ project: "r1", worktree: "w1", window: "live" });
+  expect(labels.project).toBe("r1");
+  expect(labels.worktree).toBeTruthy();
+  expect(r.labels({ window: "live" })).toEqual({});
+  expect(n).toBeGreaterThan(0);
+});
+
+test("scope F9: document Escape respects eligibility, clears only a real selection, and claims", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const pick = () => panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  pick();
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  const input = document.createElement("input");
+  document.body.append(input);
+  esc(input);
+  expect(store.get().worktree).toBe("w1");
+  const overlay = document.createElement("div");
+  overlay.className = "onboarding-overlay";
+  document.body.append(overlay);
+  esc();
+  expect(store.get().worktree).toBe("w1");
+  overlay.remove();
+  const dlg = document.createElement("div");
+  dlg.setAttribute("role", "dialog");
+  document.body.append(dlg);
+  esc();
+  expect(store.get().worktree).toBe("w1");
+  dlg.remove();
+  esc(document.body, { isComposing: true });
+  expect(store.get().worktree).toBe("w1");
+  const pre = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  claimEscape(pre);
+  document.body.dispatchEvent(pre);
+  expect(store.get().worktree).toBe("w1");
+  const ok = esc();
+  expect(ok.defaultPrevented).toBe(true);
+  expect(store.get().worktree).toBeUndefined();
+  expect(store.get().project).toBe("r1");
+  const none = esc();
+  expect(none.defaultPrevented).toBe(false);
+});
+
+test("scope F9: More-menu Escape closes it and is claimed; the Timeline tab leaves Escape alone", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+  const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+  moreBtn.click();
+  expect(menu.hidden).toBe(false);
+  const e = esc(menu);
+  expect(menu.hidden).toBe(true);
+  expect(e.defaultPrevented).toBe(true);
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  click(panel.root, "Timeline");
+  await flush();
+  const t = esc();
+  expect(t.defaultPrevented).toBe(false);
+  expect(store.get().worktree).toBe("w1");
+});
+
+test("scope review: a graph selection clears an incompatible matrix cell", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  store.narrow({ cell: { where: "/alpha", agent: "claude", label: "Alpha" } });
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  expect(store.get().cell).toBeUndefined();
+});
+
+test("scope review: resolver refresh re-reads membership while the panel is hidden", async () => {
+  const store = createScope();
+  const mk = (id: string, source: string, ws: string): AttentionSession =>
+    ({ id, source, repo_id: "r1", worktree_id: ws, state: "idle", last: undefined }) as unknown as AttentionSession;
+  vi.mocked(attention).mockResolvedValue({ sessions: [mk("s1", "codex", "w1")] } as never);
+  const panel = await scoped(store);
+  panel.root.remove();
+  vi.mocked(attention).mockResolvedValue({ sessions: [mk("s1", "codex", "w1"), mk("s9", "codex", "w1")] } as never);
+  const sc = { project: "r1", worktree: "w1", window: "live" as const };
+  expect(store.resolver()!.sessions(sc)!.has("s9")).toBe(false);
+  await store.resolver()!.refresh!();
+  expect(store.resolver()!.sessions(sc)!.has("s9")).toBe(true);
+});
+
+test("scope review: matcher is source-qualified", async () => {
+  const store = createScope();
+  const mk = (id: string, source: string, ws: string): AttentionSession =>
+    ({ id, source, repo_id: "r1", worktree_id: ws, state: "idle", last: undefined }) as unknown as AttentionSession;
+  vi.mocked(attention).mockResolvedValue({ sessions: [mk("dup", "codex", "w1"), mk("dup", "claude-code", "w2")] } as never);
+  await scoped(store);
+  const m = store.resolver()!.matcher!({ project: "r1", worktree: "w1", window: "live" })!;
+  expect(m({ id: "dup", source: "codex" })).toBe(true);
+  expect(m({ id: "dup", source: "claude-code" })).toBe(false);
+});
+
+test("scope review: a vanished selected worktree clears the local selection with the scope", async () => {
+  const store = createScope();
+  const panel = await scoped(store);
+  panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+  await flush();
+  expect(store.get().worktree).toBe("w1");
+  vi.mocked(graphAPI.timeline).mockClear();
+  vi.mocked(graphAPI.snapshot).mockImplementation(async () => snapFor("r1", ["w2"]));
+  await panel.refresh();
+  await flush();
+  expect(store.get().worktree).toBeUndefined();
+  expect(selectedIds(panel.root)).toBe(0);
+  for (const c of vi.mocked(graphAPI.timeline).mock.calls) expect(JSON.stringify(c)).not.toContain("w1");
+});
+
+test("scope review: Escape on the focused More trigger closes an open menu and is claimed", async () => {
+  const store = createScope();
+  store.narrow({ project: "r1" });
+  const panel = await scoped(store);
+  const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+  const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+  moreBtn.click();
+  const e = esc(moreBtn);
+  expect(menu.hidden).toBe(true);
+  expect(e.defaultPrevented).toBe(true);
+});
+
+test("scope review: Escape with the More menu open closes only the menu, wherever focus is", async () => {
+  for (const where of ["more", "item", "body"] as const) {
+    const store = createScope();
+    store.narrow({ project: "r1" });
+    const panel = await scoped(store);
+    panel.root.querySelector<SVGGElement>(".workspace-label")!.dispatchEvent(new MouseEvent("click"));
+    await flush();
+    expect(store.get().worktree).toBe("w1");
+    const menu = panel.root.querySelector<HTMLElement>(".graph-menu")!;
+    const moreBtn = [...panel.root.querySelectorAll("button")].find((b) => b.getAttribute("aria-expanded") !== null)!;
+    moreBtn.focus();
+    moreBtn.click();
+    expect(menu.hidden).toBe(false);
+    const target = where === "more" ? moreBtn : where === "item" ? menu.querySelector("button")! : document.body;
+    const e = esc(target);
+    expect(menu.hidden, where).toBe(true);
+    expect(e.defaultPrevented, where).toBe(true);
+    expect(isEscapeClaimed(e), where).toBe(true);
+    expect(store.get().worktree, where).toBe("w1");
+    expect(selectedIds(panel.root), where).toBeGreaterThan(0);
+    panel.root.remove();
+  }
+});
+
+async function timelineWithRow() {
+  const panel = await setup();
+  const snap = await graphAPI.snapshot("r");
+  panel.root
+    .querySelector<SVGGElement>('[data-key="workspace:w"]')!
+    .dispatchEvent(new MouseEvent("click"));
+  panel.onEvent({
+    id: "keyed",
+    time: "2026-10-05T00:00:00Z",
+    source: "codex",
+    category: "tool",
+    repo_id: "r",
+    worktree_id: snap.workspaces[0].id,
+  });
+  click(panel.root, "Timeline");
+  await flush();
+  return panel;
+}
+const keyEv = (target: Element, key: string) => {
+  const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  target.dispatchEvent(e);
+  return e;
+};
+
+test("keys on the nested Show in Graph button do not select or re-render the timeline row", async () => {
+  const panel = await timelineWithRow();
+  const row = panel.root.querySelector<HTMLElement>('[data-key="keyed"]')!;
+  expect(row).not.toBeNull();
+  const btn = panel.root.querySelector<HTMLButtonElement>('[data-key="keyed\0action"]')!;
+  expect(row.contains(btn)).toBe(false); // the action is a sibling, not nested in the row
+  btn.focus();
+  for (const k of ["Enter", " "]) {
+    const e = keyEv(btn, k);
+    expect(e.defaultPrevented).toBe(false);
+  }
+  expect(panel.root.querySelector('[data-key="keyed"]')).toBe(row);
+  expect(row.classList.contains("selected")).toBe(false);
+  expect(panel.root.querySelector(".graph-event-detail")?.textContent ?? "").not.toContain("keyed");
+  // the browser turns Enter/Space on a button into one click: that shows it in the graph without selecting the row
+  btn.click();
+  expect(panel.root.querySelector('[data-key="keyed"]')).toBeNull();
+  expect(panel.root.querySelector(".graph-canvas")).not.toBeNull();
+});
+
+test("clicking the timeline row elsewhere selects it, and Enter on the row itself selects", async () => {
+  const panel = await timelineWithRow();
+  const cell = panel.root.querySelector<HTMLElement>('[data-key="keyed"] .cell.summary')!;
+  cell.click();
+  expect(panel.root.querySelector('[data-key="keyed"]')!.classList.contains("selected")).toBe(true);
+  // unselect by re-rendering through another selection is out of scope: use a fresh panel for Enter
+  document.body.replaceChildren();
+  const second = await timelineWithRow();
+  const row = second.root.querySelector<HTMLElement>('[data-key="keyed"]')!;
+  expect(keyEv(row, "Enter").defaultPrevented).toBe(true);
+  expect(second.root.querySelector('[data-key="keyed"]')!.classList.contains("selected")).toBe(true);
+});
+
+test("/ focuses search from the body and is ignored while typing in a field", async () => {
+  const { root } = await richSetup();
+  const input = q(root, 'input[aria-label="Search graph"]');
+  const other = document.createElement("input");
+  document.body.append(other);
+  const slash = (target: EventTarget) => {
+    const e = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  };
+  expect(slash(other).defaultPrevented).toBe(false);
+  expect(document.activeElement).not.toBe(input);
+  expect(slash(document.body).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  // Typing "/" into the search box itself is a character, not a command.
+  expect(slash(input).defaultPrevented).toBe(false);
+});
+
+test("Cmd/Ctrl+K focuses search from the body and from inside another field; plain k does nothing", async () => {
+  const { root } = await richSetup();
+  const input = q(root, 'input[aria-label="Search graph"]');
+  const other = document.createElement("input");
+  document.body.append(other);
+  const k = (target: EventTarget, init: KeyboardEventInit) => {
+    const e = new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(e);
+    return e;
+  };
+  expect(k(document.body, {}).defaultPrevented).toBe(false);
+  expect(document.activeElement).not.toBe(input);
+  other.focus();
+  expect(k(other, { metaKey: true }).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  (document.activeElement as HTMLElement).blur();
+  expect(k(document.body, { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
 });

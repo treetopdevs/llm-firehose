@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { DAEMON_URL, capturedEvent, sessionEvents, errorSignatureSessions } from "./api";
+import { ApiError, DAEMON_URL, capturedEvent, sessionEvents, errorSignatureSessions, sessions, worktrees, worktree } from "./api";
+import type { WorktreeDetail, WorktreeLifetimeView, WorktreeState } from "./api";
 
 function stubFetch() {
   const f = vi.fn(async () => new Response("[]", { status: 200 }));
@@ -46,4 +47,72 @@ test("sessionEvents requests additive correlation metadata with cancellation", a
   await sessionEvents("a/b c", "correlation", ctl.signal);
   expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/sessions/a%2Fb%20c?view=correlation`);
   expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+});
+
+describe("worktree requests", () => {
+  test("worktrees requests the list and forwards the AbortSignal", async () => {
+    const f = stubFetch();
+    const ctl = new AbortController();
+    const rows = await worktrees(ctl.signal);
+    expect(rows).toEqual([]);
+    expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/worktrees`);
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+  });
+
+  test("worktree percent-encodes the id and forwards the AbortSignal", async () => {
+    const f = stubFetch();
+    const ctl = new AbortController();
+    await worktree("/work/alpha-feat", ctl.signal);
+    await worktree("a b&c");
+    expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/worktrees/%2Fwork%2Falpha-feat`);
+    expect(f.mock.calls[1][0]).toBe(`${DAEMON_URL}/worktrees/${encodeURIComponent("a b&c")}`);
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+  });
+
+  test("worktree rejects with ApiError 404", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("worktree not found", { status: 404 })));
+    const err = await worktree("nope").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+  });
+
+  test("worktrees 404 rejects with ApiError", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+    const err = await worktrees().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).path).toBe("/worktrees");
+    expect((err as ApiError).message).toBe("GET /worktrees: 404 nope");
+  });
+
+  test("GET 500 keeps its message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+    const err = await sessions().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as Error).message).toBe("GET /sessions: 500 boom");
+  });
+
+  test("type-level literals compile", () => {
+    const states: WorktreeState[] = ["open", "landed", "never_diverged", "gone", "unknown"];
+    const view: WorktreeLifetimeView = {
+      repo_id: "r", worktree_id: "w", first_time: "t", last_time: "t",
+      sessions: [{ source: "claude-code", session_id: "s", first_time: "t", last_time: "t", events: 1 }],
+      sessions_total: 1, paths: [], paths_total: 0, signal_events: 1, meta_events: 0,
+      marks: [{ kind: "commit", time: "t", event_id: "e" }], marks_total: 1, marks_available: true,
+      state: "gone", outcome: "landed", state_reason: "compare_failed", ahead: 0, behind: 0, dirty: false,
+      head: "h", label: "/work/a", default_target_ref: "main", last_observed: "t",
+    };
+    const detail: WorktreeDetail = { ...view, commits: [{ commit_id: "c", attribution: "time_join" }] };
+    expect(states).toHaveLength(5);
+    expect(detail.commits[0].attribution).toBe("time_join");
+  });
+});
+
+test("sessions forwards an AbortSignal and still works with no argument", async () => {
+  const f = stubFetch(); const ctl = new AbortController();
+  await sessions(ctl.signal);
+  expect(f.mock.calls[0][0]).toBe(`${DAEMON_URL}/sessions`);
+  expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(ctl.signal);
+  await sessions();
+  expect(f.mock.calls[1][0]).toBe(`${DAEMON_URL}/sessions`);
 });

@@ -184,7 +184,7 @@ export function stateRank(s: AgentState): number {
 }
 
 const STATE_WORDS: Record<AgentState, string> = {
-  attention: "needs attention",
+  attention: "needs you",
   working: "working",
   observed: "observed",
   none: "no agent",
@@ -196,8 +196,7 @@ export function stateDescription(s: AgentState): string {
 /** `Working`, `Needs you`, `Failed`, `Idle`: the engine's word for the session. */
 export function sessionStateWord(s: AttentionSession, nowMs: number): string {
   const word = needsLabel(s, nowMs);
-  const text = word === "NEEDS YOU" ? "Needs you" : word.toLowerCase();
-  return text.charAt(0).toUpperCase() + text.slice(1).replace(/_/g, " ");
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 /** `2m ago`; empty when the time is unknown. */

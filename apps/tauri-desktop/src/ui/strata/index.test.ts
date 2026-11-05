@@ -103,3 +103,41 @@ test("404 explains both an older daemon and a signature missing from the current
   const panel=createStrata(); await panel.refresh(); api.errorSignatureSessions.mockRejectedValueOnce(new Error("GET /errors/sessions: 404 not found"));
   click(panel.root,"Observed error"); await settle(); expect(panel.root.textContent).toContain("older daemon"); expect(panel.root.textContent).toContain("signature may no longer exist");
 });
+test("opens with an h2 equal to the nav label", () => {
+  const panel = createStrata();
+  expect(panel.root.firstElementChild?.tagName).toBe("H2");
+  expect(panel.root.firstElementChild?.textContent).toBe("Session stratigraphy");
+});
+import { createSessionDirectory } from "../../session-directory";
+test("names sessions from the directory, relabels late without refetching, and stops after deactivate", async () => {
+  const dir = createSessionDirectory(); const panel = createStrata(() => {}, () => {}, dir); await panel.activate();
+  click(panel.root, "Observed error"); await settle();
+  const name = () => panel.root.querySelector<HTMLElement>(".strata-row-heading strong")!;
+  expect(name().textContent).toBe(event.session_id!.slice(0, 8)); expect(name().title).toBe(event.session_id);
+  const before = name();
+  dir.remember([{id: event.session_id!, source: event.source, title: "Fix login bug"}]);
+  expect(name().textContent).toBe("Fix login bug"); expect(name()).toBe(before); expect(name().title).toBe(event.session_id);
+  expect(api.errorSignatureSessions).toHaveBeenCalledTimes(1);
+  panel.deactivate();
+  dir.remember([{id: event.session_id!, source: event.source, title: "Renamed later"}]);
+  expect(name().textContent).toBe("Fix login bug");
+});
+test("rows sharing a name carry source and short id", async () => {
+  const dir = createSessionDirectory(); const other = "bbbbbbbb-1111-2222-3333-444444444444";
+  api.errorSignatureSessions.mockResolvedValue({...page, sessions: [page.sessions[0], {...page.sessions[0], session_id: other, source: "codex"}]});
+  const panel = createStrata(() => {}, () => {}, dir); await panel.activate(); click(panel.root, "Observed error"); await settle();
+  dir.remember([{id: event.session_id!, source: event.source, title: "Fix login bug"}, {id: other, source: "codex", title: "Fix login bug"}]);
+  const names = [...panel.root.querySelectorAll(".strata-row-heading strong")].map(n => n.textContent);
+  expect(names[1]).toBe("Fix login bug · codex bbbbbbbb"); expect(names[0]).toBe(`Fix login bug · ${event.source} ${event.session_id!.slice(0, 8)}`);
+});
+test("returning to the panel relabels at once without refetching", async () => {
+  const dir = createSessionDirectory(); const panel = createStrata(() => {}, () => {}, dir); await panel.activate();
+  click(panel.root, "Observed error"); await settle();
+  const name = () => panel.root.querySelector<HTMLElement>(".strata-row-heading strong")!;
+  panel.deactivate();
+  dir.remember([{id: event.session_id!, source: event.source, title: "Learned while away"}]);
+  expect(name().textContent).not.toBe("Learned while away");
+  await panel.activate();
+  expect(name().textContent).toBe("Learned while away");
+  expect(api.errorSignatureSessions).toHaveBeenCalledTimes(1);
+});
