@@ -16,7 +16,7 @@
 3. Fork glyph click goes to Sessions with project+worktree, session/cell cleared, window kept.
 4. Matrix is a real matrix; needs cell opens Score for the longest wait; row label opens Project.
 5. `/.git` stripped for display only (ids untouched); digest-only repos show an 8-hex prefix, dim, tooltip says "unregistered".
-6. Root cause of the missing needs unit: the attention strip counts every `pending` session, but Fleet dropped pending sessions failing the liveness freshness rule. The one real pending session (repo_id `/Users/nicholas/develop/browser-life/.git`, matches a /worktrees row) is from 2026-10-27, so it was stale and vanished. Stale pending requests are now shown (dashed, tooltip "stale"), counted, and included in the n/N/Space queue. Unmatched repo ids get their own fog row; empty repo_id goes to "No repo id".
+6. Root cause of the missing needs unit: the attention strip counts every `pending` session, but Fleet dropped pending sessions failing the liveness freshness rule. The one real pending session (repo_id `<home>/develop/browser-life/.git`, matches a /worktrees row) is from 2026-10-27, so it was stale and vanished. Stale pending requests are now shown (dashed, tooltip "stale"), counted, and included in the n/N/Space queue. Unmatched repo ids get their own fog row; empty repo_id goes to "No repo id".
 7. n/N/Space with an empty queue show "no sessions need you" (role=status, clears after 2.5 s).
 
 ## Remaining limits

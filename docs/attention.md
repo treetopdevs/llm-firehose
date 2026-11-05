@@ -2,8 +2,9 @@
 
 Project is the desktop landing view (Fleet when more than one repository has
 rows). The attention strip stays visible across all views; open **attention** to
-inspect the working set, snooze a request, or search history. Fleet reads the
-same attention snapshot, so its needs-you units and dwell match the strip;
+inspect the working set, snooze a request, or search history. Fleet fetches the
+same `/attention` projection independently, so its needs-you units and dwell
+match the strip;
 Workspace and Sessions remain available.
 
 The inbox groups by **source and native session ID**, keeps pending requests until
