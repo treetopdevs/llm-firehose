@@ -132,18 +132,55 @@ describe("sessions band", () => {
     expect(row.querySelector(".state.needs")).toBeNull();
   });
 
-  test("a pending request from any source sharing the native id lights the aggregate row", async () => {
-    sessions.mockResolvedValue([summary({ id: "same", source: "codex" }), summary({ id: "other", last_time: new Date(now - 1_000).toISOString() })]);
-    attentionSays([
-      inbox({ id: "same", source: "codex" }),
-      inbox({ id: "same", source: "opencode", state: "needs_input", pending: evidence(30_000, { kind: "request", summary: "approve edit" }) }),
-      inbox({ id: "other" }),
-    ]);
-    const panel = createSessions(() => {}, () => []);
-    await panel.refresh();
-    const rows = [...panel.root.querySelectorAll(".band-row")];
-    expect(rows[0].querySelector(".state")?.textContent).toBe("needs you");
-    expect(rows[0].closest(".session-item")!.querySelector(".session-last")?.textContent).toBe("approve edit");
+  describe("the attention join is source-qualified", () => {
+    const opencodeAsks = () => inbox({ id: "same", source: "opencode", state: "needs_input", pending: evidence(30_000, { kind: "request", summary: "approve edit" }) });
+
+    test("a pending request from another source sharing the native id does not light this source's row", async () => {
+      sessions.mockResolvedValue([summary({ id: "same", source: "codex", last_summary: "own work" })]);
+      attentionSays([inbox({ id: "same", source: "codex" }), opencodeAsks()]);
+      const panel = createSessions(() => {}, () => []);
+      await panel.refresh();
+      expect(panel.root.querySelector(".band-row .state")?.textContent).toBe("working");
+      expect(panel.root.querySelector(".state.needs")).toBeNull();
+      expect(panel.root.querySelector(".session-last")?.textContent).toBe("own work");
+    });
+
+    test("the row of the source that asks reads needs you", async () => {
+      sessions.mockResolvedValue([summary({ id: "same", source: "opencode" })]);
+      attentionSays([inbox({ id: "same", source: "codex" }), opencodeAsks()]);
+      const panel = createSessions(() => {}, () => []);
+      await panel.refresh();
+      expect(panel.root.querySelector(".band-row .state.needs")?.textContent).toBe("needs you");
+      expect(panel.root.querySelector(".session-last")?.textContent).toBe("approve edit");
+    });
+
+    test("a row whose own source has no attention entry is unknown, even when another source has one", async () => {
+      sessions.mockResolvedValue([summary({ id: "same", source: "codex" })]);
+      attentionSays([opencodeAsks()]);
+      const panel = createSessions(() => {}, () => []);
+      await panel.refresh();
+      expect(panel.root.querySelector(".band-row .state")?.textContent).toBe("unknown");
+      expect(panel.root.querySelector(".state.needs")).toBeNull();
+    });
+
+    test("a row with an empty source joins nothing from a named source", async () => {
+      sessions.mockResolvedValue([summary({ id: "same", source: "" })]);
+      attentionSays([opencodeAsks()]);
+      const panel = createSessions(() => {}, () => []);
+      await panel.refresh();
+      expect(panel.root.querySelector(".band-row .state")?.textContent).toBe("unknown");
+    });
+
+    test("another source's request does not move a row to the front of the list", async () => {
+      sessions.mockResolvedValue([
+        summary({ id: "newer", last_time: new Date(now - 1_000).toISOString() }),
+        summary({ id: "same", source: "codex", last_time: new Date(now - 9_000).toISOString() }),
+      ]);
+      attentionSays([opencodeAsks()]);
+      const panel = createSessions(() => {}, () => []);
+      await panel.refresh();
+      expect([...panel.root.querySelectorAll(".session-item")].map((n) => n.getAttribute("data-id"))).toEqual(["newer", "same"]);
+    });
   });
 
   test("a captured title is the row's name; the checkout, start time and id are the details", async () => {
@@ -543,7 +580,7 @@ describe("sessions panel reads the shared scope", () => {
     expect(panel.root.textContent).toContain("codex");
   });
 
-  test("project scope with no resolver, or an undefined answer, lists exactly what the empty scope lists", async () => {
+  test("project scope with no resolver, or an undefined answer, lists what the empty scope lists and says it is not scoped", async () => {
     sessions.mockResolvedValue(three());
     const empty = createSessions(() => {}, () => [], undefined, undefined, createScope());
     await empty.refresh();
@@ -553,14 +590,19 @@ describe("sessions panel reads the shared scope", () => {
     noResolver.narrow({ project: "repo-graph-id" });
     const a = createSessions(() => {}, () => [], undefined, undefined, noResolver);
     await a.refresh();
-    expect(a.root.querySelector(".sessions-list")!.innerHTML).toBe(baseline);
+    const withoutNote = (box: Element) => {
+      expect(box.querySelector(".sessions-scope-note")?.textContent).toContain("showing sessions from all projects");
+      box.querySelector(".sessions-scope-note")!.remove();
+      return box.innerHTML;
+    };
+    expect(withoutNote(a.root.querySelector(".sessions-list")!)).toBe(baseline);
 
     const undef = createScope();
     undef.setResolver(resolverOf(undefined));
     undef.narrow({ project: "repo-graph-id" });
     const b = createSessions(() => {}, () => [], undefined, undefined, undef);
     await b.refresh();
-    expect(b.root.querySelector(".sessions-list")!.innerHTML).toBe(baseline);
+    expect(withoutNote(b.root.querySelector(".sessions-list")!)).toBe(baseline);
   });
 
   test("empty scope never consults the resolver, and scope.session alone does not filter", async () => {
@@ -1036,7 +1078,7 @@ describe("Worktree rung", () => {
     expect(count()).toBe(200);
     expect(panel.root.querySelector(".session-item")!.getAttribute("data-id")).toBe("s449");
     const more = () => panel.root.querySelector<HTMLButtonElement>("button.sessions-more");
-    expect(more()!.textContent).toBe("Show 250 more");
+    expect(more()!.textContent).toBe("Show 200 more");
     more()!.click();
     await vi.waitFor(() => expect(count()).toBe(400));
     more()!.click();

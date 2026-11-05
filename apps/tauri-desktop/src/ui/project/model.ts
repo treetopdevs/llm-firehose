@@ -152,8 +152,17 @@ export function axisTicks(range: TimeRange, x0: number, x1: number, n = 6): Arra
 
 const END: Record<WorktreeState, LaneEnd> = { landed: "rejoin", open: "open", gone: "gone", never_diverged: "flat", unknown: "hatched" };
 
-function badgeOf(r: WorktreeLifetimeView): string {
+export function badgeOf(r: WorktreeLifetimeView): string {
   return BADGE.format(r.state === "open", r.ahead, r.behind, r.dirty);
+}
+
+export const outcomeText = (o: string | undefined): string =>
+  o === "landed" ? "landed" : o === "abandoned" ? "abandoned" : o === "never_diverged" ? "never diverged" : o === "unknown" ? "outcome unknown" : "removed";
+
+/** A worktree's state in words, as the API classified it. Never a landing time: the API holds none. */
+export function worktreeStateText(r: WorktreeLifetimeView): string {
+  if (r.state === "gone") return `gone · ${outcomeText(r.outcome)}`;
+  return r.state === "never_diverged" ? "never diverged" : r.state;
 }
 
 function tooltipOf(r: WorktreeLifetimeView, label: string, extra: string[]): string {

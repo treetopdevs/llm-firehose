@@ -52,6 +52,17 @@ export function bucketCountsBySession(
   buckets = BAND_BUCKETS,
   bucketMs = BAND_BUCKET_MS,
 ): Map<string, number[]> {
+  return bucketCountsByKey(events, (ev) => ev.session_id!, nowMs, buckets, bucketMs);
+}
+
+/** bucketCountsBySession under the caller's key for an event's session, for callers that split one native id by source. */
+export function bucketCountsByKey(
+  events: readonly FirehoseEvent[],
+  keyOf: (ev: FirehoseEvent) => string,
+  nowMs: number,
+  buckets = BAND_BUCKETS,
+  bucketMs = BAND_BUCKET_MS,
+): Map<string, number[]> {
   const out = new Map<string, number[]>();
   for (const ev of events) {
     if (!ev.session_id || isTransition(ev)) continue;
@@ -59,10 +70,11 @@ export function bucketCountsBySession(
     if (Number.isNaN(t)) continue;
     const idx = buckets - 1 - Math.floor(Math.max(0, nowMs - t) / bucketMs);
     if (idx < 0 || idx >= buckets) continue;
-    let counts = out.get(ev.session_id);
+    const key = keyOf(ev);
+    let counts = out.get(key);
     if (!counts) {
       counts = new Array<number>(buckets).fill(0);
-      out.set(ev.session_id, counts);
+      out.set(key, counts);
     }
     counts[idx]++;
   }

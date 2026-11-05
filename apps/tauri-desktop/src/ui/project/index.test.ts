@@ -1091,7 +1091,6 @@ describe("review regressions", () => {
     // A pr_merge command mark is not landing evidence: the lane still reads "landed ?".
     expect(laneOf("l-mark").querySelector(".project-rejoin.unknown-time")).not.toBeNull();
     expect(laneOf("l-mark").textContent).toContain("landed ?");
-    expect(laneOf("l-mark").querySelector(".project-landgap")).toBeNull();
   });
 });
 

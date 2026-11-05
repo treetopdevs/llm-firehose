@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
+import type { WorktreeLifetimeView } from './api';
 import {
   DEFAULT_LIVE_SPAN_MS,
   PRESETS,
@@ -457,5 +458,23 @@ describe('liveSpanMs', () => {
     s.narrow({ session: { id: 'b' }, window: { from: 5, to: 9 } });
     expect(s.get().window).toEqual({ from: 5, to: 9 });
     expect(s.get().liveSpanMs).toBe(7_200_000);
+  });
+});
+
+describe("composed lifetimes", () => {
+  const base = { sessions: () => undefined, labels: () => ({}) };
+  const wt = (id: string) => ({ worktree_id: id }) as unknown as WorktreeLifetimeView;
+  const sc = { project: "p", window: "live" as const };
+
+  test("the primary's rows win, the fallback answers otherwise, undefined when neither has any", () => {
+    const store = createScope();
+    store.setResolver({ ...base, lifetimes: () => undefined });
+    store.setFallbackResolver({ ...base, lifetimes: () => [wt("f")] });
+    expect(store.resolver()!.lifetimes!(sc)?.map((r) => r.worktree_id)).toEqual(["f"]);
+    store.setResolver({ ...base, lifetimes: () => [wt("p")] });
+    expect(store.resolver()!.lifetimes!(sc)?.map((r) => r.worktree_id)).toEqual(["p"]);
+    store.setResolver({ ...base });
+    store.setFallbackResolver({ ...base });
+    expect(store.resolver()!.lifetimes!(sc)).toBeUndefined();
   });
 });

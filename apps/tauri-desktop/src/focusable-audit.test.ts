@@ -68,6 +68,7 @@ function walk(dir: string, out: string[] = []): string[] {
 const ONACTIVATE_CALLERS: Record<string, { descendants: boolean; why: string }> = {
   "ui/project/index.ts:bead#1": { descendants: false, why: "SVG rect leaf; stop keeps it out of its lane" },
   "ui/project/index.ts:g#1": { descendants: true, why: "lane holds focusable beads" },
+  "ui/sessions.ts:node#1": { descendants: false, why: "worktree row: text cells only" },
   "ui/sessions.ts:item#1": { descendants: true, why: "session card holds score, loops and the id chip" },
   "ui/events/view.ts:line#1": { descendants: false, why: "text cells only (self:true kept so a future control cannot double-fire)" },
   "ui/fleet/encodings.ts:g#1": { descendants: false, why: "lane row: shapes and text only" },

@@ -10,7 +10,7 @@ import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
 import type { KeyBinding } from "../../keys";
-import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, pickRepo, repoIds, resolveWindow, viewX } from "./model";
+import { LABEL_X, MIN_BRUSH_PX, axisTicks, labelMaxChars, brushWindow, layoutLanes, orderLanes, outcomeText, pickRepo, repoIds, resolveWindow, viewX } from "./model";
 import type { LaneGeom, TimeRange } from "./model";
 import { CLIP, COMMIT_TICK, DASH, GONE_MARK, HATCH, IDLE_BANG, LANDED_UNKNOWN, laneMarkPath, rejoinPath } from "../../glyphs";
 import { createActivityMap } from "../activity";
@@ -113,8 +113,6 @@ function svg(tag: string, attrs: Record<string, string | number> = {}, ...childr
 }
 
 const isAbort = (e: unknown): boolean => e instanceof Error && e.name === "AbortError";
-const outcomeText = (o: string | undefined): string =>
-  o === "landed" ? "landed" : o === "abandoned" ? "abandoned" : o === "never_diverged" ? "never diverged" : o === "unknown" ? "outcome unknown" : "removed";
 const MAX_LABEL_CHARS = labelMaxChars(X0);
 const shortLabel = (s: string): string => (s.length > MAX_LABEL_CHARS ? `…${s.slice(1 - MAX_LABEL_CHARS)}` : s);
 
@@ -226,6 +224,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
         return keys.has(k) || !elsewhere.has(k);
       };
     },
+    lifetimes: (sc) => scopedRows({ ...sc, worktree: undefined }),
     knows: (sc) => scopedRows(sc) !== undefined,
     partial(sc) {
       const sel = scopedRows(sc);
@@ -424,11 +423,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       g.append(svg("path", { class: "project-fork", d: `M ${l.forkX} ${BASE_Y} C ${l.forkX} ${y}, ${l.forkX} ${y}, ${l.forkX + 10} ${y}`, ...stroke }));
     }
     if (l.end === "rejoin") {
-      // Activity ends at endX. The rejoin sits at a pr_merge mark's time when one exists;
-      // otherwise the landing time is unknown and the curve is dashed with the landed-unknown mark.
-      if (l.rejoinKnown && l.rejoinX > l.endX) {
-        g.append(svg("line", { class: "project-landgap", x1: l.endX, x2: l.rejoinX, y1: y, y2: y, ...stroke, "stroke-dasharray": DASH.landgap }));
-      }
+      // The API holds no verified landing time, so the rejoin sits at last activity, dashed with
+      // the landed-unknown mark. A pr_merge mark is a command, not proof of landing (D95).
       const rx = l.rejoinX;
       g.append(svg("path", { class: l.rejoinKnown ? "project-rejoin" : "project-rejoin unknown-time", d: rejoinPath(rx - 10, y, rx, BASE_Y), ...stroke, ...(l.rejoinKnown ? {} : { "stroke-dasharray": DASH.unknownRejoin }) }));
       if (!l.rejoinKnown) g.append(svg("text", { class: "project-landed-unknown", x: rx + 4, y: y - 6, "font-size": 10, fill: "currentColor" }, LANDED_UNKNOWN));

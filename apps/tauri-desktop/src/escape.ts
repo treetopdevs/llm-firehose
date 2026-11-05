@@ -69,9 +69,11 @@ export type AscentTarget = PanelName | 'stay';
 
 /**
  * Where an Escape lands, decided only from the scope held before the ascend and the
- * panel it came from; nothing is inferred about how the user arrived.
+ * panel it came from; nothing is inferred about how the user arrived. `hasList` is the
+ * Sessions panel's own answer to whether it will draw the worktree list: only then does
+ * widening from a selected worktree stay on the rung.
  */
-export function ascentTarget(prev: Scope, alt: Altitude, from: string): AscentTarget {
+export function ascentTarget(prev: Scope, alt: Altitude, from: string, hasList = false): AscentTarget {
   if (from === 'session') {
     if (prev.worktree !== undefined) return 'sessions';
     if (prev.project !== undefined) return 'project';
@@ -79,7 +81,7 @@ export function ascentTarget(prev: Scope, alt: Altitude, from: string): AscentTa
   }
   if (from === 'sessions') {
     if (prev.session !== undefined) return 'stay';
-    if (alt === 'project') return 'project';
+    if (alt === 'project') return prev.worktree !== undefined && hasList ? 'stay' : 'project';
     if (alt === 'fleet' && prev.project !== undefined) return 'fleet';
     return 'stay';
   }
