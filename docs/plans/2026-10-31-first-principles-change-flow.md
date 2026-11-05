@@ -70,7 +70,7 @@ grain for "flow of changes through time".
 |---|---|---|---|
 | Project | identity, default branch | yes | `repo_id`, graph roots, graph default-branch ref |
 | Worktree birth | when it was forked, from what | exact in `full` mode: the `git worktree add` shell event, with its session. Otherwise proxy: first event carrying that `worktree_id`; fork point = merge base with main from `Comparison.MergeBases` | spool + graph |
-| Worktree state | ahead of main / behind / dirty / landed / never diverged / gone | derivable: `SelectedOnly` non-empty ⇒ unlanded; empty ⇒ landed **or** never diverged, told apart only by a prior snapshot that showed commits; dirty from `changes.go`; gone when the scan no longer lists it | `internal/workspacegraph` + snapshot |
+| Worktree state | ahead of main / behind / dirty / landed / never diverged / gone | derivable: `SelectedOnly` (commit ancestry only) non-empty ⇒ ahead of main; empty ⇒ behind or level with main. It does not establish landing: a worktree reset to main has it empty without ever merging, and a squash merge leaves it non-empty after landing. Report landed only with merge evidence (in `full` mode a verified `gh pr merge` mark); otherwise unknown. Dirty from `changes.go`; gone when the scan no longer lists it | `internal/workspacegraph` + snapshot + merge evidence |
 | Worktree death | pruned or merged | exact in `full` mode: `git worktree remove`. Otherwise proxy: disappears from scan; landed-then-gone vs abandoned-then-gone needs the state snapshot taken before it vanished | spool + persisted projection |
 | Session → worktree | which sessions worked here | yes | `worktree_id` on events |
 | Change (commit) | commits made during the lifetime, by which session | in `full` mode the `git commit` shell event gives intent, time, and session; the VCS reader confirms the resulting revision. In `balanced` mode only the VCS reader, and attribution to a session is a time join, labelled as such | spool + graph |
@@ -126,7 +126,7 @@ Project     one repo · the fork/land graph through the time window ·
   │
 Worktree    one fork · its lifetime left to right · sessions stacked ·
             changes accumulating (uncommitted → committed → landed) ·
-            diff against main at any scrub point
+            diff against main only where a captured revision or retained snapshot backs the scrub point; unavailable otherwise
   │
 Session     existing: score / lanes / loops / loom / replay / receipts as tabs
   │
@@ -197,7 +197,7 @@ missing and derivable from what exists.
    `internal/capture` does not import `internal/workspacegraph`, so the join
    with `workspacegraph.Compare` (ahead/behind/landed/dirty against the default
    branch) happens in the daemon's graph host, which already owns registered
-   roots and `EventScope`. Persist a small host-private snapshot (same location
+   roots and `EventScope`. Fixtures must include a reset-to-main worktree and a squash-merged worktree. Persist a small host-private snapshot (same location
    and mode rules as `graph-roots.json`) so "gone" can be classified as
    landed-then-gone, abandoned, or never diverged. Additive `GET /worktrees` and
    `GET /worktrees/{id}`. TDD against a scrubbed, bounded fixture derived from
@@ -216,6 +216,21 @@ What this does not do, by design: infer handoffs, infer causality, attribute a
 commit to a session with any certainty beyond a time join (label it as such),
 or act on agents.
 
+## Known limits of the projection as built
+
+- **Identity is the stored value.** Events carry raw `repo_id`/`worktree_id`
+  in `full` mode and sha256 digests otherwise, and the projection keys on
+  whatever was stored. A privacy-mode switch therefore splits one worktree into
+  two lifetimes, and a digest cannot be joined to a graph ID without the same
+  normalization on both sides. `repo_id` derives from the Git common directory,
+  not `Repository.Label`. A mode-independent normalization plus a
+  switch-spanning fixture is open work.
+- **A lifetime is a path, not an incarnation.** `worktree_id` is a canonical
+  path. Removing a worktree and recreating one at the same path merges their
+  sessions and counts under one key. A lifetime discriminator from observed
+  birth and death marks (unknown where unobserved), and a remove-and-recreate
+  fixture, are open work.
+
 ## Decisions (2026-10-31)
 
 The three questions above were open at assessment time. They are closed here
@@ -226,7 +241,11 @@ entries live in `docs/plans/2026-10-18-backlog-coordination.html` (D94–D98).
   Bash summary will carry the command verb for an allowlist of lifecycle
   commands (`git worktree add|remove`, `git commit`, `git push`, `gh pr
   create|merge`) so they are visible in `balanced` mode. Additive summary
-  change; no new hook, no `WorktreeCreate`, no git hook install. Shipped as its
+  change; no new hook, no `WorktreeCreate`, no git hook install. As built, a
+  lifecycle mark carries no command target: it attaches to the worktree of the
+  event's `cwd`, so `git worktree add|remove <path>` run from another worktree
+  is attributed to the caller, not the named path. Recording a target digest
+  (and marking only successful commands) is open work. Shipped as its
   own slice after the projection; until then the projection uses the proxy
   (first/last `worktree_id`) in `balanced` and exact marks in `full`.
 - **D95 Meta is a cost lens, not a view input.** The worktree projection and

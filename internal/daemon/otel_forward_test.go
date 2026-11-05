@@ -80,14 +80,28 @@ func TestOTLPForwardsRawBodyToTheExistingCollector(t *testing.T) {
 	metrics := otelFixture(t, "metrics.json")
 	postOTLP(t, ts.URL, "/v1/metrics", metrics)
 
-	for _, want := range []forwarded{{"/v1/logs", "application/json", body}, {"/v1/metrics", "application/json", metrics}} {
+	// Each signal has its own queue, so logs and metrics may arrive in either order.
+	wants := map[string]forwarded{
+		"/v1/logs":    {"/v1/logs", "application/json", body},
+		"/v1/metrics": {"/v1/metrics", "application/json", metrics},
+	}
+	pending := func() []string {
+		var paths []string
+		for p := range wants {
+			paths = append(paths, p)
+		}
+		return paths
+	}
+	for len(wants) > 0 {
 		select {
 		case f := <-got:
-			if f.path != want.path || f.contentType != want.contentType || string(f.body) != string(want.body) {
-				t.Fatalf("forwarded %s %q (%d bytes), want %s %q (%d bytes)", f.path, f.contentType, len(f.body), want.path, want.contentType, len(want.body))
+			want, ok := wants[f.path]
+			if !ok || f.contentType != want.contentType || string(f.body) != string(want.body) {
+				t.Fatalf("forwarded %s %q (%d bytes), want one of %v", f.path, f.contentType, len(f.body), pending())
 			}
+			delete(wants, f.path)
 		case <-time.After(3 * time.Second):
-			t.Fatalf("nothing forwarded to %s", want.path)
+			t.Fatalf("nothing forwarded for %v", pending())
 		}
 	}
 	events, err := srv.engine.Recent(20)
