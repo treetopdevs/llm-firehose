@@ -152,7 +152,11 @@ function badgeOf(r: WorktreeLifetimeView): string {
 }
 
 function tooltipOf(r: WorktreeLifetimeView, label: string, extra: string[]): string {
-  const lines = [label, `state: ${r.state}`];
+  const lines = [label];
+  // The visible label is only the folder name; keep the path so same-named worktrees stay distinguishable.
+  const path = (r.label || r.worktree_id).replace(/\/\.git\/?$/, "");
+  if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) lines.push(`path: ${path}`);
+  lines.push(`state: ${r.state}`);
   if (r.outcome) lines.push(`outcome: ${r.outcome}`);
   if (r.state_reason) lines.push(`reason: ${r.state_reason}`);
   if (r.ahead !== undefined) lines.push(`ahead ${r.ahead}`);

@@ -5,9 +5,9 @@ const sessions = vi.fn();
 const sessionEvents = vi.fn();
 const attention = vi.fn();
 vi.mock("../api", () => ({
-  sessions: () => sessions(),
+  sessions: (signal?: AbortSignal) => sessions(signal),
   sessionEvents: (id: string) => sessionEvents(id),
-  attention: () => attention(),
+  attention: (signal?: AbortSignal) => attention(signal),
 }));
 
 import { createSessions } from "./sessions";
@@ -182,6 +182,22 @@ describe("sessions band", () => {
     const row = panel.root.querySelector<HTMLElement>(".band-row")!;
     expect(row.querySelector(".state")?.textContent).toBe("unknown");
     expect(panel.root.querySelector(".error")).toBeNull();
+  });
+
+  test("a refresh request that never settles is given a deadline so it ends and polling can resume", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const hang = (signal?: AbortSignal) =>
+      new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("deadline exceeded"))));
+    sessions.mockImplementation(hang);
+    attention.mockImplementation(hang);
+    const panel = createSessions(() => {}, () => []);
+    const done = panel.refresh();
+    expect(timeout).toHaveBeenCalled();
+    deadline.abort();
+    await done;
+    expect(panel.root.querySelector(".error")?.textContent).toContain("deadline exceeded");
+    timeout.mockRestore();
   });
 
   test("flags errors inline and opens the session on click", async () => {

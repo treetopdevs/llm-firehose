@@ -242,6 +242,8 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .sessions-inbox:not([hidden]) { flex: 1; min-width: 0; overflow-y: auto; }
 .sessions-list { width: 44%; min-width: 360px; max-width: 640px; overflow-y: auto; flex-shrink: 0; }
 .sessions-events { flex: 1; overflow-y: auto; min-width: 0; }
+/* An unopened history reserves no column (beside the Needs you inbox it would halve it). */
+.sessions-events:empty { display: none; }
 .session-item {
   border: 1px solid var(--border);
   border-radius: 6px;
