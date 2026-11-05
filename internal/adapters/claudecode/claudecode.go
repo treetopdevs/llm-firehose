@@ -11,6 +11,7 @@ import (
 
 	"agentfirehose/internal/capturemeta"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/shellverbs"
 	"agentfirehose/internal/workspace"
 )
 
@@ -252,6 +253,16 @@ func mapToolEvent(ev *event.Event, p hookPayload, hook string) {
 	switch {
 	case p.ToolName == "Bash" || p.ToolName == "Shell":
 		ev.Summary = verb + " shell tool"
+		// Only allowlisted lifecycle verb phrases ever leave the command;
+		// arguments, paths and messages never do. An interrupted run is not
+		// known to have done anything, and announced or failed runs are not
+		// evidence of one, so only a completed ("ran") run carries a suffix.
+		if verb == "ran" {
+			command, _ := p.ToolInput["command"].(string)
+			if kinds, _ := shellverbs.CommandKinds(command); len(kinds) > 0 {
+				ev.Summary += ": " + shellverbs.Phrases(kinds)
+			}
+		}
 	case fileTools[p.ToolName]:
 		// The full path feeds the artifacts/files view (index.EventFilePaths);
 		// only the base name surfaces in the summary.

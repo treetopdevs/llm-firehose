@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { disambiguateSessionLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
+import { projectName, worktreeName, displayRepoLabel, disambiguateSessionLabel, sessionRefLabel, formatClock, formatDuration, formatValue, sessionName, sessionWhere, severityClass, idLabel, shortId, shortPath, summaryLine, workspaceLabel } from "./format";
 import type { FirehoseEvent } from "./api";
 
 describe("formatClock", () => {
@@ -100,8 +100,84 @@ describe("session naming", () => {
     expect(disambiguateSessionLabel(all[1][0], all[1][1], all)).toBe("Fix login · claude-code bbbbbbbb");
     expect(disambiguateSessionLabel(all[2][0], all[2][1], all)).toBe("Other");
   });
+  test("idLabel: path ids read as their tail, digests as eight characters", () => {
+    const digest = "2ed4f8a3" + "0".repeat(56);
+    expect(idLabel(digest)).toBe("2ed4f8a3");
+    expect(idLabel("/Users/nicholas/develop/browser-life/.claude/worktrees/foo")).toBe("worktrees/foo");
+    expect(idLabel("/Users/nicholas/develop/browser-life/.git")).toBe("browser-life/.git");
+    expect(idLabel("C:\\work\\repo\\wt")).toBe("repo/wt");
+    expect(idLabel("/solo")).toBe("solo");
+    expect(idLabel("/")).toBe("/");
+  });
+
   test("shortId is the first eight characters", () => {
     expect(shortId(base.id)).toBe("2ed4f8a3");
     expect(shortId("abc")).toBe("abc");
+  });
+});
+
+describe("sessionRefLabel", () => {
+  const id = "2385e3bc-aaaa-bbbb-cccc-111122223333";
+  test("an unknown ref is the short id, unresolved", () => {
+    expect(sessionRefLabel({ id, source: "claude-code" }, undefined)).toEqual({ label: "2385e3bc", resolved: false });
+  });
+  test("a titled session is its title, resolved", () => {
+    expect(sessionRefLabel({ id }, { id, source: "codex", title: "Fix login bug" })).toEqual({ label: "Fix login bug", resolved: true });
+  });
+  test("agent in checkout is resolved without a title", () => {
+    const known = { id, source: "claude-code", agent: "claude", cwd: "/Users/n/develop/llm-firehose" };
+    expect(sessionRefLabel({ id, source: "claude-code" }, known)).toEqual({ label: "claude in llm-firehose", resolved: true });
+  });
+  test("a digested checkout never reads as a name", () => {
+    const known = { id, source: "claude-code", agent: "claude", cwd: "ab".repeat(32) };
+    expect(sessionRefLabel({ id }, known)).toEqual({ label: "claude · 2385e3bc", resolved: false });
+  });
+  test("a path-shaped id reads as its tail, unresolved", () => {
+    expect(sessionRefLabel({ id: "/a/b/c" }, undefined)).toEqual({ label: "b/c", resolved: false });
+  });
+});
+
+describe("projectName", () => {
+  const id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  test("paths reduce to the folder; full is the id", () => {
+    expect(projectName("/Users/n/develop/browser-life/.git")).toEqual({ label: "browser-life", full: "/Users/n/develop/browser-life/.git" });
+    expect(projectName("/a/b/browser-life/.git/").label).toBe("browser-life");
+    expect(projectName("x", "/Users/n/browser-life/.git").label).toBe("browser-life");
+    expect(projectName("C:\\r\\proj\\.git").label).toBe("proj");
+  });
+  test("names are kept", () => {
+    expect(projectName("r", "firehose").label).toBe("firehose");
+    expect(projectName("r", "owner/repo").label).toBe("owner/repo");
+    expect(projectName("abc12345 (unknown)").label).toBe("abc12345 (unknown)");
+    expect(projectName(id).label).toBe(id.slice(0, 8));
+  });
+  test("the label never contains .git", () => {
+    for (const s of ["/a/b/.git", "/a/b/c/.git/", "C:\\a\\.git\\"]) expect(projectName(s).label).not.toContain(".git");
+  });
+});
+
+describe("worktreeName", () => {
+  test("folder of a path, resolved names kept, short ids", () => {
+    expect(worktreeName("/r/.claude/worktrees/foo").label).toBe("foo");
+    expect(worktreeName("/r/.claude/worktrees/foo/").label).toBe("foo");
+    expect(worktreeName("w", "feat/x").label).toBe("feat/x");
+    expect(worktreeName("w", "/w/alpha-open").label).toBe("alpha-open");
+    expect(worktreeName("wt-abcdefghij").label).toBe("wt-abcde");
+    expect(worktreeName("/r/x").full).toBe("/r/x");
+  });
+});
+
+test("displayRepoLabel is exported from format", () => {
+  expect(displayRepoLabel("/Users/n/browser-life/.git")).toBe("/Users/n/browser-life");
+});
+
+describe("name fallbacks (T5)", () => {
+  test("projectName/worktreeName: folder name for path ids, 8-char prefix only for digest ids", () => {
+    const hex = "0123456789abcdef".repeat(4);
+    expect(projectName("/Users/nicholas/develop/proj").label).toBe("proj");
+    expect(worktreeName("/Users/nicholas/develop/proj").label).toBe("proj");
+    expect(projectName(hex).label).toBe("01234567");
+    expect(worktreeName(hex).label).toBe("01234567");
+    expect(projectName(hex, "alpha").label).toBe("alpha");
   });
 });

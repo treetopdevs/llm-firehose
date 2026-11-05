@@ -152,6 +152,7 @@ func (s *Server) reconcileGraphRoots(ctx context.Context) {
 		_, _ = s.graph.service.Snapshot(scanCtx, repo.ID, "", true)
 		cancel()
 	}
+	s.observeWorktrees(ctx)
 }
 func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -388,6 +389,16 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repoAliases, workspaceAliases, err := s.graph.service.EventScope(repoID, workspaceID)
+	if err != nil && workspaceID != "" {
+		// A worktree the current snapshot no longer lists (a removed fork) is still a
+		// valid historical identity when the daemon observed it: its captured events
+		// keep answering under the raw path or its digest.
+		if repoScope, _, repoErr := s.graph.service.EventScope(repoID, ""); repoErr == nil {
+			if _, rec := s.worktrees.observation().lookup(repoScope[0], workspaceID); rec != nil {
+				repoAliases, workspaceAliases, err = repoScope, []string{rec.Worktree, digestString(rec.Worktree)}, nil
+			}
+		}
+	}
 	if err != nil {
 		http.Error(w, "repository or workspace unknown; register the repository or refresh", 422)
 		return

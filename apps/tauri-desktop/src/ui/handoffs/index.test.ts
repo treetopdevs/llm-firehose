@@ -152,3 +152,33 @@ test("recent picker excludes stream-only transitions before retaining the latest
     expect(seen).toEqual(Array.from({length: 100}, (_, i) => `receipt-${109-i}`));
     expect(api.capturedEvent).not.toHaveBeenCalled();
 });
+import { createSessionDirectory } from "../../session-directory";
+test("names sessions late without a refetch, keeps event ids, and stops after deactivate", async () => {
+    const store = storage(), dir = createSessionDirectory(), panel = createHandoffs(vi.fn(), () => [], store, dir);
+    await preview(panel);
+    click(panel.root, "Save annotation");
+    panel.refresh();
+    const item = () => panel.root.querySelector(".handoff-links li")!.textContent!;
+    expect(item()).toContain(from.session_id!.slice(0, 8));
+    const calls = api.capturedEvent.mock.calls.length;
+    dir.remember([{ id: from.session_id!, source: from.source, title: "Fix login bug" }]);
+    expect(item()).toContain(`${from.source} / Fix login bug / ${from.id}`);
+    expect(item()).toContain(`/ ${to.id}`);
+    expect(panel.root.querySelector(".handoff-map")!.textContent).toContain("Fix login bug");
+    expect(api.capturedEvent.mock.calls.length).toBe(calls);
+    panel.deactivate();
+    dir.remember([{ id: from.session_id!, source: from.source, title: "Renamed later" }]);
+    expect(item()).toContain("Fix login bug");
+    expect(item()).not.toContain("Renamed later");
+});
+test("returning to the panel relabels at once", async () => {
+    const store = storage(), dir = createSessionDirectory(), panel = createHandoffs(vi.fn(), () => [], store, dir);
+    await preview(panel);
+    click(panel.root, "Save annotation");
+    panel.refresh();
+    panel.deactivate();
+    dir.remember([{ id: from.session_id!, source: from.source, title: "Learned while away" }]);
+    expect(panel.root.querySelector(".handoff-links li")!.textContent).not.toContain("Learned while away");
+    panel.refresh();
+    expect(panel.root.querySelector(".handoff-links li")!.textContent).toContain(`${from.source} / Learned while away / ${from.id}`);
+});

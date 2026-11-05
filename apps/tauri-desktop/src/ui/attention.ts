@@ -6,8 +6,10 @@ import type {
   FirehoseEvent,
 } from "../api";
 import { clear, el, keepFocus } from "../dom";
-import { workspaceLabel } from "../format";
+import { disambiguateSessionLabel, projectName, sessionName, workspaceLabel, worktreeName } from "../format";
+import { needYouCount } from "../needs";
 import { formatAge } from "../spark";
+import { idChip } from "./session-id";
 
 import { createAttentionPreferences } from "./attention-preferences";
 import type { LocalStorage } from "./attention-preferences";
@@ -22,6 +24,13 @@ export type AttentionOptions = {
   onOpenSession(id: string, source?: string): void;
   onDoctor(): void;
   onOpenInbox(): void;
+  /** Every load hands over the sessions it names, so other panels can name them too. */
+  onSessions?(list: readonly AttentionSession[]): void;
+  /** Names from the scope resolver (roots, rows); a miss falls back to the format.ts folder/prefix rule. */
+  labels?: {
+    worktree(id?: string, repoId?: string): string | undefined;
+    project(id?: string): string | undefined;
+  };
 };
 
 export function createAttention(options: AttentionOptions) {
@@ -68,7 +77,7 @@ export function createAttention(options: AttentionOptions) {
     ]);
   const strip = el("section", {
     class: "attention-strip",
-    "aria-label": "Attention status",
+    "aria-label": "Needs you status",
   });
   const rows = el("div", { class: "attention-rows" });
   const status = el("p", { class: "dim", role: "status" });
@@ -78,13 +87,30 @@ export function createAttention(options: AttentionOptions) {
   const search = el("input", {
     type: "search",
     placeholder: "Search sessions and reasons…",
-    "aria-label": "Search attention",
+    "aria-label": "Search sessions",
   });
   const source = el("select", { "aria-label": "Source" });
-  const workspace = el("select", { "aria-label": "Workspace" });
+  const workspace = el("select", { "aria-label": "Worktree" });
   const eventTime = (ev: AttentionEvidence) =>
     Date.parse(ev.source_time ?? ev.time);
   const where = (s: AttentionSession) => s.worktree_id || s.cwd || s.repo || "";
+  const resolved = (f: ((id?: string, repoId?: string) => string | undefined) | undefined, id: string | undefined, repoId?: string): string | undefined => {
+    if (!f || !id) return undefined;
+    try { return f(id, repoId) || undefined; } catch { return undefined; }
+  };
+  /** The name of what where() returns: resolver, else the folder/prefix fallback. Never a bare 64-hex id. */
+  const whereName = (s: AttentionSession): string => {
+    const id = where(s);
+    if (!id) return "";
+    if (s.worktree_id) return worktreeName(id, resolved(options.labels?.worktree, id, s.repo_id)).label;
+    if (s.cwd) return workspaceLabel(undefined, s.cwd);
+    return s.repo ?? "";
+  };
+  const repoName = (s: AttentionSession): string => {
+    if (s.repo) return s.repo;
+    if (s.repo_id) return projectName(s.repo_id, resolved(options.labels?.project, s.repo_id)).label;
+    return "";
+  };
   working.addEventListener("click", () => {
     history = false;
     render();
@@ -108,7 +134,7 @@ export function createAttention(options: AttentionOptions) {
   const root = el(
     "section",
     { class: "attention-inbox" },
-    el("h2", {}, "Attention inbox"),
+    el("h2", {}, "Needs you"),
     filters,
     notifyButton,
     notificationStatus,
@@ -123,6 +149,9 @@ export function createAttention(options: AttentionOptions) {
   let abort: AbortController | null = null;
   let snapshot: AttentionSnapshot = { sessions: [], warnings: [] };
 
+  /** Pending episodes that are not snoozed: the number the strip shows. */
+  let needing = 0;
+  const countListeners = new Set<() => void>();
   let inspection = 0;
   async function inspect(id: string) {
     const version = ++inspection;
@@ -135,6 +164,10 @@ export function createAttention(options: AttentionOptions) {
           "Captured evidence is unavailable. Try again after reconnecting.";
     }
   }
+  const keyOf = (s: AttentionSession) => `${s.source}\0${s.id}`;
+  /** Names of the whole snapshot, so two sessions with one title can be told apart. */
+  let names: (readonly [string, string])[] = [];
+  const nameOf = (s: AttentionSession) => disambiguateSessionLabel(keyOf(s), sessionName(s), names);
   function row(s: AttentionSession) {
     const evidence = s.pending ?? s.last;
     const inspectButton = el(
@@ -170,16 +203,18 @@ export function createAttention(options: AttentionOptions) {
     return el(
       "article",
       { class: "attention-row" },
-      el("h3", {}, `${s.agent || s.source} · ${s.source} · ${s.id}`),
+      el("h3", {}, nameOf(s)),
+      el("p", { class: "dim" }, `${s.agent || s.source} · ${s.source}`),
+      idChip(s.id),
       el(
         "p",
         {},
-        workspaceLabel(s.repo, s.worktree_id || s.cwd) || "Workspace unknown",
+        repoName(s) || whereName(s) || "Worktree unknown",
       ),
       el(
         "p",
         { class: "dim" },
-        `Worktree: ${workspaceLabel(undefined, s.worktree_id || s.cwd) || "unknown"}`,
+        `Worktree: ${whereName(s) || "unknown"}`,
       ),
       el(
         "p",
@@ -219,12 +254,17 @@ export function createAttention(options: AttentionOptions) {
       "Desktop notifications are opt-in and require this app to stay open.";
     clear(rows);
     clear(strip);
+    names = snapshot.sessions.map((s) => [keyOf(s), sessionName(s)] as const);
     const pending = snapshot.sessions.filter((s) => s.pending);
     const snoozed = pending.filter((s) => prefs.snoozed(episodeKey(s))).length;
+    needing = pending.length - snoozed;
+    for (const fn of countListeners) {
+      try { fn(); } catch { /* a listener must not break the strip */ }
+    }
     const open = el(
       "button",
       { "data-key": "inbox" },
-      `${pending.length - snoozed} needs attention · ${snoozed} snoozed`,
+      `${needYouCount(pending.length - snoozed)} · ${snoozed} snoozed`,
     );
     open.addEventListener("click", options.onOpenInbox);
     const doctor = el(
@@ -248,12 +288,13 @@ export function createAttention(options: AttentionOptions) {
       select: HTMLSelectElement,
       values: string[],
       label: string,
+      text: (v: string) => string = (v) => v,
     ) {
       const value = select.value;
       clear(select);
       select.append(el("option", { value: "" }, label));
       for (const v of [...new Set(values)].filter(Boolean).sort())
-        select.append(el("option", { value: v }, v));
+        select.append(el("option", { value: v }, text(v)));
       select.value = value;
     }
     choices(
@@ -261,7 +302,8 @@ export function createAttention(options: AttentionOptions) {
       snapshot.sessions.map((s) => s.source),
       "All sources",
     );
-    choices(workspace, snapshot.sessions.map(where), "All workspaces");
+    const nameById = new Map(snapshot.sessions.map((s) => [where(s), whereName(s)]));
+    choices(workspace, snapshot.sessions.map(where), "All worktrees", (v) => nameById.get(v) || v);
     const term = search.value.trim().toLocaleLowerCase();
     const rank = (s: AttentionSession) =>
       s.pending
@@ -282,6 +324,7 @@ export function createAttention(options: AttentionOptions) {
           (!workspace.value || workspace.value === where(s)) &&
           [
             s.id,
+            s.title,
             s.source,
             s.agent,
             s.repo,
@@ -416,6 +459,7 @@ export function createAttention(options: AttentionOptions) {
       if (disposed || !connected || version !== epoch) return;
       snapshot = result;
       fresh = true;
+      options.onSessions?.(result.sessions);
       const keys = new Set(
         snapshot.sessions.filter((s) => s.pending).map(episodeKey),
       );
@@ -431,7 +475,7 @@ export function createAttention(options: AttentionOptions) {
       if (disposed || version !== epoch) return;
       fresh = false;
       status.textContent =
-        "Attention unavailable — waiting for the local engine.";
+        "Needs you is unavailable — waiting for the local engine.";
       render();
     } finally {
       clearTimeout(timeout);
@@ -455,7 +499,7 @@ export function createAttention(options: AttentionOptions) {
     abort?.abort();
     inFlight = null;
     status.textContent = value
-      ? "Refreshing attention…"
+      ? "Refreshing needs you…"
       : "Offline · displayed observations may be out of date.";
     render();
     if (value) void refresh();
@@ -465,7 +509,13 @@ export function createAttention(options: AttentionOptions) {
     root,
     strip,
     refresh,
+    /** The strip's count (pending, not snoozed). */
+    count: () => needing,
+    /** Calls fn whenever the strip is redrawn (so a snooze or refresh reaches other displays at once). */
+    onCount(fn: () => void) { countListeners.add(fn); },
     setConnected,
+    /** Redraws from the last snapshot (names changed; nothing is refetched). */
+    redraw() { if (!disposed) render(); },
     dispose() {
       disposed = true;
       epoch++;

@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"agentfirehose/internal/capture/internal/projection"
 	"context"
 	"fmt"
 	"math/rand"
@@ -35,7 +36,7 @@ func referenceActivity(t *testing.T, dir string, q ActivityQuery) map[string][][
 			if ev.Category != event.CategoryFile || ev.RepoID != q.RepoID || ev.Time.Before(from) || !ev.Time.Before(q.To) {
 				return
 			}
-			for _, p := range activityPaths(ev) {
+			for _, p := range projection.EventActivityPaths(ev) {
 				g, rel := q.Resolve(ev, p)
 				if counts[g+"|"+rel] == nil {
 					counts[g+"|"+rel] = map[int]int{}

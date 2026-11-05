@@ -1,12 +1,28 @@
 import { capturedEvent } from "../../api";
 import type { FirehoseEvent } from "../../api";
-import { clear, el } from "../../dom";
+import { clear, el, keepControlFocus } from "../../dom";
 import { isTransition } from "../../spark";
 import { createHandoffBook, STORAGE_KEY } from "./model";
 import type { Endpoint, Handoff, HandoffBook } from "./model";
 import { renderHandoffMap } from "./map";
+import { disambiguateSessionLabel, sessionRefLabel } from "../../format";
+import type { SessionDirectory } from "../../session-directory";
 type StorageAccess = Pick<Storage, "getItem" | "setItem">;
-export function createHandoffs(openScore: (session: string, source: string) => void = () => { }, getRecent: () => readonly FirehoseEvent[] = () => [], storage?: StorageAccess) {
+export function createHandoffs(openScore: (session: string, source: string) => void = () => { }, getRecent: () => readonly FirehoseEvent[] = () => [], storage?: StorageAccess, directory?: SessionDirectory) {
+    let unsubscribe: (() => void) | undefined;
+    // Sessions are named; event ids stay event ids. Two sessions sharing a name carry source and short id.
+    const known = (ref: { id: string; source: string }) => {
+        directory?.ensure(ref);
+        return sessionRefLabel(ref, directory?.lookup(ref)).label;
+    };
+    const peers = (): (readonly [string, string])[] => {
+        const seen = new Map<string, readonly [string, string]>();
+        for (const e of [...state.links.flatMap(l => [l.from, l.to]), ...Object.values(verified)])
+            if (e)
+                seen.set(`${e.source}\0${e.session_id}`, [`${e.source}\0${e.session_id}`, known({ id: e.session_id, source: e.source })]);
+        return [...seen.values()];
+    };
+    const nameOf = (ref: { id: string; source: string }) => disambiguateSessionLabel(`${ref.source}\0${ref.id}`, known(ref), peers());
     const status = el("p", { role: "status" }), recovery = el("section"), saved = el("section"), detail = el("section", { class: "handoff-detail", "aria-label": "Inspected receipt" }), confirmation = el("section", { class: "handoff-confirm" });
     const label = el("input", { "aria-label": "Link label", maxlength: "500" });
     const sides = ["departure", "arrival"] as const;
@@ -35,7 +51,7 @@ export function createHandoffs(openScore: (session: string, source: string) => v
         const a = verified.departure, b = verified.arrival;
         const valid = !!a && !!b && a.id !== b.id && (a.source !== b.source || a.session_id !== b.session_id);
         save.disabled = !book || !valid || !label.value.trim() || state.links.length >= 50;
-        target.textContent = a && b ? `Save direction: ${a.source} / ${a.session_id} / ${a.id} → ${b.source} / ${b.session_id} / ${b.id}.${valid ? "" : " Endpoints must be different events in different session/source lanes."}` : "Look up both endpoints to review evidence before saving.";
+        target.textContent = a && b ? `Save direction: ${a.source} / ${nameOf({ id: a.session_id, source: a.source })} / ${a.id} → ${b.source} / ${nameOf({ id: b.session_id, source: b.source })} / ${b.id}.${valid ? "" : " Endpoints must be different events in different session/source lanes."}` : "Look up both endpoints to review evidence before saving.";
     }
     function identity(event: FirehoseEvent, id: string): Endpoint {
         if (event.id !== id || typeof event.source !== "string" || !event.source.trim() || event.source.length > 512 || typeof event.session_id !== "string" || !event.session_id.trim() || event.session_id.length > 512)
@@ -140,10 +156,10 @@ export function createHandoffs(openScore: (session: string, source: string) => v
             saved.append(el("p", {}, "No saved annotations."));
             return;
         }
-        saved.append(renderHandoffMap(links, endpoint => void inspect(endpoint)));
+        saved.append(renderHandoffMap(links, endpoint => void inspect(endpoint), nameOf));
         const list = el("ol", { class: "handoff-links", start: String(page * 10 + 1) });
         for (const link of links)
-            list.append(el("li", {}, el("h4", {}, link.label), el("p", {}, "User annotation — not source-confirmed"), el("p", {}, `${link.from.source} / ${link.from.session_id} / ${link.from.id} → ${link.to.source} / ${link.to.session_id} / ${link.to.id}`), button("Inspect departure", () => void inspect(link.from)), button("Inspect arrival", () => void inspect(link.to)), button("Remove annotation", () => remove(link))));
+            list.append(el("li", {}, el("h4", {}, link.label), el("p", {}, "User annotation — not source-confirmed"), el("p", {}, `${link.from.source} / ${nameOf({ id: link.from.session_id, source: link.from.source })} / ${link.from.id} → ${link.to.source} / ${nameOf({ id: link.to.session_id, source: link.to.source })} / ${link.to.id}`), button("Inspect departure", () => void inspect(link.from)), button("Inspect arrival", () => void inspect(link.to)), button("Remove annotation", () => remove(link))));
         saved.append(list);
         if (state.links.length > 10)
             pager(saved, page, state.links.length, 10, "annotations", next => { invalidate(); page = next; drawSaved(); });
@@ -169,7 +185,7 @@ export function createHandoffs(openScore: (session: string, source: string) => v
         clear(recent);
         recent.append(el("p", { class: "dim" }, `${recentEvents.length} recent session-bearing observations from the bounded live buffer. Older events require manual IDs.`));
         for (const event of recentEvents.slice(recentPage * 20, recentPage * 20 + 20)) {
-            const row = el("div", { class: "handoff-recent-row" }, el("p", {}, `${event.source} / ${event.session_id} / ${event.time} · ${event.summary || event.name || event.id}`));
+            const row = el("div", { class: "handoff-recent-row" }, el("p", {}, `${event.source} / ${nameOf({ id: event.session_id!, source: event.source })} / ${event.time} · ${event.summary || event.name || event.id}`));
             for (const side of sides)
                 row.append(button(`Use as ${side}`, () => { cancelSide(side); cancelInspect(); fields[side].value = event.id; status.textContent = `${side} ID filled. Look up evidence explicitly before saving.`; }));
             recent.append(row);
@@ -181,6 +197,7 @@ export function createHandoffs(openScore: (session: string, source: string) => v
         invalidate();
         clear(recovery);
         clear(recent);
+        recentEvents = [];
         label.value = "";
         fields.departure.value = "";
         fields.arrival.value = "";
@@ -209,7 +226,24 @@ export function createHandoffs(openScore: (session: string, source: string) => v
     for (const side of sides)
         fields[side].addEventListener("input", () => { cancelSide(side); cancelInspect(); });
     label.addEventListener("input", updateSave);
-    function refresh() { invalidate(); }
+    /** Redraws names only: saved list, map, recent rows and the pending save line. Receipts, fields and pages stay. */
+    function relabel() {
+        const restore = keepControlFocus(root);
+        drawSaved();
+        if (recentEvents.length)
+            drawRecent();
+        updateSave();
+        restore();
+    }
+    function refresh() {
+        invalidate();
+        if (!unsubscribe && directory) { unsubscribe = directory.subscribe(relabel); relabel(); }
+    }
+    function deactivate() {
+        invalidate();
+        unsubscribe?.();
+        unsubscribe = undefined;
+    }
     reload();
-    return { root, refresh };
+    return { root, refresh, deactivate };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { AttentionEvidence, AttentionSession } from "../../api";
-import { DWELL_CAP, buildDwell } from "./model";
+import { DWELL_CAP, buildDwell, liveSessions, sessionKey } from "./model";
 
 const now = Date.parse("2026-10-02T12:00:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -48,11 +48,11 @@ describe("buildDwell", () => {
     );
     expect(more).toBe(0);
     expect(rows.map((r) => r.id)).toEqual(["n", "w"]);
-    expect(rows[0]).toMatchObject({ needs: true, status: "NEEDS YOU", dwellMs: 7 * 60_000, fraction: 0.7, text: "approve Bash", source: "codex" });
+    expect(rows[0]).toMatchObject({ needs: true, status: "needs you", dwellMs: 7 * 60_000, fraction: 0.7, text: "approve Bash", source: "codex" });
     expect(rows[1]).toMatchObject({ needs: false, status: "working", dwellMs: 120_000, fraction: 0.2, text: "edit view.go" });
   });
 
-  test("a bare notification is not a request: no NEEDS YOU, and the uncertainty is shown", () => {
+  test("a bare notification is not a request: no needs-you label, and the uncertainty is shown", () => {
     const { rows } = buildDwell(
       [
         session({
@@ -74,7 +74,7 @@ describe("buildDwell", () => {
       ],
       now,
     );
-    expect(rows[0]).toMatchObject({ id: "f", needs: true, status: "FAILED", hasError: true, text: "StopFailure" });
+    expect(rows[0]).toMatchObject({ id: "f", needs: true, status: "failed", hasError: true, text: "StopFailure" });
   });
 
   test("longest wait first among pending sessions, then most recent activity, then id", () => {
@@ -133,5 +133,24 @@ describe("buildDwell", () => {
     const { rows, more } = buildDwell(many, now);
     expect(rows).toHaveLength(DWELL_CAP);
     expect(more).toBe(3);
+  });
+});
+
+describe("liveSessions", () => {
+  test("applies the freshness rule buildDwell uses", () => {
+    const sessions = [
+      session({ id: "fresh-pending", state: "needs_input", pending: evidence({ at: 60_000, kind: "request" }) }),
+      session({ id: "old-pending", state: "needs_input", pending: evidence({ at: 3 * 24 * 3_600_000, kind: "request" }), last: evidence({ at: 3 * 24 * 3_600_000 }) }),
+      session({ id: "idle-fresh", state: "idle", last: evidence({ at: 60_000 }) }),
+      session({ id: "idle-old", state: "idle", last: evidence({ at: 30 * 60_000 }) }),
+    ];
+    const live = liveSessions(sessions, now);
+    expect(live.map((l) => l.s.id)).toEqual(["fresh-pending", "idle-fresh"]);
+    expect(live[0].since).toBe(now - 60_000);
+    expect(buildDwell(sessions, now).rows.map((r) => r.id).sort()).toEqual(live.map((l) => l.s.id).sort());
+  });
+
+  test("sessionKey scopes by source and native id", () => {
+    expect(sessionKey(session({ id: "a", source: "codex" }))).toBe(JSON.stringify(["codex", "a"]));
   });
 });

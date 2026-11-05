@@ -61,6 +61,7 @@ type Projection struct {
 	traces       map[string]*traceEntry
 	files        map[string]*fileEntry
 	fileSessions map[fileSessionKey]*FileSession
+	worktrees    map[worktreeKey]*worktreeEntry
 	errSigs      map[string]*errorSignatureEntry
 	seen         map[string]string
 	inbox        map[inboxKey]*InboxSession
@@ -101,6 +102,7 @@ func New() *Projection {
 		traces:       map[string]*traceEntry{},
 		files:        map[string]*fileEntry{},
 		fileSessions: map[fileSessionKey]*FileSession{},
+		worktrees:    map[worktreeKey]*worktreeEntry{},
 		errSigs:      map[string]*errorSignatureEntry{},
 		seen:         map[string]string{},
 		inbox:        map[inboxKey]*InboxSession{},
@@ -364,6 +366,7 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 		}
 	}
 
+	ix.foldWorktree(ev)
 	ix.foldErrorSignature(ev)
 	return transitions, true
 }
