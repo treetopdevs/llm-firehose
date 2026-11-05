@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"agentfirehose/internal/adapters/claudecode"
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
@@ -58,6 +60,64 @@ func TestWorktreeLandingNeedsVerifiedSelfMerge(t *testing.T) {
 			path := f.Wt["feat-abandoned"]
 			admitSession(t, engineAdmitter{s.engine}, "sess-ab", path, "2026-10-31T12:10:00Z", "2026-10-31T12:30:00Z")
 			admitBash(t, s, "merge", path, "2026-10-31T12:40:00Z", tc.cmd)
+			refreshObserve(t, s)
+			f.git(f.Main, "", "worktree", "remove", "--force", path)
+			refreshObserve(t, s)
+			row := wtByLabel(t, s, path)
+			reason, _ := row["state_reason"].(string)
+			if row["state"] != "gone" || row["outcome"] != tc.outcome || reason != tc.reason {
+				t.Fatalf("row: %v", row)
+			}
+		})
+	}
+}
+
+// A cancelled `sleep 100 && gh pr merge --squash` never reached the merge, so
+// it is no evidence of landing. This walks the real path: adapter, privacy in
+// Admit, projection, classification. The payload is the captured
+// post_tool_use.json; no interrupted:true capture exists, so only that flag
+// (plus the command and cwd) differs from what Claude Code sent.
+func TestWorktreeInterruptedMergeIsNotLanded(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		interrupted     bool
+		outcome, reason string
+	}{
+		{"interrupted", true, "abandoned", ""},
+		{"completed", false, "landed", "pr_merge_mark"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWorktreeGitFixture(t)
+			s, _ := newWorktreeServer(t, "full")
+			registerFixture(t, s, f.Main)
+			path := f.Wt["feat-abandoned"]
+			admitSession(t, engineAdmitter{s.engine}, "sess-ab", path, "2026-10-31T12:10:00Z", "2026-10-31T12:30:00Z")
+
+			data, err := os.ReadFile("../adapters/claudecode/testdata/post_tool_use.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			payload["cwd"] = path
+			payload["tool_input"].(map[string]any)["command"] = "sleep 100 && gh pr merge --squash"
+			payload["tool_response"].(map[string]any)["interrupted"] = tc.interrupted
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev, err := claudecode.Parse(raw)
+			if err != nil || ev == nil {
+				t.Fatalf("adapter: %v %v", ev, err)
+			}
+			when := time.Date(2026, 10, 31, 12, 40, 0, 0, time.UTC)
+			ev.Time, ev.CaptureTime = when, &when
+			if _, err := s.engine.Admit(context.Background(), *ev); err != nil {
+				t.Fatal(err)
+			}
+
 			refreshObserve(t, s)
 			f.git(f.Main, "", "worktree", "remove", "--force", path)
 			refreshObserve(t, s)

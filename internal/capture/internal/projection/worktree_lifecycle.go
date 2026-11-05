@@ -39,7 +39,8 @@ func lifecycleKinds(raw string) []string {
 // selfMerge is stricter: the payload's last command is a plain `gh pr merge`
 // without a PR selector (so gh merges the PR of the current branch, i.e. of the
 // worktree that issued it) and without --auto, and the hook fired, which for
-// PostToolUse means the whole command exited 0.
+// PostToolUse means the whole command exited 0. The caller rejects interrupted
+// observations before reaching this parser, since their commands did not finish.
 func lifecycle(raw string) (kinds []string, selfMerge bool) {
 	if !strings.Contains(raw, "git") && !strings.Contains(raw, "gh") {
 		return nil, false
