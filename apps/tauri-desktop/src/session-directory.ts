@@ -2,6 +2,7 @@
 // /sessions and /attention at different times; the directory remembers them by
 // source and id so a bare ref (scope crumb, lens head) can be named without a
 // fetch of its own. A load never overwrites what was remembered after it began.
+import { sessionRefLabel } from "./format";
 import type { SessionLike } from "./format";
 
 export type SessionRefLike = { id: string; source?: string };
@@ -35,14 +36,15 @@ export function createSessionDirectory(
   function put(s: SessionLike, gen: number): boolean {
     const k = keyOf(s.source, s.id);
     const prev = entries.get(k);
-    // An entry without first_time (an /attention row) never erases one a /sessions row supplied.
+    // An entry without first_time or title (an /attention row) never erases one a /sessions row supplied.
     const merged = { ...s };
-    if (merged.first_time === undefined && prev?.s.first_time !== undefined) merged.first_time = prev.s.first_time;
+    for (const f of ["first_time", "title"] as const)
+      if (merged[f] === undefined && prev?.s[f] !== undefined) merged[f] = prev.s[f];
     entries.set(k, { s: merged, gen });
     let set = byId.get(s.id);
     if (!set) byId.set(s.id, (set = new Set()));
     set.add(s.source);
-    return !prev || !same(prev.s, s);
+    return !prev || !same(prev.s, merged);
   }
 
   function lookup(ref: SessionRefLike): SessionLike | undefined {
@@ -68,7 +70,8 @@ export function createSessionDirectory(
       return () => void subs.delete(fn);
     },
     ensure(ref) {
-      if (!loader || loading || lookup(ref)) return;
+      const known = lookup(ref);
+      if (!loader || loading || (known && sessionRefLabel(ref, known).resolved)) return;
       const t = now();
       if (t - lastStart < COOLDOWN_MS) return;
       lastStart = t;

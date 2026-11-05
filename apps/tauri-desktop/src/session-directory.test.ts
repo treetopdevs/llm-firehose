@@ -116,4 +116,22 @@ describe("session directory", () => {
     expect(d.lookup({ id: A, source: "codex" })?.title).toBe("Fix login bug");
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  test("an entry without a title neither notifies nor erases the one that had it", () => {
+    const d = createSessionDirectory();
+    d.remember([s()]);
+    const fn = vi.fn();
+    d.subscribe(fn);
+    d.remember([s({ title: undefined })]);
+    expect(fn).not.toHaveBeenCalled();
+    expect(d.lookup({ id: A, source: "codex" })?.title).toBe("Fix login bug");
+  });
+
+  test("ensure still loads for an entry that nothing names", async () => {
+    const d = createSessionDirectory(async () => [s()], () => 0);
+    d.remember([s({ title: undefined, agent: "codex", cwd: undefined, repo: undefined })]);
+    d.ensure({ id: A, source: "codex" });
+    await flush();
+    expect(d.lookup({ id: A, source: "codex" })?.title).toBe("Fix login bug");
+  });
 });
