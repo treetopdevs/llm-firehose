@@ -69,7 +69,7 @@ export const HATCH = { size: 6, d: "M 0 6 L 6 0" } as const;
 export function rejoinPath(x0: number, y: number, rx: number, baseY: number): string {
   return `M ${x0} ${y} C ${rx} ${y}, ${rx} ${y}, ${rx} ${baseY}`;
 }
-export const DASH = { tail: "4 3", landgap: "2 3", unknownRejoin: "3 3", flat: "2 3" } as const;
+export const DASH = { tail: "4 3", unknownRejoin: "3 3", flat: "2 3" } as const;
 
 export interface GlyphEntry {
   glyph?: string;
@@ -144,7 +144,6 @@ export const GLYPH_GROUPS: GlyphGroup[] = [
       { swatch: { kind: "dash", id: "tail" }, name: "dashed tail", meaning: "An open worktree, quiet since its last activity.", hook: ".project-tail" },
       { swatch: { kind: "dash", id: "flat" }, name: "dotted run", meaning: "No divergence from the main line was observed.", hook: ".project-lane.flat" },
       { swatch: { kind: "dash", id: "hatched" }, name: "hatched", meaning: "State unknown: the span is only approximate.", hook: ".project-lane.hatched" },
-      { swatch: { kind: "dash", id: "landgap" }, name: "land gap", meaning: "Reserved for a daemon-verified landing time after the last activity; none is drawn today.", hook: ".project-landgap" },
     ],
   },
   {
@@ -204,9 +203,6 @@ export function swatchSvg(entry: GlyphEntry): SVGElement | null {
       break;
     case "tail":
       svg.append(line(DASH.tail));
-      break;
-    case "landgap":
-      svg.append(line(DASH.landgap));
       break;
     case "flat":
       svg.append(line(DASH.flat));

@@ -83,7 +83,7 @@ describe("table integrity", () => {
     expect(has("rejoin", "rejoin")).toBe(true);
     expect(has("rejoin", LANDED_UNKNOWN)).toBe(true);
     for (const b of [BADGE.ahead, BADGE.behind, BADGE.dirty]) expect(has("badges", b), b).toBe(true);
-    for (const d of ["solid", "tail", "flat", "hatched", "landgap"]) expect(has("lane-styles", d), d).toBe(true);
+    for (const d of ["solid", "tail", "flat", "hatched"]) expect(has("lane-styles", d), d).toBe(true);
     for (const m of Object.values(SESSION_STATE_MARKS)) expect(has("session-state", m), m).toBe(true);
   });
 });
@@ -216,9 +216,7 @@ describe("geometry", () => {
     if (flat) expect(flat.getAttribute("stroke-dasharray")).toBe(DASH.flat);
     const tail = panel.root.querySelector(".project-tail");
     if (tail) expect(tail.getAttribute("stroke-dasharray")).toBe(DASH.tail);
-    const gap = panel.root.querySelector(".project-landgap");
-    if (gap) expect(gap.getAttribute("stroke-dasharray")).toBe(DASH.landgap);
-    for (const [id, dash] of [["tail", DASH.tail], ["landgap", DASH.landgap], ["flat", DASH.flat], ["unknown_rejoin", DASH.unknownRejoin]] as const) {
+    for (const [id, dash] of [["tail", DASH.tail], ["flat", DASH.flat], ["unknown_rejoin", DASH.unknownRejoin]] as const) {
       const e = GLYPH_GROUPS.flatMap((g) => g.entries).find((x) => x.swatch?.kind === "dash" && x.swatch.id === id)!;
       expect(e, id).toBeTruthy();
       expect(swatchSvg(e)!.querySelector("[stroke-dasharray]")!.getAttribute("stroke-dasharray")).toBe(dash);
@@ -299,10 +297,17 @@ describe("no stray vocabulary literals", () => {
 });
 
 describe("styles.css hooks", () => {
+  test("no land gap survives: no landing time exists to draw one from (slice 17)", () => {
+    const css = readFileSync(join(process.cwd(), "src/styles.css"), "utf8");
+    expect(css).not.toContain("landgap");
+    expect(Object.keys(DASH)).not.toContain("landgap");
+    expect(allEntries.map((e) => e.name)).not.toContain("land gap");
+  });
+
   test("the lane hook selectors appear in the stylesheet", () => {
     const css = stripComments(readFileSync(join(process.cwd(), "src/styles.css"), "utf8"));
     const selectors = parseRules(css).map((r) => r.selector).join("\n");
-    for (const hook of [".project-lane.flat", ".project-rejoin", ".project-landgap", ".project-tail", ".project-lane.hatched"]) {
+    for (const hook of [".project-lane.flat", ".project-rejoin", ".project-tail", ".project-lane.hatched"]) {
       expect(selectors, hook).toContain(hook);
     }
     for (const e of allEntries) if (e.hook) expect(css, e.hook).toContain(e.hook);

@@ -83,6 +83,8 @@ describe("focus visibility", () => {
   test.each([
     [".feed-row:focus-visible", "outline"],
     [".session-item:focus-visible", "outline"],
+    [".worktree-item:focus-visible", "outline"],
+    [".sessions-back:focus-visible", "outline"],
     [".project-bead:focus-visible", "stroke"],
     [".project-lane:focus-visible .project-hit", "stroke"],
     [".fleet-lane-row:focus-visible .fleet-lane-focus", "stroke"],

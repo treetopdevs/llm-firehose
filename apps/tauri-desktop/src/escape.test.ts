@@ -182,3 +182,13 @@ test('afterAscend receives the pre-ascend scope; a session-only scope reaches fl
   expect(ascentTarget(prev, alt, active)).toBe('fleet');
   expect(store.ascend()).toBeNull();
 });
+
+test('Escape from a selected worktree widens to the list only when the panel says it will draw one', () => {
+  const pw = { window: 'live' as const, project: 'p', worktree: 'w' };
+  expect(ascentTarget(pw, 'project', 'sessions', true)).toBe('stay');
+  expect(ascentTarget(pw, 'project', 'sessions', false)).toBe('project');
+  expect(ascentTarget(pw, 'project', 'sessions')).toBe('project');
+  expect(ascentTarget({ window: 'live', project: 'p' }, 'fleet', 'sessions', true)).toBe('fleet');
+  expect(ascentTarget({ ...pw, session: { id: 's' } }, 'worktree', 'sessions', true)).toBe('stay');
+  expect(ascentTarget({ ...pw, session: { id: 's' } }, 'worktree', 'session', true)).toBe('sessions');
+});

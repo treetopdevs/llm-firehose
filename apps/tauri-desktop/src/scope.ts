@@ -13,6 +13,7 @@
 //   Session altitude treats live as the whole session and ignores the span.
 // - `cell` is a deliberate escape hatch: SessionSummary carries no
 //   repo_id/worktree_id, so the sessions matrix selects by CellScope instead.
+import type { WorktreeLifetimeView } from './api';
 import type { CellScope } from './ui/workspace/model';
 
 export type ScopeWindow = { from: number; to: number } | 'live';
@@ -64,6 +65,8 @@ export interface ScopeResolver {
   knows?(scope: Scope): boolean;
   /** Set when membership is a capped sample: `known` of `total` sessions are listed. */
   partial?(scope: Scope): { known: number; total: number } | undefined;
+  /** The lifetime rows of scope.project, whatever worktree is selected; undefined when none are held. Shares matcher() and labels()'s source, so a listed row always resolves. */
+  lifetimes?(scope: Scope): readonly WorktreeLifetimeView[] | undefined;
   labels(scope: Scope): { project?: string; worktree?: string };
 }
 
@@ -279,6 +282,7 @@ function composeResolvers(p: ScopeResolver, f: ScopeResolver): ScopeResolver {
     },
     knows: (sc) => (p.knows?.(sc) ?? true) || (f.knows?.(sc) ?? false),
     refresh: (signal) => Promise.all([p.refresh?.(signal), f.refresh?.(signal)]).then(() => undefined),
+    lifetimes: (sc) => p.lifetimes?.(sc) ?? f.lifetimes?.(sc),
     labels(sc) {
       const out: { project?: string; worktree?: string } = { ...f.labels(sc) };
       for (const [k, v] of Object.entries(p.labels(sc)) as Array<['project' | 'worktree', string | undefined]>) {

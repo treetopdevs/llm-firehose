@@ -644,6 +644,8 @@ test("graph round trip: a second project scope loads that repository; sessions f
   b.scope.narrow({ project: "r1" });
   await vi.waitFor(() => expect(b.urls.filter((u) => u.includes("repo_id=r1")).length).toBeGreaterThan(1));
   b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelector(".worktree-item")?.getAttribute("data-wt")).toBe("wt-r1"));
+  document.querySelector<HTMLElement>(".worktree-item")!.click();
   await vi.waitFor(() => expect([...document.querySelectorAll(".session-item")].map((i) => i.getAttribute("data-id"))).toEqual(["s-in"]));
 });
 
@@ -755,6 +757,43 @@ test("lane click scopes the sessions list", async () => {
   expect(document.querySelector(".scope-crumb")?.textContent).toContain("alpha-open");
   expect(document.querySelector(".scope-crumb")?.textContent).not.toMatch(/wt-open/);
   expect(b.urls.some((u) => new URL(u).pathname === "/workspace-graph")).toBe(false);
+});
+
+test("Escape from a lane's sessions widens to the worktree list, then to Fleet", async () => {
+  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow("s-o1"), sessionRow("s-x")] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  document.querySelector<SVGGElement>(".project-lane")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(1));
+  document.querySelector<HTMLElement>(".session-item")!.focus();
+  esc();
+  expect(b.scope.get().worktree).toBeUndefined();
+  expect(b.scope.get().project).toBe("repoA");
+  expect(b.active()).toBe("sessions");
+  await vi.waitFor(() => expect(document.querySelectorAll(".worktree-item")).toHaveLength(1));
+  expect(document.activeElement).toBe(document.querySelector(".worktree-item"));
+  expect(document.querySelector(".scope-crumb")?.textContent).not.toContain("alpha-open");
+  esc();
+  expect(b.scope.get().project).toBeUndefined();
+  expect(b.active()).toBe("fleet");
+});
+
+test("Escape from a selected worktree of a project with no rows still goes to Project", async () => {
+  const b = await boot({ worktrees: [], sessions: [sessionRow("s-x")] });
+  b.scope.narrow({ project: "nobody", worktree: "ghost" });
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(1));
+  esc();
+  expect(b.scope.get()).toMatchObject({ project: "nobody" });
+  expect(b.active()).toBe("project");
+});
+
+test("Escape with a cell in scope never promises a list the panel will not draw", async () => {
+  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow("s-o1")] });
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  b.scope.narrow({ project: "repoA", worktree: "wt-open", cell: { where: "w", agent: "a", label: "l" } });
+  b.nav("sessions").click();
+  esc();
+  expect(b.active()).toBe("project");
 });
 
 test("bead click opens Score", async () => {
@@ -953,7 +992,7 @@ test("Fleet descents carry the window; row, fork and need open project, sessions
   expect(b.scope.get().session).toEqual({ id: "s-n1", source: "codex" });
 });
 
-test("Escape from Sessions reached by a Fleet fork returns to Project, then Fleet (not stuck on Sessions)", async () => {
+test("Escape from Sessions reached by a Fleet fork widens to the worktree list, then Fleet (not stuck on Sessions)", async () => {
   const b = await boot({ worktrees: twoRepos() });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
   await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
@@ -961,9 +1000,10 @@ test("Escape from Sessions reached by a Fleet fork returns to Project, then Flee
   expect(b.active()).toBe("sessions");
   expect(b.scope.get().worktree).toBeDefined();
   expect(esc().defaultPrevented).toBe(true);
-  expect(b.active()).toBe("project");
+  expect(b.active()).toBe("sessions");
   expect(b.scope.get().worktree).toBeUndefined();
   expect(b.scope.get().project).toBeDefined();
+  await vi.waitFor(() => expect(document.querySelector(".worktree-item")).not.toBeNull());
   expect(esc().defaultPrevented).toBe(true);
   expect(b.active()).toBe("fleet");
   expect(b.scope.get().project).toBeUndefined();

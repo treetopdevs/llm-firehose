@@ -437,7 +437,7 @@ const ascendOnEscape = createEscapeHandler({
   activePanel: () => (active === "session" && !sessionPanel.escapes() ? "session-nonscope" : active),
   scopePanels: SCOPE_PANELS,
   afterAscend: (alt, from, prev) => {
-    const target = ascentTarget(prev, alt, from);
+    const target = ascentTarget(prev, alt, from, sessionsPanel.hasWorktreeList());
     if (target !== "stay") show(target);
     else if (from === "sessions") void sessionsPanel.refresh();
   },
