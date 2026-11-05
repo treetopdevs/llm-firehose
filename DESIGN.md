@@ -177,7 +177,7 @@ This system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI t
 
 **Key Characteristics:**
 - Monospace for data, sans for prose; tabular numerals on clocks and ranges.
-- Flat surfaces, 1px hairlines; shadows only on the two graph popovers (search results, overflow menu), the selected workspace pill and the onboarding scrim.
+- Flat surfaces, 1px hairlines; shadows only on the transient popovers (graph search results, graph overflow menu, actions menu), the selected workspace pill, the modal scrims, focus rings that cannot be outlines and the fleet change flash.
 - Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).
 - Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.
 - Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.
@@ -314,11 +314,11 @@ The onboarding sheet's `h2` declares no size and keeps the browser's default `h2
 
 ## 4. Elevation
 
-The system is flat. Depth is conveyed by hairlines and by two tonal steps (`--bg` page, `--bg-panel` controls and rows, `--bg-hover` on hover), never by shadow. Borders also encode state on fleet rows: solid for a known unit, dashed for fog (no recent evidence), dotted for a unit with no repository, `--accent` for the current checkout, `--err` for a failed one. The only shadows are the onboarding scrim (`color-mix(in srgb, var(--bg) 86%, transparent)`), the graph's search results and overflow menu (`0 12px 32px` of `--bg` at 75%), a soft `drop-shadow` of `--selected` on the selected workspace pill, and focus rings drawn as 2px box-shadows where an outline would box an SVG group.
+The system is flat. Depth is conveyed by hairlines and by two tonal steps (`--bg` page, `--bg-panel` controls and rows, `--bg-hover` on hover), never by shadow. Borders also encode state on fleet rows: solid for a known unit, dashed for fog (no recent evidence), dotted for a unit with no repository, `--accent` for the current checkout, `--err` for a failed one. The only shadows are the modal scrims (`color-mix(in srgb, var(--bg) N%, transparent)` at 86% for onboarding, 72% for the keys legend and 70% for the prune confirmation), the graph's search results and overflow menu (`0 12px 32px` of `--bg` at 75%), the actions menu (`0 12px 32px` of `--bg` at 85%), a soft `drop-shadow` of `--selected` on the selected workspace pill, focus rings drawn as 2px box-shadows on the graph canvas and map strip, and the fleet row change flash.
 
 ### Shadow Vocabulary
-- **Popover lift** (`box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 75%, transparent)`): only for a transient list floating over the graph (search results, the overflow menu).
-- **Ring focus** (`box-shadow: inset 0 0 0 2px var(--selected)` on the graph canvas, `0 0 0 2px var(--selected)` on the map strip): focus where an outline cannot wrap the target. Outline is preferred everywhere an outline fits.
+- **Popover lift** (`box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 75%, transparent)`): only for a transient list floating over the graph (search results, the overflow menu). The actions menu over Fleet and Project uses the same offset at 85%.
+- **Ring focus** (`box-shadow: inset 0 0 0 2px var(--selected)` on the graph canvas, `0 0 0 2px var(--focus)` on the map strip): focus where an outline cannot wrap the target. Outline is preferred everywhere an outline fits.
 - **Change flash** (`0 0 0 2px var(--text-dim)` fading to transparent): the fleet row change animation.
 
 ### Named Rules
@@ -392,7 +392,7 @@ Identity-hue exception: the locally set property `--hue` (set per element in `se
 Literal allowlist: `OFFLIMITS_TS` in `tokens.test.ts` exempts only `ui/graph/names.ts`, which holds the four pinned graph state values the parity test compares against `:root`. Every other TypeScript file is covered by the literal guard and the accent policy.
 
 ### Onboarding sheet
-The only modal: a fixed overlay of `--bg` at 86% over the app, with a centred `--bg-panel` sheet, 10px radius, `--border`, `1.4rem` padding, `min(520px, 90vw)` wide, and a `--text` sans `h2`.
+One of three modals, with the keys legend (`--bg` at 72%) and the prune confirmation (`--bg` at 70%): a fixed overlay of `--bg` at 86% over the app, with a centred `--bg-panel` sheet, 10px radius, `--border`, `1.4rem` padding, `min(520px, 90vw)` wide, and a `--text` sans `h2`.
 
 ## 6. Do's and Don'ts
 

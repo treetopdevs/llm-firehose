@@ -344,8 +344,12 @@ export function createSessions(
     onActivate(
       item,
       () => {
-        onSelectSession(s.source ? { id: s.id, source: s.source } : { id: s.id });
+        const ref = s.source ? { id: s.id, source: s.source } : { id: s.id };
+        onSelectSession(ref);
+        // /sessions aggregates sources under one id and s.source is only the first
+        // seen, so the history stays unfiltered while tracking the scope's identity.
         void openSession(s.id);
+        historyRef = ref;
       },
       { self: true },
     );
