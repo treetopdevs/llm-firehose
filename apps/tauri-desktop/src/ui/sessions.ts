@@ -35,6 +35,8 @@ export interface WorktreeOptions {
 }
 
 const REFRESH_MS = 5000;
+/** A refresh request that has not settled by now is abandoned, so the periodic poll is never starved by a hung one. */
+const REQUEST_DEADLINE_MS = 15_000;
 
 // Session explorer: a small-multiples band from /sessions (one row per
 // session, same encoding every row), drill-down via /sessions/{id}. Who needs
@@ -366,7 +368,8 @@ export function createSessions(
     try {
       const now = Date.now();
       const scoped = !!(store.get().worktree || store.get().project);
-      const [list, inbox] = await Promise.allSettled([sessions(), attention(), scoped ? store.resolver()?.refresh?.() : undefined]);
+      const signal = AbortSignal.timeout(REQUEST_DEADLINE_MS);
+      const [list, inbox] = await Promise.allSettled([sessions(signal), attention(signal), scoped ? store.resolver()?.refresh?.() : undefined]);
       // A newer refresh started while these requests were in flight: it owns the DOM and the maps.
       if (gen !== refreshGen) return;
       if (list.status === "rejected") throw list.reason;

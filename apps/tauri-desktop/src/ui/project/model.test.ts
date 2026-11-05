@@ -217,6 +217,16 @@ describe("layoutLanes", () => {
     for (const g of [labelled, bare]) expect(`${g.label}${g.ariaLabel}${g.tooltip}`).not.toContain(".git");
   });
 
+  test("the tooltip keeps the full worktree path so same-named folders stay distinguishable", () => {
+    const a = layoutLanes([row({ worktree_id: "wt-a", label: "/w/one/app", first_time: iso(NOW - D) })], ["wt-a"], live, X0, X1, NOW)[0];
+    const b = layoutLanes([row({ worktree_id: "wt-b", label: "/w/two/app", first_time: iso(NOW - D) })], ["wt-b"], live, X0, X1, NOW)[0];
+    expect(a.label).toBe(b.label);
+    expect(a.tooltip.split("\n")).toContain("path: /w/one/app");
+    expect(b.tooltip.split("\n")).toContain("path: /w/two/app");
+    const bare = layoutLanes([row({ worktree_id: "/x/app/.git", first_time: iso(NOW - D) })], ["/x/app/.git"], live, X0, X1, NOW)[0];
+    expect(bare.tooltip.split("\n")).toContain("path: /x/app");
+  });
+
   test("label column leaves a gutter before x0", () => {
     expect(LABEL_PAD).toBeGreaterThanOrEqual(8);
     for (const x0 of [100, 170, 300]) {
