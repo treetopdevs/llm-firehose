@@ -83,7 +83,7 @@ A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
 for non-terminal users. Views are altitudes with one shared scope (project,
 worktree, session, time window), Escape ascends one altitude: **Fleet** (one
 row per repository: forks as state glyphs, needs-you units with dwell, event
-sparkline; map, lanes, airspace and matrix encodings), **Project** (the landing
+sparkline; map, dwell, matrix, lanes and airspace encodings), **Project** (the landing
 view: worktree lanes leaving and rejoining the default branch, sessions as
 beads, commits as ticks, the window as a scrubber), **Sessions** and **Score**.
 Lenses: the live feed, the attention strip and inbox, a read-only workspace
@@ -141,8 +141,9 @@ Packaging for macOS, Windows, and Linux is validated in CI
 feed are documented in the [release runbook](docs/release-runbook.md).
 
 See the [attention guide](docs/attention.md) for signal rules, capture limitations,
-and notification behavior. Live is the landing view; the attention strip remains
-visible across the existing activity views.
+and notification behavior. Project is the landing view (Fleet when several
+repositories are captured); the attention strip remains visible across the
+existing activity views.
 
 ## Supported sources
 

@@ -29,6 +29,20 @@ describe("lanesStrip", () => {
     expect(svg.textContent).toContain("<img src=x onerror=alert(1)>");
   });
 
+  test("keyboard lanes have an inset focus perimeter inside the SVG viewport", () => {
+    const canvas = lanesStrip(lanesOf(events), NOW, W, 600, () => {});
+    for (const row of canvas.querySelectorAll(".fleet-lane-row")) {
+      const hit = row.querySelector(".lane-hit")!;
+      const ring = row.querySelector(".fleet-lane-focus")!;
+      expect(ring).not.toBeNull();
+      expect(Number(ring.getAttribute("x"))).toBe(1);
+      expect(Number(ring.getAttribute("y"))).toBe(Number(hit.getAttribute("y")) + 1);
+      expect(Number(ring.getAttribute("width"))).toBe(598);
+      expect(Number(ring.getAttribute("height"))).toBe(Number(hit.getAttribute("height")) - 2);
+      expect(row.lastElementChild).toBe(ring);
+    }
+  });
+
   test("open spans carry class open", () => {
     const lanes = lanesOf([ev({ id: "1", session_id: "s1", call_id: "c1", time: iso(NOW - 20_000), payload: { phase: "start" } })]);
     const svg = lanesStrip(lanes, NOW, W, 600, () => {});
