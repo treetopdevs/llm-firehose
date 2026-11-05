@@ -515,14 +515,19 @@
         "purpose": "Graph search results and overflow menu floating over the canvas."
       },
       {
+        "name": "action-menu-lift",
+        "value": "0 12px 32px color-mix(in srgb, var(--bg) 85%, transparent)",
+        "purpose": "Actions menu floating over Fleet and Project."
+      },
+      {
         "name": "ring-focus",
         "value": "inset 0 0 0 2px var(--selected)",
-        "purpose": "Graph canvas and map strip focus, where an outline cannot wrap the target. Elsewhere focus is a 2px var(--focus) outline."
+        "purpose": "Graph canvas and map strip focus, where an outline cannot wrap the target; the map strip draws it in var(--focus). Elsewhere focus is a 2px var(--focus) outline."
       },
       {
         "name": "overlay-scrim",
         "value": "color-mix(in srgb, var(--bg) 86%, transparent)",
-        "purpose": "Onboarding overlay backdrop; the only modal."
+        "purpose": "Onboarding overlay backdrop, one of three modal scrims; the keys legend uses 72% and the prune confirmation 70%."
       }
     ],
     "motion": [
@@ -628,11 +633,11 @@
     "overview": "**Creative North Star: \"The Operations Board\"**\n\nAgent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense, flat and dark, and colour is spent on state, not decoration. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, \"unknown\"), never as a guess.\n\nOne token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for location, pressed state and the primary action, `--needs` for \"needs you\", `--selected` for selection in the graph and session tabs, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.\n\nProduct intent (register, users, tone) lives in [PRODUCT.md](PRODUCT.md).\n\nThis system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI tiles, gradient accents, identical card grids), the observability \"dark blue with neon\" skin, glassmorphism and gradient text, chat-app friendliness (avatars, bubbles, emoji status), and any surface that identifies a thing by its hash when a human name exists.",
     "keyCharacteristics": [
       "Monospace for data, sans for prose; tabular numerals on clocks and ranges.",
-      "Flat surfaces, 1px hairlines; shadows only on the two graph popovers (search results, overflow menu), the selected workspace pill and the onboarding scrim.",
+      "Flat surfaces, 1px hairlines; shadows only on the transient popovers (graph search results, graph overflow menu, actions menu), the selected workspace pill, the modal scrims, focus rings that cannot be outlines and the fleet change flash.",
       "Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).",
       "Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.",
       "Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.",
-      "Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. The matrix cells, dwell rows, lane rows, fleet lane rows and score tracks now draw a `--focus` indicator (tested); feed rows and session items take focus but have no styled focus-visible yet and fall back to the browser ring."
+      "Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. One global `:focus-visible` rule in `styles.css` draws a 2px `--focus` indicator on every focusable surface, including feed rows, session items and Project beads (the graph keeps `--selected`)."
     ],
     "rules": [
       {
