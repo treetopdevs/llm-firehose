@@ -140,7 +140,8 @@ func (ix *Projection) foldWorktree(ev event.Event) {
 	for _, p := range EventActivityPaths(ev) {
 		w.addPath(p)
 	}
-	if ev.Source == "claude-code" && ev.Category == event.CategoryShell && strings.HasPrefix(ev.Name, "PostToolUse:") && ev.Raw != "" {
+	if ev.Source == "claude-code" && ev.Category == event.CategoryShell && strings.HasPrefix(ev.Name, "PostToolUse:") && ev.Raw != "" && ev.Payload["interrupted"] != true {
+		// An interrupted command did not run to its end, so its text proves nothing.
 		kinds, selfMerge := lifecycle(ev.Raw)
 		for _, kind := range kinds {
 			w.addMark(WorktreeMark{Kind: kind, SessionID: ev.SessionID, Time: ev.Time, EventID: ev.ID})
