@@ -57,3 +57,10 @@ nesting, scalar types, and optional-field presence are unchanged.
 `PreCompact` is mapped by the parser (inherited from the daemon-desktop
 branch) but has no captured fixture yet; capture one before extending its
 payload beyond the current metadata-only mapping.
+
+## Derived lifecycle cases
+
+Bash lifecycle-verb cases (`git commit`, `git push`, worktree and PR commands) have no
+fixtures of their own: tests derive them at test time from the real
+`post_tool_use_bash.json` / `pre_tool_use_bash.json` shapes by replacing only
+`hook_event_name` and `tool_input.command`.

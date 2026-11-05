@@ -163,8 +163,13 @@ func TestEngineWorktreesBalancedPolicy(t *testing.T) {
 		keys[r.WorktreeID] = true
 		signal += r.SignalEvents
 		meta += r.MetaEvents
-		if len(r.Marks) != 0 || r.MarksTotal != 0 {
-			t.Errorf("%s has marks in balanced mode: %d/%d", r.WorktreeID, len(r.Marks), r.MarksTotal)
+		// Summary verbs survive balanced redaction as display-only marks.
+		wantMarks := map[string]int{sha("/work/alpha"): 3, sha("/work/alpha-feat"): 4, sha("/work/beta-fix"): 3}[r.WorktreeID]
+		if r.MarksTotal != wantMarks || len(r.Marks) != wantMarks || r.Marks == nil {
+			t.Errorf("%s balanced marks = %d/%d, want %d", r.WorktreeID, len(r.Marks), r.MarksTotal, wantMarks)
+		}
+		if !r.LastCommitMark.IsZero() || !r.LastMergeMark.IsZero() {
+			t.Errorf("%s balanced marks must be display-only: %v %v", r.WorktreeID, r.LastCommitMark, r.LastMergeMark)
 		}
 		if r.Marks == nil || r.Sessions == nil || r.Paths == nil {
 			t.Errorf("%s has nil slice", r.WorktreeID)

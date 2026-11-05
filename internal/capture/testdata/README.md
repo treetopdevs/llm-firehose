@@ -55,3 +55,15 @@ a quoted `echo`, `ls`, `git status`, Pre events, a failure event, a path over 24
 runes, a command over 240 runes, and a meta event before the first signal event.
 It was produced by a throwaway deterministic generator (not committed); the test
 caps it at 300 lines and 150 KB.
+Ten shell summaries (all `ran`; `will run`, failed and interrupted carry none) carry the adapter's
+lifecycle verb suffix, e.g. `ran shell tool: git commit`; they were refreshed with
+a line-scoped edit of the `summary` value only (every other byte unchanged), using
+what `claudecode.Parse` makes of each record's own `raw`. The suffix is what lets
+worktree marks survive balanced privacy.
+
+`worktrees_balanced.ndjson` is the production balanced redaction
+(`privacy.Redact(ev, ModeBalanced)`) of every `worktrees_full.ndjson` record: no
+`raw`, truncated strings, digested paths and ids. It is generated, not hand-edited:
+`UPDATE_WORKTREE_FIXTURES=1 go test ./internal/capture -run TestWorktreeBalancedFixtureIsRedactFullFixture`
+rewrites it, and the same test (without the variable) fails if it drifts from the
+full fixture. If the full fixture changes, regenerate this one.
