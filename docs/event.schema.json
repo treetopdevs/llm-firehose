@@ -122,6 +122,10 @@
       "type": "string",
       "description": "Canonical local path of the containing Git worktree root when observable. Added additively within schema version 1."
     },
+    "root_alias": {
+      "type": "string",
+      "description": "The workspace root as spelled through cwd, present only when a symlink makes that spelling differ from the canonical root. Dropped in minimal mode. Added additively within schema version 1."
+    },
     "jj_repo_id": {
       "type": "string",
       "description": "JJ-only identity namespace: jj: followed by the canonical shared .jj/repo directory, or its sha256 hex digest outside full mode. Additive schema version 1 field; does not change Git repo_id."

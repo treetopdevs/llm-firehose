@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"unicode/utf8"
 
 	"agentfirehose/internal/event"
 )
@@ -57,6 +58,13 @@ func Redact(ev event.Event, mode Mode) event.Event {
 	out.WorktreeID = digestPath(out.WorktreeID)
 	out.JJRepoID = digestPath(out.JJRepoID)
 	out.JJWorkspaceID = digestPath(out.JJWorkspaceID)
+	// The alias stays readable in balanced mode, because digesting it would
+	// remove the only thing it is for. A truncated prefix would match the wrong
+	// paths, so one over the limit is dropped. Minimal mode has no readable paths
+	// to match it against.
+	if mode == ModeMinimal || utf8.RuneCountInString(out.RootAlias) > balancedMaxRunes {
+		out.RootAlias = ""
+	}
 	return out
 }
 

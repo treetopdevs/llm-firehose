@@ -5,6 +5,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"agentfirehose/internal/event"
@@ -21,6 +22,9 @@ func Enrich(ev event.Event) event.Event {
 // caller-supplied identity may be preserved on ev, but is never a discovery hint.
 func EnrichWithRoot(ev event.Event) (event.Event, string) {
 	observedRoot := ""
+	// Only a local observation may set the alias, so a caller cannot use the
+	// field to persist text.
+	ev.RootAlias = ""
 	repoID, worktreeID := Observe(ev.CWD)
 	if repoID != "" && worktreeID != "" {
 		ev.RepoID = repoID
@@ -32,6 +36,12 @@ func EnrichWithRoot(ev event.Event) (event.Event, string) {
 		ev.JJWorkspaceID = workspaceID
 		observedRoot = strings.TrimPrefix(workspaceID, "jj:")
 	}
+	// Activity maps the alias onto the Git worktree when there is one.
+	aliasRoot := observedRoot
+	if worktreeID != "" && repoID != "" {
+		aliasRoot = worktreeID
+	}
+	ev.RootAlias = rootAlias(ev.CWD, aliasRoot)
 	return ev, observedRoot
 }
 
@@ -106,4 +116,54 @@ func canonical(path string) string {
 		return filepath.Clean(resolved)
 	}
 	return path
+}
+
+// rootAlias returns root as spelled through cwd, or "" when that spelling is
+// the canonical root or cannot be derived. A symlink below the root leaves no
+// spelling of the root in cwd, and matching text alone can name another
+// directory, so the candidate must itself resolve to root.
+func rootAlias(cwd, root string) string {
+	if root == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(root, canonical(abs))
+	if err != nil {
+		return ""
+	}
+	fold := runtime.GOOS == "windows"
+	alias := abs
+	if rel != "." {
+		var ok bool
+		if alias, ok = trimPathSuffix(abs, string(filepath.Separator)+rel, fold); !ok {
+			return ""
+		}
+	}
+	if samePath(alias, root, fold) || !samePath(canonical(alias), root, fold) {
+		return ""
+	}
+	return alias
+}
+
+// trimPathSuffix removes suffix from path. Fold matches Windows, where
+// EvalSymlinks normalises letter case.
+func trimPathSuffix(path, suffix string, fold bool) (string, bool) {
+	if len(suffix) > len(path) {
+		return "", false
+	}
+	cut := len(path) - len(suffix)
+	if !samePath(path[cut:], suffix, fold) {
+		return "", false
+	}
+	return path[:cut], true
+}
+
+func samePath(a, b string, fold bool) bool {
+	if fold {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
