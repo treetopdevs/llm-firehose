@@ -48,7 +48,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             triple: aarch64-apple-darwin
           - os: windows-2022
             triple: x86_64-pc-windows-msvc
@@ -88,7 +88,9 @@ jobs:
         run: pnpm -C apps/tauri-desktop install --frozen-lockfile
 
       - name: Frontend tests
-        run: pnpm -C apps/tauri-desktop test
+        # Hosted Windows runners can exceed vitest's 5s per-test default on heavy DOM
+        # tests. This is only the harness limit; perf assertions keep their thresholds.
+        run: pnpm -C apps/tauri-desktop test --testTimeout=20000
 
       - name: Build firehosed sidecar
         run: bash scripts/build-sidecar.sh ${{ matrix.triple }}
