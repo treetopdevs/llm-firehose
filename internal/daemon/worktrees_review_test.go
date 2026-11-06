@@ -237,3 +237,29 @@ func TestWorktreeDetailNeverScansWithoutCachedSnapshot(t *testing.T) {
 		t.Fatal("the detail route scanned the repository")
 	}
 }
+
+// Unestablished body commands must not fabricate divergence at the base tip.
+func TestWorktreeCompoundBodyDoesNotProveLanding(t *testing.T) {
+	f := newWorktreeGitFixture(t)
+	s, _ := newWorktreeServer(t, "full")
+	registerFixture(t, s, f.Main)
+	path := f.Wt["feat-idle"]
+	admitSession(t, engineAdmitter{s.engine}, "sess-idle", path, "2026-10-31T12:10:00Z", "2026-10-31T12:30:00Z")
+	refreshObserve(t, s)
+	for i, cmd := range []string{
+		"if false; then :; git commit -m x; fi",
+		"if false\nthen\n :\n git commit -m x\nfi",
+		"while false; do :; git commit -m x; done",
+		"until true; do :; git commit -m x; done",
+		"for f in; do :; git commit -m x; done",
+	} {
+		admitBash(t, s, fmt.Sprintf("compound-%d", i), path, "2026-10-31T12:40:00Z", cmd)
+		if row := wtByLabel(t, s, path); row["state"] != "never_diverged" {
+			t.Fatalf("%q fabricated landing: %v", cmd, row)
+		}
+	}
+	admitBash(t, s, "condition", path, "2026-10-31T12:41:00Z", "if git commit -m x; then :; fi")
+	if row := wtByLabel(t, s, path); row["state"] != "landed" {
+		t.Fatalf("executed top-level condition lost its evidence: %v", row)
+	}
+}

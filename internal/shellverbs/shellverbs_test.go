@@ -295,6 +295,19 @@ func TestLifecycleConditionalBodies(t *testing.T) {
 		name, cmd string
 		want      []string
 	}{
+		{"false body later command", "if false; then :; git commit -m x; fi", nil},
+		{"multiline false body", "if false\nthen\n :\n git commit -m x\nfi", nil},
+		{"else later command", "if true; then :; else :; git commit -m x; fi", nil},
+		{"elif condition skipped", "if true; then :; elif git commit -m x; then :; fi", nil},
+		{"while later command", "while false; do :; git commit -m x; done", nil},
+		{"until later command", "until true\ndo\n :\n git commit -m x\ndone", nil},
+		{"empty for later command", "for f in; do :; git commit -m x; done", nil},
+		{"nested body condition", "if false; then if git commit -m x; then :; fi; git push; fi", nil},
+		{"nested loop body", "for f in; do while git commit -m x; do :; done; git push; done", nil},
+		{"after nested constructs", "if false; then for f in; do :; done; fi; git commit -m x", []string{"commit"}},
+		{"while condition runs", "while git commit -m x; do :; done", []string{"commit"}},
+		{"until condition runs", "until git commit -m x; do :; done", []string{"commit"}},
+		{"multiline if condition runs", "if\n git commit -m x\nthen\n :\nfi", []string{"commit"}},
 		{"if one-line", "if false; then :; git commit -m x; fi", nil},
 		{"if/elif/else multiline", "if a\nthen\n  git commit -m x\nelif b\nthen\n  git push\nelse\n  git commit -m y\nfi", nil},
 		{"for loop", "for f in a b; do echo $f; git push; done", nil},
