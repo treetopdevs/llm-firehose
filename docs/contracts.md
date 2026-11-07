@@ -33,7 +33,8 @@ Evolution rules:
   — an optional native ordering value within its documented source scope;
   `transport` and `source_version` — optional capture provenance;
   `source_time` / `capture_time` — the source clock and Firehose observation
-  clock; and `repo_id` / `worktree_id` — observable local Git identities —
+  clock; `repo_id` / `worktree_id` — observable local Git identities; and
+  `root_alias` — the workspace root as spelled through a symlinked `cwd` —
   were added additively within version 1.)
 - Removing, renaming, or changing the meaning of a field requires a version
   bump and a reader that understands both versions.
@@ -66,6 +67,28 @@ daemonless hosts use the same Admission path.
 | `balanced` (default) | dropped | strings at every nesting level truncated to 240 runes (with `…`) | kept | replaced with sha256 hex digests |
 | `full` | kept | kept verbatim | kept | kept (canonical absolute paths) |
 
+`root_alias` is the one path text outside `full` mode's guarantee. It is the
+workspace root as spelled through `cwd`, recorded only when a symlink makes that
+spelling differ from the canonical root (macOS `/tmp` and `/private/tmp`, or a
+symlinked checkout). It lets the Activity Map place files captured through that
+spelling, because agents report the unresolved path and `cwd` is only a digest
+outside `full` mode.
+
+| Mode | `root_alias` |
+|---|---|
+| `minimal` | dropped |
+| `balanced` (default) | kept readable; dropped if over 240 runes, because a truncated prefix would match the wrong paths |
+| `full` | kept |
+
+This amended the table on 2026-11-05 (D134). It is a deliberate exception,
+approved by the maintainer, to the rule that a privacy-semantics change needs a
+`schema_version` bump: version 1 balanced history can now hold this readable path
+text. Version 1 is kept because the field is optional, no existing field changed
+meaning, and consumers ignore what they do not know, so a bump would give no
+reader anything to handle differently. `cwd`, `repo_id` and `worktree_id` stay digests outside
+`full` mode, so the alias does not reveal where a link points. Only a local
+observation at Admission sets it: a caller-supplied value is discarded. Events
+captured earlier have no alias and are not rewritten.
 `summary` is not redacted in any mode, so `minimal` also persists the Claude
 Code lifecycle verb suffix (`ran shell tool: git commit`). Decision D101
 (2026-10-31, `docs/plans/2026-10-18-backlog-coordination.html`): keep this as
@@ -441,6 +464,13 @@ Response fields: `repo_id`, `workspace_id`, `from`, `to`, `bucket_seconds`,
   or a Codex `custom_tool_call_output:apply_patch` that failed or whose every
   listed file was cut by truncation). They add no Heat.
 - `capture_gap` has the Timeline meaning.
+
+An absolute path under the event's own `root_alias` is first mapped onto that
+event's canonical root, and the usual innermost-root rule then applies. This is
+text comparison only: the daemon makes no filesystem calls on captured paths,
+which are untrusted. Without an alias, including on events captured before the
+field existed or with a symlink below the root, such a path stays under `Outside
+known worktrees`.
 
 Privacy: `path` values are display values, readable in `balanced` and `full`
 like other graph labels; balanced-mode capture truncates long payload strings at

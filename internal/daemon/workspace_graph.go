@@ -532,6 +532,16 @@ func (a *activityRoots) resolve(ev event.Event, path string) (string, string) {
 		}
 		return "", filepath.ToSlash(clean)
 	}
+	// The event's own root_alias maps a path captured through a symlink onto the
+	// canonical root. This is lexical on purpose: the daemon makes no filesystem
+	// calls on captured paths, which are untrusted.
+	if alias := ev.RootAlias; ownID != "" && filepath.IsAbs(alias) && under(alias, clean) {
+		// ownID prefers the Git worktree, which is the root the alias spells.
+		if root, ok := a.byAlias[ownID]; ok {
+			rel, _ := filepath.Rel(alias, clean)
+			clean = filepath.Join(root, rel)
+		}
+	}
 	best := ""
 	for _, root := range a.all {
 		if len(root) > len(best) && under(root, clean) {
