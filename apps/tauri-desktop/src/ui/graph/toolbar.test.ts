@@ -5,6 +5,7 @@ import { createToolbar, type SearchResult, type ToolbarHandlers } from "./toolba
 afterEach(() => document.body.replaceChildren());
 
 const hit: SearchResult = { kind: "workspace", id: "w1", title: "wt-1", detail: "main" };
+/** Mount a toolbar with spy handlers and type a query, so one result is listed. */
 function mount() {
   const h: ToolbarHandlers = {
     selectRepo: vi.fn(),

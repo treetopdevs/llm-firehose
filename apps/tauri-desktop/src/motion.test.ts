@@ -6,9 +6,11 @@ import { parseRules, type Rule } from "./tokens-helpers";
 // Press feedback and focus fills live in plain CSS, so these tests read the
 // stylesheet: jsdom neither runs transitions nor matches :active or :focus-visible.
 const all: Rule[] = parseRules(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+/** A rule's selector list, split and trimmed. */
 const items = (r: Rule): string[] => r.selector.split(",").map((s) => s.trim());
 const top = all.filter((r) => r.context.length === 0);
 const reduced = all.filter((r) => r.context.some((c) => /prefers-reduced-motion:\s*reduce/.test(c)));
+/** Every declaration block among `rules` whose selector list contains `sel` exactly, joined. */
 const body = (rules: Rule[], sel: string): string => rules.filter((r) => items(r).includes(sel)).map((r) => r.body).join(";");
 
 describe("motion tokens", () => {

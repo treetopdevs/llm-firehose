@@ -330,6 +330,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     const from = { ...view };
     panTarget = to;
     const t0 = performance.now();
+    /** One frame: interpolate toward `to`, then schedule the next frame or land and clear the pan. */
     const step = (now: number) => {
       const k = easeInOut(Math.min(1, Math.max(0, (now - t0) / PAN_MS)));
       view = k >= 1 ? to : {
@@ -1252,6 +1253,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     },
     { passive: false },
   );
+  // Primary-button press: catch any running pan, then start a background drag unless it landed on a node.
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== undefined && e.button !== 0) return;
     stopPan(); // grabbing the canvas catches a running pan, even on a node
