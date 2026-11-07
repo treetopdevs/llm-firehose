@@ -323,8 +323,11 @@ test("a bare revision shows identifiers, description, parents as buttons and the
   expect(root.querySelector(".insp-origin")).toBeNull();
   const parent = root.querySelector<HTMLButtonElement>(".parent-link")!;
   expect(parent.textContent).toBe(P.slice(0, 8));
-  parent.click();
-  expect(h.selectRevision).toHaveBeenCalledWith(P);
+  // A mouse click (detail > 0) pans the camera; Enter or Space on the button (detail 0) jumps.
+  parent.dispatchEvent(new MouseEvent("click", { detail: 1 }));
+  expect(h.selectRevision).toHaveBeenLastCalledWith(P, true);
+  root.querySelector<HTMLButtonElement>(".parent-link")!.dispatchEvent(new MouseEvent("click", { detail: 0 }));
+  expect(h.selectRevision).toHaveBeenLastCalledWith(P, false);
   await flush();
   expect(root.querySelector('select[aria-label="Compare with"]')).toBeTruthy();
 });

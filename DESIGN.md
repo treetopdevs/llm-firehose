@@ -333,7 +333,7 @@ Two easing tokens live in `:root`; the built-in keywords are too weak to read as
 - `--ease-out` (`cubic-bezier(0.23, 1, 0.32, 1)`): press feedback, and anything entering or leaving.
 - `--ease-in-out` (`cubic-bezier(0.77, 0, 0.175, 1)`): things moving across the screen.
 
-The shell is a tool people keep open all day, so motion is rare: anything triggered tens of times a day (rows streaming in, nav switches, opening the detail pane) changes in one frame, and keyboard-initiated changes never animate. Only `transform` and `opacity` animate; reduced motion keeps opacity and drops movement (tested in `motion.test.ts`).
+The shell is a tool people keep open all day, so motion is rare (the graph's pointer-initiated camera pan is the one movement, see Graph): anything triggered tens of times a day (rows streaming in, nav switches, opening the detail pane) changes in one frame, and keyboard-initiated changes never animate. New motion animates only `transform`, `scale` and `opacity`; the transport thumb (`left`/`width`) and the fleet change flash predate this rule. Reduced motion keeps opacity and drops movement (tested in `motion.test.ts`).
 
 ## 5. Components
 
@@ -391,6 +391,7 @@ The workspace graph consumes the same tokens. `--g-*` and `--muted` no longer ex
 - Selection is `--selected`, focus is `--selected` (outline) or `--text` (the pill, chip or node stroke, where an outline would box the SVG group), the ground stroke is `--fog`, conflicts use `--warn`/`--err`.
 - Ecosystem leaves: attempt `--focus`, complete `--ok`, failed `--err`, unknown `--stale`. Handoff series use `--series-1..5`. Replay captured uses `--observed`; the hypothetical lane uses `--replay-alt` on `--replay-alt-bg`.
 - TS renderers emit `var(--token)` strings or classes, not hex.
+- Camera: a camera jump the mouse starts (clicking a search result or an inspector parent link) pans over 240ms with the `--ease-in-out` curve (computed in TS as the quartic ease-in-out, `canvas.ts`). Jumps the keyboard starts (Enter in search, Space or Enter on a parent link), jumps that also switch tabs, and every jump under reduced motion land in one frame. Wheel, drag, any arrow key (on the canvas or a focused node), fit and the edge hints stop a running pan where it is.
 
 Names that TypeScript reads from CSS at runtime. Do not rename:
 

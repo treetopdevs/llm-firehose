@@ -289,6 +289,105 @@ test("Fit keeps a readable scale anchored on the tips, All shows the whole deep 
   expect(canvas.view().scale).toBeLessThan(0.1);
 });
 
+// ---- camera pan ----------------------------------------------------------
+const frames = () => vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
+const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+/** The view an instant centerOnWorkspace("w") lands on, from a fresh mount. */
+function centeredTarget(g: CanvasGraph) {
+  const { canvas } = mount(g);
+  canvas.centerOnWorkspace("w");
+  const v = canvas.view();
+  document.body.replaceChildren();
+  return v;
+}
+const far = () => graphOf(commits("c", 120), [cw("w", "c0")]);
+
+test("an animated centerOn pans to the instant target over 240ms, not in one frame", () => {
+  const target = centeredTarget(far());
+  frames();
+  try {
+    const { canvas } = mount(far());
+    const start = canvas.view();
+    expect(dist(start, target)).toBeGreaterThan(10);
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    expect(canvas.view()).toEqual(start);
+    vi.advanceTimersByTime(120);
+    const mid = canvas.view();
+    expect(dist(mid, start)).toBeGreaterThan(1);
+    expect(dist(mid, target)).toBeGreaterThan(1);
+    vi.advanceTimersByTime(160);
+    expect(canvas.view()).toEqual(target);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test.each([
+  ["a wheel zoom", (svg: SVGSVGElement) => svg.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, cancelable: true }))],
+  ["grabbing the canvas", (svg: SVGSVGElement) => svg.dispatchEvent(new PointerEvent("pointerdown", { button: 0 }))],
+])("%s mid-pan stops the pan where it is", (_, interrupt) => {
+  frames();
+  try {
+    const { canvas } = mount(far());
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    vi.advanceTimersByTime(80);
+    interrupt(canvas.svg);
+    const held = canvas.view();
+    vi.advanceTimersByTime(400);
+    expect(canvas.view()).toEqual(held);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("focusing the target right after an animated centerOn keeps the pan (search picks do both)", () => {
+  const target = centeredTarget(far());
+  frames();
+  try {
+    const { canvas } = mount(far());
+    const start = canvas.view();
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    canvas.focusWorkspace("w");
+    expect(canvas.view()).toEqual(start);
+    vi.advanceTimersByTime(120);
+    expect(dist(canvas.view(), target)).toBeGreaterThan(1);
+    vi.advanceTimersByTime(160);
+    expect(canvas.view()).toEqual(target);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("an arrow key on a focused node mid-pan stops the pan: keyboard input never rides an animation", () => {
+  frames();
+  try {
+    const { canvas } = mount(far());
+    const n = q(canvas, '[data-key="revision:c5"]');
+    n.focus();
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    vi.advanceTimersByTime(80);
+    n.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    const held = canvas.view();
+    vi.advanceTimersByTime(400);
+    expect(canvas.view()).toEqual(held);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reduced motion centers in one frame even when asked to animate", () => {
+  const target = centeredTarget(far());
+  const original = window.matchMedia;
+  window.matchMedia = ((q: string) => ({ matches: /reduce/.test(q), media: q }) as MediaQueryList) as typeof window.matchMedia;
+  try {
+    const { canvas } = mount(far());
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    expect(canvas.view()).toEqual(target);
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
 test("centerOnWorkspace puts the label at the middle of the canvas", () => {
   const { canvas } = mount(graphOf(diamond, [cw("w", "b")]));
   canvas.centerOnWorkspace("w");
