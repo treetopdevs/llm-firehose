@@ -168,6 +168,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
     active = -1;
     input.setAttribute("aria-expanded", "false");
   }
+  /** Close the search, clear its canvas mute, and hand the result on with how it was chosen. */
   function choose(r: SearchResult, via: "pointer" | "keyboard") {
     input.value = "";
     hide();

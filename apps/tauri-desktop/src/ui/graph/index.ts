@@ -611,6 +611,7 @@ export function createWorkspaceGraph(
     applyWorkspace(id);
     publish();
   }
+  /** Select a bare revision (clearing any workspace) and optionally center it, panning when `animate`. */
   function selectRevision(key: string, center = false, animate = false) {
     revision = key;
     workspace = "";
@@ -873,6 +874,7 @@ export function createWorkspaceGraph(
     }
     return out;
   }
+  /** Select and center a search result; only a pointer pick on the visible graph pans the camera. */
   function pickResult(r: SearchResult, via: "pointer" | "keyboard") {
     // A tab switch reveals the canvas: nothing on screen to travel from, so it jumps.
     const animate = via === "pointer" && tab === "graph";

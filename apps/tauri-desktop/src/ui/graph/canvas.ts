@@ -315,10 +315,15 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
   /** The running camera pan; anything else that moves the view stops it where it is. */
   let pan: number | undefined;
   let panTarget: View | undefined;
+  /** Cancel a running pan, leaving the camera wherever its last frame put it. */
   function stopPan() {
     if (pan !== undefined) cancelAnimationFrame(pan);
     pan = panTarget = undefined;
   }
+  /**
+   * Ease the camera from the current view to `to` over PAN_MS, one frame at a time.
+   * Detaching the canvas mid-pan lands on `to` at once; any setView stops it.
+   */
   function panTo(to: View) {
     stopPan();
     autoView = undefined;
@@ -341,12 +346,14 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     };
     pan = requestAnimationFrame(step);
   }
+  /** Jump the camera to `v` (scale clamped), stopping any pan; `auto` keeps a fit's re-fit on resize. */
   function setView(v: View, auto = false) {
     stopPan();
     view = { x: v.x, y: v.y, scale: clampScale(v.scale) };
     if (!auto) autoView = undefined;
     applyView();
   }
+  /** Re-run the active fit (if any) against the current layout and size; stops any pan. */
   function reapplyAuto() {
     stopPan();
     const v = autoView?.();
@@ -385,6 +392,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     autoView = undefined;
     setView(viewForRect(r, minScale, true));
   }
+  /** Put world point `p` at the middle of the canvas, never zooming out below `minScale`; pans when `opts.animate`. */
   function centerOn(p: Point, minScale = 1, opts: CenterOptions = {}) {
     const { w, h } = size();
     const scale = clampScale(Math.max(view.scale, minScale));
@@ -403,10 +411,12 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     const n = key ? layout.nodes.get(key) : undefined;
     return n ? { x: n.x, y: n.y } : undefined;
   }
+  /** Center on a workspace's label, cluster chip or revision node, whichever the layout drew. */
   function centerOnWorkspace(id: string, minScale = 1, opts?: CenterOptions) {
     const p = pointOf(id);
     if (p) centerOn(p, minScale, opts);
   }
+  /** Center on a revision node; a key outside the loaded layout is a no-op. */
   function centerOnRevision(key: string, minScale = 1, opts?: CenterOptions) {
     const n = layout?.nodes.get(key);
     if (n) centerOn({ x: n.x, y: n.y }, minScale, opts);
