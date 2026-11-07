@@ -9,6 +9,9 @@
   --needs: #f3b01d;
   --selected: #3adfd7;
   --focus: #5abdf2;
+  /* Motion: strong curves; the built-in keywords are too weak to read as intentional. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --stale: #a0968f;
   --fog: #454e58;
   --ok: #3fc168;
@@ -111,8 +114,16 @@ button {
   margin: 0.15rem;
   cursor: pointer;
   font: inherit;
+  transition: scale 120ms var(--ease-out);
 }
 button:hover { background: var(--bg-hover); }
+/* Press feedback. The `scale` property composes with any positioning `transform` (edge hints).
+   Nav and lens tabs are switched constantly, so they stay still. */
+button:active { scale: 0.97; }
+.nav-btn:active, .session-tabs button:active { scale: none; }
+@media (prefers-reduced-motion: reduce) {
+  button:active { scale: none; }
+}
 button.primary { border-color: var(--accent); color: var(--accent); }
 
 input, select {
@@ -197,7 +208,6 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
   width: 0;
   border-left: 1px solid var(--border);
   overflow: hidden;
-  transition: width 0.15s ease;
   position: relative;
   flex-shrink: 0;
 }
@@ -316,7 +326,8 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .matrix thead th { border-bottom: 1px solid var(--border); }
 .matrix td { padding: 0.35rem 1rem 0.35rem 0; white-space: nowrap; }
 .matrix-cell { cursor: pointer; }
-.matrix-cell:hover, .matrix-cell:focus { background: var(--bg-hover); outline: none; }
+.matrix-cell:hover, .matrix-cell:focus-visible { background: var(--bg-hover); }
+.matrix-cell:focus { outline: none; }
 .matrix-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .matrix-cell .spark { white-space: pre; line-height: 1; margin-right: 0.6rem; }
 .matrix-cell .glyph { display: inline-block; width: 1ch; }
@@ -341,7 +352,8 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .dwell-scale-mark { position: absolute; transform: translateX(-50%); color: var(--text-dim); }
 .dwell-scale-mark.end { right: 0; transform: none; }
 .dwell-row { border-left-color: hsl(var(--hue) 55% 55%); cursor: pointer; }
-.dwell-row:hover, .dwell-row:focus { background: var(--bg-hover); outline: none; }
+.dwell-row:hover, .dwell-row:focus-visible { background: var(--bg-hover); }
+.dwell-row:focus { outline: none; }
 .dwell-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .dwell-row .agent, .dwell-row .where, .dwell-row .state, .dwell-row .dwell-label {
   color: var(--text-dim); overflow: hidden; text-overflow: ellipsis;
@@ -366,7 +378,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .lane-row { cursor: pointer; }
 .lane-row:focus { outline: none; }
 .lane-hit { fill: transparent; }
-.lane-row:hover .lane-hit, .lane-row:focus .lane-hit { fill: var(--bg-hover); }
+.lane-row:hover .lane-hit, .lane-row:focus-visible .lane-hit { fill: var(--bg-hover); }
 .lane-row:focus-visible .lane-hit, .fleet-lane-row:focus-visible .lane-hit { stroke: var(--focus); stroke-width: 2; }
 .lane-label { fill: var(--text); font-size: var(--fs-sm); }
 .lane-state { fill: var(--text-dim); font-size: var(--fs-xs); }
@@ -861,7 +873,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .score-track { cursor: pointer; }
 .score-track:focus-visible { outline: none; }
 .score-hit { fill: transparent; }
-.score-track:hover .score-hit, .score-track:focus .score-hit { fill: var(--bg-hover); }
+.score-track:hover .score-hit, .score-track:focus-visible .score-hit { fill: var(--bg-hover); }
 .score-track:focus-visible .score-hit { stroke: var(--focus); stroke-width: 2; }
 .score-label { fill: var(--text); font-size: var(--fs-sm); }
 .score-base { stroke: color-mix(in srgb, var(--border) 45%, transparent); }
@@ -1148,7 +1160,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 /* Inset so the SVG viewport cannot clip the keyboard focus perimeter. */
 .fleet-lane-focus { fill: none; stroke: transparent; stroke-width: 2; pointer-events: none; }
 .fleet-lane-row:focus-visible .fleet-lane-focus { stroke: var(--focus); }
-.fleet-lane-row:hover .lane-hit, .fleet-lane-row:focus .lane-hit { fill: var(--bg-hover); }
+.fleet-lane-row:hover .lane-hit, .fleet-lane-row:focus-visible .lane-hit { fill: var(--bg-hover); }
 .lane-label.needs { fill: var(--needs); font-weight: 700; }
 .fleet-bands { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .fleet-band { border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.6rem; font-size: var(--fs-sm); }
