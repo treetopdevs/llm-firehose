@@ -82,7 +82,10 @@ retains only Anthropic's documented bounded API error class, mapping future
 unknown values to `unknown`. Prompt text, assistant text, tool
 arguments/results, notification bodies, transcript paths, detailed error
 text, and elicitation values remain only in
-`raw`, so balanced/minimal persistence drops them. `Bash` tools map to
+`raw`, so balanced/minimal persistence drops them. A successful `Bash`/`Shell`
+summary additionally carries allowlisted lifecycle phrases (`ran shell tool: git
+commit, git push`) and nothing else from the command; everything else stays in
+`raw`. `Bash` tools map to
 `shell`; file tools map to `file`; a single failing tool is `warn` severity,
 while `StopFailure` maps to the `error` category as a session-level failure.
 

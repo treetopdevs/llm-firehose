@@ -113,6 +113,13 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+/** Readable name for a repo/worktree id: the last two path segments when the id is a raw path (full privacy), else the eight-character digest prefix. */
+export function idLabel(id: string): string {
+  if (!/[/\\]/.test(id)) return shortId(id);
+  const parts = id.split(/[/\\]/).filter(Boolean);
+  return parts.length ? parts.slice(-2).join("/") : shortId(id);
+}
+
 /**
  * Where a session runs, as a person would say it: the checkout's basename,
  * with the absolute path kept for a tooltip. A digested path (older history,
@@ -151,4 +158,51 @@ export function disambiguateSessionLabel(key: string, label: string, all: readon
   if (all.filter(([, l]) => l === label).length < 2) return label;
   const [source, id] = key.split("\0");
   return `${label} · ${source} ${shortId(id ?? "")}`;
+}
+
+/**
+ * The name for a session reference. Resolved only when something real names it
+ * (a title, or a readable checkout); otherwise the short id, flagged so callers
+ * can dim it. Nothing is fabricated.
+ */
+export function sessionRefLabel(ref: { id: string; source?: string }, known?: SessionLike): { label: string; resolved: boolean } {
+  if (!known) return { label: idLabel(ref.id), resolved: false };
+  const where = sessionWhere(known).label;
+  return { label: sessionName(known), resolved: !!known.title || (where !== "" && !where.startsWith("#")) };
+}
+
+/** Display-only: drops a trailing "/.git" (repo ids are git common dirs). Never applied to ids. */
+export function displayRepoLabel(label: string): string {
+  const stripped = label.replace(/[/\\]\.git[/\\]?$/, "");
+  return stripped === "" ? label : stripped;
+}
+
+const UNKNOWN_SUFFIX = " (unknown)";
+
+/** A filesystem path (absolute, home-relative, drive-lettered, backslashed or a git dir), as opposed to a name like owner/repo. */
+function pathLike(s: string): boolean {
+  return /^([/~]|[A-Za-z]:[\\/])/.test(s) || s.includes("\\") || /[/\\]\.git[/\\]?$/.test(s);
+}
+
+/** Last non-empty segment of a path, with a trailing .git directory and separators ignored. */
+function folderOf(path: string): string {
+  const parts = displayRepoLabel(path.replace(/[/\\]+$/, "")).split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function displayName(id: string, resolved?: string): { label: string; full: string } {
+  const base = resolved || id;
+  if (base.endsWith(UNKNOWN_SUFFIX)) return { label: base, full: id };
+  if (pathLike(base)) return { label: folderOf(base), full: id };
+  return { label: resolved || idLabel(id), full: id };
+}
+
+/** The one display name for a project (repo id): a folder or name, never a raw path or a trailing .git. `full` is always the id. */
+export function projectName(id: string, resolved?: string): { label: string; full: string } {
+  return displayName(id, resolved);
+}
+
+/** The one display name for a worktree id; same rule as projectName. */
+export function worktreeName(id: string, resolved?: string): { label: string; full: string } {
+  return displayName(id, resolved);
 }

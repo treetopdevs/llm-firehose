@@ -288,10 +288,10 @@ test("captured activity shows the three newest scoped events with relative age a
 test("origin workspace is always unknown, with honest help", () => {
   const { root } = mount(ctx());
   const origin = root.querySelector(".insp-origin")!;
-  expect(origin.textContent).toContain("Origin workspace");
+  expect(origin.textContent).toContain("Origin worktree");
   expect(origin.querySelector(".origin-value")!.textContent).toBe("unknown");
   const help = origin.querySelector<HTMLElement>(".origin-help")!;
-  expect(help.textContent).toContain("does not infer or record which workspace created another");
+  expect(help.textContent).toContain("does not infer or record which worktree created another");
   expect(help.hidden).toBe(true);
   origin.querySelector<HTMLButtonElement>(".help")!.click();
   expect(root.querySelector<HTMLElement>(".origin-help")!.hidden).toBe(false);
@@ -310,7 +310,7 @@ test("Highlight ancestry and Inspect changes act; Inspect changes shows the comm
   expect(detail.textContent).toContain("Only on selected (2)");
   expect(detail.textContent).toContain("Merge bases");
   expect(detail.textContent).toContain("internal/cache.go".split("/")[1]);
-  expect(detail.textContent).toContain("Uncommitted checkout changes are separate");
+  expect(detail.textContent).toContain("Uncommitted worktree changes are separate");
   expect(button(root, "Inspect changes").getAttribute("aria-expanded")).toBe("true");
 });
 
@@ -323,8 +323,11 @@ test("a bare revision shows identifiers, description, parents as buttons and the
   expect(root.querySelector(".insp-origin")).toBeNull();
   const parent = root.querySelector<HTMLButtonElement>(".parent-link")!;
   expect(parent.textContent).toBe(P.slice(0, 8));
-  parent.click();
-  expect(h.selectRevision).toHaveBeenCalledWith(P);
+  // A mouse click (detail > 0) pans the camera; Enter or Space on the button (detail 0) jumps.
+  parent.dispatchEvent(new MouseEvent("click", { detail: 1 }));
+  expect(h.selectRevision).toHaveBeenLastCalledWith(P, true);
+  root.querySelector<HTMLButtonElement>(".parent-link")!.dispatchEvent(new MouseEvent("click", { detail: 0 }));
+  expect(h.selectRevision).toHaveBeenLastCalledWith(P, false);
   await flush();
   expect(root.querySelector('select[aria-label="Compare with"]')).toBeTruthy();
 });
@@ -344,7 +347,7 @@ test("a parent outside the loaded history is shown as not loaded, never as a lin
 
 test("nothing selected prompts for a selection", () => {
   const { root } = mount(ctx({ workspace: undefined, revision: "" }));
-  expect(root.textContent).toContain("Select a workspace or revision");
+  expect(root.textContent).toContain("Select a worktree or revision");
 });
 
 test("identical updates do not rebuild the pane, so focus survives attention polling", async () => {
@@ -496,7 +499,7 @@ test("a locked, pruned or inaccessible checkout is stated in the inspector", () 
     document.body.replaceChildren();
     const { root } = mount(ctx({ workspace: { ...ws, availability } }));
     const row = root.querySelector(".insp-checkout")!;
-    expect(row.textContent).toContain("Checkout");
+    expect(row.textContent).toContain("Worktree");
     expect(row.textContent).toContain(availability);
   }
   document.body.replaceChildren();
@@ -538,7 +541,7 @@ test("the inspector shows the full worktree path and the repository root", () =>
   expect(path.querySelector("code")!.textContent).toBe("/Users/dev/work/wt-07-fix");
   expect(path.querySelector("code")!.getAttribute("title")).toBe("/Users/dev/work/wt-07-fix");
   const repo = root.querySelector(".insp-repo-path")!;
-  expect(repo.querySelector(".insp-label")!.textContent).toBe("Repository");
+  expect(repo.querySelector(".insp-label")!.textContent).toBe("Project");
   expect(repo.querySelector("code")!.textContent).toBe("/Users/dev/work/llm-firehose");
 });
 

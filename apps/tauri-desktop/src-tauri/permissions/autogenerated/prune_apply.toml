@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prune-apply"
+description = "Enables the prune_apply command without any pre-configured scope."
+commands.allow = ["prune_apply"]
+
+[[permission]]
+identifier = "deny-prune-apply"
+description = "Denies the prune_apply command without any pre-configured scope."
+commands.deny = ["prune_apply"]

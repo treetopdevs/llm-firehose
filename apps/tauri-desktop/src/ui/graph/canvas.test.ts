@@ -82,7 +82,7 @@ test("a label is a compact pill with a short name, a state dot and a separate di
   const badge = label.querySelector(".label-badge")!;
   expect(badge.textContent).toBe("dirty");
   expect(label.querySelector("text")!.textContent).not.toContain("dirty");
-  expect(label.getAttribute("aria-label")).toContain("needs attention");
+  expect(label.getAttribute("aria-label")).toContain("needs you");
 });
 
 test("selection marks the ancestry, dims the rest and leaves everything clickable", () => {
@@ -168,7 +168,7 @@ test("more than three workspaces on one revision collapse into a counted cluster
   const { canvas, h } = mount(graphOf([node("a")], workspaces));
   expect(qa(canvas, ".workspace-label")).toHaveLength(0);
   const chip = q(canvas, ".workspace-cluster");
-  expect(chip.textContent).toContain("5 workspaces");
+  expect(chip.textContent).toContain("5 worktrees");
   expect(chip.getAttribute("aria-expanded")).toBe("false");
   click(chip);
   expect(h.toggleCluster).toHaveBeenCalledWith("a");
@@ -240,7 +240,7 @@ test("axis annotations, depth ticks and the honest footer", () => {
   expect(text).toContain("Revision parent links");
   expect(text).toContain("Merge (multiple parents)");
   expect(canvas.root.querySelector(".graph-footer-status")!.textContent).toMatch(
-    /^All 1 workspaces labelled · \d+ in view$/,
+    /^All 1 worktrees labelled · \d+ in view$/,
   );
 });
 
@@ -287,6 +287,105 @@ test("Fit keeps a readable scale anchored on the tips, All shows the whole deep 
   expect(screenY).toBeLessThan(640);
   canvas.fitAll();
   expect(canvas.view().scale).toBeLessThan(0.1);
+});
+
+// ---- camera pan ----------------------------------------------------------
+const frames = () => vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
+const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+/** The view an instant centerOnWorkspace("w") lands on, from a fresh mount. */
+function centeredTarget(g: CanvasGraph) {
+  const { canvas } = mount(g);
+  canvas.centerOnWorkspace("w");
+  const v = canvas.view();
+  document.body.replaceChildren();
+  return v;
+}
+const far = () => graphOf(commits("c", 120), [cw("w", "c0")]);
+
+test("an animated centerOn pans to the instant target over 240ms, not in one frame", () => {
+  const target = centeredTarget(far());
+  frames();
+  try {
+    const { canvas } = mount(far());
+    const start = canvas.view();
+    expect(dist(start, target)).toBeGreaterThan(10);
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    expect(canvas.view()).toEqual(start);
+    vi.advanceTimersByTime(120);
+    const mid = canvas.view();
+    expect(dist(mid, start)).toBeGreaterThan(1);
+    expect(dist(mid, target)).toBeGreaterThan(1);
+    vi.advanceTimersByTime(160);
+    expect(canvas.view()).toEqual(target);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test.each([
+  ["a wheel zoom", (svg: SVGSVGElement) => svg.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, cancelable: true }))],
+  ["grabbing the canvas", (svg: SVGSVGElement) => svg.dispatchEvent(new PointerEvent("pointerdown", { button: 0 }))],
+])("%s mid-pan stops the pan where it is", (_, interrupt) => {
+  frames();
+  try {
+    const { canvas } = mount(far());
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    vi.advanceTimersByTime(80);
+    interrupt(canvas.svg);
+    const held = canvas.view();
+    vi.advanceTimersByTime(400);
+    expect(canvas.view()).toEqual(held);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("focusing the target right after an animated centerOn keeps the pan (search picks do both)", () => {
+  const target = centeredTarget(far());
+  frames();
+  try {
+    const { canvas } = mount(far());
+    const start = canvas.view();
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    canvas.focusWorkspace("w");
+    expect(canvas.view()).toEqual(start);
+    vi.advanceTimersByTime(120);
+    expect(dist(canvas.view(), target)).toBeGreaterThan(1);
+    vi.advanceTimersByTime(160);
+    expect(canvas.view()).toEqual(target);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("an arrow key on a focused node mid-pan stops the pan: keyboard input never rides an animation", () => {
+  frames();
+  try {
+    const { canvas } = mount(far());
+    const n = q(canvas, '[data-key="revision:c5"]');
+    n.focus();
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    vi.advanceTimersByTime(80);
+    n.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    const held = canvas.view();
+    vi.advanceTimersByTime(400);
+    expect(canvas.view()).toEqual(held);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reduced motion centers in one frame even when asked to animate", () => {
+  const target = centeredTarget(far());
+  const original = window.matchMedia;
+  window.matchMedia = ((q: string) => ({ matches: /reduce/.test(q), media: q }) as MediaQueryList) as typeof window.matchMedia;
+  try {
+    const { canvas } = mount(far());
+    canvas.centerOnWorkspace("w", 1, { animate: true });
+    expect(canvas.view()).toEqual(target);
+  } finally {
+    window.matchMedia = original;
+  }
 });
 
 test("centerOnWorkspace puts the label at the middle of the canvas", () => {
@@ -600,7 +699,7 @@ test("an edge hint is a button that pans toward the workspaces it counts", () =>
   const hint = (side: string) => q<HTMLButtonElement>(canvas, `.edge-hint.${side}`);
   const side = ["right", "bottom", "left", "top"].find((s) => !hint(s).hidden)!;
   expect(hint(side).tagName).toBe("BUTTON");
-  expect(hint(side).getAttribute("aria-label")).toMatch(/more workspaces? /);
+  expect(hint(side).getAttribute("aria-label")).toMatch(/more worktrees? /);
   const before = canvas.view();
   const seen = canvas.inViewCount();
   hint(side).click();
@@ -621,4 +720,20 @@ test("a label's tooltip carries the full path while its accessible name stays sh
   expect(label.getAttribute("aria-label")).not.toContain("/work");
   // a workspace without a path (JJ, or a digest from an older daemon) keeps the plain tooltip
   expect(q(canvas, '[data-key="workspace:v"] title').textContent).toBe("plain");
+});
+
+test("a cluster button names its aggregate state and updates on the same node", () => {
+  const workspaces = ["a1", "a2", "a3", "a4"].map((id) => cw(id, "a"));
+  const { canvas } = mount(graphOf([node("a")], workspaces));
+  const chip = q(canvas, ".workspace-cluster");
+  expect(chip.getAttribute("role")).toBe("button");
+  expect(chip.getAttribute("aria-label")).toContain("no agent");
+  canvas.setState({ ...idle, agents: new Map<string, AgentInfo>([["a2", { state: "attention", count: 1 }]]) });
+  expect(q(canvas, ".workspace-cluster")).toBe(chip);
+  expect(chip.getAttribute("aria-label")).toContain("needs you");
+  expect(chip.getAttribute("aria-label")).toContain("4 worktrees on one revision, collapsed");
+  canvas.setState({ ...idle, agents: new Map<string, AgentInfo>([["a2", { state: "working", count: 1 }]]) });
+  expect(q(canvas, ".workspace-cluster")).toBe(chip);
+  expect(chip.getAttribute("aria-label")).toContain("working");
+  expect(chip.getAttribute("aria-label")).not.toContain("needs you");
 });

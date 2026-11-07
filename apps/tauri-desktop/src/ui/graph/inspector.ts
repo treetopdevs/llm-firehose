@@ -8,6 +8,7 @@ import { graphAPI, type Comparison, type FileChange, type Snapshot, type Workspa
 import { sharedAncestorCount, type GraphNode } from "./model";
 import { displayText, fileName, isDigest, shortDigest, sourceName, stateDescription, type AgentState } from "./names";
 import { icon } from "./toolbar";
+import { LOCAL } from "../../keys";
 
 export interface AgentRow {
   source: string;
@@ -55,7 +56,8 @@ export interface InspectorHandlers {
   openSession(id: string, source: string): void;
   filterTimeline(source: string, id: string): void;
   openTimeline(): void;
-  selectRevision(key: string): void;
+  /** `viaPointer`: a mouse click pans the camera there; Enter or Space jumps. */
+  selectRevision(key: string, viaPointer: boolean): void;
   highlightAncestry(): void;
   toggleDescendants(): void;
 }
@@ -232,7 +234,7 @@ export function createInspector(h: InspectorHandlers) {
       if (pn) {
         // index based so keyboard focus survives stepping to a revision with other parents
         const b = el("button", { type: "button", class: "parent-link", title: displayText(pn.description), "data-action": `parent:${i}` }, pn.commit_id.slice(0, 8));
-        b.onclick = () => h.selectRevision(p);
+        b.onclick = (e) => h.selectRevision(p, e.detail > 0);
         parents.append(b);
       } else parents.append(el("span", { class: "dim parent-missing", title: "Older history not loaded" }, `${p.slice(0, 8)} (not loaded)`));
     });
@@ -277,7 +279,7 @@ export function createInspector(h: InspectorHandlers) {
       el(
         "p",
         { class: "dim" },
-        "Uncommitted checkout changes are separate from this revision comparison. Revision identity does not establish patch equivalence.",
+        "Uncommitted worktree changes are separate from this revision comparison. Revision identity does not establish patch equivalence.",
       ),
     );
     return box;
@@ -289,17 +291,17 @@ export function createInspector(h: InspectorHandlers) {
     const n = node(c.revision);
     if (!ws && !n) {
       frag.append(
-        el("h3", {}, "Select a workspace or revision"),
-        el("p", { class: "dim" }, "Click a workspace label or a revision, or press ⌘K to search. Edges are revision parents only."),
+        el("h3", {}, "Select a worktree or revision"),
+        el("p", { class: "dim" }, "Click a worktree label or a revision, or press ⌘K to search. Edges are revision parents only."),
       );
       if (c.unassigned)
-        frag.append(el("p", { class: "dim" }, `${c.unassigned} sessions have unavailable or missing workspace identity.`));
+        frag.append(el("p", { class: "dim" }, `${c.unassigned} sessions have unavailable or missing worktree identity.`));
       return frag;
     }
 
     // Header
     const head = el("div", { class: "insp-head" });
-    if (ws) head.append(el("span", { class: `agent-dot big state-${c.state}`, title: stateDescription(c.state) }));
+    if (ws) head.append(el("span", { class: `agent-dot big state-${c.state}`, role: "img", "aria-label": stateDescription(c.state), title: stateDescription(c.state) }));
     head.append(el("h3", {}, ws ? c.name : `Revision ${n!.commit_id.slice(0, 8)}`));
     frag.append(head);
 
@@ -316,7 +318,7 @@ export function createInspector(h: InspectorHandlers) {
       };
       frag.append(field("Branch", el("span", { class: "insp-branch" }, c.branch), copy));
       const checkout = field(
-        "Checkout",
+        "Worktree",
         el(
           "span",
           { class: "insp-checkout-text" },
@@ -329,14 +331,14 @@ export function createInspector(h: InspectorHandlers) {
       if (ws.availability && ws.availability !== "available") checkout.classList.add("unavailable");
       frag.append(checkout);
       if (c.workspacePath) frag.append(pathField("Path", c.workspacePath, "insp-path"));
-      if (c.repoPath) frag.append(pathField("Repository", c.repoPath, "insp-repo-path"));
+      if (c.repoPath) frag.append(pathField("Project", c.repoPath, "insp-repo-path"));
 
       const agents = el("div", { class: "insp-agents" });
       for (const a of c.agents) {
         const row = el("div", { class: "agent-row", "data-session": `${a.source}\0${a.id}` });
         const open = el("button", { type: "button", class: "agent-open", title: `Open ${sourceName(a.source)} session ${a.id}`, "data-action": `session:${a.source}:${a.id}` });
         open.append(
-          el("span", { class: `agent-dot state-${a.state}` }),
+          el("span", { class: `agent-dot state-${a.state}`, role: "img", "aria-label": stateDescription(a.state) }),
           el("span", { class: "agent-name" }, a.name || `${sourceName(a.source)} session`),
         );
         open.onclick = () => h.openSession(a.id, a.source);
@@ -396,7 +398,7 @@ export function createInspector(h: InspectorHandlers) {
         };
         input.onchange = apply;
         input.onkeydown = (e) => {
-          if (e.key === "Enter") apply();
+          if (LOCAL.inspectorCompare.matches(e)) apply();
         };
         frag.append(input);
         if (custom && !FULL_ID.test(custom.trim()))
@@ -445,18 +447,18 @@ export function createInspector(h: InspectorHandlers) {
         act.append(
           el("div", { class: "activity-row", "data-event": a.id }, icon("event", 15), el("span", { class: "act-text" }, a.text), el("span", { class: "act-age dim" }, a.age)),
         );
-      if (!c.activity.length) act.append(el("p", { class: "dim" }, "No captured events for this workspace yet."));
+      if (!c.activity.length) act.append(el("p", { class: "dim" }, "No captured events for this worktree yet."));
       const open = el("button", { type: "button", "data-action": "timeline" }, "Open scoped Timeline");
       open.onclick = () => h.openTimeline();
       act.append(open);
       frag.append(act);
 
       const origin = el("section", { class: "insp-section insp-origin" });
-      const help = el("button", { type: "button", class: "icon-button help", "aria-label": "About origin workspace", "aria-expanded": originHelp ? "true" : "false", "data-action": "origin-help" }, icon("help", 16));
+      const help = el("button", { type: "button", class: "icon-button help", "aria-label": "About origin worktree", "aria-expanded": originHelp ? "true" : "false", "data-action": "origin-help" }, icon("help", 16));
       const helpText = el(
         "p",
         { class: "dim origin-help", id: "graph-origin-help" },
-        "Firehose does not infer or record which workspace created another. Shared ancestry shows revision parents only.",
+        "Firehose does not infer or record which worktree created another. Shared ancestry shows revision parents only.",
       );
       helpText.hidden = !originHelp;
       help.setAttribute("aria-controls", "graph-origin-help");
@@ -465,7 +467,7 @@ export function createInspector(h: InspectorHandlers) {
         rerender(true);
       };
       origin.append(
-        el("h4", {}, "Origin workspace"),
+        el("h4", {}, "Origin worktree"),
         el("div", { class: "origin-row" }, icon("agent", 18), el("span", { class: "origin-value" }, "unknown"), help),
         helpText,
       );
@@ -490,7 +492,7 @@ export function createInspector(h: InspectorHandlers) {
       frag.append(actions);
     }
     if (c.unassigned)
-      frag.append(el("p", { class: "dim" }, `${c.unassigned} sessions have unavailable or missing workspace identity.`));
+      frag.append(el("p", { class: "dim" }, `${c.unassigned} sessions have unavailable or missing worktree identity.`));
     return frag;
   }
 

@@ -69,6 +69,14 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("client: %s: %s: %s", e.Operation, e.Status, e.Body)
 }
 
+// statusError is a non-200 getJSON response; callers use Code to classify it.
+type statusError struct {
+	Code int
+	msg  string
+}
+
+func (e *statusError) Error() string { return e.msg }
+
 func (c *Client) getJSON(ctx context.Context, path string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
@@ -81,7 +89,7 @@ func (c *Client) getJSON(ctx context.Context, path string, v any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("client: GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
+		return &statusError{Code: resp.StatusCode, msg: fmt.Sprintf("client: GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))}
 	}
 	return json.NewDecoder(resp.Body).Decode(v)
 }

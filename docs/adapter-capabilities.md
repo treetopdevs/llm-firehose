@@ -39,7 +39,9 @@ The local baseline is OpenCode 1.18.10, Claude Code 2.1.218, and Gemini CLI
 declares (the `supported_events` count doctor reports); ten are backed by the
 real fixture corpus, while `PreCompact` keeps its pre-merge mapping and awaits
 a captured payload (see the claudecode testdata README). Other documented
-Claude hooks remain coverage gaps until their payloads are observed. The
+Claude hooks remain coverage gaps until their payloads are observed. A ran
+Bash/Shell summary carries the allowlisted lifecycle phrases (git worktree
+add/remove, commit, push, gh pr create/merge) and nothing else from the command. The
 OpenCode adapter maps thirteen bus families; nine are backed by the sanitized
 1.18.10 bus-event corpus, while `session.error`, `session.deleted`, and the
 two permission families keep their pre-corpus mappings as unproven inherited

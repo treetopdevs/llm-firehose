@@ -1,3 +1,5 @@
+mod actions;
+
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -20,6 +22,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
+        .manage(actions::PruneTokens::default())
+        .invoke_handler(tauri::generate_handler![
+            actions::open_path,
+            actions::prune_preview,
+            actions::prune_apply
+        ])
         .setup(|app| {
             if daemon_reachable(DAEMON_ADDR) {
                 return Ok(());

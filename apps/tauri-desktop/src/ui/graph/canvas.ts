@@ -5,6 +5,7 @@
 // svg, no per-node handlers.
 
 import { el } from "../../dom";
+import { claimEscape, isEscapeEligible } from "../../escape";
 import {
   fitBounds,
   layoutWorkspaceGraph,
@@ -17,6 +18,7 @@ import {
 } from "./layout";
 import { relatives, type GraphNode, type Point } from "./model";
 import { aggregateState, displayText, stateDescription, type AgentState } from "./names";
+import { LOCAL } from "../../keys";
 
 const svgNS = "http://www.w3.org/2000/svg";
 export function svg<K extends keyof SVGElementTagNameMap>(
@@ -36,6 +38,15 @@ export const READABLE_SCALE = 0.75;
 export const LABEL_MIN_SCALE = 0.5;
 /** Left gutter reserved for the pinned depth ticks. */
 const GUTTER = 56;
+/** A pointer-initiated camera jump pans for this long; keyboard jumps never animate. */
+const PAN_MS = 240;
+/** Quartic ease-in-out: the closed form of DESIGN.md's --ease-in-out, cubic-bezier(0.77, 0, 0.175, 1). */
+const easeInOut = (t: number) => (t < 0.5 ? 8 * t ** 4 : 1 - (-2 * t + 2) ** 4 / 2);
+const reducedMotion = () => !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+export interface CenterOptions {
+  /** Pan there instead of jumping: only for pointer-initiated moves, and never under reduced motion. */
+  animate?: boolean;
+}
 const PAD = 28;
 const GLOW_LIMIT = 300;
 /** Screen x of the axis arrows and rule, and of the notes beside them. */
@@ -85,7 +96,7 @@ export interface CanvasHandlers {
   selectWorkspace(id: string): void;
   selectRevision(key: string): void;
   toggleCluster(revisionKey: string): void;
-  clearSelection(): void;
+  clearSelection(): boolean;
   expandHistory(): void;
 }
 
@@ -124,6 +135,7 @@ interface ClusterRec {
   dot: SVGCircleElement;
   cluster: LaidCluster;
   flags: string;
+  aria: string;
 }
 
 function fnv(h: number, s: string): number {
@@ -216,7 +228,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
   expandButton.onclick = () => handlers.expandHistory();
   footer.append(legend, footerStatus, expandButton);
   // Zoomed far out the labels are too small to read; say so rather than show specks.
-  const zoomHint = el("div", { class: "graph-zoom-hint", role: "status" }, "Zoomed out: labels are hidden. Zoom in, or search, to read workspaces.");
+  const zoomHint = el("div", { class: "graph-zoom-hint", role: "status" }, "Zoomed out: labels are hidden. Zoom in, or search, to read worktrees.");
   zoomHint.hidden = true;
   // Workspaces beyond each edge of the view, so a cropped Fit never hides them silently.
   // Each is a button that pans a screenful toward them.
@@ -300,12 +312,51 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     updateAxis();
     updateFooter();
   }
+  /** The running camera pan; anything else that moves the view stops it where it is. */
+  let pan: number | undefined;
+  let panTarget: View | undefined;
+  /** Cancel a running pan, leaving the camera wherever its last frame put it. */
+  function stopPan() {
+    if (pan !== undefined) cancelAnimationFrame(pan);
+    pan = panTarget = undefined;
+  }
+  /**
+   * Ease the camera from the current view to `to` over PAN_MS, one frame at a time.
+   * Detaching the canvas mid-pan lands on `to` at once; any setView stops it.
+   */
+  function panTo(to: View) {
+    stopPan();
+    autoView = undefined;
+    const from = { ...view };
+    panTarget = to;
+    const t0 = performance.now();
+    /** One frame: interpolate toward `to`, then schedule the next frame or land and clear the pan. */
+    const step = (now: number) => {
+      const k = easeInOut(Math.min(1, Math.max(0, (now - t0) / PAN_MS)));
+      view = k >= 1 ? to : {
+        x: from.x + (to.x - from.x) * k,
+        y: from.y + (to.y - from.y) * k,
+        scale: from.scale + (to.scale - from.scale) * k,
+      };
+      applyView();
+      pan = k < 1 && canvas.isConnected ? requestAnimationFrame(step) : undefined;
+      if (pan === undefined) {
+        panTarget = undefined;
+        if (view !== to) setView(to);
+      }
+    };
+    pan = requestAnimationFrame(step);
+  }
+  /** Jump the camera to `v` (scale clamped), stopping any pan; `auto` keeps a fit's re-fit on resize. */
   function setView(v: View, auto = false) {
+    stopPan();
     view = { x: v.x, y: v.y, scale: clampScale(v.scale) };
     if (!auto) autoView = undefined;
     applyView();
   }
+  /** Re-run the active fit (if any) against the current layout and size; stops any pan. */
   function reapplyAuto() {
+    stopPan();
     const v = autoView?.();
     if (v) {
       view = v;
@@ -342,14 +393,13 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     autoView = undefined;
     setView(viewForRect(r, minScale, true));
   }
-  function centerOn(p: Point, minScale = 1) {
+  /** Put world point `p` at the middle of the canvas, never zooming out below `minScale`; pans when `opts.animate`. */
+  function centerOn(p: Point, minScale = 1, opts: CenterOptions = {}) {
     const { w, h } = size();
     const scale = clampScale(Math.max(view.scale, minScale));
-    setView({
-      x: GUTTER + (w - GUTTER) / 2 - p.x * scale,
-      y: h / 2 - p.y * scale,
-      scale,
-    });
+    const to = { x: GUTTER + (w - GUTTER) / 2 - p.x * scale, y: h / 2 - p.y * scale, scale };
+    if (opts.animate && canvas.isConnected && !reducedMotion()) panTo(to);
+    else setView(to);
   }
   function pointOf(id: string): Point | undefined {
     if (!layout) return undefined;
@@ -362,29 +412,32 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     const n = key ? layout.nodes.get(key) : undefined;
     return n ? { x: n.x, y: n.y } : undefined;
   }
-  function centerOnWorkspace(id: string, minScale = 1) {
+  /** Center on a workspace's label, cluster chip or revision node, whichever the layout drew. */
+  function centerOnWorkspace(id: string, minScale = 1, opts?: CenterOptions) {
     const p = pointOf(id);
-    if (p) centerOn(p, minScale);
+    if (p) centerOn(p, minScale, opts);
   }
-  function centerOnRevision(key: string, minScale = 1) {
+  /** Center on a revision node; a key outside the loaded layout is a no-op. */
+  function centerOnRevision(key: string, minScale = 1, opts?: CenterOptions) {
     const n = layout?.nodes.get(key);
-    if (n) centerOn({ x: n.x, y: n.y }, minScale);
+    if (n) centerOn({ x: n.x, y: n.y }, minScale, opts);
   }
-  /** Pan the least amount that brings a world rect fully on screen. */
+  /** Pan the least amount that brings a world rect fully on screen; mid-pan, judged at the pan's destination. */
   function ensureVisible(r: Rect) {
     const { w, h } = size();
     const margin = 24;
+    const v = panTarget ?? view;
     let dx = 0,
       dy = 0;
-    const left = view.x + r.x * view.scale;
-    const right = left + r.w * view.scale;
-    const top = view.y + r.y * view.scale;
-    const bottom = top + r.h * view.scale;
+    const left = v.x + r.x * v.scale;
+    const right = left + r.w * v.scale;
+    const top = v.y + r.y * v.scale;
+    const bottom = top + r.h * v.scale;
     if (left < GUTTER + margin) dx = GUTTER + margin - left;
     else if (right > w - margin) dx = w - margin - right;
     if (top < margin) dy = margin - top;
     else if (bottom > h - margin) dy = h - margin - bottom;
-    if (dx || dy) setView({ ...view, x: view.x + dx, y: view.y + dy });
+    if (dx || dy) setView({ ...v, x: v.x + dx, y: v.y + dy });
   }
 
   // ---- axis and footer --------------------------------------------------
@@ -472,7 +525,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       ? ` (${clustered} grouped in ${new Set(layout.clusterOf.values()).size} counted ${new Set(layout.clusterOf.values()).size === 1 ? "cluster" : "clusters"})`
       : "";
     const counts = viewCounts();
-    const text = `All ${total} workspaces labelled${grouped} · ${counts.inView} in view`;
+    const text = `All ${total} worktrees labelled${grouped} · ${counts.inView} in view`;
     if (footerStatus.textContent !== text) footerStatus.textContent = text;
     for (const side of ["left", "right", "top", "bottom"] as const) {
       const hint = edgeHints[side];
@@ -481,7 +534,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       if (n) {
         const t = hintText[side](n);
         if (hint.textContent !== t) hint.textContent = t;
-        hint.setAttribute("aria-label", `${n} more ${n === 1 ? "workspace" : "workspaces"} ${side === "left" ? "to the left" : side === "right" ? "to the right" : side === "top" ? "above" : "below"}; pan toward them`);
+        hint.setAttribute("aria-label", `${n} more ${n === 1 ? "worktree" : "worktrees"} ${side === "left" ? "to the left" : side === "right" ? "to the right" : side === "top" ? "above" : "below"}; pan toward them`);
       }
     }
     expandButton.hidden = !graph.hasMore;
@@ -551,6 +604,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     text.textContent = ws.name;
     const dot = svg("circle", {
       class: "agent-dot state-none",
+      "aria-hidden": "true",
       cx: l.w - 12,
       cy: l.h / 2,
       r: 4.5,
@@ -570,7 +624,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       "data-key": `cluster:${c.revision_key}`,
       transform: `translate(${num(c.x)},${num(c.y)})`,
       "aria-expanded": c.expanded ? "true" : "false",
-      "aria-label": `${c.count} workspaces on one revision, ${c.expanded ? "expanded" : "collapsed"}`,
+      "aria-label": `${c.count} worktrees on one revision, ${c.expanded ? "expanded" : "collapsed"}`,
     });
     if (c.leader)
       g.append(
@@ -584,19 +638,20 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       );
     g.append(svg("rect", { class: "chip", width: c.w, height: c.h, rx: 6 }));
     const text = svg("text", { x: 10, y: c.h / 2 + 4 });
-    text.textContent = `${c.count} workspaces ${c.expanded ? "▾" : "▸"}`;
+    text.textContent = `${c.count} worktrees ${c.expanded ? "▾" : "▸"}`;
     const dot = svg("circle", {
       class: "agent-dot state-none",
+      "aria-hidden": "true",
       cx: c.w - 12,
       cy: c.h / 2,
       r: 4.5,
     });
     const title = svg("title");
     title.textContent = c.expanded
-      ? "Collapse this group of workspaces"
-      : "Expand to show every workspace on this revision";
+      ? "Collapse this group of worktrees"
+      : "Expand to show every worktree on this revision";
     g.append(clipped(text, c.w, c.h), dot, title);
-    return { g, dot, cluster: c, flags: "" };
+    return { g, dot, cluster: c, flags: "", aria: "" };
   }
 
   /** Key (`workspace:..`, `cluster:..`, `revision:..`) of the focused element inside the svg. */
@@ -1009,6 +1064,11 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
         setClass(rec.g, `workspace-cluster${flags}`);
       }
       setClass(rec.dot, `agent-dot state-${agent}`);
+      const aria = `${rec.cluster.count} worktrees on one revision, ${rec.cluster.expanded ? "expanded" : "collapsed"}, ${stateDescription(agent)}`;
+      if (rec.aria !== aria) {
+        rec.aria = aria;
+        rec.g.setAttribute("aria-label", aria);
+      }
     }
     // Keep the selected label as the keyboard entry point unless focus is inside the canvas.
     if (!canvas.contains(document.activeElement) || document.activeElement === canvas) {
@@ -1126,13 +1186,16 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     (e) => {
       const ev = e as KeyboardEvent;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      if (ev.key === "Escape") {
-        handlers.clearSelection();
+      if (LOCAL.canvasClear.matches(ev)) {
+        if (isEscapeEligible(ev) && handlers.clearSelection()) {
+          claimEscape(ev);
+          ev.preventDefault();
+        }
         return;
       }
       const key = keyOf(ev.target);
       if (key !== null) {
-        if (ev.key === "Enter" || ev.key === " ") {
+        if (LOCAL.canvasOpen.matches(ev)) {
           ev.preventDefault();
           (ev.target as Element).dispatchEvent(new MouseEvent("click", { bubbles: true }));
           return;
@@ -1143,9 +1206,10 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
           ArrowLeft: "left",
           ArrowRight: "right",
         };
-        const dir = dirs[ev.key];
+        const dir = LOCAL.canvasPan.matches(ev) ? dirs[ev.key] : undefined;
         if (dir) {
           ev.preventDefault();
+          stopPan(); // keyboard input never rides an animation
           moveFocus(key, dir);
         }
         return;
@@ -1153,13 +1217,13 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       if (ev.target !== canvas) return;
       const step = 48;
       let handled = true;
+      if (!LOCAL.canvasPan.matches(ev) && !LOCAL.canvasZoom.matches(ev) && !LOCAL.canvasFit.matches(ev)) return;
       if (ev.key === "ArrowLeft") setView({ ...view, x: view.x + step });
       else if (ev.key === "ArrowRight") setView({ ...view, x: view.x - step });
       else if (ev.key === "ArrowUp") setView({ ...view, y: view.y + step });
       else if (ev.key === "ArrowDown") setView({ ...view, y: view.y - step });
-      else if (ev.key === "+" || ev.key === "=") zoomAt(1.2);
-      else if (ev.key === "-" || ev.key === "_") zoomAt(1 / 1.2);
-      else if (ev.key === "0") handlers.fit();
+      else if (LOCAL.canvasZoom.matches(ev)) zoomAt(ev.key === "+" || ev.key === "=" ? 1.2 : 1 / 1.2);
+      else if (LOCAL.canvasFit.matches(ev)) handlers.fit();
       else handled = false;
       if (handled) ev.preventDefault();
     },
@@ -1189,8 +1253,10 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     },
     { passive: false },
   );
+  // Primary-button press: catch any running pan, then start a background drag unless it landed on a node.
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== undefined && e.button !== 0) return;
+    stopPan(); // grabbing the canvas catches a running pan, even on a node
     if (keyOf(e.target) !== null) return;
     drag = { x: e.clientX, y: e.clientY, moved: 0 };
     canvas.setPointerCapture?.(e.pointerId);

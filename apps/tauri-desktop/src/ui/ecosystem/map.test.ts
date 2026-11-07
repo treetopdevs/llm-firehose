@@ -23,8 +23,17 @@ test("empty replay beds keep their position and disclose no visible activity",()
 test("single failed observation has neutral stem and exposes recorded tool",()=>{
  const e={id:'failed',name:'view_file',severity:'error',payload:{}} as FirehoseEvent;
  const root=renderEcosystemMap([{key:'f',path:'f',workspace:'w',eventIds:[e.id]}],[e],()=>{});
- expect(root.querySelector('line')?.getAttribute('stroke')).toBe('#75818d');
- expect(root.querySelector('ellipse')?.getAttribute('fill')).toBe('#e27d77');
+ expect(root.querySelector('line')?.getAttribute('stroke')).toBe('var(--stale)');
+ expect(root.querySelector('ellipse')?.getAttribute('fill')).toBe('var(--err)');
  expect(root.querySelector('button')?.getAttribute('aria-label')).toContain('view_file');
  expect(root.textContent).toContain('may include reads');
+});
+test("emitted styles reference only tokens declared on :root",async()=>{
+ const {readFileSync}=await import("node:fs");const {parseTokens}=await import("../../tokens-helpers");
+ const declared=Object.keys(parseTokens(readFileSync("src/styles.css","utf8")).base);
+ const e={id:'a',name:'t',severity:'error',payload:{}} as FirehoseEvent;
+ const root=renderEcosystemMap([{key:'f',path:'f',workspace:'w',eventIds:['a','b']}],[e,{...e,id:'b'}],()=>{});
+ const used=[...root.innerHTML.matchAll(/var\(\s*(--[\w-]+)/g)].map(m=>m[1]);
+ expect(used.length).toBeGreaterThan(0);expect(used.filter(n=>!declared.includes(n))).toEqual([]);
+ expect(root.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b/i);
 });

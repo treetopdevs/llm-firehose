@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { FeedState, coalesce } from "./state";
+import { FEED_RING, FeedState, coalesce } from "./state";
+import { TIMELINE_CAP } from "./ui/graph/model";
 import type { FirehoseEvent } from "./api";
 
 function ev(partial: Partial<FirehoseEvent> & { id: string }): FirehoseEvent {
@@ -182,5 +183,41 @@ describe("FeedState", () => {
     feed.push(ev({ id: "2", source: "codex", name: "b" }));
     feed.push(ev({ id: "3", source: "claude-code", name: "c" }));
     expect(feed.sources()).toEqual(["claude-code", "codex"]);
+  });
+});
+
+describe("row keys", () => {
+  const call = (id: string, time: string) =>
+    ev({ id, time, session_id: "s1", turn_id: "t1", call_id: "c1", payload: { phase: "post", tool_name: "Bash" } });
+
+  test("a coalesced row keeps the id of its first event as its key while row.event changes", () => {
+    const rows = coalesce([call("hook-id", "2026-07-02T10:00:00Z"), call("rollout-id", "2026-07-02T10:00:01Z")]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].event.id).toBe("rollout-id");
+    expect(rows[0].count).toBe(2);
+    expect(rows[0].key).toBe("hook-id");
+  });
+
+  test("distinct rows have distinct keys, including outside the correlation window", () => {
+    const rows = coalesce([call("a", "2026-07-02T10:00:00Z"), call("b", "2026-07-02T10:01:00Z"), ev({ id: "c" })]);
+    expect(rows.map((r) => r.key)).toEqual(["a", "b", "c"]);
+  });
+
+  test("events without ids still get unique keys", () => {
+    const rows = coalesce([ev({ id: "" }), ev({ id: "" })]);
+    expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+  });
+});
+
+describe("FEED_RING", () => {
+  test("equals the project timeline cap and evicts the oldest", () => {
+    expect(FEED_RING).toBe(5000);
+    expect(FEED_RING).toBe(TIMELINE_CAP);
+    const feed = new FeedState(FEED_RING);
+    for (let i = 0; i < 5050; i++) feed.push(ev({ id: `e${i}` }));
+    const ids = feed.events().map((e) => e.id);
+    expect(ids).toHaveLength(5000);
+    expect(ids[0]).toBe("e50");
+    expect(ids[4999]).toBe("e5049");
   });
 });
