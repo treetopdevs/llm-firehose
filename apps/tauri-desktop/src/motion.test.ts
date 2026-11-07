@@ -36,7 +36,9 @@ describe("press feedback", () => {
     expect(body(top, "button:active")).toMatch(/(?:^|[;\s])scale:\s*0\.97/);
   });
 
-  test.each([".nav-btn:active", ".session-tabs button:active"])("%s stays still: switched constantly", (sel) => {
+  // Tabs (Fleet encodings, Project chips, session lenses, any future tablist) and nav switch
+  // views constantly, and their selected state is already the feedback.
+  test.each([".nav-btn:active", '[role="tab"]:active'])("%s stays still: switched constantly", (sel) => {
     expect(body(top, sel)).toMatch(/(?:^|[;\s])scale:\s*none/);
   });
 

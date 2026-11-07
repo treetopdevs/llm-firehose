@@ -118,9 +118,9 @@ button {
 }
 button:hover { background: var(--bg-hover); }
 /* Press feedback. The `scale` property composes with any positioning `transform` (edge hints).
-   Nav and lens tabs are switched constantly, so they stay still. */
+   Nav and tabs switch views constantly and their selected state is the feedback, so they stay still. */
 button:active { scale: 0.97; }
-.nav-btn:active, .session-tabs button:active { scale: none; }
+.nav-btn:active, [role="tab"]:active { scale: none; }
 @media (prefers-reduced-motion: reduce) {
   button:active { scale: none; }
 }

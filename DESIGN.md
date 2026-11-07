@@ -340,7 +340,7 @@ The shell is a tool people keep open all day, so motion is rare (the graph's poi
 ### Buttons
 - **Shape:** softly squared (6px radius), 1px `--border`, `--bg-panel` fill, text inherits the body font at `--fs-base`.
 - **Default:** `--bg-panel` background, `--text`, `0.35rem 0.8rem` padding, `0.15rem` outer margin.
-- **Press:** `scale: 0.97` (the individual property, so it composes with positioning transforms) over 120ms `--ease-out` on `:active`, off under reduced motion. Nav buttons and session lens tabs stay still: they are switched constantly.
+- **Press:** `scale: 0.97` (the individual property, so it composes with positioning transforms) over 120ms `--ease-out` on `:active`, off under reduced motion. Nav buttons and every `role="tab"` (Fleet encodings, Project chips, session lenses) stay still: they switch views constantly and their selected state is the feedback.
 - **Hover / Focus:** hover shifts the fill to `--bg-hover`; focus-visible draws a 2px `--focus` outline with 1px to 3px offset (per panel today; the shell should own it).
 - **Primary:** same shape with an `--accent` border and `--accent` text; no filled accent buttons exist.
 - **Pressed / toggled** (`aria-pressed="true"`, `.active`): `--accent` border and text in the shell; inside the graph, `--selected` text on a `--selected` wash.

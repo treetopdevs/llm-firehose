@@ -79,6 +79,14 @@ export function createAttention(options: AttentionOptions) {
     class: "attention-strip",
     "aria-label": "Needs you status",
   });
+  // Built once; render() only rewrites their text. Rebuilding them on every poll dropped a
+  // click whose press spanned the poll (mousedown and mouseup landed on different nodes).
+  const stripOpen = el("button", { "data-key": "inbox" });
+  stripOpen.addEventListener("click", options.onOpenInbox);
+  const stripCoverage = el("span", { class: "dim" });
+  const stripDoctor = el("button", { "data-key": "doctor" }, "Check capture setup");
+  stripDoctor.addEventListener("click", options.onDoctor);
+  strip.append(stripOpen, stripCoverage, stripDoctor);
   const rows = el("div", { class: "attention-rows" });
   const status = el("p", { class: "dim", role: "status" });
   let history = false;
@@ -253,7 +261,6 @@ export function createAttention(options: AttentionOptions) {
       notificationMessage ||
       "Desktop notifications are opt-in and require this app to stay open.";
     clear(rows);
-    clear(strip);
     names = snapshot.sessions.map((s) => [keyOf(s), sessionName(s)] as const);
     const pending = snapshot.sessions.filter((s) => s.pending);
     const snoozed = pending.filter((s) => prefs.snoozed(episodeKey(s))).length;
@@ -261,27 +268,8 @@ export function createAttention(options: AttentionOptions) {
     for (const fn of countListeners) {
       try { fn(); } catch { /* a listener must not break the strip */ }
     }
-    const open = el(
-      "button",
-      { "data-key": "inbox" },
-      `${needYouCount(pending.length - snoozed)} · ${snoozed} snoozed`,
-    );
-    open.addEventListener("click", options.onOpenInbox);
-    const doctor = el(
-      "button",
-      { "data-key": "doctor" },
-      "Check capture setup",
-    );
-    doctor.addEventListener("click", options.onDoctor);
-    strip.append(
-      open,
-      el(
-        "span",
-        { class: "dim" },
-        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}${snapshot.warnings.length} capture warning(s) · ${snapshot.gaps?.length ?? 0} capture gap(s) · Coverage depends on captured observations`,
-      ),
-      doctor,
-    );
+    stripOpen.textContent = `${needYouCount(pending.length - snoozed)} · ${snoozed} snoozed`;
+    stripCoverage.textContent = `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}${snapshot.warnings.length} capture warning(s) · ${snapshot.gaps?.length ?? 0} capture gap(s) · Coverage depends on captured observations`;
     working.setAttribute("aria-pressed", String(!history));
     historyButton.setAttribute("aria-pressed", String(history));
     function choices(

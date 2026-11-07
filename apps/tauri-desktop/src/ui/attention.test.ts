@@ -532,3 +532,19 @@ test("without labels a digest worktree shows its 8-character prefix, not 64 hex"
   expect(panel.root.textContent).toContain(`Worktree: ${HEX.slice(0, 8)}`);
   expect(panel.root.textContent).not.toContain(HEX);
 });
+
+test("a refresh keeps the strip's buttons, so a press that spans a poll still clicks", async () => {
+  const doctor = vi.fn();
+  const p = mount({ onDoctor: doctor });
+  await p.refresh();
+  const inbox = p.strip.querySelector("[data-key=inbox]");
+  const check = p.strip.querySelector<HTMLButtonElement>("[data-key=doctor]")!;
+  snapshot.sessions = [session("r1"), session("r2")];
+  await p.refresh();
+  // Same nodes, new text: mousedown before the poll and mouseup after land on one button.
+  expect(p.strip.querySelector("[data-key=inbox]")).toBe(inbox);
+  expect(p.strip.querySelector("[data-key=doctor]")).toBe(check);
+  expect(inbox!.textContent).toContain("2 need you");
+  check.click();
+  expect(doctor).toHaveBeenCalledTimes(1);
+});
