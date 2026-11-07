@@ -701,15 +701,32 @@ test("⌘K focuses search, a result selects its workspace and centres its label"
   option.click();
   await flush();
   expect(label(root, "tip").classList.contains("selected")).toBe(true);
-  const pill = label(root, "tip");
+  // A pointer pick pans there; it settles centred.
+  await vi.waitFor(() => expect(centredOn(root, "tip")).toBe(true), { timeout: 2000, interval: 20 });
+});
+
+test("choosing a search result with Enter centres its label in one frame", async () => {
+  const { root } = await richSetup();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+  const input = root.querySelector<HTMLInputElement>('input[aria-label="Search graph"]')!;
+  input.value = "tip";
+  input.dispatchEvent(new Event("input"));
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", cancelable: true }));
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+  expect(label(root, "tip").classList.contains("selected")).toBe(true);
+  expect(centredOn(root, "tip")).toBe(true);
+});
+
+/** Whether the camera has the named label at the middle of the canvas. */
+function centredOn(root: HTMLElement, name: string): boolean {
+  const pill = label(root, name);
   const [tx, ty] = pill.getAttribute("transform")!.match(/-?[\d.]+/g)!.map(Number);
   const w = Number(pill.querySelector("rect")!.getAttribute("width"));
   const h = Number(pill.querySelector("rect")!.getAttribute("height"));
   const view = translateOf(root);
   const s = scaleOf(root);
-  expect(Math.abs(view.x + (tx + w / 2) * s - (56 + (900 - 56) / 2))).toBeLessThan(2);
-  expect(Math.abs(view.y + (ty + h / 2) * s - 320)).toBeLessThan(2);
-});
+  return Math.abs(view.x + (tx + w / 2) * s - (56 + (900 - 56) / 2)) < 2 && Math.abs(view.y + (ty + h / 2) * s - 320) < 2;
+}
 
 test("arrow keys move focus between labels and Escape clears the selection", async () => {
   const { root } = await richSetup();

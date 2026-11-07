@@ -326,11 +326,21 @@ The system is flat. Depth is conveyed by hairlines and by two tonal steps (`--bg
 
 **The Border Speaks Rule.** On a unit row the border style is data (solid, dashed, dotted, accent, error). Do not reuse those styles decoratively.
 
+### Motion
+
+Two easing tokens live in `:root`; the built-in keywords are too weak to read as intentional.
+
+- `--ease-out` (`cubic-bezier(0.23, 1, 0.32, 1)`): press feedback, and anything entering or leaving.
+- `--ease-in-out` (`cubic-bezier(0.77, 0, 0.175, 1)`): things moving across the screen.
+
+The shell is a tool people keep open all day, so motion is rare (the graph's pointer-initiated camera pan is the one movement, see Graph): anything triggered tens of times a day (rows streaming in, nav switches, opening the detail pane) changes in one frame, and keyboard-initiated changes never animate. New motion animates only `transform`, `scale` and `opacity`; the transport thumb (`left`/`width`) and the fleet change flash predate this rule. Reduced motion keeps opacity and drops movement (tested in `motion.test.ts`).
+
 ## 5. Components
 
 ### Buttons
 - **Shape:** softly squared (6px radius), 1px `--border`, `--bg-panel` fill, text inherits the body font at `--fs-base`.
 - **Default:** `--bg-panel` background, `--text`, `0.35rem 0.8rem` padding, `0.15rem` outer margin.
+- **Press:** `scale: 0.97` (the individual property, so it composes with positioning transforms) over 120ms `--ease-out` on `:active`, off under reduced motion. Nav buttons and session lens tabs stay still: they are switched constantly.
 - **Hover / Focus:** hover shifts the fill to `--bg-hover`; focus-visible draws a 2px `--focus` outline with 1px to 3px offset (per panel today; the shell should own it).
 - **Primary:** same shape with an `--accent` border and `--accent` text; no filled accent buttons exist.
 - **Pressed / toggled** (`aria-pressed="true"`, `.active`): `--accent` border and text in the shell; inside the graph, `--selected` text on a `--selected` wash.
@@ -371,7 +381,7 @@ The system is flat. Depth is conveyed by hairlines and by two tonal steps (`--bg
 The shell-owned time control under the header, bound to the shared `scope.window`. A `--fs-sm` row with 8px gaps and a bottom hairline: four presets (2h, 8h, 24h, 7d), Live, Hold, a tabular-numeric range readout in `--text-dim`, and a 14px-high slider track with a 7px radius, `--bg-panel` fill and a `--border`. The thumb is `--text-dim` at 70% opacity and slides with a 120ms ease (disabled under reduced motion). Controls are 4px-radius `--bg-panel` buttons with `3px 8px` padding; pressed state is `--accent` border and text; focus-visible is a 2px `--focus` outline; disabled state is 45% opacity with a not-allowed cursor. The track is a `role="slider"` with Arrow and Home keys; Escape during a drag restores the window.
 
 ### Lanes (signature component)
-SVG rows of time: an axis in `--fs-xs` `--text-dim` with 1-on-3 dashed `--border` gridlines, a soft `--border` baseline, closed spans in `--text-dim` at 45% opacity and open spans in `--text` at 85% (the open span is not accent coloured; tested), ticks in `--text` (`--err` for errors, `--needs` for needs), and a transparent hit rectangle that fills `--bg-hover` on hover or focus and takes a 2px `--focus` stroke on focus-visible. Lane labels are `--fs-sm` `--text`, state words `--fs-xs` `--text-dim`, and a lane that needs the operator goes bold `--needs`. Arrow keys and 1 to 9 pick a lane, Enter opens it.
+SVG rows of time: an axis in `--fs-xs` `--text-dim` with 1-on-3 dashed `--border` gridlines, a soft `--border` baseline, closed spans in `--text-dim` at 45% opacity and open spans in `--text` at 85% (the open span is not accent coloured; tested), ticks in `--text` (`--err` for errors, `--needs` for needs), and a transparent hit rectangle that fills `--bg-hover` on hover or keyboard focus (`:focus-visible`, so a click leaves no hover-like fill behind) and takes a 2px `--focus` stroke on focus-visible. Lane labels are `--fs-sm` `--text`, state words `--fs-xs` `--text-dim`, and a lane that needs the operator goes bold `--needs`. Arrow keys and 1 to 9 pick a lane, Enter opens it.
 
 ### Graph
 
@@ -381,6 +391,7 @@ The workspace graph consumes the same tokens. `--g-*` and `--muted` no longer ex
 - Selection is `--selected`, focus is `--selected` (outline) or `--text` (the pill, chip or node stroke, where an outline would box the SVG group), the ground stroke is `--fog`, conflicts use `--warn`/`--err`.
 - Ecosystem leaves: attempt `--focus`, complete `--ok`, failed `--err`, unknown `--stale`. Handoff series use `--series-1..5`. Replay captured uses `--observed`; the hypothetical lane uses `--replay-alt` on `--replay-alt-bg`.
 - TS renderers emit `var(--token)` strings or classes, not hex.
+- Camera: a camera jump the mouse starts (clicking a search result or an inspector parent link) pans over 240ms with the `--ease-in-out` curve (computed in TS as the quartic ease-in-out, `canvas.ts`). Jumps the keyboard starts (Enter in search, Space or Enter on a parent link), jumps that also switch tabs, and every jump under reduced motion land in one frame. Wheel, drag, any arrow key (on the canvas or a focused node), fit and the edge hints stop a running pan where it is.
 
 Names that TypeScript reads from CSS at runtime. Do not rename:
 

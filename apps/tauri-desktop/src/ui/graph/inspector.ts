@@ -56,7 +56,8 @@ export interface InspectorHandlers {
   openSession(id: string, source: string): void;
   filterTimeline(source: string, id: string): void;
   openTimeline(): void;
-  selectRevision(key: string): void;
+  /** `viaPointer`: a mouse click pans the camera there; Enter or Space jumps. */
+  selectRevision(key: string, viaPointer: boolean): void;
   highlightAncestry(): void;
   toggleDescendants(): void;
 }
@@ -233,7 +234,7 @@ export function createInspector(h: InspectorHandlers) {
       if (pn) {
         // index based so keyboard focus survives stepping to a revision with other parents
         const b = el("button", { type: "button", class: "parent-link", title: displayText(pn.description), "data-action": `parent:${i}` }, pn.commit_id.slice(0, 8));
-        b.onclick = () => h.selectRevision(p);
+        b.onclick = (e) => h.selectRevision(p, e.detail > 0);
         parents.append(b);
       } else parents.append(el("span", { class: "dim parent-missing", title: "Older history not loaded" }, `${p.slice(0, 8)} (not loaded)`));
     });

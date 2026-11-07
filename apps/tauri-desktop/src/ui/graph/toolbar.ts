@@ -72,7 +72,8 @@ export interface ToolbarHandlers {
   fit(): void;
   all(): void;
   search(query: string): SearchResult[];
-  pick(result: SearchResult): void;
+  /** `via` says how it was chosen: only a pointer pick pans the camera. */
+  pick(result: SearchResult, via: "pointer" | "keyboard"): void;
   /** Resolves when registered; rejects with a user-facing message. */
   register(root: string, vcs: string): Promise<void>;
   refresh(): void;
@@ -138,7 +139,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
       } else li.append(el("span", { class: "result-kind" }, r.kind === "revision" ? "◆" : "•"));
       li.append(el("span", { class: "result-title" }, r.title), el("span", { class: "result-detail" }, r.detail));
       li.onmousedown = (e) => e.preventDefault(); // keep input focus until the click lands
-      li.onclick = () => choose(r);
+      li.onclick = () => choose(r, "pointer");
       list.append(li);
     });
     if (!results.length) list.append(el("li", { class: "graph-search-empty", role: "presentation" }, "No match"));
@@ -167,11 +168,12 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
     active = -1;
     input.setAttribute("aria-expanded", "false");
   }
-  function choose(r: SearchResult) {
+  /** Close the search, clear its canvas mute, and hand the result on with how it was chosen. */
+  function choose(r: SearchResult, via: "pointer" | "keyboard") {
     input.value = "";
     hide();
     h.search(""); // clears the canvas mute
-    h.pick(r);
+    h.pick(r, via);
   }
   input.addEventListener("focus", show);
   input.addEventListener("input", () => {
@@ -195,7 +197,7 @@ export function createToolbar(h: ToolbarHandlers, opts: ToolbarOptions = {}) {
       const r = results[active] ?? (results.length === 1 ? results[0] : undefined);
       if (r) {
         e.preventDefault();
-        choose(r);
+        choose(r, "keyboard");
       }
     } else if (e.key === "Escape") {
       if (e.isComposing || isEscapeClaimed(e)) return;

@@ -480,7 +480,7 @@ export function createWorkspaceGraph(
       render();
       void loadHistory();
     },
-    selectRevision: (key) => selectRevision(key, true),
+    selectRevision: (key, viaPointer) => selectRevision(key, true, viaPointer),
     highlightAncestry: () => {
       descendant = false;
       sync();
@@ -611,7 +611,8 @@ export function createWorkspaceGraph(
     applyWorkspace(id);
     publish();
   }
-  function selectRevision(key: string, center = false) {
+  /** Select a bare revision (clearing any workspace) and optionally center it, panning when `animate`. */
+  function selectRevision(key: string, center = false, animate = false) {
     revision = key;
     workspace = "";
     session = "";
@@ -619,7 +620,7 @@ export function createWorkspaceGraph(
     void loadHistory(); // no workspace selected any more: nothing to load, and anything in flight is dropped
     render();
     publish();
-    if (center) canvas.centerOnRevision(key, canvas.view().scale);
+    if (center) canvas.centerOnRevision(key, canvas.view().scale, { animate });
   }
   function clearLocal(): boolean {
     if (!workspace && !revision) return false;
@@ -873,16 +874,19 @@ export function createWorkspaceGraph(
     }
     return out;
   }
-  function pickResult(r: SearchResult) {
+  /** Select and center a search result; only a pointer pick on the visible graph pans the camera. */
+  function pickResult(r: SearchResult, via: "pointer" | "keyboard") {
+    // A tab switch reveals the canvas: nothing on screen to travel from, so it jumps.
+    const animate = via === "pointer" && tab === "graph";
     if (tab !== "graph") {
       switchTab("graph");
     }
     if (r.kind === "workspace") {
       selectWorkspace(r.id);
-      canvas.centerOnWorkspace(r.id, Math.max(canvas.view().scale, 0.8));
+      canvas.centerOnWorkspace(r.id, Math.max(canvas.view().scale, 0.8), { animate });
       canvas.focusWorkspace(r.id);
     } else {
-      selectRevision(r.id, true);
+      selectRevision(r.id, true, animate);
     }
   }
 

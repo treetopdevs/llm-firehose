@@ -38,6 +38,15 @@ export const READABLE_SCALE = 0.75;
 export const LABEL_MIN_SCALE = 0.5;
 /** Left gutter reserved for the pinned depth ticks. */
 const GUTTER = 56;
+/** A pointer-initiated camera jump pans for this long; keyboard jumps never animate. */
+const PAN_MS = 240;
+/** Quartic ease-in-out: the closed form of DESIGN.md's --ease-in-out, cubic-bezier(0.77, 0, 0.175, 1). */
+const easeInOut = (t: number) => (t < 0.5 ? 8 * t ** 4 : 1 - (-2 * t + 2) ** 4 / 2);
+const reducedMotion = () => !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+export interface CenterOptions {
+  /** Pan there instead of jumping: only for pointer-initiated moves, and never under reduced motion. */
+  animate?: boolean;
+}
 const PAD = 28;
 const GLOW_LIMIT = 300;
 /** Screen x of the axis arrows and rule, and of the notes beside them. */
@@ -303,12 +312,51 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     updateAxis();
     updateFooter();
   }
+  /** The running camera pan; anything else that moves the view stops it where it is. */
+  let pan: number | undefined;
+  let panTarget: View | undefined;
+  /** Cancel a running pan, leaving the camera wherever its last frame put it. */
+  function stopPan() {
+    if (pan !== undefined) cancelAnimationFrame(pan);
+    pan = panTarget = undefined;
+  }
+  /**
+   * Ease the camera from the current view to `to` over PAN_MS, one frame at a time.
+   * Detaching the canvas mid-pan lands on `to` at once; any setView stops it.
+   */
+  function panTo(to: View) {
+    stopPan();
+    autoView = undefined;
+    const from = { ...view };
+    panTarget = to;
+    const t0 = performance.now();
+    /** One frame: interpolate toward `to`, then schedule the next frame or land and clear the pan. */
+    const step = (now: number) => {
+      const k = easeInOut(Math.min(1, Math.max(0, (now - t0) / PAN_MS)));
+      view = k >= 1 ? to : {
+        x: from.x + (to.x - from.x) * k,
+        y: from.y + (to.y - from.y) * k,
+        scale: from.scale + (to.scale - from.scale) * k,
+      };
+      applyView();
+      pan = k < 1 && canvas.isConnected ? requestAnimationFrame(step) : undefined;
+      if (pan === undefined) {
+        panTarget = undefined;
+        if (view !== to) setView(to);
+      }
+    };
+    pan = requestAnimationFrame(step);
+  }
+  /** Jump the camera to `v` (scale clamped), stopping any pan; `auto` keeps a fit's re-fit on resize. */
   function setView(v: View, auto = false) {
+    stopPan();
     view = { x: v.x, y: v.y, scale: clampScale(v.scale) };
     if (!auto) autoView = undefined;
     applyView();
   }
+  /** Re-run the active fit (if any) against the current layout and size; stops any pan. */
   function reapplyAuto() {
+    stopPan();
     const v = autoView?.();
     if (v) {
       view = v;
@@ -345,14 +393,13 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     autoView = undefined;
     setView(viewForRect(r, minScale, true));
   }
-  function centerOn(p: Point, minScale = 1) {
+  /** Put world point `p` at the middle of the canvas, never zooming out below `minScale`; pans when `opts.animate`. */
+  function centerOn(p: Point, minScale = 1, opts: CenterOptions = {}) {
     const { w, h } = size();
     const scale = clampScale(Math.max(view.scale, minScale));
-    setView({
-      x: GUTTER + (w - GUTTER) / 2 - p.x * scale,
-      y: h / 2 - p.y * scale,
-      scale,
-    });
+    const to = { x: GUTTER + (w - GUTTER) / 2 - p.x * scale, y: h / 2 - p.y * scale, scale };
+    if (opts.animate && canvas.isConnected && !reducedMotion()) panTo(to);
+    else setView(to);
   }
   function pointOf(id: string): Point | undefined {
     if (!layout) return undefined;
@@ -365,29 +412,32 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     const n = key ? layout.nodes.get(key) : undefined;
     return n ? { x: n.x, y: n.y } : undefined;
   }
-  function centerOnWorkspace(id: string, minScale = 1) {
+  /** Center on a workspace's label, cluster chip or revision node, whichever the layout drew. */
+  function centerOnWorkspace(id: string, minScale = 1, opts?: CenterOptions) {
     const p = pointOf(id);
-    if (p) centerOn(p, minScale);
+    if (p) centerOn(p, minScale, opts);
   }
-  function centerOnRevision(key: string, minScale = 1) {
+  /** Center on a revision node; a key outside the loaded layout is a no-op. */
+  function centerOnRevision(key: string, minScale = 1, opts?: CenterOptions) {
     const n = layout?.nodes.get(key);
-    if (n) centerOn({ x: n.x, y: n.y }, minScale);
+    if (n) centerOn({ x: n.x, y: n.y }, minScale, opts);
   }
-  /** Pan the least amount that brings a world rect fully on screen. */
+  /** Pan the least amount that brings a world rect fully on screen; mid-pan, judged at the pan's destination. */
   function ensureVisible(r: Rect) {
     const { w, h } = size();
     const margin = 24;
+    const v = panTarget ?? view;
     let dx = 0,
       dy = 0;
-    const left = view.x + r.x * view.scale;
-    const right = left + r.w * view.scale;
-    const top = view.y + r.y * view.scale;
-    const bottom = top + r.h * view.scale;
+    const left = v.x + r.x * v.scale;
+    const right = left + r.w * v.scale;
+    const top = v.y + r.y * v.scale;
+    const bottom = top + r.h * v.scale;
     if (left < GUTTER + margin) dx = GUTTER + margin - left;
     else if (right > w - margin) dx = w - margin - right;
     if (top < margin) dy = margin - top;
     else if (bottom > h - margin) dy = h - margin - bottom;
-    if (dx || dy) setView({ ...view, x: view.x + dx, y: view.y + dy });
+    if (dx || dy) setView({ ...v, x: v.x + dx, y: v.y + dy });
   }
 
   // ---- axis and footer --------------------------------------------------
@@ -1159,6 +1209,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
         const dir = LOCAL.canvasPan.matches(ev) ? dirs[ev.key] : undefined;
         if (dir) {
           ev.preventDefault();
+          stopPan(); // keyboard input never rides an animation
           moveFocus(key, dir);
         }
         return;
@@ -1202,8 +1253,10 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     },
     { passive: false },
   );
+  // Primary-button press: catch any running pan, then start a background drag unless it landed on a node.
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== undefined && e.button !== 0) return;
+    stopPan(); // grabbing the canvas catches a running pan, even on a node
     if (keyOf(e.target) !== null) return;
     drag = { x: e.clientX, y: e.clientY, moved: 0 };
     canvas.setPointerCapture?.(e.pointerId);
