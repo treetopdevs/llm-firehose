@@ -39,3 +39,20 @@ test("settings: the h2 exists while config loads and is the same node after refr
   expect(p.root.querySelector("h2")).toBe(h2);
   expect(p.root.querySelectorAll("h2")).toHaveLength(1);
 });
+
+test("doctor: a check's explanation does not use the side pane's zero-width class", async () => {
+  api.doctor.mockResolvedValue([{ name: "n", ok: false, detail: "run firehose install" }]);
+  const p = createDoctor();
+  await p.refresh(); await settle();
+  const detail = [...p.root.querySelectorAll(".doctor-check span")].find((s) => s.textContent === "run firehose install")!;
+  expect(detail.classList.contains("detail")).toBe(false);
+});
+
+test("doctor: an unreachable engine reads as a sentence, not an exception", async () => {
+  api.doctor.mockRejectedValue(new TypeError("Failed to fetch"));
+  const p = createDoctor();
+  await p.refresh(); await settle();
+  const text = p.root.querySelector(".error")!.textContent!;
+  expect(text).toContain("isn't responding");
+  expect(text).not.toContain("TypeError");
+});

@@ -296,6 +296,12 @@ describe("no stray vocabulary literals", () => {
   });
 });
 
+describe("glyph meaning", () => {
+  test("a worktree whose state is unknown does not wear the needs-you mark", () => {
+    expect(FORK_GLYPH.unknown).not.toBe(NEEDS_MARK);
+  });
+});
+
 describe("styles.css hooks", () => {
   test("no land gap survives: no landing time exists to draw one from (slice 17)", () => {
     const css = readFileSync(join(process.cwd(), "src/styles.css"), "utf8");
