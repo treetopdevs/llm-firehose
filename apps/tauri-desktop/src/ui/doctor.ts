@@ -1,5 +1,6 @@
 import { doctor } from "../api";
 import { el } from "../dom";
+import { failureMessage } from "../errors";
 import { runAdapterInstall } from "./install";
 
 const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigravity"];
@@ -22,7 +23,7 @@ export function createDoctor(): { root: HTMLElement; refresh(): void } {
             { class: `doctor-check ${c.ok ? "ok" : "bad"}` },
             el("span", { class: "mark" }, c.ok ? "✓" : "✗"),
             el("span", { class: "name" }, c.name),
-            el("span", { class: "detail dim" }, c.detail),
+            el("span", { class: "doctor-detail dim" }, c.detail),
           ),
         );
       }
@@ -37,7 +38,7 @@ export function createDoctor(): { root: HTMLElement; refresh(): void } {
       }
       root.append(el("h3", {}, "adapters"), buttons, status);
     } catch (err) {
-      root.replaceChildren(heading, el("p", { class: "error" }, String(err)));
+      root.replaceChildren(heading, el("p", { class: "error" }, failureMessage("run the setup checks", err)));
     }
   }
 

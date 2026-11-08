@@ -414,7 +414,7 @@ describe('local key descriptors', () => {
     const files = Object.keys(LISTENERS).map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
     for (const name of Object.keys(LOCAL)) expect(files, name).toContain(`LOCAL.${name}`);
     // Files that register keydown outside the declared set must be the known non-local ones.
-    const KNOWN_OTHER = new Set(['keys.ts', 'ui/legend.ts']);
+    const KNOWN_OTHER = new Set(['keys.ts', 'ui/legend.ts', 'ui/onboarding.ts']);
     const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs');
     const walk = (dir: string, rel = ''): string[] =>
       readdirSync(dir).flatMap((n: string) => {

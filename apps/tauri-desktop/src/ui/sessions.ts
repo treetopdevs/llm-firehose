@@ -1,6 +1,7 @@
 import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView, WorktreeSessionRef } from "../api";
 import { clear, el, onActivate } from "../dom";
+import { failureMessage } from "../errors";
 import { formatClock, projectName, sessionName, sessionRefLabel, sessionWhere, shortId, workspaceKey, worktreeName } from "../format";
 import type { SessionLike } from "../format";
 import type { SessionDirectory } from "../session-directory";
@@ -344,7 +345,7 @@ export function createSessions(
       if (version !== historyVersion) return;
       historyRef = null;
       clear(eventsBox);
-      eventsBox.append(el("p", { class: "error" }, String(err)));
+      eventsBox.append(el("p", { class: "error" }, failureMessage("load this session's events", err)));
     }
   }
 
@@ -634,7 +635,7 @@ export function createSessions(
       if (gen !== refreshGen) return;
       willClear(captureFocus());
       clear(listBox);
-      listBox.append(el("p", { class: "error" }, String(err)));
+      listBox.append(el("p", { class: "error" }, failureMessage("load sessions", err)));
     }
   }
 
