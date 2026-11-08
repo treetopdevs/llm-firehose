@@ -7,7 +7,7 @@ const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigra
 
 // Adapter wiring status from /doctor, with one-click install per adapter.
 export function createDoctor(): { root: HTMLElement; refresh(): void } {
-  const root = el("section", { class: "doctor" });
+  const root = el("section", { class: "doctor", tabindex: "-1", "aria-label": "Doctor" });
   const heading = el("h2", {}, "Doctor");
 
   async function refresh() {

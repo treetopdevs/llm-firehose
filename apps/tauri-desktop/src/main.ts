@@ -549,5 +549,11 @@ show("project");
 landingPending = true;
 
 if (!isOnboarded()) {
-  app.append(createOnboarding(() => show("doctor")));
+  app.append(
+    createOnboarding(() => {
+      show("doctor");
+      // The overlay took the focused button with it.
+      panels.doctor.root.focus();
+    }),
+  );
 }
