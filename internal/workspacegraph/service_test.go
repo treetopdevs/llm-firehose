@@ -541,7 +541,9 @@ func TestCanceledGitScanRetainsStaleSnapshot(t *testing.T) {
 
 // An untrusted repository's own config must never get a command executed by
 // the daemon's background scans (clean filters run during `git status`).
-func TestGitScanRefusesExecutableRepoConfig(t *testing.T) {
+// A repository whose config defines a filter still scans: the scan never loads
+// that config, so the filter cannot run and no longer hides the repository.
+func TestGitScanIgnoresExecutableRepoConfig(t *testing.T) {
 	ctx := context.Background()
 	root := fixture(t)
 	os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("a.txt filter=pwn\n"), 0600)
@@ -554,11 +556,12 @@ func TestGitScanRefusesExecutableRepoConfig(t *testing.T) {
 
 	s := New(privacy.ModeFull)
 	repo, err := s.Register(ctx, root, "git")
-	if err == nil {
-		_, err = s.Snapshot(ctx, repo.ID, "", true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err == nil {
-		t.Fatal("scan of a repo with an executable filter config succeeded")
+	v, err := s.Snapshot(ctx, repo.ID, "", true)
+	if err != nil || !v.Workspaces[0].Dirty {
+		t.Fatalf("scan: %+v %v", v.Workspaces, err)
 	}
 	if _, e := os.Stat(marker); e == nil {
 		t.Fatal("repo-local filter command was executed")
@@ -592,13 +595,43 @@ func TestGitScanAllowsDottedBranchAndRemoteNames(t *testing.T) {
 	}
 }
 
-func TestGitScanFailsClosedOnUnknownRepoConfig(t *testing.T) {
+// The guard protects only the live fallback (a repository the shadow git dir
+// cannot mirror); there it still fails closed on any key it does not know.
+func TestLiveConfigGuardFailsClosedOnUnknownRepoConfig(t *testing.T) {
 	for _, kv := range [][2]string{{"core.fsmonitor", "touch x"}, {"core.sshcommand", "x"}, {"custom.thing", "1"}, {"diff.d.textconv", "x"}, {"diff.a.b.textconv", "x"}, {"remote.my.fork.uploadpack", "x"}, {"submodule.a.b.update", "!x"}} {
 		root := fixture(t)
 		git(t, root, "config", kv[0], kv[1])
-		if _, err := New(privacy.ModeFull).Register(context.Background(), root, "git"); err == nil {
+		if err := guardGitConfig(context.Background(), root); err == nil {
 			t.Fatalf("%s accepted", kv[0])
 		}
+	}
+}
+
+// A ref backend the shadow does not mirror is read live, behind the guard: an
+// inert config scans, an unknown key refuses the repository.
+func TestGitReftableRepositoryUsesGuardedLiveSession(t *testing.T) {
+	root := t.TempDir()
+	if out, e := exec.Command("git", "-C", root, "init", "-b", "main", "--ref-format=reftable").CombinedOutput(); e != nil {
+		t.Skipf("git without reftable support: %s", out)
+	}
+	git(t, root, "commit", "--allow-empty", "-m", "base")
+	os.WriteFile(filepath.Join(root, "f.txt"), []byte("x"), 0600)
+	ctx := context.Background()
+	s := New(privacy.ModeFull)
+	repo, err := s.Register(ctx, root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Snapshot(ctx, repo.ID, "", true)
+	if err != nil || len(v.Workspaces) != 1 || !v.Workspaces[0].Dirty || len(v.Nodes) != 1 || v.DefaultTargetRef != "main" {
+		t.Fatalf("live scan: %+v %v", v, err)
+	}
+	git(t, root, "config", "custom.thing", "1")
+	if _, err := s.Snapshot(ctx, repo.ID, "", true); err != nil {
+		t.Fatalf("a failed rescan keeps the stale snapshot: %v", err)
+	}
+	if _, err := New(privacy.ModeFull).Register(ctx, root, "git"); err == nil {
+		t.Fatal("unknown config accepted on the live path")
 	}
 }
 

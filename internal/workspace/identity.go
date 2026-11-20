@@ -3,6 +3,8 @@
 package workspace
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +59,7 @@ func Observe(cwd string) (repoID, worktreeID string) {
 		if info, statErr := os.Stat(dotGit); statErr == nil {
 			gitDir := dotGit
 			if !info.IsDir() {
-				data, readErr := os.ReadFile(dotGit)
+				data, readErr := ReadMetadata(dotGit)
 				if readErr != nil {
 					return "", ""
 				}
@@ -75,7 +77,7 @@ func Observe(cwd string) (repoID, worktreeID string) {
 				return "", ""
 			}
 			commonDir := gitDir
-			if data, readErr := os.ReadFile(filepath.Join(gitDir, "commondir")); readErr == nil {
+			if data, readErr := ReadMetadata(filepath.Join(gitDir, "commondir")); readErr == nil {
 				value := strings.TrimSpace(string(data))
 				if value != "" {
 					if filepath.IsAbs(value) {
@@ -106,4 +108,36 @@ func canonical(path string) string {
 		return filepath.Clean(resolved)
 	}
 	return path
+}
+
+// maxMetadata bounds every VCS pointer file read (.git, commondir, HEAD,
+// .jj/repo, git_target): real ones are a path or a ref, far below this.
+const maxMetadata = 32768
+
+// ReadMetadata reads a small VCS metadata file. Repositories are discovered
+// from agent activity and may be hostile, so the target must be a regular file
+// (a symlink to a device or pipe is refused before it is opened) and the read
+// is bounded, whatever size the file claims.
+func ReadMetadata(path string) ([]byte, error) {
+	if info, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxMetadata+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxMetadata {
+		return nil, errors.New("metadata file too large")
+	}
+	return data, nil
 }

@@ -21,7 +21,7 @@ func gitStatus(ctx context.Context, root string) (string, error) {
 	return status, err
 }
 
-// gitDirtyState returns `git status` output and, when stats is set and status
+// gitDirtyState (and the session's dirtyState behind it) returns `git status` output and, when stats is set and status
 // found changes, `git diff --numstat -z HEAD` output, both from the same
 // shadow git dir (see gitStatus). detail is the status with untracked
 // directories expanded to their files (equal to status when none is folded);
@@ -32,7 +32,20 @@ func gitStatus(ctx context.Context, root string) (string, error) {
 // repository out of it. Numstat is best effort: a failure returns no numstat
 // (changes then carry path and status only), never an error.
 func gitDirtyState(ctx context.Context, root string, stats bool) (status, detail, numstat string, err error) {
-	_, env, cleanup, err := newShadowGitDir(ctx, root)
+	layout, err := locateGit(root)
+	if err != nil {
+		return "", "", "", err
+	}
+	g, err := openGitSession(ctx, layout)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer g.cleanup()
+	return g.dirtyState(ctx, root, stats)
+}
+
+func (g *gitSession) dirtyState(ctx context.Context, root string, stats bool) (status, detail, numstat string, err error) {
+	env, cleanup, err := g.checkoutShadow(root)
 	if err != nil {
 		// No symlinks (e.g. Windows) or an unusual layout: fall back to the
 		// checked live repo, which keeps only the narrow check-then-run window.
@@ -74,83 +87,27 @@ func hasUntrackedDirectory(status string) bool {
 	return false
 }
 
-func newShadowGitDir(ctx context.Context, root string) (string, []string, func(), error) {
-	out, err := run(ctx, root, "git", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir")
-	if err != nil {
-		return "", nil, nil, err
+// checkoutShadow builds the private git dir one checkout's status runs
+// against: that checkout's HEAD and index over the repository's shared objects
+// and refs, with the session's sanitized config. It reads files only.
+func (g *gitSession) checkoutShadow(root string) ([]string, func(), error) {
+	if g.shadow == "" {
+		return nil, nil, errors.New("no sanitized config")
 	}
-	paths := strings.Split(strings.TrimSpace(out), "\n")
-	if len(paths) != 2 {
-		return "", nil, nil, errors.New("unexpected rev-parse output")
-	}
-	gitDir, common := filepath.Clean(paths[0]), filepath.Clean(paths[1])
-	cfg, err := run(ctx, root, "git", "config", "--list", "--show-scope", "-z")
+	gitDir, err := worktreeGitDir(root)
 	if err != nil {
-		return "", nil, nil, err
+		return nil, nil, err
 	}
 	dir, err := os.MkdirTemp("", "firehose-shadow-*")
 	if err != nil {
-		return "", nil, nil, err
+		return nil, nil, err
 	}
 	cleanup := func() { os.RemoveAll(dir) }
-	fail := func(e error) (string, []string, func(), error) { cleanup(); return "", nil, nil, e }
-
-	// git refuses a symlinked HEAD, so it is copied (it is only a ref or hash).
-	head, e := os.ReadFile(filepath.Join(gitDir, "HEAD"))
-	if e != nil {
-		return fail(e)
+	if e := populateShadow(dir, gitDir, g.layout.common, g.config, false); e != nil {
+		cleanup()
+		return nil, nil, e
 	}
-	if e := os.WriteFile(filepath.Join(dir, "HEAD"), head, 0o600); e != nil {
-		return fail(e)
-	}
-	for _, l := range []struct{ name, target string }{
-		{"objects", filepath.Join(common, "objects")},
-		{"refs", filepath.Join(common, "refs")},
-		{"packed-refs", filepath.Join(common, "packed-refs")},
-	} {
-		if e := os.Symlink(l.target, filepath.Join(dir, l.name)); e != nil {
-			return fail(e)
-		}
-	}
-	if e := os.Mkdir(filepath.Join(dir, "info"), 0o700); e != nil {
-		return fail(e)
-	}
-	if e := os.Symlink(filepath.Join(common, "info", "exclude"), filepath.Join(dir, "info", "exclude")); e != nil {
-		return fail(e)
-	}
-
-	// The shadow config is written here from validated tokens (booleans,
-	// enums, digits), never copied from the repo, so nothing needs quoting.
-	var conf strings.Builder
-	conf.WriteString("[core]\n\tbare = false\n")
-	var ext strings.Builder
-	fields := strings.Split(cfg, "\x00")
-	for i := 0; i+1 < len(fields); i += 2 {
-		if fields[i] != "local" {
-			continue
-		}
-		key, val, _ := strings.Cut(fields[i+1], "\n")
-		k := strings.ToLower(key)
-		if !shadowConfigValue(k, val) {
-			continue
-		}
-		section, name, _ := strings.Cut(k, ".")
-		line := "\t" + name + " = " + strings.ToLower(val) + "\n"
-		switch section {
-		case "core":
-			conf.WriteString(line)
-		case "extensions":
-			ext.WriteString(line)
-		}
-	}
-	if ext.Len() > 0 {
-		conf.WriteString("[extensions]\n" + ext.String())
-	}
-	if e := os.WriteFile(filepath.Join(dir, "config"), []byte(conf.String()), 0o600); e != nil {
-		return fail(e)
-	}
-	env := []string{"GIT_DIR=" + dir, "GIT_WORK_TREE=" + root, "GIT_INDEX_FILE=" + filepath.Join(gitDir, "index")}
-	return dir, env, cleanup, nil
+	return []string{"GIT_DIR=" + dir, "GIT_WORK_TREE=" + root, "GIT_INDEX_FILE=" + filepath.Join(gitDir, "index")}, cleanup, nil
 }
 
 // shadowConfigValue reports whether a local config entry may be copied into

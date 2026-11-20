@@ -266,7 +266,44 @@ changes; full reconciliation every 30 seconds catches missed signals and checkou
 content changes. Explicit/focus refresh is also supported. Observed roots are
 learned before privacy processing only in a running capture engine, with no
 filesystem crawl; a root that does not scan (not a repository, VCS unavailable)
-is never remembered. A privacy-mode transition invalidates graph caches, because
+is never remembered.
+
+Identities in captured history are never discovery hints, in any mode: an
+ingested event can claim any `repo_id`, so only a root observed from a live
+`cwd`, or registered explicitly, is ever inspected.
+
+Roots are consolidated into projects before anything is listed, by reading
+local VCS metadata files only (no VCS command):
+
+- Any directory inside a repository resolves to that repository. A Git
+  repository is identified by its common dir, a JJ repository by its shared
+  repo dir, so every worktree of one repository is one registration, and scans
+  run from the main checkout (the git dir of a bare repository), so the
+  registration no longer depends on the checkout that led to it still existing.
+  `Repository.label` keeps its meaning, the root of the checkout or workspace
+  that registered the repository (which may be a linked worktree); the main
+  checkout is the additive `project_label`.
+- A colocated JJ + Git repository is one project with two registrations. With
+  `vcs` empty both are registered, whichever side was observed; they share
+  `project_id` and `project_label` (see the additive fields below). Naming a `vcs` in `POST /workspace-graph/repos` remains an
+  explicit choice for that root and replaces its other registration.
+- A Git worktree nested inside a JJ workspace's directory resolves to Git; a
+  root where both VCSs sit at the same level resolves to JJ.
+- A repository that cannot be scanned is listed once, as one `unavailable` row
+  named after its main checkout, however many of its checkouts were observed.
+- Observed activity outside any repository is not listed.
+
+Git scans never load the repository's own config. Every VCS command runs
+without any inherited `GIT_*` environment variable, and every Git command of a
+scan or comparison runs against a private git dir that shares the repository's
+objects, refs and worktree records but whose config the daemon writes from
+validated tokens, so config-defined programs (filters, fsmonitor, pagers, diff
+drivers, hooks paths) cannot run, and tool-specific keys (Tower, git-flow,
+GitHub Desktop, beads) cannot make a repository unreadable. Only a repository
+that private dir cannot mirror (no symlink support, or a ref backend other than
+`files`) is read live, and then only after its local config passes the
+fail-closed allowlist; such a repository with unknown config keys is the
+`unavailable` case above. A privacy-mode transition invalidates graph caches, because
 `id` fields change with the mode.
 
 Repository roots are persisted in `~/.agentfirehose/graph-roots.json` (0600,
@@ -275,6 +312,15 @@ daemon restart. A root is added when it is registered explicitly or when a root
 learned from observed agent activity scans successfully; the file is loaded at
 startup in every mode (entries that are not absolute paths or name an unknown VCS
 are ignored) and is never deleted or rewritten because the privacy mode changed.
+What is stored for a repository is its main checkout (for a Git worktree of a
+project whose main checkout is a JJ workspace, the worktree itself). A stored
+root is dropped at the next reconciliation only when it is confirmed not to be
+a repository any more: the path does not exist, or it is a readable, non-empty
+directory with no `.git` or `.jj` entry at or above it. Anything less certain
+is kept and listed as `unavailable`: a permission error, VCS metadata that is
+present but unreadable or broken, an empty directory (what an unmounted mount
+point looks like), and any root under a removable or network mount point
+(`/Volumes`, `/media`, `/mnt`, `/run/media`, an absent Windows drive).
 The file holds raw absolute paths: it is host-private state, never part of the
 event spool, the live stream, an export or any API response, and `0600` plus the
 loopback-only, browser-origin-restricted daemon are its protection. This
@@ -282,14 +328,17 @@ replaces the earlier rule that kept raw roots on disk only in `full` mode, which
 emptied the repository list after every restart in `minimal`/`balanced`.
 
 Display values in graph responses are never hashed or truncated, in any mode:
-`Repository.label` is the canonical root path, a Git workspace `label` is its
+`Repository.label` is the canonical root path, `project_label` the project's
+main checkout, a Git workspace `label` is its
 worktree path, a JJ workspace `label` is the workspace name, and branch or
 bookmark names (`refs`, `default_target_ref`), revision descriptions,
 `changed_files`, comparison `changed_files` and `FileChange.path` are the VCS's
 own text. This replaces the earlier rule that hashed these values in `minimal`
 and truncated them at 240 runes in `balanced`. The same applies to the
 synthetic `unavailable` repository rows, whose `label` is the root path and
-whose `id` is an opaque digest.
+whose `id` is an opaque digest; their `project_id` is the Git repository
+identity when the root is a Git repository (so captured sessions still belong
+to the project), else the same opaque digest.
 
 #### Per-file change statistics (additive)
 
@@ -301,6 +350,9 @@ applies.
 
 | Where | Field | Meaning |
 |---|---|---|
+| `GET /workspace-graph/repos`, snapshot `repository` | `project_id` | Shared by every registration of one project. For Git, and for JJ colocated with (or backed by) a Git repository outside its store, the Git repository identity: equal to the Git registration's `id` and to the `repo_id` Capture stamps on events, following the privacy mode the same way. For any other JJ repository, its own `id`. |
+| `GET /workspace-graph/repos`, snapshot `repository` | `project_label` | The project's main checkout path, readable in every privacy mode. |
+| `GET /workspace-graph` snapshot `workspaces[]` | `primary` | `true` on a Git repository's main checkout; omitted otherwise. A bare repository has no primary workspace. |
 | `GET /workspace-graph` snapshot | `default_target_ref` | Name of the ref behind `default_target` (`main` or `master` for Git, the bookmark for JJ). Present exactly when `default_target` is. |
 | `workspaces[]` | `changes` | Uncommitted checkout changes (a list of `FileChange`). |
 | `workspaces[]` | `changes_truncated` | `true` only when the workspace has more than 200 changed files; `changes` then holds the first 200 in the VCS's stable path order. |

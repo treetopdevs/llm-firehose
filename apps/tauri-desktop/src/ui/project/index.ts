@@ -350,7 +350,14 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   function syncSelect(ids: string[], repo: string | undefined): void {
     // A name beats a fallback: the store resolver first, then the host's label unless it is
     // only the fallback form (which a later resolved name must be able to outrank).
+    // A second view of a project (the JJ side of a colocated repository) reads as
+    // that project plus its VCS, so one project never appears as two alike entries.
     const nameOf = (id: string): string => {
+      let view: string | undefined;
+      try { view = deps.roots?.view?.(id) || undefined; } catch { view = undefined; }
+      return view ? `${projectNameOf(id)} · ${view}` : projectNameOf(id);
+    };
+    const projectNameOf = (id: string): string => {
       const fallback = projectName(id).label;
       const rooted = rootsName(id);
       let resolved: string | undefined;
