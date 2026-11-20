@@ -420,3 +420,61 @@ func TestHostileHeadIsRefusedWithoutReadingIt(t *testing.T) {
 		}
 	}
 }
+
+// A git dir is identified as itself even inside another repository's git dir
+// (a submodule under .git/modules), not as the repository around it.
+func TestNestedGitDirIsItsOwnRepository(t *testing.T) {
+	outer, _ := canonical(fixture(t))
+	inner := filepath.Join(outer, ".git", "modules", "lib")
+	if e := os.MkdirAll(filepath.Dir(inner), 0o700); e != nil {
+		t.Fatal(e)
+	}
+	git(t, outer, "init", "--bare", "-q", inner)
+	id, _, vcs, ok := Identify(inner, "git")
+	if !ok || vcs != "git" || id != inner {
+		t.Fatalf("id %q ok %v, want %q", id, ok, inner)
+	}
+}
+
+// A separate git dir first reached through a linked worktree learns its main
+// checkout when that checkout registers.
+func TestMainCheckoutFoundLaterIsAdopted(t *testing.T) {
+	ctx := context.Background()
+	holder, _ := canonical(t.TempDir())
+	work, gitDir, linked := filepath.Join(holder, "work"), filepath.Join(holder, "store.git"), filepath.Join(holder, "linked")
+	os.MkdirAll(work, 0o700)
+	git(t, work, "init", "-q", "-b", "main", "--separate-git-dir", gitDir)
+	git(t, work, "commit", "--allow-empty", "-m", "base")
+	git(t, work, "worktree", "add", "-b", "one", linked)
+	s := New(privacy.ModeFull)
+	first, err := s.Register(ctx, linked, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ProjectLabel != gitDir {
+		t.Fatalf("fixture: the main checkout must be unknown from %s: %+v", linked, first)
+	}
+	second, err := s.Register(ctx, work, "git")
+	if err != nil || second.ID != first.ID || second.ProjectLabel != work || second.Label != linked {
+		t.Fatalf("%+v %v", second, err)
+	}
+}
+
+// Both views of a project report one project_label, the Git main checkout,
+// even when the JJ workspace lives elsewhere.
+func TestJJBackedByExternalGitSharesProjectLabel(t *testing.T) {
+	if _, e := exec.LookPath("jj"); e != nil {
+		t.Skip("jj unavailable")
+	}
+	gitRoot, _ := canonical(fixture(t))
+	view, _ := canonical(t.TempDir())
+	jj(t, view, "git", "init", "--git-repo", gitRoot)
+	s := New(privacy.ModeFull)
+	r, err := s.Register(context.Background(), view, "jj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Label != view || r.ProjectLabel != gitRoot || r.ProjectID != filepath.Join(gitRoot, ".git") {
+		t.Fatalf("%+v", r)
+	}
+}

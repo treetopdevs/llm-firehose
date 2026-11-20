@@ -28,6 +28,9 @@ type registration struct {
 	// label is the checkout or workspace that first registered the repository,
 	// the meaning Repository.label has always had.
 	label string
+	// projectRoot names the project: root, or for JJ backed by a Git repository
+	// that repository's main checkout, so both views report one project_label.
+	projectRoot string
 	// project is the raw identity shared by every registration of one project
 	// (the Git common dir for Git and for JJ colocated with it).
 	project  string
@@ -143,6 +146,14 @@ func (s *Service) registerGit(ctx context.Context, root string) (*registration, 
 		return nil, e
 	}
 	if existing := s.known(layout.common); existing != nil {
+		// A repository first reached through a linked worktree of a separate git
+		// dir has no known main checkout until that checkout leads here.
+		s.mu.Lock()
+		if existing.git.main == "" && layout.main != "" {
+			existing.git.main, existing.git.anchor = layout.main, layout.anchor
+			existing.root, existing.projectRoot, existing.snapshot = layout.anchor, layout.anchor, nil
+		}
+		s.mu.Unlock()
 		return existing, nil
 	}
 	// Prove the repository can be read before it is listed.
@@ -155,7 +166,7 @@ func (s *Service) registerGit(ctx context.Context, root string) (*registration, 
 	if label == "" {
 		label = layout.anchor
 	}
-	return s.adopt(&registration{root: layout.anchor, label: label, identity: layout.common, vcs: "git", project: layout.common, git: layout}), nil
+	return s.adopt(&registration{root: layout.anchor, projectRoot: layout.anchor, label: label, identity: layout.common, vcs: "git", project: layout.common, git: layout}), nil
 }
 
 func (s *Service) registerJJ(ctx context.Context, root string) (*registration, error) {
@@ -170,11 +181,11 @@ func (s *Service) registerJJ(ctx context.Context, root string) (*registration, e
 	if _, e := run(ctx, layout.anchor, "jj", "root"); e != nil {
 		return nil, e
 	}
-	project := id
+	project, projectRoot := id, layout.anchor
 	if layout.git != "" {
-		project = layout.git
+		project, projectRoot = layout.git, layout.gitAnchor
 	}
-	return s.adopt(&registration{root: layout.anchor, label: layout.top, identity: id, vcs: "jj", project: project}), nil
+	return s.adopt(&registration{root: layout.anchor, projectRoot: projectRoot, label: layout.top, identity: id, vcs: "jj", project: project}), nil
 }
 func (s *Service) repository(r *registration) Repository {
 	status := "pending"
@@ -193,7 +204,22 @@ func (s *Service) repository(r *registration) Repository {
 }
 
 func describeRepository(r registration, m privacy.Mode, at time.Time, status string) Repository {
-	return Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: r.label, ObservedAt: at, Status: status, ProjectID: identity(r.project, m), ProjectLabel: r.root}
+	return Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: r.label, ObservedAt: at, Status: status, ProjectID: identity(r.project, m), ProjectLabel: r.projectRoot}
+}
+
+// Forget drops every registration anchored on root, for a repository whose
+// root is confirmed gone. It reports whether any was dropped.
+func (s *Service) Forget(root string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := false
+	for key, r := range s.repos {
+		if r.root == root || r.label == root {
+			delete(s.repos, key)
+			dropped = true
+		}
+	}
+	return dropped
 }
 
 // Repositories lists registrations by id.

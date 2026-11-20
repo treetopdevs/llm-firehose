@@ -147,6 +147,7 @@ func (s *Server) reconcileGraphRoots(ctx context.Context) {
 		case !ok:
 			if rootIsGone(root.Root) {
 				_ = s.forgetGraphRoot(root.Root)
+				s.graph.service.Forget(root.Root)
 			} else {
 				unavailable[root.Root] = root.VCS
 			}

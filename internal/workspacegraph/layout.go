@@ -23,7 +23,12 @@ type gitLayout struct {
 // its layout without running Git, so a repository is the same whichever of its
 // worktrees led to it and stays reachable after that worktree is removed.
 func locateGit(root string) (gitLayout, error) {
-	common, top := workspace.Observe(root)
+	// A git dir is itself, even when it sits inside another repository's git dir
+	// (a submodule under .git/modules): only a checkout is looked up by ancestry.
+	var common, top string
+	if !isGitDir(root) {
+		common, top = workspace.Observe(root)
+	}
 	if common == "" {
 		if !isGitDir(root) {
 			return gitLayout{}, errors.New("not a Git repository")
@@ -143,6 +148,8 @@ type jjLayout struct {
 	top    string // the workspace that led here
 	anchor string // main workspace root, else the workspace that led here
 	git    string // canonical backing Git dir outside the store (colocated), else ""
+	// gitAnchor is what that Git repository is named after: the project's name.
+	gitAnchor string
 }
 
 func locateJJ(root string) (jjLayout, error) {
@@ -178,7 +185,7 @@ func locateJJ(root string) (jjLayout, error) {
 		return l, nil
 	}
 	if g, e := locateGit(target); e == nil {
-		l.git = g.common
+		l.git, l.gitAnchor = g.common, g.anchor
 	}
 	return l, nil
 }

@@ -327,3 +327,27 @@ func TestEmptyOrMountedRootIsNotConfirmedGone(t *testing.T) {
 		t.Fatal("a missing path off any mount point is gone")
 	}
 }
+
+// A repository deleted while the daemon runs leaves the list on the next
+// reconciliation, not only after a restart.
+func TestRepositoryDeletedWhileRunningLeavesTheList(t *testing.T) {
+	root := gitRepo(t)
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "base")
+	cfg := testConfig(t)
+	home := t.TempDir()
+	s := New(testEngine(t, cfg), cfg, home, "test")
+	if err := s.rememberGraphRoot(root, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcileGraphRoots(t.Context())
+	if repos := listedRepos(t, s); len(repos) != 1 || repos[0].Status != "ready" {
+		t.Fatalf("registered: %+v", repos)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcileGraphRoots(t.Context())
+	if repos := listedRepos(t, s); len(repos) != 0 {
+		t.Fatalf("a deleted repository must not stay listed: %+v", repos)
+	}
+}
