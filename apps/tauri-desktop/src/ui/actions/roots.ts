@@ -57,13 +57,16 @@ export function createRoots(deps: RootsDeps): Roots {
         // A newer refresh started after this one: its response (or failure)
         // decides; an older response must never overwrite newer state.
         if (mine !== issued) return { ok: false, revision, repos: copy() };
-        items = list.map((r) => (r.vcs === undefined ? { id: r.id, label: r.label } : { id: r.id, label: r.label, vcs: r.vcs }));
-        byId = new Map(list.map((r) => [r.id, r.label]));
+        // A project is named after its main checkout (`project_label`); `label` is
+        // the checkout that registered it, which may be a linked worktree.
+        const path = (r: (typeof list)[number]) => r.project_label ?? r.label;
+        items = list.map((r) => (r.vcs === undefined ? { id: r.id, label: path(r) } : { id: r.id, label: path(r), vcs: r.vcs }));
+        byId = new Map(list.map((r) => [r.id, path(r)]));
         // A project id names the same checkout as its registrations, so it resolves
         // to a label even when only another view of the project is registered.
         labels = new Map(byId);
         for (const r of list)
-          if (r.project_id && !labels.has(r.project_id)) labels.set(r.project_id, r.project_label ?? r.label);
+          if (r.project_id && !labels.has(r.project_id)) labels.set(r.project_id, path(r));
         views = new Map(
           list.filter((r) => r.project_id && r.project_id !== r.id && r.status !== "unavailable").map((r) => [r.id, r.vcs]),
         );

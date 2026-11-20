@@ -14,6 +14,7 @@ import (
 // gitLayout is where a Git repository lives, found by reading files only.
 type gitLayout struct {
 	common string // canonical git common dir: the repository identity
+	top    string // the checkout that led here, "" when root was a git dir
 	main   string // canonical main checkout, "" when bare or unknown
 	anchor string // what the repository is named after: main, else common
 }
@@ -28,7 +29,7 @@ func locateGit(root string) (gitLayout, error) {
 			return gitLayout{}, errors.New("not a Git repository")
 		}
 		common, top = root, ""
-		if data, e := os.ReadFile(filepath.Join(root, "commondir")); e == nil {
+		if data, e := workspace.ReadMetadata(filepath.Join(root, "commondir")); e == nil {
 			if value := strings.TrimSpace(string(data)); value != "" {
 				if !filepath.IsAbs(value) {
 					value = filepath.Join(root, value)
@@ -42,7 +43,7 @@ func locateGit(root string) (gitLayout, error) {
 	if !isGitDir(common) {
 		return gitLayout{}, errors.New("not a Git repository")
 	}
-	l := gitLayout{common: common}
+	l := gitLayout{common: common, top: top}
 	if filepath.Base(common) == ".git" {
 		parent := filepath.Dir(common)
 		if c, t := workspace.Observe(parent); c == common && t == parent {
@@ -103,7 +104,7 @@ func Identify(root, vcs string) (id, anchor, resolved string, ok bool) {
 }
 
 func isGitDir(dir string) bool {
-	if info, e := os.Stat(filepath.Join(dir, "HEAD")); e != nil || info.IsDir() {
+	if info, e := os.Stat(filepath.Join(dir, "HEAD")); e != nil || !info.Mode().IsRegular() {
 		return false
 	}
 	info, e := os.Stat(filepath.Join(dir, "objects"))
@@ -121,7 +122,7 @@ func worktreeGitDir(root string) (string, error) {
 	if info.IsDir() {
 		return canonical(dotGit)
 	}
-	data, e := os.ReadFile(dotGit)
+	data, e := workspace.ReadMetadata(dotGit)
 	if e != nil {
 		return "", e
 	}
@@ -139,6 +140,7 @@ func worktreeGitDir(root string) (string, error) {
 // jjLayout is where a JJ repository lives, found by reading files only.
 type jjLayout struct {
 	repo   string // canonical shared repo dir (<main>/.jj/repo)
+	top    string // the workspace that led here
 	anchor string // main workspace root, else the workspace that led here
 	git    string // canonical backing Git dir outside the store (colocated), else ""
 }
@@ -149,17 +151,14 @@ func locateJJ(root string) (jjLayout, error) {
 		return jjLayout{}, errors.New("not a JJ repository")
 	}
 	l := jjLayout{repo: strings.TrimPrefix(repoID, "jj:"), anchor: strings.TrimPrefix(workspaceID, "jj:")}
+	l.top = l.anchor
 	if dotJJ := filepath.Dir(l.repo); filepath.Base(dotJJ) == ".jj" {
 		if info, e := os.Stat(filepath.Dir(dotJJ)); e == nil && info.IsDir() {
 			l.anchor = filepath.Dir(dotJJ)
 		}
 	}
 	store := filepath.Join(l.repo, "store")
-	info, e := os.Stat(filepath.Join(store, "git_target"))
-	if e != nil || !info.Mode().IsRegular() || info.Size() > 32768 {
-		return l, nil
-	}
-	data, e := os.ReadFile(filepath.Join(store, "git_target"))
+	data, e := workspace.ReadMetadata(filepath.Join(store, "git_target"))
 	if e != nil {
 		return l, nil
 	}
@@ -249,9 +248,14 @@ func openGitSession(ctx context.Context, l gitLayout) (*gitSession, error) {
 // shadow, where `git worktree list` reads it.
 func populateShadow(dir, gitDir, common, conf string, worktrees bool) error {
 	// git refuses a symlinked HEAD, so it is copied (it is only a ref or hash).
-	head, e := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	// The copy is the one file of the shadow whose bytes come from the
+	// repository, so it is bounded and must be exactly a ref or a hash.
+	head, e := workspace.ReadMetadata(filepath.Join(gitDir, "HEAD"))
 	if e != nil {
 		return e
+	}
+	if !validHead(string(head)) {
+		return errors.New("unexpected HEAD")
 	}
 	if e := os.WriteFile(filepath.Join(dir, "HEAD"), head, 0o600); e != nil {
 		return e
@@ -272,6 +276,32 @@ func populateShadow(dir, gitDir, common, conf string, worktrees bool) error {
 		return e
 	}
 	return os.WriteFile(filepath.Join(dir, "config"), []byte(conf), 0o600)
+}
+
+// validHead reports whether HEAD holds what Git writes there: a symbolic ref
+// under refs/ or a full object id, on one line.
+func validHead(head string) bool {
+	head = strings.TrimSuffix(strings.TrimSuffix(head, "\n"), "\r")
+	if ref, ok := strings.CutPrefix(head, "ref: "); ok {
+		if !strings.HasPrefix(ref, "refs/") || len(ref) > 1024 {
+			return false
+		}
+		for _, r := range ref {
+			if r <= ' ' || r == 0x7f {
+				return false
+			}
+		}
+		return true
+	}
+	if len(head) != 40 && len(head) != 64 {
+		return false
+	}
+	for _, r := range head {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // shadowConfig writes the shadow config from validated tokens (booleans, enums,

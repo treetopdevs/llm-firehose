@@ -64,6 +64,15 @@ describe("roots store", () => {
     expect(roots.resolved("solo-git")).toBe(false);
     expect(roots.resolved("jj-solo")).toBe(true);
   });
+  test("a project is named after its main checkout, not the worktree that registered it", async () => {
+    const linked = { ...repo("git-id", "/w/app-feature"), project_id: "git-id", project_label: "/w/app" };
+    const roots = createRoots({ repos: async () => [linked, repo("old", "/w/old-daemon")] });
+    const result = await roots.refresh();
+    expect(roots.rawLabel("git-id")).toBe("/w/app");
+    expect(result.repos.find((r) => r.id === "git-id")?.label).toBe("/w/app");
+    // A daemon without project_label still names the repository by label.
+    expect(roots.rawLabel("old")).toBe("/w/old-daemon");
+  });
   test("a repo whose root is a linked worktree still reports registered", async () => {
     const roots = createRoots({ repos: async () => [repo("r1", "/w/linked-worktree")] });
     await roots.refresh();

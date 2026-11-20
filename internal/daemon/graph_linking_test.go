@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -60,8 +61,12 @@ func TestWorktreesOfOneRepositoryAreOneProject(t *testing.T) {
 	s.reconcileGraphRoots(t.Context())
 
 	repos := listedRepos(t, s)
-	if len(repos) != 1 || repos[0].Label != root || repos[0].Status != "ready" || repos[0].ProjectLabel != root || repos[0].ProjectID != repos[0].ID {
+	if len(repos) != 1 || repos[0].Status != "ready" || repos[0].ProjectLabel != root || repos[0].ProjectID != repos[0].ID {
 		t.Fatalf("one project named after the main checkout: %+v", repos)
+	}
+	// label keeps its meaning: a checkout of the repository that registered it.
+	if l := repos[0].Label; l != root && l != linked[0] && l != linked[1] {
+		t.Fatalf("label must be a checkout that was observed: %q", l)
 	}
 	roots := readRoots(t, home)
 	if len(roots) != 1 || roots[0].Root != root {
@@ -92,6 +97,9 @@ func TestDeletedRootsAreForgotten(t *testing.T) {
 	cfg := testConfig(t)
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".agentfirehose"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plain, "notes.txt"), []byte("not a repository\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal([]graphRoot{{deleted, ""}, {plain, ""}, {root, ""}})
@@ -172,7 +180,7 @@ func TestBareRepositoryWorktreesAreAllForks(t *testing.T) {
 	s.reconcileGraphRoots(t.Context())
 
 	repos := listedRepos(t, s)
-	if len(repos) != 1 || repos[0].Label != bare || repos[0].ID != bare {
+	if len(repos) != 1 || repos[0].ProjectLabel != bare || repos[0].ID != bare {
 		t.Fatalf("one project named after the git dir: %+v", repos)
 	}
 	if roots := readRoots(t, home); len(roots) != 1 || roots[0].Root != bare {
@@ -249,39 +257,73 @@ func TestExplicitVCSChoiceIsStableAcrossReconciles(t *testing.T) {
 	}
 }
 
-// A repository that only appears in captured history (agents worked there
-// before this daemon started) is a project in full mode, where history holds
-// its raw identity; a deleted one is not.
-func TestRepositoriesInCapturedHistoryAreDiscoveredInFullMode(t *testing.T) {
-	root, linked := linkedRepo(t, 1)
-	deleted, _ := linkedRepo(t, 0)
-	for _, mode := range []string{"full", "balanced"} {
-		t.Run(mode, func(t *testing.T) {
-			cfg := testConfig(t)
-			cfg.PrivacyMode = mode
-			earlier := testEngine(t, cfg)
-			for i, cwd := range []string{linked[0], deleted} {
-				admitSession(t, engineAdmitter{earlier}, "old-"+string(rune('a'+i)), cwd, "2026-10-31T12:10:00Z", "2026-10-31T12:30:00Z")
-			}
-			if mode == "full" {
-				if err := os.RemoveAll(deleted); err != nil {
-					t.Fatal(err)
-				}
-			}
-			// A new engine over the same spool: nothing observed live.
-			s := New(testEngine(t, cfg), cfg, t.TempDir(), "test")
-			if len(s.engine.ObservedRoots()) != 0 {
-				t.Fatal("fixture: the restarted engine must have observed nothing")
-			}
-			s.reconcileGraphRoots(t.Context())
-			repos := listedRepos(t, s)
-			if mode == "full" {
-				if len(repos) != 1 || repos[0].Label != root || repos[0].Status != "ready" {
-					t.Fatalf("history names the repository: %+v", repos)
-				}
-			} else if len(repos) != 0 {
-				t.Fatalf("digests name nothing on disk: %+v", repos)
-			}
-		})
+// Captured history is not a discovery hint. An ingested event can claim any
+// repo_id, so a repository named only there is never registered or scanned;
+// only a root observed from a live cwd, or registered explicitly, is.
+func TestCapturedHistoryIsNotADiscoveryHint(t *testing.T) {
+	_, linked := linkedRepo(t, 1)
+	cfg := testConfig(t)
+	cfg.PrivacyMode = "full"
+	earlier := testEngine(t, cfg)
+	admitSession(t, engineAdmitter{earlier}, "old", linked[0], "2026-10-31T12:10:00Z", "2026-10-31T12:30:00Z")
+	home := t.TempDir()
+	s := New(testEngine(t, cfg), cfg, home, "test")
+	if len(s.engine.ObservedRoots()) != 0 || len(s.engine.Worktrees()) == 0 {
+		t.Fatal("fixture: history must name the repository and nothing may be observed live")
+	}
+	s.reconcileGraphRoots(t.Context())
+	if repos := listedRepos(t, s); len(repos) != 0 {
+		t.Fatalf("history must not register a repository: %+v", repos)
+	}
+	if _, err := os.Stat(graphRootsPath(home)); err == nil {
+		t.Fatalf("history must not persist a root: %+v", readRoots(t, home))
+	}
+}
+
+// Metadata that is present but cannot be read is not proof the repository is
+// gone: the root stays remembered and is listed as unavailable.
+func TestRootWithUnreadableMetadataIsNotForgotten(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("needs enforced directory permissions")
+	}
+	root := gitRepo(t)
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "base")
+	cfg := testConfig(t)
+	home := t.TempDir()
+	s := New(testEngine(t, cfg), cfg, home, "test")
+	observe(t, s, root)
+	s.reconcileGraphRoots(t.Context())
+	if err := os.Chmod(filepath.Join(root, ".git"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, ".git"), 0o700) })
+	restarted := New(testEngine(t, cfg), cfg, home, "test")
+	restarted.reconcileGraphRoots(t.Context())
+	if roots := readRoots(t, home); len(roots) != 1 || roots[0].Root != root {
+		t.Fatalf("a root with unreadable metadata must stay remembered: %+v", roots)
+	}
+	if repos := listedRepos(t, restarted); len(repos) != 1 || repos[0].Status != "unavailable" {
+		t.Fatalf("listed as unavailable: %+v", repos)
+	}
+}
+
+// An empty directory is what an unmounted mount point looks like, so it is not
+// proof either; a directory under a mount prefix never is.
+func TestEmptyOrMountedRootIsNotConfirmedGone(t *testing.T) {
+	empty := t.TempDir()
+	if rootIsGone(empty) {
+		t.Fatal("an empty directory may be an unmounted mount point")
+	}
+	if err := os.WriteFile(filepath.Join(empty, "notes.txt"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !rootIsGone(empty) {
+		t.Fatal("a readable directory with content and no VCS metadata is confirmed not a repository")
+	}
+	if rootIsGone("/mnt/nas/repo") || rootIsGone("/Volumes/NotMounted/repo") {
+		t.Fatal("a root under a mount point is never confirmed gone")
+	}
+	if !rootIsGone(filepath.Join(empty, "deleted")) {
+		t.Fatal("a missing path off any mount point is gone")
 	}
 }

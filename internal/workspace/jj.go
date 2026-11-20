@@ -26,10 +26,7 @@ func ObserveJJ(cwd string) (repoID, workspaceID string) {
 		if info, err := os.Stat(repo); err == nil {
 			if !info.IsDir() {
 				// Bound metadata reads so malformed local pointers cannot burden capture.
-				if !info.Mode().IsRegular() || info.Size() > 32768 {
-					return "", ""
-				}
-				data, err := os.ReadFile(repo)
+				data, err := ReadMetadata(repo)
 				if err != nil || strings.TrimSpace(string(data)) == "" {
 					return "", ""
 				}

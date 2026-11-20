@@ -2,10 +2,13 @@ package workspacegraph
 
 import (
 	"agentfirehose/internal/privacy"
+	"agentfirehose/internal/workspace"
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,8 +122,10 @@ func TestGitRepositoryAnchorsOnMainCheckout(t *testing.T) {
 	if a.ID != b.ID || a.ID != c.ID || len(s.Repositories()) != 1 {
 		t.Fatalf("one repository expected: %+v", s.Repositories())
 	}
-	if a.Label != root || a.ID != filepath.Join(root, ".git") {
-		t.Fatalf("anchor: %+v want label %s", a, root)
+	// label keeps its meaning (the checkout that registered the repository);
+	// the main checkout is the additive project_label.
+	if a.Label != first || b.Label != first || a.ID != filepath.Join(root, ".git") {
+		t.Fatalf("label: %+v want %s", a, first)
 	}
 	if a.ProjectID != a.ID || a.ProjectLabel != root {
 		t.Fatalf("project: %+v", a)
@@ -181,7 +186,7 @@ func TestColocatedJJAndGitShareOneProject(t *testing.T) {
 		vcs := []string{}
 		for _, r := range repos {
 			vcs = append(vcs, r.VCS)
-			if r.ProjectID != filepath.Join(root, ".git") || r.ProjectLabel != root || r.Label != root {
+			if r.ProjectID != filepath.Join(root, ".git") || r.ProjectLabel != root {
 				t.Fatalf("shared project: %+v", r)
 			}
 		}
@@ -229,7 +234,7 @@ func TestJJRepositoryAnchorsOnMainWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Label != root || r.ProjectID != r.ID || r.ProjectLabel != root || len(s.Repositories()) != 1 {
+	if want, _ := canonical(other); r.Label != want || r.ProjectID != r.ID || r.ProjectLabel != root || len(s.Repositories()) != 1 {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -278,7 +283,7 @@ func TestBareRepositoryAnchorsOnItsGitDir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("register from %s: %v", from, err)
 		}
-		if repo.ID != bare || repo.Label != bare || repo.ProjectLabel != bare {
+		if repo.ID != bare || repo.Label != from || repo.ProjectLabel != bare {
 			t.Fatalf("from %s: %+v", from, repo)
 		}
 		v, err := s.Snapshot(ctx, repo.ID, "", true)
@@ -325,5 +330,93 @@ func TestSeparateGitDirAnchorsOnItsCheckout(t *testing.T) {
 	v, err := s.Snapshot(context.Background(), repo.ID, "", true)
 	if err != nil || len(v.Workspaces) != 1 || v.Workspaces[0].Label != work || !v.Workspaces[0].Primary {
 		t.Fatalf("%+v %v", v.Workspaces, err)
+	}
+}
+
+// A daemon started from a hook or a wrapper inherits GIT_* variables. None may
+// reach a scan: they can define a filter, or point Git back at the live config.
+func TestGitScanIgnoresAmbientGitEnvironment(t *testing.T) {
+	ctx := context.Background()
+	root := fixture(t)
+	os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("a.txt filter=pwn\n"), 0600)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("one\n"), 0600)
+	git(t, root, "add", ".")
+	git(t, root, "commit", "-m", "tracked")
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("two\n"), 0600)
+	marker := filepath.Join(t.TempDir(), "pwned")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "filter.pwn.clean")
+	t.Setenv("GIT_CONFIG_VALUE_0", "touch "+marker+"; cat")
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(t.TempDir(), "elsewhere"))
+	t.Setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", filepath.Join(t.TempDir(), "objects"))
+
+	s := New(privacy.ModeFull)
+	repo, err := s.Register(ctx, root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Snapshot(ctx, repo.ID, "", true)
+	if err != nil || len(v.Workspaces) != 1 || !v.Workspaces[0].Dirty {
+		t.Fatalf("scan: %+v %v", v.Workspaces, err)
+	}
+	if _, e := os.Stat(marker); e == nil {
+		t.Fatal("a filter defined in the inherited environment was executed")
+	}
+}
+
+func TestScanEnvDropsEveryGitVariable(t *testing.T) {
+	got := scanEnv([]string{"PATH=/bin", "GIT_DIR=/x", "git_config_count=1", "Git_Exec_Path=/y", "GITHUB_TOKEN=keep", "HOME=/h"})
+	if want := []string{"PATH=/bin", "GITHUB_TOKEN=keep", "HOME=/h"}; !slices.Equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+// HEAD is the one file copied out of the repository. A HEAD that is not a
+// small regular file holding a ref or a hash is never read without bound.
+func TestHostileHeadIsRefusedWithoutReadingIt(t *testing.T) {
+	if _, e := os.Stat("/dev/zero"); e != nil {
+		t.Skip("no /dev/zero")
+	}
+	ctx := context.Background()
+	root, _ := canonical(fixture(t))
+	head := filepath.Join(root, ".git", "HEAD")
+	if e := os.Remove(head); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Symlink("/dev/zero", head); e != nil {
+		t.Skip("symlinks unavailable")
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := New(privacy.ModeFull).Register(ctx, root, "git")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a repository whose HEAD is a device must not register")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("registration is reading an endless HEAD")
+	}
+	if _, e := workspace.ReadMetadata(head); e == nil {
+		t.Fatal("a device must not be read as metadata")
+	}
+	// A regular file larger than any real HEAD is refused as well.
+	big := filepath.Join(t.TempDir(), "HEAD")
+	os.WriteFile(big, bytes.Repeat([]byte("a"), 1<<20), 0600)
+	if _, e := workspace.ReadMetadata(big); e == nil {
+		t.Fatal("an oversized metadata file must be refused")
+	}
+	dir := t.TempDir()
+	os.Remove(head)
+	os.WriteFile(head, []byte("ref: refs/heads/main\n[core]\n\tfsmonitor = x\n"), 0600)
+	if e := populateShadow(dir, filepath.Join(root, ".git"), filepath.Join(root, ".git"), "", true); e == nil {
+		t.Fatal("HEAD that is not a single ref or hash must not be copied")
+	}
+	for head, want := range map[string]bool{"ref: refs/heads/main\n": true, strings.Repeat("a", 40) + "\n": true, strings.Repeat("0", 64): true, "ref: ../config\n": false, "ref: refs/heads/a b\n": false, "deadbeef\n": false, "": false} {
+		if validHead(head) != want {
+			t.Errorf("validHead(%q) = %v", head, !want)
+		}
 	}
 }

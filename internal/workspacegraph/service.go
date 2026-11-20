@@ -22,7 +22,12 @@ var ErrNotFound = errors.New("repository unavailable")
 var ErrCursor = errors.New("expired or invalid graph cursor")
 
 type registration struct {
+	// root is where commands run and what the project is named after: the main
+	// checkout or main workspace (the git dir of a bare repository).
 	root, identity, vcs string
+	// label is the checkout or workspace that first registered the repository,
+	// the meaning Repository.label has always had.
+	label string
 	// project is the raw identity shared by every registration of one project
 	// (the Git common dir for Git and for JJ colocated with it).
 	project  string
@@ -146,7 +151,11 @@ func (s *Service) registerGit(ctx context.Context, root string) (*registration, 
 		return nil, e
 	}
 	session.cleanup()
-	return s.adopt(&registration{root: layout.anchor, identity: layout.common, vcs: "git", project: layout.common, git: layout}), nil
+	label := layout.top
+	if label == "" {
+		label = layout.anchor
+	}
+	return s.adopt(&registration{root: layout.anchor, label: label, identity: layout.common, vcs: "git", project: layout.common, git: layout}), nil
 }
 
 func (s *Service) registerJJ(ctx context.Context, root string) (*registration, error) {
@@ -165,7 +174,7 @@ func (s *Service) registerJJ(ctx context.Context, root string) (*registration, e
 	if layout.git != "" {
 		project = layout.git
 	}
-	return s.adopt(&registration{root: layout.anchor, identity: id, vcs: "jj", project: project}), nil
+	return s.adopt(&registration{root: layout.anchor, label: layout.top, identity: id, vcs: "jj", project: project}), nil
 }
 func (s *Service) repository(r *registration) Repository {
 	status := "pending"
@@ -184,11 +193,10 @@ func (s *Service) repository(r *registration) Repository {
 }
 
 func describeRepository(r registration, m privacy.Mode, at time.Time, status string) Repository {
-	return Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: r.root, ObservedAt: at, Status: status, ProjectID: identity(r.project, m), ProjectLabel: r.root}
+	return Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: r.label, ObservedAt: at, Status: status, ProjectID: identity(r.project, m), ProjectLabel: r.root}
 }
 
-// Repositories lists registrations by project label, so the registrations of
-// one project (Git, then JJ) are adjacent.
+// Repositories lists registrations by id.
 func (s *Service) Repositories() []Repository {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,16 +204,7 @@ func (s *Service) Repositories() []Repository {
 	for _, r := range s.repos {
 		out = append(out, s.repository(r))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.Label != b.Label {
-			return a.Label < b.Label
-		}
-		if a.VCS != b.VCS {
-			return a.VCS < b.VCS
-		}
-		return a.ID < b.ID
-	})
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 func (s *Service) SetPrivacy(mode privacy.Mode) {
@@ -348,7 +347,7 @@ func runInput(ctx context.Context, root, bin string, env []string, stdin string,
 	}
 	c := exec.CommandContext(cctx, resolveTool(bin), args...)
 	c.Dir = root
-	c.Env = append(append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C"), env...)
+	c.Env = append(append(scanEnv(os.Environ()), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C"), env...)
 	var out, stderr boundedBuffer
 	if stdin != "" {
 		c.Stdin = strings.NewReader(stdin)
@@ -363,6 +362,24 @@ func runInput(ctx context.Context, root, bin string, env []string, stdin string,
 		return "", &commandError{bin: bin, cause: e}
 	}
 	return out.String(), nil
+}
+
+// scanEnv is the daemon's environment without any GIT_* variable. An inherited
+// GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG*, GIT_EXEC_PATH or object-directory
+// override (a daemon started from a hook or a wrapper has them) would point a
+// scan back at the live repository config or at other code, so every VCS
+// command starts from none and gets only the ones the scanner sets. Names are
+// matched without regard to case, as Windows resolves them.
+func scanEnv(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(strings.ToUpper(name), "GIT_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // CachedSnapshot returns the retained snapshot of a repository without ever

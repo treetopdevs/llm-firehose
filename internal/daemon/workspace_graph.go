@@ -127,15 +127,6 @@ func (s *Server) reconcileGraphRoots(ctx context.Context) {
 		known[graphRootKey(root.Root)] = true
 	}
 	observed := s.engine.ObservedRoots()
-	// Captured history names repositories too. In full mode its identities are
-	// the raw git dirs, so a repository agents worked in before this daemon
-	// started is a project now, not only once an agent returns to it. Other
-	// modes store digests, which name nothing on disk.
-	for _, lifetime := range s.engine.Worktrees() {
-		if filepath.IsAbs(lifetime.RepoID) {
-			observed = append(observed, lifetime.RepoID)
-		}
-	}
 	for _, root := range observed {
 		if !known[graphRootKey(root)] {
 			roots = append(roots, graphRoot{Root: root})
@@ -166,7 +157,7 @@ func (s *Server) reconcileGraphRoots(ctx context.Context) {
 			if err != nil {
 				unavailable[anchor] = vcs
 			} else {
-				_ = s.rememberGraphRoot(anchoredRoot(root.Root, repo.Label), root.VCS)
+				_ = s.rememberGraphRoot(anchoredRoot(root.Root, repo.ProjectLabel), root.VCS)
 			}
 		}
 		s.graph.registrationMu.Unlock()
@@ -198,23 +189,47 @@ func anchoredRoot(root, anchor string) string {
 }
 
 // rootIsGone reports that a remembered root is confirmed not to be a repository
-// any more: it does not exist (and is not merely unmounted), or it is a
-// directory that can be read and holds no repository. Anything less certain (a
-// permission error, a transient read failure) keeps the root.
+// any more. Only two findings confirm it: the path does not exist (and is not
+// merely unmounted), or it is a readable, non-empty directory with no VCS
+// metadata entry at or above it. Anything less certain keeps the root, listed
+// as unavailable: a permission error, metadata that is present but unreadable
+// or broken, a path under a mount point, or an empty directory (which is what
+// an unmounted mount point looks like).
 func rootIsGone(root string) bool {
+	if rootMayReturn(root) {
+		return false
+	}
 	info, err := os.Stat(root)
 	if errors.Is(err, fs.ErrNotExist) {
-		return !rootMayReturn(root)
+		return true
 	}
-	if err != nil || !info.IsDir() {
-		return err == nil
+	if err != nil {
+		return false
 	}
-	_, err = os.ReadDir(root)
-	return err == nil
+	if !info.IsDir() {
+		return true
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) == 0 {
+		return false
+	}
+	// The root may itself be a git dir (a bare repository) that stopped reading.
+	if _, err := os.Lstat(filepath.Join(root, "HEAD")); !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	for dir := root; ; dir = filepath.Dir(dir) {
+		for _, name := range []string{".git", ".jj"} {
+			if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, fs.ErrNotExist) {
+				return false
+			}
+		}
+		if filepath.Dir(dir) == dir {
+			return true
+		}
+	}
 }
 
-// rootMayReturn reports whether a missing root sits under a removable or
-// network mount point, where "missing" usually means "not mounted now".
+// rootMayReturn reports whether a root sits under a removable or network mount
+// point, where missing or empty usually means "not mounted now".
 func rootMayReturn(root string) bool {
 	for _, prefix := range []string{"/Volumes/", "/media/", "/mnt/", "/run/media/"} {
 		if strings.HasPrefix(root, prefix) {
@@ -321,7 +336,7 @@ func (s *Server) handleGraphRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repository unavailable or VCS command failed", 422)
 		return
 	}
-	if s.rememberGraphRoot(anchoredRoot(input.Root, repo.Label), input.VCS) != nil {
+	if s.rememberGraphRoot(anchoredRoot(input.Root, repo.ProjectLabel), input.VCS) != nil {
 		http.Error(w, "could not persist repository registration", 500)
 		return
 	}
