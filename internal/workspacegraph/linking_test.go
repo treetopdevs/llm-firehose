@@ -454,9 +454,26 @@ func TestMainCheckoutFoundLaterIsAdopted(t *testing.T) {
 	if first.ProjectLabel != gitDir {
 		t.Fatalf("fixture: the main checkout must be unknown from %s: %+v", linked, first)
 	}
+	// A scan in flight during the adoption copied the old layout. Its result
+	// must be discarded, which the scan sequence decides.
+	reg := s.known(first.ID)
+	s.mu.Lock()
+	reg.sequence++
+	inFlight := reg.sequence
+	s.mu.Unlock()
 	second, err := s.Register(ctx, work, "git")
 	if err != nil || second.ID != first.ID || second.ProjectLabel != work || second.Label != linked {
 		t.Fatalf("%+v %v", second, err)
+	}
+	s.mu.Lock()
+	superseded, cached := reg.sequence != inFlight, reg.snapshot != nil
+	s.mu.Unlock()
+	if !superseded || cached {
+		t.Fatalf("adoption must supersede an in-flight scan: superseded=%v cached=%v", superseded, cached)
+	}
+	v, err := s.Snapshot(ctx, second.ID, "", true)
+	if err != nil || len(v.Workspaces) != 2 || v.Workspaces[0].Label != work || !v.Workspaces[0].Primary {
+		t.Fatalf("scan after adoption: %+v %v", v.Workspaces, err)
 	}
 }
 
