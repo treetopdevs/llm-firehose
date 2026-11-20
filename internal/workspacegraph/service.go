@@ -152,6 +152,9 @@ func (s *Service) registerGit(ctx context.Context, root string) (*registration, 
 		if existing.git.main == "" && layout.main != "" {
 			existing.git.main, existing.git.anchor = layout.main, layout.anchor
 			existing.root, existing.projectRoot, existing.snapshot = layout.anchor, layout.anchor, nil
+			// A scan already running copied the old layout: supersede it, so its
+			// result is discarded instead of cached.
+			existing.sequence++
 		}
 		s.mu.Unlock()
 		return existing, nil
