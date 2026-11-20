@@ -1588,7 +1588,12 @@ export function createWorkspaceGraph(
       viewListener = fn;
     },
     currentRepo: () => repo,
-    registeredRepos: () => repos.map((r) => r.id),
+    // One id per project the host can open: a repository that cannot be scanned is
+    // listed under its project id (the one its sessions and worktrees carry), never
+    // as a second, dead entry.
+    registeredRepos: () => [
+      ...new Set(repos.map((r) => (r.status === "unavailable" && r.project_id ? r.project_id : r.id))),
+    ],
     onEvent: (e: FirehoseEvent) => {
       if (hidden()) {
         missedWhileHidden++;

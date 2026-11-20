@@ -1210,6 +1210,15 @@ describe("picker names and idle semantics", () => {
     expect(store.resolver()!.labels({ ...store.get(), project: unnamed }).project).toBe("ffffffff (unknown)");
   });
 
+  test("a colocated project is one entry, with its JJ view named as that project's JJ view", async () => {
+    const GIT = "a".repeat(64), JJ = "b".repeat(64);
+    const roots: Roots = { ...rootsOf({ [GIT]: "/Users/n/alpha", [JJ]: "/Users/n/alpha" }), view: (id) => (id === JJ ? "jj" : undefined) };
+    const graph = { ...graphStub(), registeredRepos: () => [GIT, JJ] };
+    const { panel } = setupWith([row({ repo_id: GIT, worktree_id: "w2" })], { graph, roots });
+    await panel.activate();
+    expect(optionsOf(panel).map((o) => o.textContent)).toEqual(["alpha", "alpha · jj"]);
+  });
+
   test("selector option text stays 'alpha' while graph labels flip, and shows the displayName fallback without a roots label", async () => {
     let graphLabel: string | undefined;
     const { store, panel } = setupWith([row({ repo_id: DIGEST, worktree_id: "w2" })], { roots: rootsOf({ [DIGEST]: "alpha" }) });

@@ -17,7 +17,7 @@ func (s *Service) Compare(ctx context.Context, id, selected, target string) (Com
 		s.mu.Unlock()
 		return Comparison{}, ErrNotFound
 	}
-	root, vcs := r.root, r.vcs
+	root, vcs, layout := r.root, r.vcs, r.git
 	if target == "" && r.snapshot != nil {
 		target = r.snapshot.DefaultTarget
 	}
@@ -27,6 +27,14 @@ func (s *Service) Compare(ctx context.Context, id, selected, target string) (Com
 		return v, errors.New("comparison requires full revision IDs and an explicit target")
 	}
 	query := func(args ...string) (string, error) { return run(ctx, root, vcs, args...) }
+	if vcs == "git" {
+		session, e := openGitSession(ctx, layout)
+		if e != nil {
+			return v, e
+		}
+		defer session.cleanup()
+		query = func(args ...string) (string, error) { return session.run(ctx, args...) }
+	}
 	var b string
 	var e error
 	if vcs == "git" {

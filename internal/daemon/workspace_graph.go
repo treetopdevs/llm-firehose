@@ -4,16 +4,18 @@ import (
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
-	"agentfirehose/internal/workspace"
 	"agentfirehose/internal/workspacegraph"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,6 +91,7 @@ func (s *Server) writeGraphRoots(roots []graphRoot) error {
 // runGraphDiscovery runs outside capture admission. Only explicitly registered
 // or pre-privacy observed roots are inspected; there is no filesystem crawl.
 func (s *Server) runGraphDiscovery(ctx context.Context) {
+	workspacegraph.SweepStaleShadows()
 	s.reconcileGraphRoots(ctx)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -102,46 +105,75 @@ func (s *Server) runGraphDiscovery(ctx context.Context) {
 	}
 }
 
-// reconcileGraphRoots scans every registered or observed root once, remembers
-// (and persists) each that scans successfully, and refreshes known repositories.
+// reconcileGraphRoots resolves every remembered or observed root to the
+// repository it belongs to, registers each repository once, and refreshes the
+// known ones. Roots are consolidated up front, by reading files only:
+//
+//   - every checkout of one repository leads to the same registration, and what
+//     is remembered (and persisted) is the repository's main checkout, so the
+//     project outlives the worktree that first revealed it;
+//   - a repository that cannot be scanned is one unavailable project, however
+//     many of its checkouts were observed;
+//   - a root that is not a repository is not a project. One that was remembered
+//     and has since been deleted, or stopped being a repository, is forgotten,
+//     unless it sits on a mount point that may simply not be mounted now.
 func (s *Server) reconcileGraphRoots(ctx context.Context) {
 	s.graph.mu.Lock()
 	roots := append([]graphRoot(nil), s.graph.roots...)
 	s.graph.mu.Unlock()
+	remembered := len(roots)
 	known := map[string]bool{}
 	for _, root := range roots {
 		known[graphRootKey(root.Root)] = true
 	}
-	for _, root := range s.engine.ObservedRoots() {
+	observed := s.engine.ObservedRoots()
+	// Captured history names repositories too. In full mode its identities are
+	// the raw git dirs, so a repository agents worked in before this daemon
+	// started is a project now, not only once an agent returns to it. Other
+	// modes store digests, which name nothing on disk.
+	for _, lifetime := range s.engine.Worktrees() {
+		if filepath.IsAbs(lifetime.RepoID) {
+			observed = append(observed, lifetime.RepoID)
+		}
+	}
+	for _, root := range observed {
 		if !known[graphRootKey(root)] {
 			roots = append(roots, graphRoot{Root: root})
 			known[graphRootKey(root)] = true
 		}
 	}
-	for _, root := range roots {
+	unavailable := map[string]string{}
+	for i, root := range roots {
 		if ctx.Err() != nil {
 			return
 		}
 		s.graph.registrationMu.Lock()
 		root = s.selectedGraphRoot(root)
-		scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		_, err := s.graph.service.Register(scanCtx, root.Root, root.VCS)
-		s.graph.mu.Lock()
-		if s.graph.unavailable == nil {
-			s.graph.unavailable = map[string]string{}
+		_, anchor, vcs, ok := workspacegraph.Identify(root.Root, root.VCS)
+		switch {
+		case !ok && i >= remembered:
+			// Observed activity outside any repository.
+		case !ok:
+			if rootIsGone(root.Root) {
+				_ = s.forgetGraphRoot(root.Root)
+			} else {
+				unavailable[root.Root] = root.VCS
+			}
+		default:
+			scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			repo, err := s.graph.service.Register(scanCtx, root.Root, root.VCS)
+			cancel()
+			if err != nil {
+				unavailable[anchor] = vcs
+			} else {
+				_ = s.rememberGraphRoot(anchoredRoot(root.Root, repo.Label), root.VCS)
+			}
 		}
-		if err != nil {
-			s.graph.unavailable[root.Root] = root.VCS
-		} else {
-			delete(s.graph.unavailable, root.Root)
-		}
-		s.graph.mu.Unlock()
-		if err == nil {
-			_ = s.rememberGraphRoot(root.Root, root.VCS)
-		}
-		cancel()
 		s.graph.registrationMu.Unlock()
 	}
+	s.graph.mu.Lock()
+	s.graph.unavailable = unavailable
+	s.graph.mu.Unlock()
 	// Refresh known repositories even when rediscovery fails, allowing the
 	// service to retain and explicitly mark the last successful graph stale.
 	for _, repo := range s.graph.service.Repositories() {
@@ -154,15 +186,84 @@ func (s *Server) reconcileGraphRoots(ctx context.Context) {
 	}
 	s.observeWorktrees(ctx)
 }
+
+// anchoredRoot is what to remember for a root that registered: the repository's
+// main checkout, unless that resolves to a different repository than the root
+// did (a Git worktree of a project whose main checkout is a JJ workspace).
+func anchoredRoot(root, anchor string) string {
+	if anchor != "" && graphRootKey(anchor) == graphRootKey(root) {
+		return anchor
+	}
+	return root
+}
+
+// rootIsGone reports that a remembered root is confirmed not to be a repository
+// any more: it does not exist (and is not merely unmounted), or it is a
+// directory that can be read and holds no repository. Anything less certain (a
+// permission error, a transient read failure) keeps the root.
+func rootIsGone(root string) bool {
+	info, err := os.Stat(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return !rootMayReturn(root)
+	}
+	if err != nil || !info.IsDir() {
+		return err == nil
+	}
+	_, err = os.ReadDir(root)
+	return err == nil
+}
+
+// rootMayReturn reports whether a missing root sits under a removable or
+// network mount point, where "missing" usually means "not mounted now".
+func rootMayReturn(root string) bool {
+	for _, prefix := range []string{"/Volumes/", "/media/", "/mnt/", "/run/media/"} {
+		if strings.HasPrefix(root, prefix) {
+			return true
+		}
+	}
+	if volume := filepath.VolumeName(root); volume != "" {
+		if _, err := os.Stat(volume + string(filepath.Separator)); err != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// forgetGraphRoot drops a remembered root from memory and graph-roots.json.
+func (s *Server) forgetGraphRoot(root string) error {
+	s.graph.mu.Lock()
+	defer s.graph.mu.Unlock()
+	kept := make([]graphRoot, 0, len(s.graph.roots))
+	for _, existing := range s.graph.roots {
+		if existing.Root != root {
+			kept = append(kept, existing)
+		}
+	}
+	if len(kept) == len(s.graph.roots) {
+		return nil
+	}
+	if err := s.writeGraphRoots(kept); err != nil {
+		return err
+	}
+	s.graph.roots = kept
+	return nil
+}
+
 func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	repos := s.graph.service.Repositories()
 	knownRoots := make(map[string]bool, len(repos))
+	knownIDs := make(map[string]bool, len(repos))
 	for _, repo := range repos {
 		if root, _, err := s.graph.service.Root(repo.ID); err == nil {
 			knownRoots[canonicalGraphRoot(root)] = true
 		}
+		if aliases, _, err := s.graph.service.EventScope(repo.ID, ""); err == nil && len(aliases) > 0 {
+			knownIDs[aliases[0]] = true
+		}
 	}
+	full := s.currentPrivacyMode() == privacy.ModeFull
+	var missing []workspacegraph.Repository
 	s.graph.mu.Lock()
 	for root, vcs := range s.graph.unavailable {
 		// A retained failed/stale service registration already describes this
@@ -173,10 +274,29 @@ func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 		// The id is an opaque digest in every mode; the label is the readable
 		// root path, like every other graph display value.
 		sum := sha256.Sum256([]byte("unavailable:" + root))
-		repos = append(repos, workspacegraph.Repository{ID: hex.EncodeToString(sum[:]), VCS: vcs, Label: root, Status: "unavailable"})
+		row := workspacegraph.Repository{ID: hex.EncodeToString(sum[:]), VCS: vcs, Label: root, Status: "unavailable", ProjectLabel: root}
+		row.ProjectID = row.ID
+		if id, _, resolved, ok := workspacegraph.Identify(root, vcs); ok {
+			if knownIDs[id] {
+				continue
+			}
+			if row.VCS == "" {
+				row.VCS = resolved
+			}
+			// The project identity is the one events carry, so sessions captured
+			// in the repository still belong to this row's project.
+			if resolved == "git" {
+				row.ProjectID = id
+				if !full {
+					row.ProjectID = digestString(id)
+				}
+			}
+		}
+		missing = append(missing, row)
 	}
 	s.graph.mu.Unlock()
-	writeJSON(w, repos)
+	sort.Slice(missing, func(i, j int) bool { return missing[i].Label < missing[j].Label })
+	writeJSON(w, append(repos, missing...))
 }
 func (s *Server) handleGraphRegister(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 16384)
@@ -201,7 +321,7 @@ func (s *Server) handleGraphRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repository unavailable or VCS command failed", 422)
 		return
 	}
-	if s.rememberGraphRoot(input.Root, input.VCS) != nil {
+	if s.rememberGraphRoot(anchoredRoot(input.Root, repo.Label), input.VCS) != nil {
 		http.Error(w, "could not persist repository registration", 500)
 		return
 	}
@@ -578,13 +698,14 @@ func canonicalGraphRoot(root string) string {
 	}
 	return filepath.Clean(root)
 }
+
+// graphRootKey is the repository a root belongs to (its raw identity, found by
+// reading files only), so every checkout of one repository shares a key. A
+// root outside any repository is its own key.
 func graphRootKey(root string) string {
 	root = canonicalGraphRoot(root)
-	if repo, _ := workspace.ObserveJJ(root); repo != "" {
-		return repo
-	}
-	if repo, _ := workspace.Observe(root); repo != "" {
-		return repo
+	if id, _, _, ok := workspacegraph.Identify(root, ""); ok {
+		return id
 	}
 	return root
 }

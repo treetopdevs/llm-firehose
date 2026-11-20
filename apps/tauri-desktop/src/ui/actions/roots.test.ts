@@ -46,6 +46,24 @@ describe("roots store", () => {
     expect(roots.resolved("r1")).toBe(true);
     expect(roots.rawLabel("r1")).toBe("/w/a");
   });
+  test("a project id resolves to its label through any registration; only the second view is marked", async () => {
+    const git = { ...repo("git-id", "/w/app"), project_id: "git-id", project_label: "/w/app" };
+    const jj = { ...repo("jj-id", "/w/app"), vcs: "jj", project_id: "git-id", project_label: "/w/app" };
+    const jjOnly = { ...repo("jj-solo", "/w/solo"), vcs: "jj", project_id: "solo-git", project_label: "/w/solo" };
+    const dead = { ...repo("synthetic", "/w/dead"), status: "unavailable", project_id: "dead-git", project_label: "/w/dead" };
+    const roots = createRoots({ repos: async () => [git, jj, jjOnly, dead] });
+    await roots.refresh();
+    expect(roots.rawLabel("git-id")).toBe("/w/app");
+    expect(roots.rawLabel("solo-git")).toBe("/w/solo");
+    expect(roots.rawLabel("dead-git")).toBe("/w/dead");
+    expect(roots.view?.("git-id")).toBeUndefined();
+    expect(roots.view?.("jj-id")).toBe("jj");
+    expect(roots.view?.("jj-solo")).toBe("jj");
+    expect(roots.view?.("synthetic")).toBeUndefined();
+    // Registered means a registration of its own, not merely a known project.
+    expect(roots.resolved("solo-git")).toBe(false);
+    expect(roots.resolved("jj-solo")).toBe(true);
+  });
   test("a repo whose root is a linked worktree still reports registered", async () => {
     const roots = createRoots({ repos: async () => [repo("r1", "/w/linked-worktree")] });
     await roots.refresh();

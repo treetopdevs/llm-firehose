@@ -10,6 +10,13 @@ type Repository struct {
 	Label      string    `json:"label"`
 	ObservedAt time.Time `json:"observed_at"`
 	Status     string    `json:"status"`
+	// ProjectID is shared by every registration of one project: a Git repository
+	// and the JJ repository colocated with it carry the same value, the Git
+	// repository identity (so it equals the repo_id Capture stamps on events and
+	// follows the privacy mode like ID). ProjectLabel is the project's main
+	// checkout, readable in every mode.
+	ProjectID    string `json:"project_id,omitempty"`
+	ProjectLabel string `json:"project_label,omitempty"`
 }
 type Revision struct {
 	Key         string    `json:"key"`
@@ -50,6 +57,9 @@ type Workspace struct {
 	Conflicted       bool         `json:"conflicted"`
 	Availability     string       `json:"availability"`
 	Unborn           bool         `json:"unborn"`
+	// Primary marks a Git repository's main checkout. A bare repository has
+	// none, so its first linked worktree is not primary.
+	Primary bool `json:"primary,omitempty"`
 }
 type Edge struct {
 	Child  string `json:"child"`
