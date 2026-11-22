@@ -611,6 +611,52 @@ describe('review fixes', () => {
     r.dispatchEvent(new MouseEvent('pointerenter'));
     expect(r.title).not.toBe(before);
   });
+  test('entering the trigger re-reads the clock, so the trigger tooltip is not stale', () => {
+    let n = NOW;
+    const store = createScope();
+    const t = createTransport({ store, now: () => n, effectiveLiveSpan: () => 2 * H });
+    made.push(t);
+    document.body.append(t.root);
+    const trigger = q(t, '.transport-trigger');
+    const before = trigger.title;
+    n += 3 * H;
+    trigger.dispatchEvent(new MouseEvent('pointerenter'));
+    expect(trigger.title).not.toBe(before);
+  });
+  describe('the visible readout follows the clock while a live range is held over a session', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+    const open = (applies = true) => {
+      let n = NOW;
+      const store = createScope();
+      const ext = { from: NOW - 90 * 60_000, to: NOW - 30 * 60_000 };
+      const t = createTransport({ store, now: () => n, effectiveLiveSpan: () => 2 * H, sessionSpan: () => ext });
+      made.push(t);
+      document.body.append(t.root);
+      store.narrow({ window: 'live', session: { id: 's' } });
+      t.setPanel('session');
+      t.setApplies(applies);
+      return { t, store, advance: (ms: number) => { n += ms; vi.advanceTimersByTime(ms); } };
+    };
+    test('the readout switches to partial coverage when the range start passes the session start, with no store change or hover', () => {
+      const { t, advance } = open();
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+      advance(H);
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('no timer runs while the range does not apply, after leaving the session, or after destroy', () => {
+      const a = open(false);
+      expect(vi.getTimerCount()).toBe(0);
+      a.t.setApplies(true);
+      expect(vi.getTimerCount()).toBe(1);
+      a.t.setPanel('project');
+      expect(vi.getTimerCount()).toBe(0);
+      a.t.setPanel('session');
+      expect(vi.getTimerCount()).toBe(1);
+      a.t.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
   test('held window labels the button as the return action', () => {
     const { store, t } = setup();
     expect(q(t, '.transport-hold').textContent).toBe('Hold');

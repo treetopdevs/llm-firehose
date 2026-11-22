@@ -119,7 +119,33 @@ export function createTransport(deps: TransportDeps): Transport {
     if (applies) trigger.title = title;
   };
 
+  // While a session is shown and a live range is held over it, coverage depends on the clock: the
+  // range start slides past the session start (or end) with no store change. One timeout, aimed at
+  // the next such boundary, repaints then. It exists only while the range applies and is visible.
+  let clock: ReturnType<typeof setTimeout> | null = null;
+  function syncClock(): void {
+    if (clock !== null) clearTimeout(clock);
+    clock = null;
+    if (destroyed || !session || !applies || root.hidden || store.held() !== 'live' || !store.get().session) return;
+    const ext = deps.sessionSpan?.(store.get().session!);
+    if (!ext) return;
+    const n = now();
+    const sp = span();
+    const edges = [ext.from, ext.to].filter((v): v is number => v !== undefined && v + sp > n);
+    if (edges.length === 0) return;
+    const wait = Math.min(Math.min(...edges) + sp - n + 1, 2 ** 31 - 1);
+    clock = setTimeout(() => {
+      clock = null;
+      paint();
+    }, wait);
+  }
+  let destroyed = false;
+
   function paint(): void {
+    drawn();
+    syncClock();
+  }
+  function drawn(): void {
     const s = store.get();
     const g = geometry(s);
     const key = JSON.stringify([s.window, s.liveSpanMs ?? null, span(), session, session && outside(s), g.left.toFixed(3), g.width.toFixed(3), g.pct]);
@@ -273,6 +299,8 @@ export function createTransport(deps: TransportDeps): Transport {
   // Live timestamps move with the clock, so refresh the tooltip when it is about to be read.
   on(range, 'pointerenter', retitle);
   on(range, 'mouseenter', retitle);
+  on(trigger, 'pointerenter', retitle);
+  on(trigger, 'mouseenter', retitle);
 
   const unsub = store.subscribe((next, prev) => {
     if (drag && !writing) abortDrag();
@@ -371,6 +399,7 @@ export function createTransport(deps: TransportDeps): Transport {
         closePop(false);
       }
       root.hidden = !v;
+      syncClock();
     },
     setApplies(a) {
       applies = a;
@@ -380,6 +409,7 @@ export function createTransport(deps: TransportDeps): Transport {
         abortDrag();
         closePop(false);
       } else retitle();
+      syncClock();
     },
     setPanel(id) {
       const next = id === 'session';
@@ -394,6 +424,8 @@ export function createTransport(deps: TransportDeps): Transport {
     },
     refresh: paint,
     destroy() {
+      destroyed = true;
+      syncClock();
       closePop(false);
       unsub();
       endDrag();
