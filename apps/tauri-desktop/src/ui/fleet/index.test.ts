@@ -815,6 +815,40 @@ describe("expandable project rows (MS-10)", () => {
     expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
   });
 
+  test("a refresh that hides the selected worktree leaves focus on another worktree that is still drawn", async () => {
+    const { panel, byKey, data } = setup();
+    data.sessions = [...baseSessions(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    await panel.activate();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    const other = byKey(key("fork", "repoA", "wt-idle"));
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    data.sessions = [S.fog(), S.workB(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    nowMs += 1000;
+    await panel.refresh();
+    await vi.advanceTimersByTimeAsync(700);
+    expect(panel.selectedKey()).toBe(key("row", "repoA"));
+    expect(document.activeElement).toBe(byKey(key("fork", "repoA", "wt-idle")));
+  });
+
+  test("a selected worktree that goes idle between two clicks stays selected and drawn until the hold ends", async () => {
+    const { panel, byKey, data } = setup();
+    data.sessions = [...baseSessions(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    await panel.activate();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    const selected = byKey(key("fork", "repoA", "wt-open"));
+    selected.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    data.sessions = [S.fog(), S.workB(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+    expect(byKey(key("fork", "repoA", "wt-open"))).toBe(selected);
+    expect(selected.isConnected).toBe(true);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(panel.selectedKey()).toBe(key("row", "repoA"));
+    expect(selected.isConnected).toBe(false);
+  });
+
   test("a refresh that leaves the selected worktree drawn keeps the selection", async () => {
     const { panel, byKey, data } = setup();
     await panel.activate();

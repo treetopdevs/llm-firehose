@@ -342,14 +342,18 @@ export function createFleet(deps: FleetDeps): FleetPanel {
    * A refresh can stop drawing the selected worktree of an open row (it went idle, so it is no longer among the first
    * children). The selection, and focus with it, then moves to the project row; nothing is expanded to keep it.
    */
-  function hideSelectedFork(): void {
-    if (selFork === undefined) return;
+  function selectedForkHidden(): boolean {
+    if (selFork === undefined) return false;
     const [repo, wtId] = selFork.split(SEP);
     const row = result.rows.find((r) => r.id === repo);
-    if (!row || !isOpen(row.id) || !row.forks.some((f) => f.id === wtId) || drawnForks(row).some((f) => f.id === wtId)) return;
-    const refs = rowRefs.get(nodes.get("row:" + row.id)!);
-    if (refs?.forks.contains(document.activeElement)) refs.head.focus();
-    selRow = row.id; selNeed = undefined; selFork = undefined;
+    return !!row && isOpen(row.id) && row.forks.some((f) => f.id === wtId) && !drawnForks(row).some((f) => f.id === wtId);
+  }
+  function hideSelectedFork(): void {
+    if (!selectedForkHidden()) return;
+    const [repo, wtId] = selFork!.split(SEP);
+    // Focus moves only when the hidden worktree itself held it; another drawn worktree keeps its focus.
+    if (nodes.get("fork:" + repo + "|" + wtId)?.contains(document.activeElement)) rowRefs.get(nodes.get("row:" + repo)!)?.head.focus();
+    selRow = repo; selNeed = undefined; selFork = undefined;
   }
   function setOpen(row: FleetRow, open: boolean): void {
     openChoice.set(row.id, open);
@@ -461,7 +465,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     attBy = new Map((att ?? []).map((s) => [sessionKey(s), s]));
     result = buildFleet({ worktrees: wt, sessions: att ?? [], now, order, resolveLabel });
     order = result.order;
-    hideSelectedFork();
+    // Mid double click the selection is part of what waits: relocating it would redraw the rows under the pointer.
+    // An explicit act (force) relocates at once; otherwise the relocation runs when the hold ends.
+    if (!force && holdTimer !== undefined && encoding === "map") { if (selectedForkHidden()) redrawHeld = true; }
+    else hideSelectedFork();
     emitLabels();
     renderStatus();
     syncFlags();
