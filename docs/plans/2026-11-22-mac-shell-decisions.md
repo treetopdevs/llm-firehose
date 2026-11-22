@@ -233,6 +233,20 @@ Each is rewritten to the new rule, not deleted.
 | `main.test.ts` Escape ascent tests | Esc walks session, worktree, project, fleet | Esc clears selection, then goes up one structural level (MS-8) |
 | `vocabulary.test.ts` "Fleet encoding labels use Table, Waiting and By state" | Eight Fleet encodings | The merged list and its More menu (MS-9); "All projects" added to the vocabulary |
 | `tokens.test.ts` contrast, token contract, identity hue | One dark theme | Both themes; state and identity colours per theme (MS-3) |
+| `main.test.ts` "session activation by double click, Enter and Space…" (was "by click, Enter and Space…"), "Enter on a nested score button or id chip…" | A click on a session row opened it | A click selects, a double click, Enter or Space opens (MS-8); the nested-control rule moved into `select-open.ts` and `sessions.select.test.ts` |
+| `main.test.ts` "the score view has no sidebar entry; shown with nothing in scope it starts empty" | Enabled replay sound from a button in the Score and checked audio closes on leaving | The Score has no sound control; replay sound is a Settings choice (MS-9). Audio closing on leaving is covered by `sonification.test.ts` |
+| `ui/score/sonification.test.ts` "explicit sound control…" (now "the Score shows no sound control; the Settings choice decides, and playback starting is what opens audio"), "blocked audio and a cue failure…", "a tick observing a detached paused panel…", "stepping during playback…", "a dense window cues only its latest observation…"; "the sound disclosure keyboard action…" replaced by "turning the setting off in Settings closes audio at once" | Each clicked Enable replay sound in the Score and read the status text there | Each sets the shared setting (`ui/score/sound-setting.ts`) and plays; the audio state is read from the setting module, which Settings shows (MS-9) |
+| `ui/attention.test.ts` "shows captured warnings and explains storage failures…", "unrecorded capture gaps are inspectable…" | Warnings and gaps were rows in the Needs you queue and counted in its strip | They are held for Doctor and counted on its badge, not in the queue (MS-9); inspected through `inspectWarning` and `inspectGap` |
+| `ui/fleet/index.test.ts` "one row per repo in stable order…", "a snapshot with attention ahead of worktrees…", "every go patch carries…", the "%s open keeps the historical window…" fork case, "a hung worktrees request is aborted…", "glyphs are ordered needs you and working first…", "idle and needs show in the fork's accessible name…", "selecting an unknown worktree shows unknown and why…", the context-menu and `.` key tests on a fork (they share `rig`), "a /worktrees change while a menu is open…" | Worktrees were always drawn as chips under the row | A project row starts as one line; these open the rows and Show all first (`showEverything`) and a collapsed row draws no worktree (MS-10) |
+| `ui/fleet/index.test.ts` "a row draws at most 12 glyphs…", "non-open forks are glyph-only…", "gone forks older than seven days are behind the overflow…", "the overflow chip does not navigate", "expanding a static +N row…", "the overflow control names what it hides, by status" | The "+N" chip, 12-glyph cap and glyph-only chips | The rest line, Show all, a state word on every worktree row (MS-10) |
+| `main.test.ts` "Escape from Sessions reached by a Fleet fork…", "Fleet shares the one controller: its fork menu…" | A worktree chip was on screen at launch | Open the project rows first (`openFleetRows`) |
+| `keys.test.ts` descriptor tables | Fleet registered two keydown handlers and `LOCAL` had no tree key | `rowTree` (← →) added; Fleet registers five keydown handlers (head, disclosure and worktree row read `LOCAL.rowTree`) |
+| `content.test.ts` target list | `.fleet-more` was a 24px target | `.fleet-disclose` and `.fleet-showall` are (`.fleet-more` is gone) |
+
+The test names above are the ones identified from `git diff cc49c74..HEAD -- '*.test.ts'` removed lines and from this pass. Many
+tests on the branch also had their bodies adjusted without a new name for the slice rules (neutral selection fills, hairline rows,
+hidden panel headings, 24px targets, two roots reads at launch, hosted switchers); those are in the slice commits, and the
+diff is the list.
 
 Checked against the test bodies, these stay as they are: "scope.window drives Score and the
 filter lenses", "a disjoint window is left unchanged by Score…", "Fleet descents carry the
@@ -305,7 +319,7 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   - **Targets (MS-11).** 24px minimum on every new control, 28px for the project row head, More,
     Open and Actions; `src/content.test.ts` reads them from the stylesheet. Fleet Lanes rows are 24px.
   - `DESIGN.md` Components and `.impeccable/design.json` describe all of this.
-  - **Not in:** the project row's expansion is the existing "+N" chip, not the "one line with Show
+  - **Not in at the time (all since delivered, see Completion on 2026-11-22):** the project row's expansion is the existing "+N" chip, not the "one line with Show
     all" of MS-10; the per-row Actions button on Fleet rows stays beside the inspector's Actions
     button (the move to the context menu alone is not done); the session list is not filtered by the range, so it says "of N sessions", not
     "of N in range"; the Doctor-only move of install buttons and capture warnings is not done;
@@ -335,22 +349,48 @@ closes on a click outside it and on Escape; an open worktree classified unknown 
 mark and its chip is announced with the reason; a More view (Strata, Patches) leaves the last used
 Fleet tab as the tab stop; the inspector's Close button hands focus back to the selected row.
 
-Deferred, so MS-6, MS-7, MS-8, MS-9 and MS-10 are not fully delivered:
+### Completion on 2026-11-22 (second pass)
 
-- **MS-6, neutral selection token.** `--selected` is still the teal accent value. Rows, the sidebar
-  and chips use a neutral fill, but the graph tabs, inspector primary action, map presets, crumb
-  and session tabs, and the Lanes, attention, Score and Fleet fork "current" states still read
-  `--selected` or `--accent`. Moving them needs a neutral token in both themes, the `DESIGN.md`
-  table and the accent allow-list test updated together.
-- **MS-7, "Session · whole".** The toolbar shows "Live · whole session" in a session. It does not
-  yet switch to "Session · whole" when the held range does not cover the session.
-- **MS-8, nearest surviving row.** A kept selection whose row is gone is dropped, not moved to the
-  nearest surviving row, and Back restores the selection without moving focus to that row (focus goes
-  to the view heading).
-- **MS-9.** Replay sound is still in the Score; install buttons are still in onboarding as well
-  as Doctor; Project has no Sessions view of its own (it descends to Sessions).
-- **MS-10.** Project rows keep the "+N" chip instead of expanding to needs you and working
-  worktrees with one rest line and "Show all".
+The deferred items above are delivered, each with tests that were run:
+
+- **MS-6, neutral selection token.** Landed in `c424abc`: `--selected` is a neutral fill in both themes and may only be a
+  background or fill; no selected, pressed or current state reads `--accent` (`tokens.test.ts`).
+- **MS-7, "Session · whole".** While a session is in scope and the held range does not cover it, the range control reads
+  "Session · whole". The held range is a new read-only `scope.held()`; the session's extent comes from the session directory
+  (`first_time`, and `last_time` when known). With no known extent, or a state installed whole, it keeps "Live · whole session".
+- **MS-8, range on travel.** Back, Forward, Back through a session leaves the project's 24h range at 24h (a guard test; no
+  change was needed). Entering a session by history still starts on the whole session, as before; a session's zoom is not part of
+  a place.
+- **MS-8, restore by key.** Session and worktree rows carry `data-key` equal to their selection key. A history entry keeps the
+  selected key and its place in the list; Back restores the key once this visit's load has settled, a key that is gone falls to the
+  row now at that place (the last row clamps), and focus goes to the restored row, else the view's heading. A worktree hidden
+  behind a collapsed project or Show all is revealed to be selected.
+- **Review leftovers.** A pending scroll restore ignores the clamp event the clearing queues, and panels close an open More menu
+  when they are left.
+- **MS-9.** Replay sound is a Settings checkbox (off by default, kept on this device); the Score keeps playing it, opens audio when
+  playback starts, and shows no control. Capture warnings and gaps are listed in Doctor and counted on its badge, and are out of the
+  Needs you queue and its count; the first-run setup no longer has install buttons. Project has a Sessions view (the Worktree list,
+  hosted) that is a view of the Project place in history. Dwell, Matrix and Airspace stay reachable by name, one test each.
+- **MS-10.** A project row is one line with a disclosure button; expanded it shows its needs-you and working worktrees as one-line
+  rows, then one rest line with Show all. A needs-you project starts expanded and the start is fixed when the row is first drawn.
+  Keys: Right expands, Right again enters the worktrees, Left climbs and collapses.
+
+Four review findings that had not been confirmed were traced: two were real and fixed (Back into a session's history in the
+Worktree panel came back empty; a session's zoom stayed drawn over All projects after the sidebar), one was real and fixed
+(history entries kept old project ids after a privacy-mode change), and one was real in a narrow form and mitigated (rows could
+move between the clicks of a double click; Fleet now holds drawn rows still for 600 ms after a press). The fifth, "Back loses the
+session's saved zoom", is the rule, not a defect: MS-7 gives a session its own zoom that opens whole, and a zoom is not a place.
+
+Still not done or not verified:
+
+- Nothing was run in a real browser or WKWebView; every result above is a happy-dom test. The new row layout (the hairline
+  flex, the 40px indent of worktree rows, the hidden disclosure that keeps its space) has not been looked at.
+- Capture gaps are counted with warnings on the Doctor badge; they were a separate line in the old strip. If the badge should count
+  only warnings, `attention.warnings()` is the one place.
+- The attention module still builds its strip element (its own tests read it); the shell does not mount it.
+- The Sessions view keeps the panel's own `h2` ("Worktree"), visually hidden, so Project shows two hidden headings.
+- The native app menu and the toolbar search remain out of scope (see slice 3).
+- Escape while a restore is pending and the user's own click or selection end the restore; Tab alone does not.
 
 ## Answered on 2026-11-22
 

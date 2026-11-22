@@ -617,9 +617,9 @@
       "name": "All Projects Row",
       "kind": "card",
       "refersTo": "unit-row",
-      "description": "A bordered row per project: name, a needs-you count, and its worktrees by status in words (\"1 needs you · 3 working · 20 idle · 59 unknown\", zeros left out, unknown with the ◌ mark and never idle). A single click selects it into the inspector as a neutral --bg-hover fill; Enter or a double click opens it.",
-      "html": "<div class=\"ds-row ds-selected\" aria-current=\"true\"><span class=\"ds-row-label\">alpha</span><span class=\"ds-row-needs\">1?</span><span class=\"ds-row-dim\">1 needs you · 3 working · 20 idle · 59 unknown</span></div><div class=\"ds-row ds-fog\"><span class=\"ds-row-label\">beta</span><span class=\"ds-row-dim\">no worktree data</span></div>",
-      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;min-height:28px;border:1px solid var(--border,#6d6863);border-radius:6px;background:var(--bg-panel,#1a1614);padding:4px 10px;margin:4px 0;font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,'Segoe UI',Roboto,sans-serif;color:var(--text,#ebe7e4)}.ds-row:hover{background:var(--bg-hover,#25211e)}.ds-row.ds-selected{background:var(--selected,#2c2825);outline:1px solid var(--border,#6d6863);outline-offset:-1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#a9a39e)}.ds-row-label{flex:0 0 12rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-needs{color:var(--warn,#daa932);font-weight:700}.ds-row-dim{color:var(--text-dim,#a9a39e);font-size:12px}"
+      "description": "One line per project on a hairline: a disclosure button, the name, a needs-you count, its worktrees by status in words (\"1 needs you · 3 working · 20 idle · 59 unknown\", zeros left out, unknown with the ◌ mark and never idle), a spark and the last activity. A project with a needs-you worktree starts expanded: its needs-you and working worktrees show as one-line rows (mark and word, name, what it waits on, age), then one rest line counts the remainder (\"79 more worktrees: 20 idle · 59 unknown (no recent evidence)\") with a Show all button. A single click selects a row into the inspector as a neutral --bg-hover fill; Enter or a double click opens it. Right expands, Left collapses.",
+      "html": "<div class=\"ds-row ds-selected\" aria-current=\"true\"><button class=\"ds-dis\" aria-expanded=\"true\" aria-label=\"Collapse alpha\">▾</button><span class=\"ds-row-label\">alpha</span><span class=\"ds-row-needs\">1?</span><span class=\"ds-row-dim\">1 needs you · 3 working · 20 idle · 59 unknown</span><span class=\"ds-row-dim\">4m</span></div><div class=\"ds-kid\"><span class=\"ds-warn\">?</span><span class=\"ds-row-dim\">needs you</span><span>alpha-open</span><span class=\"ds-row-dim\">may I run this?</span><span class=\"ds-row-dim\">30m</span></div><div class=\"ds-rest\"><span>79 more worktrees: 20 idle · 59 unknown (no recent evidence)</span><button class=\"ds-all\" aria-expanded=\"false\">Show all</button></div><div class=\"ds-row ds-fog\"><button class=\"ds-dis\" hidden>▸</button><span class=\"ds-row-label\">beta</span><span class=\"ds-row-dim\">no worktree data</span></div>",
+      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;min-height:28px;border-bottom:1px solid color-mix(in srgb,var(--border,#6d6863) 35%,transparent);padding:6px 16px;font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,'Segoe UI',Roboto,sans-serif;color:var(--text,#ebe7e4)}.ds-row:hover{background:var(--bg-panel,#1a1614)}.ds-row.ds-selected{background:var(--selected,#2c2825)}.ds-row.ds-fog{color:var(--text-dim,#a9a39e)}.ds-dis{min-width:24px;min-height:24px;border:0;background:none;color:var(--text-dim,#a9a39e)}.ds-dis[hidden]{display:inline-flex;visibility:hidden}.ds-row-label{flex:0 0 12rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-needs{color:var(--warn,#daa932);font-weight:700}.ds-row-dim{color:var(--text-dim,#a9a39e);font-size:12px}.ds-kid{display:flex;align-items:center;gap:10px;min-height:24px;padding:2px 8px 2px 56px;font-size:13px}.ds-warn{color:var(--warn,#daa932);font-weight:700}.ds-rest{display:flex;align-items:center;gap:10px;min-height:24px;padding:2px 8px 2px 56px;color:var(--text-dim,#a9a39e);font-size:12px}.ds-all{min-height:24px;padding:0 8px;border:1px solid var(--border,#6d6863);border-radius:4px;background:none;color:var(--text-dim,#a9a39e);font:inherit}"
     },
     {
       "name": "Range",
@@ -644,6 +644,22 @@
       "description": "The shared right-hand pane, filled by a selection and never opened unasked: kind, name, status as a mark and a word (unknown in --text-dim with its reason), a facts list where a value never captured reads unknown, the native id as a copyable field, and one Open button with an optional Actions menu.",
       "html": "<aside class=\"ds-insp\"><p class=\"ds-k\">Worktree</p><h2>alpha-wt</h2><p class=\"ds-st\">◌ unknown</p><p class=\"ds-k\">no activity time captured</p><dl><dt>project</dt><dd>alpha</dd><dt>last activity</dt><dd class=\"ds-unk\">unknown</dd></dl><button class=\"ds-open\">Open worktree sessions</button></aside>",
       "css": ".ds-insp{width:320px;padding:.8rem;background:var(--bg,#110f0d);border-left:1px solid var(--border,#6d6863);color:var(--text,#ebe7e4);font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,'Segoe UI',Roboto,sans-serif}.ds-insp h2{font-size:14px;margin:0 0 .4rem}.ds-k{margin:0;font-size:11px;color:var(--text-dim,#a9a39e)}.ds-st{margin:0;font-weight:600;color:var(--text-dim,#a9a39e)}dl{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;font-size:12px}dt{color:var(--text-dim,#a9a39e)}dd{margin:0}.ds-unk{color:var(--text-dim,#a9a39e);font-style:italic}.ds-open{min-height:28px;margin-top:.5rem;padding:0 .8rem;background:var(--bg-panel,#1a1614);color:var(--accent,#fe7802);border:1px solid var(--accent,#fe7802);border-radius:6px;font:inherit}"
+    },
+    {
+      "name": "Capture Warnings",
+      "kind": "card",
+      "refersTo": "unit-row",
+      "description": "Doctor lists capture warnings and gaps under its checks, one hairline row each (source and summary, when recorded, an Inspect button). They are never in the Needs you queue; the Doctor sidebar item carries their count.",
+      "html": "<div class=\"ds-cw\"><p>codex: unmapped rollout record</p><p class=\"ds-dim\">Recorded 4m ago · recovery unknown</p><button>Inspect warning</button></div>",
+      "css": ".ds-cw{padding:10px 12px;border-bottom:1px solid color-mix(in srgb,var(--border,#6d6863) 35%,transparent);font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;color:var(--text,#ebe7e4)}.ds-cw p{margin:2px 0}.ds-dim{color:var(--text-dim,#a9a39e);font-size:12px}"
+    },
+    {
+      "name": "Replay Sound Setting",
+      "kind": "custom",
+      "refersTo": "inputs",
+      "description": "In Settings: one checkbox row, off by default, kept on this device, with a status line and the tone list in dim text. The Score has no sound control; it reads this choice when playback starts.",
+      "html": "<label class=\"ds-snd\"><input type=\"checkbox\"> <strong>replay sound</strong> <span class=\"ds-dim\">quiet local tones while a session replays in the Score</span></label><p class=\"ds-dim\">Off. A replay is silent.</p>",
+      "css": ".ds-snd{display:flex;align-items:center;gap:8px;font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;color:var(--text,#ebe7e4)}.ds-dim{color:var(--text-dim,#a9a39e);font-size:12px}"
     }
   ],
   "narrative": {
@@ -654,7 +670,7 @@
       "Flat surfaces, 1px hairlines; shadows only on the transient popovers (graph search results, graph overflow menu, actions menu), the modal scrims, focus rings that cannot be outlines and the fleet change flash.",
       "Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).",
       "Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.",
-      "Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.",
+      "Rows and lanes, not cards: a unit of the fleet is a row on a hairline, one line each; a project row expands to its needs-you and working worktrees, and state is a mark and a word.",
       "Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. One global `:focus-visible` rule in `styles.css` draws a 2px `--focus` indicator on every focusable surface, including feed rows, session items and Project beads (the graph keeps `--selected`)."
     ],
     "rules": [
