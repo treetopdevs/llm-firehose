@@ -65,6 +65,24 @@ const siblings = (ev: FirehoseEvent) =>
 const showDetail = (ev: FirehoseEvent) =>
   renderDetail(detailPane, ev, () => renderDetail(detailPane, null, () => {}), siblings, undefined, offerEvidence, sessionDirectory);
 
+// A selection (click or arrow) fills the shared pane; nothing navigates until Open. Closing the pane drops the
+// selection in the panel that made it, and each change is written into the current history entry (MS-8).
+const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
+  if (!s && !inspectorShowing(detailPane)) return;
+  renderInspector(detailPane, s, { onClose: clear, menu: actions });
+  rememberSelection();
+};
+/** Writes the selection into the current history entry right away, so a move made a moment later still returns to it. */
+function rememberSelection(): void {
+  const cur = places.current();
+  if (!cur || cur.place.panel !== active) return;
+  const sel = selectedKeyHere();
+  const { sel: _gone, ...rest } = cur.state;
+  places.record(cur.place, sel ? { ...rest, sel } : rest);
+}
+/** The selected row of the panel being shown, if it has one. */
+const selectedKeyHere = (): string | undefined => (active === "fleet" ? fleetPanel.selectedKey() : active === "sessions" ? sessionsPanel.selectedKey() : undefined);
+
 const refOf = (id: string, source?: string): SessionRef => (source === undefined ? { id } : { id, source });
 
 // Score, Loops, Loom, Replay, Handoffs and Court are tabs of the Session altitude.
@@ -105,7 +123,7 @@ attentionPanel.root.addEventListener("click", (e) => {
   // Only an Inspect click starts an inspection; Working, Snooze and the rest must not revalidate a stale one.
   if ((e.target as Element | null)?.closest?.('[data-key^="inspect:"], [data-key^="warning:"]')) inspectClickGeneration = navGeneration;
 }, true);
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel });
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel, inspect: inspectFor(() => sessionsPanel.clearSelection()) });
 
 // Opening a session from elsewhere keeps the project/worktree parents only
 // when the graph resolver says the session belongs to them; otherwise the
@@ -194,21 +212,6 @@ const feedPanel = createEventList(liveSource(feedState, { renderLimit: 1000 }), 
   },
   resetWindow: () => scope.narrow({ window: "live" }),
 });
-// A selection (click or arrow) fills the shared pane; nothing navigates until Open. Closing the pane drops the
-// selection in the panel that made it, and each change is written into the current history entry (MS-8).
-const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
-  if (!s && !inspectorShowing(detailPane)) return;
-  renderInspector(detailPane, s, { onClose: clear, menu: actions });
-  rememberSelection();
-};
-/** Writes the selection into the current history entry right away, so a move made a moment later still returns to it. */
-function rememberSelection(): void {
-  const cur = places.current();
-  if (!cur || cur.place.panel !== active) return;
-  const sel = active === "fleet" ? fleetPanel.selectedKey() : undefined;
-  const { sel: _gone, ...rest } = cur.state;
-  places.record(cur.place, sel ? { ...rest, sel } : rest);
-}
 const fleetPanel = createFleet({
   store: scope,
   actions,
@@ -466,7 +469,7 @@ function recordPlace(): void {
     const first = here === undefined;
     const moved = !here || !samePlace(here, place);
     const cell = scope.get().cell;
-    const sel = active === "fleet" ? fleetPanel.selectedKey() : undefined;
+    const sel = selectedKeyHere();
     places.record(place, { ...(cell ? { cell } : {}), ...(sel ? { sel } : {}) });
     travelling = false;
     here = place;
@@ -499,6 +502,7 @@ function travel(dir: "back" | "forward"): boolean {
   );
   // The selection comes back by key, once the rows are there.
   if (name === "fleet") fleetPanel.selectKey(entry.state.sel);
+  else if (name === "sessions") sessionsPanel.selectKey(entry.state.sel);
   syncHistory();
   return true;
 }

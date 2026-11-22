@@ -185,6 +185,7 @@ export const LOCAL = {
   inspectorCompare: local('graph inspector', 'Enter', 'compare with the typed commit ID', 'Enter'),
   actionMenu: local('actions menu', '↑ ↓ Enter Esc', 'move through the actions, run one, or close the menu', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'),
   actionDialog: local('prune confirmation', 'Tab Esc', 'switch between Cancel and Confirm, or cancel', 'Tab', 'Escape'),
+  rowClear: local('rows and cards', 'Esc', 'clear the selected row and close the inspector', 'Escape'),
   rowSelect: local('rows and cards', '↑ / ↓', 'select the previous or next row (Enter opens it)', 'ArrowUp', 'ArrowDown'),
   moreMenu: local('more menu', '↑ ↓ Home End Esc', 'move through the menu, choose one, or close it', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape', 'Tab'),
   fleetClear: local('fleet', 'Esc', 'clear the selected row or need', 'Escape'),

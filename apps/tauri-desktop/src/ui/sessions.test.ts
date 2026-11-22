@@ -19,6 +19,8 @@ import type { Scope } from "../scope";
 import type { AttentionEvidence, AttentionSession, FirehoseEvent, SessionSummary } from "../api";
 
 const now = Date.now();
+/** Open is a double click (MS-8); a single click only selects. */
+const openIt = (n: Element): void => { n.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); };
 
 function summary(over: Partial<SessionSummary> & { id: string }): SessionSummary {
   return {
@@ -196,9 +198,10 @@ describe("sessions band", () => {
     expect(items[0].querySelector(".name")?.textContent).toBe("Redesign the Workflow section");
     expect(items[0].querySelector(".session-facts")?.textContent).toMatch(/^claude · redesign-027da0 · started \d{2}:\d{2}:\d{2} · 51 events$/);
     expect(items[0].querySelector(".session-facts")?.getAttribute("title")).toBe("/Users/me/dev/app/.claude/worktrees/redesign-027da0");
-    expect(items[0].querySelector(".session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
+    // The native id is a field of the inspector, not a line on the row (MS-10).
+    expect(items[0].querySelector(".session-id")).toBeNull();
     expect(items[1].querySelector(".name")?.textContent).toBe("claude in app");
-    items[0].click();
+    openIt(items[0]);
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c"));
     await vi.waitFor(() => expect(panel.root.querySelector(".session-heading h3")?.textContent).toBe("Redesign the Workflow section"));
     expect(panel.root.querySelector(".session-heading .session-id")?.textContent).toBe("2ed4f8a3-0bf0-47dc-8b7b-63aa59de602c");
@@ -307,7 +310,7 @@ describe("sessions band", () => {
     expect(row.querySelector(".err")?.getAttribute("role")).toBe("img");
     expect(row.querySelector(".err")?.getAttribute("aria-label")).toBe("error captured");
     expect(row.querySelector(".err")?.getAttribute("title")).toBeTruthy();
-    row.click();
+    openIt(row);
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("s1"));
   });
 });
@@ -384,7 +387,7 @@ describe("sessions scope", () => {
     panel.setScope({ where: "/home/me/dev/app", agent: "claude", label: "…/dev/app · claude" });
     await panel.refresh();
 
-    const ids = () => [...panel.root.querySelectorAll(".session-id")].map((n) => n.textContent);
+    const ids = () => [...panel.root.querySelectorAll(".session-item")].map((n) => n.getAttribute("data-id"));
     expect(ids()).toEqual(["s1"]);
     const chip = panel.root.querySelector<HTMLElement>(".sessions-cell")!;
     expect(chip.textContent).toContain("…/dev/app · claude");
@@ -437,7 +440,7 @@ test("ordinary aggregate session rows retain history from every source", async (
   ]);
   const panel = createSessions(() => {}, () => []);
   await panel.refresh();
-  panel.root.querySelector<HTMLElement>(".session-item")!.click();
+  openIt(panel.root.querySelector<HTMLElement>(".session-item")!);
   await vi.waitFor(() => {
     expect(panel.root.textContent).toContain("codex aggregate evidence");
     expect(panel.root.textContent).toContain("opencode aggregate evidence");
@@ -451,7 +454,7 @@ test("a row's history survives a context move that keeps its scoped session", as
   const store = createScope();
   const panel = createSessions(() => {}, () => [], undefined, undefined, store, undefined, (ref) => store.narrow({ session: ref }));
   await panel.refresh();
-  panel.root.querySelector<HTMLElement>(".session-item")!.click();
+  openIt(panel.root.querySelector<HTMLElement>(".session-item")!);
   await vi.waitFor(() => expect(panel.root.textContent).toContain("row evidence"));
   store.narrow({ project: "p2", session: { id: "same", source: "codex" } });
   expect(panel.root.querySelector(".sessions-events")?.textContent).toContain("row evidence");
@@ -660,7 +663,7 @@ describe("sessions panel reads the shared scope", () => {
     const onSelect = vi.fn();
     const panel = createSessions(onSelect, () => [], undefined, undefined, store);
     await panel.refresh();
-    panel.root.querySelector<HTMLElement>(".band-row")!.click();
+    openIt(panel.root.querySelector<HTMLElement>(".band-row")!);
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledWith("s1"));
     expect(narrow).not.toHaveBeenCalled();
     expect(store.get().session).toBeUndefined();
@@ -868,9 +871,9 @@ describe("session cards are keyboard operable", () => {
     await panel.refresh();
     const card = item(panel, "s1");
     expect(card.getAttribute("role")).toBe("group");
-    for (const c of ["score-open", "loops-open", "session-id"]) { const n = card.querySelector(`.${c}`); if (n) expect(n.closest('[role="button"]'), c).toBeNull(); }
+    for (const c of ["score-open", "loops-open"]) { const n = card.querySelector(`.${c}`); if (n) expect(n.closest('[role="button"]'), c).toBeNull(); }
     expect(card.getAttribute("aria-label")).toMatch(/^open .+/);
-    if (how === "click") card.click();
+    if (how === "click") openIt(card);
     else press(card, how);
     await vi.waitFor(() => expect(sessionEvents).toHaveBeenCalledTimes(1));
     expect(onSelectSession).toHaveBeenCalledTimes(1);
@@ -878,7 +881,7 @@ describe("session cards are keyboard operable", () => {
     expect(order).toEqual(["select", "history"]);
   });
 
-  test("Enter on a nested score button or id chip does not select or open", async () => {
+  test("Enter on a nested score button does not select or open", async () => {
     sessions.mockResolvedValue([summary({ id: "s1" })]);
     sessionEvents.mockResolvedValue([]);
     const onSelectSession = vi.fn();
@@ -886,8 +889,7 @@ describe("session cards are keyboard operable", () => {
     const panel = createSessions(() => {}, () => [], onOpenScore, undefined, createScope(), undefined, onSelectSession);
     await panel.refresh();
     const score = panel.root.querySelector<HTMLElement>(".score-open")!;
-    const chip = panel.root.querySelector<HTMLElement>(".session-id")!;
-    for (const n of [score, chip]) {
+    for (const n of [score]) {
       expect(press(n, "Enter") && true).toBe(true);
       expect(press(n, " ") && true).toBe(true);
     }
@@ -921,9 +923,9 @@ describe("session list focus survives the periodic refresh", () => {
     q(panel, ".session-item[data-id='s2'] .score-open").focus();
     await panel.refresh();
     expect(document.activeElement).toBe(q(panel, ".session-item[data-id='s2'] .score-open"));
-    q(panel, ".session-item[data-id='s1'] .session-id").focus();
+    q(panel, ".session-item[data-id='s1'] .score-open").focus();
     await panel.refresh();
-    expect(document.activeElement).toBe(q(panel, ".session-item[data-id='s1'] .session-id"));
+    expect(document.activeElement).toBe(q(panel, ".session-item[data-id='s1'] .score-open"));
     panel.root.remove();
   });
 

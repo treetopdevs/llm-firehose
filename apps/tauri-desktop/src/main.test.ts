@@ -3287,6 +3287,31 @@ describe("select, open, back (inspector)", () => {
     expect(pane().querySelector("h2")!.textContent).toBe(fleetRows()[1].querySelector(".fleet-row-label")!.textContent);
   });
 
+  test("a session row selects into the inspector without writing scope; opening it is the history stop, and Back restores the selection", async () => {
+    const b = await boot({ sessions: [sessionRow("r1"), sessionRow("r2")] });
+    b.nav("sessions").click();
+    await vi.waitFor(() => expect(document.querySelectorAll(".session-item").length).toBe(2));
+    await settle();
+    const row = () => document.querySelector<HTMLElement>(".session-item[data-id='r1']")!;
+    const before = b.scope.get();
+    row().click();
+    expect(pane().getAttribute("data-inspector")).toBe("session");
+    expect(pane().querySelector(".inspector-id-value")!.textContent).toBe("r1");
+    expect(b.scope.get()).toBe(before);
+    expect(b.active()).toBe("sessions");
+    openIt(row());
+    expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
+    await settle();
+    expect(backBtn().getAttribute("aria-disabled")).toBe("false");
+    b.nav("files").click();
+    expect(pane().classList.contains("open")).toBe(false);
+    await settle();
+    backBtn().click();
+    expect(b.active()).toBe("sessions");
+    await vi.waitFor(() => expect(pane().getAttribute("data-inspector")).toBe("session"));
+    expect(pane().querySelector(".inspector-id-value")!.textContent).toBe("r1");
+  });
+
   test("moving to another panel closes the inspector", async () => {
     const b = await boot({ worktrees: twoRepos() });
     await ready(b);
