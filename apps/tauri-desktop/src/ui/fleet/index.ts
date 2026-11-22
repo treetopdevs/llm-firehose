@@ -338,6 +338,19 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (row.forks.length === 0 || !isOpen(row.id)) return [];
     return showAll.has(row.id) ? stripOf(row.forks, true).shown : childrenOf(row.forks);
   }
+  /**
+   * A refresh can stop drawing the selected worktree of an open row (it went idle, so it is no longer among the first
+   * children). The selection, and focus with it, then moves to the project row; nothing is expanded to keep it.
+   */
+  function hideSelectedFork(): void {
+    if (selFork === undefined) return;
+    const [repo, wtId] = selFork.split(SEP);
+    const row = result.rows.find((r) => r.id === repo);
+    if (!row || !isOpen(row.id) || !row.forks.some((f) => f.id === wtId) || drawnForks(row).some((f) => f.id === wtId)) return;
+    const refs = rowRefs.get(nodes.get("row:" + row.id)!);
+    if (refs?.forks.contains(document.activeElement)) refs.head.focus();
+    selRow = row.id; selNeed = undefined; selFork = undefined;
+  }
   function setOpen(row: FleetRow, open: boolean): void {
     openChoice.set(row.id, open);
     // A selection inside a row that closes goes to the row, as in any tree.
@@ -448,6 +461,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     attBy = new Map((att ?? []).map((s) => [sessionKey(s), s]));
     result = buildFleet({ worktrees: wt, sessions: att ?? [], now, order, resolveLabel });
     order = result.order;
+    hideSelectedFork();
     emitLabels();
     renderStatus();
     syncFlags();

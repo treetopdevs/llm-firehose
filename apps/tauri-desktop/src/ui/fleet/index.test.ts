@@ -798,6 +798,33 @@ describe("expandable project rows (MS-10)", () => {
     expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
   });
 
+  test("a refresh that hides the selected worktree moves the selection, and focus, to its project row without expanding anything", async () => {
+    const { panel, byKey, data } = setup();
+    await panel.activate();
+    disclose(rowOf(byKey, "repoB")).click();
+    panel.selectKey(forkSelKey("repoB", "wt-b1"));
+    const fork = byKey(key("fork", "repoB", "wt-b1"));
+    expect(fork.classList.contains("selected")).toBe(true);
+    fork.focus();
+    data.sessions = baseSessions().filter((x) => x.id !== S.workB().id); // the worktree stops working and is no longer drawn
+    nowMs += 1000;
+    await panel.refresh();
+    expect(kids(rowOf(byKey, "repoB"))).toHaveLength(0);
+    expect(panel.selectedKey()).toBe(key("row", "repoB"));
+    expect(document.activeElement).toBe(rowOf(byKey, "repoB").querySelector(".fleet-row-head"));
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("a refresh that leaves the selected worktree drawn keeps the selection", async () => {
+    const { panel, byKey, data } = setup();
+    await panel.activate();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    data.sessions = [...baseSessions()];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+  });
+
   test("a row whose /attention answered before /worktrees still starts open when a worktree needs you", async () => {
     const { panel, byKey, api } = setup();
     let release!: (v: typeof FIXTURE_ROWS) => void;
