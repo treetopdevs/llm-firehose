@@ -280,7 +280,7 @@ type BootOpts = {
   sessions?: unknown[]; repos?: unknown[] | (() => unknown[] | Promise<unknown[]>); snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
   attentionWarnings?: unknown[]; attentionGaps?: unknown[];
-  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean | number; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
+  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean | number; healthGate?: Promise<void>; worktreesGate?: Promise<void>; /** Holds every /sessions answer while its `p` is set. */ sessionsHold?: { p?: Promise<void> }; /** Receives each setInterval callback the shell registers. */ intervals?: Array<() => void>;
   // /workspace-graph/timeline answers a valid EventPage; /workspace-graph/activity a valid ActivityResponse.
   timeline?: EventPage | ((q: URLSearchParams) => EventPage);
   activity?: ActivityResponse | ((q: URLSearchParams) => ActivityResponse);
@@ -299,7 +299,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
   vi.useFakeTimers({ toFake: opts.fakeTimeout ? ["Date", "setTimeout"] : ["Date"], now: NOW });
   vi.setSystemTime(NOW);
   vi.stubGlobal("localStorage", { getItem: () => (opts.firstRun ? null : "1"), setItem: () => {} });
-  vi.stubGlobal("setInterval", () => 0);
+  vi.stubGlobal("setInterval", (fn: () => void) => { opts.intervals?.push(fn); return 0; });
   const sources: Boot["sources"] = [];
   vi.stubGlobal("EventSource", class { onopen: (() => void) | null = null; onerror = null; onmessage: ((m: { data: string }) => void) | null = null; constructor() { sources.push(this); } close() {} });
   const urls: string[] = [];
@@ -325,7 +325,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     }
     if (p === "/attention/event" && opts.attentionEvent) return json(await opts.attentionEvent(u.searchParams.get("id") ?? ""));
     if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: opts.attentionWarnings ?? [], ...(opts.attentionGaps ? { gaps: opts.attentionGaps } : {}) });
-    if (p === "/sessions") return json(opts.sessions ?? []);
+    if (p === "/sessions") { await opts.sessionsHold?.p; return json(opts.sessions ?? []); }
     if (p.startsWith("/sessions/")) return json(opts.sessionEvents ?? scoreFixture);
     if (p === "/events") return json(opts.events ?? []);
     if (p === "/workspace-graph/repos") return json(typeof opts.repos === "function" ? await opts.repos() : opts.repos ?? []);
@@ -3679,6 +3679,36 @@ describe("Project's Sessions view (MS-9)", () => {
     expect(selectedChip()).toBe("sessions");
     await vi.waitFor(() => expect(wtItems().filter((n) => n.classList.contains("picked"))).toHaveLength(1));
     expect(b.active()).toBe("project");
+  });
+
+  test("a Sessions refresh still in flight when the view is left cannot reopen the inspector over the new view", async () => {
+    const hold: { p?: Promise<void> } = {};
+    const intervals: Array<() => void> = [];
+    const b = await bootProject({ worktrees: [wtRow({ repo_id: "r1", worktree_id: "wt-a", label: "/w/a" })], sessions: [sessionRow("s-o1")], sessionsHold: hold, intervals });
+    b.go("project", { project: "r1", worktree: "wt-a" }, true);
+    await flushTurn();
+    chip("sessions").click();
+    const rows = () => document.querySelectorAll<HTMLElement>(".content .project .session-item");
+    await vi.waitFor(() => expect(rows().length).toBe(1));
+    await flushTurn();
+    const pane = () => document.querySelector<HTMLElement>(".detail")!;
+    rows()[0].click();
+    expect(pane().classList.contains("open")).toBe(true);
+    const sroot = document.querySelector<HTMLElement>(".content .project .sessions")!;
+    let release!: () => void;
+    hold.p = new Promise<void>((r) => { release = r; });
+    vi.setSystemTime(NOW + 600_000); // the refresh will describe the row differently (its age), as a real one would
+    for (const tick of intervals) tick(); // the Sessions panel starts a refresh that waits on /sessions
+    await flushTurn();
+    chip("lanes").click();
+    expect(pane().classList.contains("open")).toBe(false);
+    release();
+    hold.p = undefined;
+    await flushTurn();
+    await flushTurn();
+    expect(sroot.querySelector(".session-item")).not.toBeNull();
+    expect(pane().classList.contains("open")).toBe(false);
+    expect(selectedChip()).toBe("lanes");
   });
 
   test("Escape from an opened worktree returns to the project's list in the same view; Escape again goes up to All projects", async () => {

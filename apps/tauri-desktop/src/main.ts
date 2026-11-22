@@ -68,8 +68,10 @@ const showDetail = (ev: FirehoseEvent) =>
 
 // A selection (click or arrow) fills the shared pane; nothing navigates until Open. Closing the pane drops the
 // selection in the panel that made it, and each change is written into the current history entry (MS-8).
-const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
+const inspectFor = (clear: () => void, shown: () => boolean = () => true) => (s: Inspected | null): void => {
   if (!s && !inspectorShowing(detailPane)) return;
+  // A refresh that was still in flight when its panel was left must not fill the pane over the view that replaced it.
+  if (s && !shown()) return;
   const close = () => {
     // The Close button is about to leave the DOM: hand focus back to the row the pane described.
     const sel = content.querySelector<HTMLElement>(".selected, .picked");
@@ -143,7 +145,7 @@ attentionPanel.root.addEventListener("click", (e) => {
   // Only an Inspect click starts an inspection; Working, Snooze and the rest must not revalidate a stale one.
   if ((e.target as Element | null)?.closest?.('[data-key^="inspect:"]')) inspectClickGeneration = navGeneration;
 }, true);
-const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel, inspect: inspectFor(() => sessionsPanel.clearSelection()) });
+const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel, inspect: inspectFor(() => sessionsPanel.clearSelection(), () => selectionPanelFor(active) === sessionsPanel) });
 
 // Opening a session from elsewhere keeps the project/worktree parents only
 // when the graph resolver says the session belongs to them; otherwise the
