@@ -54,7 +54,7 @@ test("leaving Court cancels its pending receipt and preserves unsaved text acros
   input("New claim","Unsubmitted idea");tab("replay");
   expect(signal()!.aborted).toBe(true);
   goFn("ecosystem");nav("session");
-  expect(document.querySelector("#session-tab-replay")?.getAttribute("aria-selected")).toBe("true");
+  expect(document.querySelector("#session-tab-replay")?.getAttribute("aria-checked")).toBe("true");
   tab("court");
   expect(document.querySelector<HTMLInputElement>('[aria-label="New claim"]')?.value).toBe("Unsubmitted idea");
 });
@@ -71,6 +71,6 @@ test("Escape neither aborts a pending Court receipt nor leaves the tab; it is no
   expect(inField.defaultPrevented).toBe(false);
   expect(onTab.defaultPrevented).toBe(false);
   expect(signal()!.aborted).toBe(false);
-  expect(document.querySelector("#session-tab-court")?.getAttribute("aria-selected")).toBe("true");
+  expect(document.querySelector("#session-tab-court")?.getAttribute("aria-checked")).toBe("true");
   expect(active()).toBe("session");
 });

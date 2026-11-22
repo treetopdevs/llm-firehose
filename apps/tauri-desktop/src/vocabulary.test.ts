@@ -177,9 +177,16 @@ describe("vocabulary guard", () => {
     expect(hits).toEqual([]);
   });
 
-  test("Fleet encoding labels use Table, Waiting and By state", () => {
+  test("Fleet switcher labels are List, Lanes and Events, with Strata and Patches behind More views (MS-9)", () => {
     const text = all.filter((c) => c.file === "ui/fleet/index.ts").map((c) => c.text);
-    for (const w of ["Table", "Waiting", "By state"]) expect(text).toContain(w);
+    for (const w of ["List", "Lanes", "Events", "Strata", "Patches", "More views"]) expect(text).toContain(w);
+    // The merged list replaces these three views (MS-9): their names are gone from visible copy.
+    for (const w of ["Table", "Waiting", "By state"]) expect(text).not.toContain(w);
+  });
+
+  test("the merged list is named All projects (MS-2)", () => {
+    const fleet = all.filter((c) => c.file === "ui/fleet/index.ts").map((c) => c.text);
+    expect(fleet).toContain("All projects");
   });
 
   test("obsolete uppercase NEEDS YOU / NEEDS INPUT is banned, case-sensitively", () => {

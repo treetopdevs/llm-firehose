@@ -276,7 +276,7 @@ Hex only in light, as in dark: `--attention` #9a6400, `--working` #0f7a4d, `--ob
 The per-session identity hue is data (`--hue`, set per row). Its saturation and lightness are theme tokens, `--hue-s` and `--hue-l` (55% and 55% dark, 60% and 40% light), so the stripe reads on both surfaces.
 
 ### Roles
-- **Accent** (`--accent`): pressed toggles (lanes, score, attention filters, fleet encodings), the primary button's border and text, the current checkout's border on fleet rows and forks, the selected fleet row's outline, the current tick on the score. It means "you are here", "this is on" or "this is the action". It is no longer on the brand word or the onboarding heading, and no button is filled with it.
+- **Accent** (`--accent`): pressed toggles (lanes, score, attention filters), the primary button's border and text (the inspector's Open), the current checkout's border on fleet rows and forks, the current tick on the score. A selected row and the selected view segment are neutral fills, not accent. It means "you are here", "this is on" or "this is the action". It is no longer on the brand word or the onboarding heading, and no button is filled with it.
 - **Needs** (`--needs`): the "needs you" badge (`--bg` text on `--needs`), bold state words and lane labels for sessions waiting on the operator, needs ticks on lanes and the score, the dwell bar of a needing row.
 - **Selected** (`--selected`): selection inside the workspace graph (nodes, edges, labels, tabs, map presets, the event table row) and the session lens tabs' wash. Inside `.workspace-graph` it is also the focus ring.
 - **Focus** (`--focus`): the 2px keyboard ring everywhere in the shell outside the graph.
@@ -392,16 +392,33 @@ The shell is a tool people keep open all day, so motion is rare (the graph's poi
 - **Needs badge:** `--bg` text on `--needs`, border the same.
 - **Error badge:** `--on-err` text on `--err`.
 - **Lens chips** (session lens head): pill (999px), `--border`, `--fs-xs` text, `1px 10px` padding.
-- **Copyable id** (`.session-id`): `--fs-xs` monospace, `--text-dim`, transparent border that becomes `--border` on hover, `cursor: copy`, turns `--ok` when copied. The id is a detail under the name, never the name.
+- **Copyable id** (`.session-id`): `--fs-xs` monospace, `--text-dim`, transparent border that becomes `--border` on hover, `cursor: copy`, turns `--ok` when copied. The id is a detail under the name, never the name. It is on the session heading and in the inspector; a session row in a list no longer draws it (MS-10).
 
 ### Unit rows (fleet, attention, sessions)
 - **Corner style:** 6px radius.
 - **Background:** `--bg-panel` on `--bg`; hover to `--bg-hover`.
-- **Border:** 1px `--border`, with the state styles from Elevation; selected adds a 1px `--accent` outline offset 1px.
-- **Internal padding:** `4px 10px` on fleet rows, `.8rem 1rem` on attention rows, `0.18rem 0.4rem` on feed rows.
+- **Border:** 1px `--border`, with the state styles from Elevation. A selected row (`.selected`, or `.picked` in the Worktree lists) is a neutral `--bg-hover` fill with a 1px `--border` outline, never the accent (MS-6); the fill is the whole signal, so it is also set for the current item of a keyboard walk.
+- **Internal padding:** `4px 10px` on fleet rows, `.8rem 1rem` on attention rows, `0.5rem` on session and worktree rows, `0.18rem 0.4rem` on feed rows.
+- **Targets (MS-11):** the head of a project row is 28px tall, a worktree chip, a need chip and the "+N" overflow chip are 24px, a session or worktree row is at least 40px, and the Score and Loops buttons on a session row are 24px. `src/content.test.ts` reads these from the stylesheet.
 - **Content:** label in `--text`, secondary facts in `--text-dim`, summary truncated with an ellipsis at a fixed character width (36ch on needs rows).
 - **Identity stripe:** session band rows carry a 3px left border in the per-session identity hue, `hsl(var(--hue) 55% 55%)`. This is identity, not state.
 - **Change flash:** a 1.6s ease-out fade from `--bg-hover` and a 2px `--text-dim` ring to transparent, disabled under `prefers-reduced-motion`.
+
+### All projects list (`ui/fleet`, the `map` encoding)
+One row per project, newest activity first within a stable order. The head reads the project name, a needs-you count in `--warn`, the longest wait, and the worktrees by status in words: "1 needs you · 3 working · 20 idle · 59 unknown", zeros left out (`summarize()` in `ui/fleet/model.ts`). Below it sit the worktree chips and the needs-you queue.
+- **Status of a worktree:** needs you, working, idle, unknown, landed, never diverged, gone, claimed in that order. Needs you and working come from the attention poll by `worktree_id`. An open worktree with evidence and no live session is idle. **Unknown stays unknown:** an open worktree with no readable activity time, and a worktree whose state the daemon could not determine, are unknown with the `◌` mark and a reason, never idle. A project seen only by the needs-you snapshot says "no worktree data", not 0.
+- **Order and overflow:** chips for needs-you and working worktrees lead, then the rest in the old order; a row draws at most 12 and the "+N" chip names what it hides ("show all 8 more worktrees: 3 idle · 5 unknown").
+- **Switcher:** List and Lanes are tabs, Events too when its host is mounted. Strata and Patches sit behind **More views**. Waiting, Table and By state are retired from the switcher (MS-9); the List carries what they showed, and the names still resolve for aliases and old history entries.
+- **Keys:** arrows select the next or previous row, Enter or Space opens, Escape clears the selection and the inspector, 1 to 9 pick a row, n and N walk the needs-you queue.
+
+### Select, open, back
+Selecting and opening are different moves (MS-8). A single click or an arrow key **selects**: the row takes the neutral fill and the shared pane fills with the inspector. Nothing navigates, the scope is not written, no history entry is added, and focus stays on the row so the arrows keep walking. Enter, Space or a double click **opens**: it narrows the scope and pushes a history entry. The pane never opens unasked. Escape clears the selection and closes the inspector before it goes up a level. The selected row's key is stored in the current history entry, so Back returns to the place with the same row selected; a row that is gone is simply not selected. The rule lives in `src/select-open.ts` and is audited in `focusable-audit.test.ts` like `onActivate`.
+
+### Inspector (`ui/inspector.ts`)
+The shared right-hand pane, filled by a selection: the kind (Project, Worktree, Session) in `--fs-xs` `--text-dim`, the name as an `h2`, the status as a mark and a word (`--needs` for needs you, `--text-dim` for unknown, with its reason underneath), a facts list (`--fs-sm`, labels `--text-dim`; a fact that was never captured reads "unknown" in italic `--text-dim`, it is not left out and not invented), the native id as a monospace copyable field with a "Copy" button (24px), then one **Open** button (28px, the primary action) and, when the row has some, an **Actions** menu button that opens the row's actions. It does not take focus. A redraw while focus is on one of its controls keeps focus there. At 1100px and under it overlays the content.
+
+### More menu (`ui/more-menu.ts`)
+Where a demoted view lives (MS-9). One 28px button reading "More" (or the name of the demoted view that is showing, with the `--bg-hover` fill and 600 weight, so Back to a hidden view is never a mystery) and a `▾`; `aria-haspopup="menu"` and `aria-expanded`. The pop-up is a `--bg-panel` surface (6px radius, `--border`, `--shadow`) of full-width 28px `menuitemradio` items, the current one marked with `aria-checked` and a `--bg-hover` fill. ArrowUp and ArrowDown open it from the button and move through it (wrapping), Home and End jump, choosing an item closes it and returns focus to the button, Tab closes it, and **Escape closes it, returns focus to the button, and is claimed** so the shell does not also go up a level. A press outside closes it. Used by Fleet (Strata, Patches) and Session (Loom, Replay, Handoffs, Court); Score and Loops stay tabs. The demoted tabs keep their `session-tab-*` ids as the menu items, so each tabpanel is still labelled.
 
 ### Inputs / Fields
 - **Style:** `--bg-panel` fill, 1px `--border`, 6px radius, `0.3rem 0.5rem` padding, body font; selects match inputs.
@@ -425,7 +442,7 @@ The window is a source list beside a stage. The sidebar answers "where", the too
 - **Order:** sidebar toggle, Back and Forward chevrons, the title, the view switcher, then the range at the far edge. A toolbar search (the mock shows one) is not built: the decisions doc gives it no scope.
 - **History:** two borderless 28px chevron buttons named "Back" and "Forward", `aria-disabled` and 45% opacity when the history has nowhere to go (not `disabled`, so a button that holds focus keeps it). They are the same moves as ⌘[ and ⌘].
 - **Title:** the place name in 600 weight `--fs-md` (All projects, Needs you, Files, Doctor, Settings; Project, Worktree and Session for opened levels), then the breadcrumb (project › worktree › session) in `--text-dim`, unresolved ids in monospace.
-- **View switcher:** the shown panel's own segmented group (Fleet encodings, Project chips, Session tabs) is hosted in the toolbar and handed back to its panel when another panel is shown, so there is one control for "what" and it keeps its keys and roles.
+- **View switcher:** the shown panel's own switcher (`.fleet-views`, `.project-chips`, `.session-views`: the segmented group plus its More menu) is hosted in the toolbar and handed back to its panel when another panel is shown, so there is one control for "what" and it keeps its keys and roles.
 - **Range:** the one time control, see below.
 - **Inspector:** at 1100px and under it overlays the content instead of pushing it.
 

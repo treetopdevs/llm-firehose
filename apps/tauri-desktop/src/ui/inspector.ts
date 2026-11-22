@@ -32,6 +32,7 @@ export interface InspectorOptions {
   menu?: { openMenu(actions: readonly UnitAction[], anchor: HTMLElement, opts?: { returnFocus?: HTMLElement }): void };
 }
 
+const CONTROLS = ["inspector-open", "inspector-copy", "inspector-actions", "detail-close"];
 const KIND_LABEL: Record<Inspected["kind"], string> = { project: "Project", worktree: "Worktree", session: "Session" };
 
 /** Whether the pane currently shows an inspector (rather than an event, or nothing). */
@@ -39,6 +40,8 @@ export const inspectorShowing = (pane: HTMLElement): boolean => pane.hasAttribut
 
 export function renderInspector(pane: HTMLElement, s: Inspected | null, opts: InspectorOptions): void {
   releasePane(pane);
+  // A redraw (the data under the selection moved) must not drop focus from the control the user is on.
+  const held = pane.contains(document.activeElement) ? CONTROLS.find((c) => document.activeElement?.classList.contains(c)) : undefined;
   clear(pane);
   pane.removeAttribute("data-inspector");
   if (!s) {
@@ -86,4 +89,5 @@ export function renderInspector(pane: HTMLElement, s: Inspected | null, opts: In
   }
   body.push(row);
   pane.append(...body);
+  if (held) pane.querySelector<HTMLElement>(`.${held}`)?.focus();
 }

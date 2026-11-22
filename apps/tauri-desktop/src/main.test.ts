@@ -500,7 +500,7 @@ test("a sessions row click sets scope.session; the evidence court leaves scope u
   const b = await boot({ sessions: [sessionRow("r1")] });
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
-  document.querySelector<HTMLElement>(".session-item[data-id='r1']")!.click();
+  openIt(document.querySelector<HTMLElement>(".session-item[data-id='r1']")!);
   expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
   expect(b.active()).toBe("sessions");
   const before = b.scope.get();
@@ -540,7 +540,7 @@ test("a sessions row click only narrows scope: no refetch, the clicked row survi
   const row = document.querySelector<HTMLElement>(".session-item[data-id='r1']")!;
   const listCalls = () => b.urls.filter((u) => new URL(u).pathname === "/sessions").length;
   const before = listCalls();
-  row.click();
+  openIt(row);
   await Promise.resolve();
   expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
   expect(listCalls()).toBe(before);
@@ -686,7 +686,7 @@ test("graph round trip: a second project scope loads that repository; sessions f
   await vi.waitFor(() => expect(b.urls.filter((u) => u.includes("repo_id=r1")).length).toBeGreaterThan(1));
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector(".worktree-item")?.getAttribute("data-wt")).toBe("wt-r1"));
-  document.querySelector<HTMLElement>(".worktree-item")!.click();
+  openIt(document.querySelector<HTMLElement>(".worktree-item")!);
   await vi.waitFor(() => expect([...document.querySelectorAll(".session-item")].map((i) => i.getAttribute("data-id"))).toEqual(["s-in"]));
 });
 
@@ -2118,7 +2118,7 @@ test("names not ids: a same-id pair under two sources leaves a source-less ref a
   expect(crumb.querySelector(".unresolved")).not.toBeNull();
 });
 
-test("session activation by click, Enter and Space each scope, crumb and load history exactly once; no delegated listener", async () => {
+test("session activation by double click, Enter and Space each scope, crumb and load history exactly once; no delegated listener", async () => {
   const b = await boot({ sessions: [sessionRow("r1", { title: "First task" }), sessionRow("r2", { title: "Second task" })] });
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
@@ -2128,7 +2128,7 @@ test("session activation by click, Enter and Space each scope, crumb and load hi
   const add = vi.spyOn(sessionsRoot, "addEventListener");
   expect(add).not.toHaveBeenCalled();
   const cases: Array<[string, (n: HTMLElement) => void]> = [
-    ["click", (n) => n.click()],
+    ["double click", (n) => openIt(n)],
     ["Enter", (n) => void press(n, "Enter")],
     ["Space", (n) => void press(n, " ")],
   ];
@@ -2147,13 +2147,13 @@ test("session activation by click, Enter and Space each scope, crumb and load hi
   }
 });
 
-test("Enter on a nested score button or id chip does not change scope or open the list", async () => {
+test("Enter on a nested score button does not change scope or open the list", async () => {
   const b = await boot({ sessions: [sessionRow("r1")] });
   b.nav("sessions").click();
   await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
   const before = b.scope.get();
   const calls = () => b.urls.filter((u) => new URL(u).pathname === "/sessions/r1").length;
-  for (const sel of [".session-item .score-open", ".session-item .session-id"]) {
+  for (const sel of [".session-item .score-open"]) {
     document.querySelector(sel)!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   }
   expect(b.scope.get()).toEqual(before);

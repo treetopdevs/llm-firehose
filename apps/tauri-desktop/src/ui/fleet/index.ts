@@ -96,8 +96,8 @@ const EVENT_REFRESH_MS = 1000;
 const LANES_REDRAW_MS = 250;
 const AIRSPACE_WINDOW_MS = 15 * 60_000;
 const BLOCKS = "▁▂▃▄▅▆▇█";
-/** Visible labels. Waiting, Table and By state are retired from the switcher (MS-9): the List carries what they showed. */
-const ENCODING_LABEL: Record<Encoding, string> = { map: "List", dwell: "Waiting", matrix: "Table", lanes: "Lanes", airspace: "By state", strata: "Strata", ecosystem: "Patches", events: "Events" };
+/** Visible labels. The retired encodings (dwell, matrix, airspace) have none: the List carries what they showed (MS-9). */
+const ENCODING_LABEL: Partial<Record<Encoding, string>> = { map: "List", lanes: "Lanes", strata: "Strata", ecosystem: "Patches", events: "Events" };
 /** The tabs of the switcher, and the views that sit behind More (MS-9). The rest stay reachable by name, not by tab. */
 const TAB_ENCODINGS: readonly Encoding[] = ["map", "lanes", "events"];
 const MORE_ENCODINGS: readonly Encoding[] = ["strata", "ecosystem"];
@@ -239,7 +239,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const more = moreEncodings.length > 0
     ? createMoreMenu({
         label: "More views",
-        items: moreEncodings.map((id) => ({ id, label: ENCODING_LABEL[id] })),
+        items: moreEncodings.map((id) => ({ id, label: ENCODING_LABEL[id] ?? id })),
         onPick: (id) => setEncoding(id as Encoding),
         itemAttrs: (id) => ({ "data-enc": id }),
       })

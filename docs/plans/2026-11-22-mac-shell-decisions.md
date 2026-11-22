@@ -284,7 +284,35 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   a footer button as well as `?`, until the Tauri menu exists), a toolbar search (the doc keeps
   none), and the Fleet More menu and merged list (slice 4). The attention module still builds its
   strip element for its own tests; the shell no longer mounts it.
-- Slices 4 and 5 not started.
+- **Slice 4, done except the items listed here.** In:
+  - **All projects list.** The Map encoding became the merged list (id `map`, label List). A project
+    row reads its worktrees by status in words ("1 needs you · 3 working · 20 idle · 59 unknown",
+    zeros left out). A worktree is needs you, working, idle, unknown, landed, never diverged or gone;
+    an open worktree with no readable activity time is unknown with `◌` and a reason, never idle. The
+    "+N" chip names what it hides. Needs you and working worktrees lead the strip. Waiting, Table and
+    By state are retired from the switcher and still resolve by name.
+  - **Select, open, back (MS-8).** `src/select-open.ts`: a click or an arrow selects and fills the
+    inspector (`ui/inspector.ts`, in the shared pane), Enter, Space or a double click opens. Selecting
+    writes no scope and adds no history entry. Escape clears the selection and the inspector first.
+    The selected key is kept in the history entry, so Back returns with the row selected. Applies to
+    project rows, worktree chips and needs-you chips in Fleet, and session and worktree rows in the
+    Worktree panel. The session id left the row and is a copyable field in the inspector.
+  - **Honest states in session rows.** A session the needs-you snapshot does not know is `◌ unknown`
+    with a reason, an unreadable time reads unknown, a missing start time is left out, and the list
+    still says "Showing N of M sessions".
+  - **More menus (MS-9).** `ui/more-menu.ts`: Fleet (Strata, Patches) and Session (Loom, Replay,
+    Handoffs, Court). Keyboard operable; Escape closes it and returns focus to its button.
+  - **Targets (MS-11).** 24px minimum on every new control, 28px for the project row head, More,
+    Open and Actions; `src/content.test.ts` reads them from the stylesheet. Fleet Lanes rows are 24px.
+  - `DESIGN.md` Components and `.impeccable/design.json` describe all of this.
+  - **Not in:** the project row's expansion is the existing "+N" chip, not the "one line with Show
+    all" of MS-10; the per-row Actions button on Fleet rows stays beside the inspector's Actions
+    button (the move to the context menu alone is not done); the session list is not filtered by the range, so it says "of N sessions", not
+    "of N in range"; the Doctor-only move of install buttons and capture warnings is not done;
+    the nearest-surviving-row fallback when a kept selection's row is gone is not built (the
+    selection is simply dropped); Replay sound is still where it was; nothing was run in a real
+    browser or WKWebView.
+- Slice 5 not started.
 
 ## Answered on 2026-11-22
 

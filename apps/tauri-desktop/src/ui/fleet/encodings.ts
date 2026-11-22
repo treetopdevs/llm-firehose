@@ -16,7 +16,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const LABEL_W = 150;
 const LABEL_CHARS = 18;
 const AXIS_H = 16;
-const ROW_H = 22;
+/** A lane is a button: 24px is the smallest target (MS-11). */
+const ROW_H = 24;
 const PAD = 6;
 
 /** Namespaces session_id by source so two sources reusing an id never share a lane or pair a call. */

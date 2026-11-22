@@ -48,6 +48,14 @@ describe("inspector (MS-8)", () => {
     expect(document.activeElement).toBe(row);
   });
 
+  test("a redraw while focus is on an inspector control keeps focus on the same control", () => {
+    const p = pane();
+    renderInspector(p, subject(), { onClose: vi.fn() });
+    p.querySelector<HTMLButtonElement>(".inspector-copy")!.focus();
+    renderInspector(p, subject({ facts: [{ label: "events", value: "43" }] }), { onClose: vi.fn() });
+    expect(document.activeElement).toBe(p.querySelector(".inspector-copy"));
+  });
+
   test("an unknown status is drawn as unknown with its reason, never as idle", () => {
     const p = pane();
     renderInspector(p, subject({ status: { word: "unknown", mark: "◌", reason: "no activity time captured" } }), { onClose: vi.fn() });
