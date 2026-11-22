@@ -104,7 +104,7 @@ export function createTransport(deps: TransportDeps): Transport {
     const ext = s.session ? deps.sessionSpan?.(s.session) : undefined;
     if (!held || !ext || (ext.from === undefined && ext.to === undefined)) return false;
     const r = resolveRange(held, now(), held === 'live' ? span() : undefined);
-    return (ext.from !== undefined && ext.from < r.from) || (ext.to !== undefined && ext.to > r.to) || (ext.from !== undefined && ext.from > r.to);
+    return (ext.from !== undefined && ext.from < r.from) || (ext.to !== undefined && ext.to > r.to) || (ext.from !== undefined && ext.from > r.to) || (ext.to !== undefined && ext.to < r.from);
   }
   function readout(s: Scope): { text: string; title: string } {
     if (session) return formatRange(s.window, now(), s.liveSpanMs, { wholeSession: true, outside: outside(s) });

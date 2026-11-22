@@ -207,6 +207,14 @@ describe('altitude from the displayed panel', () => {
       const { t } = inSession({ from: NOW - 3 * H, to: NOW - H }, { from: NOW - D, to: NOW });
       expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
     });
+    test('a known end before the held range starts reads Session · whole even without a known start', () => {
+      const { t } = inSession({ to: NOW - 2 * D }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('a known end inside the held range, with no known start, keeps Live · whole session', () => {
+      const { t } = inSession({ to: NOW - H }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+    });
     test('the held live range counts as the last live span', () => {
       const { t } = inSession({ from: NOW - 10 * D, to: NOW - 9 * D }, 'live');
       expect(q(t, '.transport-range').textContent).toBe('Session · whole');
