@@ -365,7 +365,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
           { label: "agent", value: n.source },
         ],
         id: { label: "session id", value: n.id },
-        open: { label: "Open session", run: () => openNeed(n) },
+        open: { label: "Open session", run: () => { const cur = result.needs.find((x) => x.key === n.key); if (cur) openNeed(cur); } },
         actions: actionsForSession({ source: n.source, id: n.id }),
       };
     }
@@ -644,9 +644,19 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       disclose.addEventListener("keydown", treeKey);
       disclose.addEventListener("click", () => { const cur = result.rows.find((x) => x.id === row.id); if (cur) setOpen(cur, !isOpen(row.id)); });
       showAllBtn.addEventListener("click", () => {
-        if (showAll.has(row.id)) showAll.delete(row.id);
-        else showAll.add(row.id);
-        recompute(true);
+        if (showAll.has(row.id)) {
+          showAll.delete(row.id);
+          // Hiding the selected worktree moves the selection (and focus, if it was there) to the project head.
+          const cur = result.rows.find((x) => x.id === row.id);
+          const hiding = cur !== undefined && selFork !== undefined && selFork.split(SEP)[0] === row.id && !childrenOf(cur.forks).some((f) => forkSel(row.id, f.id) === selFork);
+          const focused = hiding && refs!.forks.contains(document.activeElement);
+          if (hiding) { selRow = row.id; selNeed = undefined; selFork = undefined; }
+          recompute(true);
+          if (focused) refs!.head.focus();
+        } else {
+          showAll.add(row.id);
+          recompute(true);
+        }
       });
       // The disclosure sits beside the head, never inside it: a button must not live inside a role=button.
       node.append(disclose, head);
@@ -681,7 +691,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
     // A start of "open" needs the attention snapshot: until it has answered (or failed), a needs you worktree cannot be known.
-    if (!startedOpen.has(row.id) && (att !== undefined || attFailed)) startedOpen.set(row.id, row.forks.some((f) => f.kind === "needs"));
+    // /attention answering first leaves a provisional row with no worktrees, so the choice also waits for /worktrees (or its absence).
+    if (!startedOpen.has(row.id) && (att !== undefined || attFailed) && (wt !== undefined || wtUnsupported)) startedOpen.set(row.id, row.forks.some((f) => f.kind === "needs"));
     const hasKids = row.forks.length > 0;
     const open = hasKids && isOpen(row.id);
     const all = open && showAll.has(row.id);

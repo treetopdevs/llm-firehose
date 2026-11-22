@@ -770,6 +770,47 @@ describe("expandable project rows (MS-10)", () => {
     expect(panel.selectedKey()).toBe(key("row", "repoB"));
   });
 
+  test("Show fewer moves a selection that sits behind Show all to the project row, and focus with it", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoA");
+    const all = r.querySelector<HTMLButtonElement>(".fleet-showall")!;
+    all.click();
+    panel.selectKey(forkSelKey("repoA", "wt-unk"));
+    const hidden = byKey(key("fork", "repoA", "wt-unk"));
+    expect(hidden.classList.contains("selected")).toBe(true);
+    hidden.focus();
+    expect(document.activeElement).toBe(hidden);
+    all.click();
+    expect(kids(r)).toHaveLength(1);
+    expect(panel.selectedKey()).toBe(key("row", "repoA"));
+    expect(document.activeElement).toBe(r.querySelector(".fleet-row-head"));
+  });
+
+  test("Show fewer keeps a selection that stays visible", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoA");
+    const all = r.querySelector<HTMLButtonElement>(".fleet-showall")!;
+    all.click();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    all.click();
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+  });
+
+  test("a row whose /attention answered before /worktrees still starts open when a worktree needs you", async () => {
+    const { panel, byKey, api } = setup();
+    let release!: (v: typeof FIXTURE_ROWS) => void;
+    api.worktrees.mockImplementation(() => new Promise<typeof FIXTURE_ROWS>((r) => { release = r; }));
+    const loading = panel.activate();
+    await flush();
+    release(FIXTURE_ROWS);
+    await loading;
+    await flush();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("true");
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("false");
+  });
+
   test("selectableKeys lists each row, its worktrees and its needs, in drawn order", async () => {
     const { panel } = setup();
     await panel.activate();
@@ -2106,6 +2147,22 @@ describe("select and open (MS-8)", () => {
     expect(go).not.toHaveBeenCalled();
     byKey(needKey("claude-code", "sa")).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     expect(go.mock.calls[0]![0]).toBe("score");
+  });
+
+  test("a need's inspector Open uses the need as it is now, not as it was when selected", async () => {
+    const { panel, inspect, go, byKey, data } = withInspect();
+    data.sessions = [att({ id: "sx", repo_id: "repoB", waitMs: 8 * MIN })];
+    await panel.activate();
+    byKey(needKey("claude-code", "sx")).click();
+    const first = subjects(inspect).at(-1)!;
+    expect(first.kind).toBe("session");
+    // The same fields are displayed, so the inspector is not re-filled; only the worktree is learned.
+    data.sessions = [att({ id: "sx", repo_id: "repoB", worktree_id: "wt-b1", waitMs: 8 * MIN })];
+    await panel.refresh();
+    const n = inspect.mock.calls.length;
+    first.open.run();
+    expect(inspect.mock.calls.length).toBe(n);
+    expect(go).toHaveBeenCalledWith("score", expect.objectContaining({ project: "repoB", worktree: "wt-b1" }));
   });
 
   test("selecting an unknown worktree shows unknown and why, never idle", async () => {
