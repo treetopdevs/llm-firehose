@@ -125,18 +125,15 @@
         ]
       },
       "selected": {
-        "role": "role",
+        "role": "neutral",
         "displayName": "Selected",
-        "canonical": "oklch(82.0% 0.130 190)",
+        "canonical": "oklch(28.0% 0.008 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.027 190)",
-          "oklch(25.0% 0.043 190)",
-          "oklch(35.0% 0.061 190)",
-          "oklch(45.0% 0.078 190)",
-          "oklch(55.0% 0.095 190)",
-          "oklch(65.0% 0.112 190)",
-          "oklch(80.0% 0.130 190)",
-          "oklch(95.0% 0.073 190)"
+          "oklch(20.5% 0.007 60)",
+          "oklch(25.0% 0.008 60)",
+          "oklch(28.0% 0.008 60)",
+          "oklch(90.0% 0.006 60)",
+          "oklch(92.5% 0.005 60)"
         ]
       },
       "focus": {
@@ -455,18 +452,15 @@
         ]
       },
       "selected-wash": {
-        "role": "role",
+        "role": "neutral",
         "displayName": "Selected Wash",
-        "canonical": "oklch(82.0% 0.130 190 / 0.18)",
+        "canonical": "oklch(28.0% 0.008 60)",
         "tonalRamp": [
-          "oklch(15.0% 0.027 190)",
-          "oklch(25.0% 0.043 190)",
-          "oklch(35.0% 0.061 190)",
-          "oklch(45.0% 0.078 190)",
-          "oklch(55.0% 0.095 190)",
-          "oklch(65.0% 0.112 190)",
-          "oklch(80.0% 0.130 190)",
-          "oklch(95.0% 0.073 190)"
+          "oklch(20.5% 0.007 60)",
+          "oklch(25.0% 0.008 60)",
+          "oklch(28.0% 0.008 60)",
+          "oklch(90.0% 0.006 60)",
+          "oklch(92.5% 0.005 60)"
         ]
       }
     },
@@ -521,7 +515,7 @@
       },
       {
         "name": "ring-focus",
-        "value": "inset 0 0 0 2px var(--selected)",
+        "value": "inset 0 0 0 2px var(--focus)",
         "purpose": "Graph canvas and map strip focus, where an outline cannot wrap the target; the map strip draws it in var(--focus). Elsewhere focus is a 2px var(--focus) outline."
       },
       {
@@ -607,9 +601,9 @@
       "name": "Session Lens Tabs",
       "kind": "nav",
       "refersTo": "segment-group",
-      "description": "Segmented tablist of the two activity views, Score and Loops; the selected segment is an 18% --selected wash with --text. The four notebooks (Loom, Replay, Handoffs, Court) sit behind a More menu beside it.",
+      "description": "Segmented tablist of the two activity views, Score and Loops; the selected segment is the neutral --selected fill with --text. The four notebooks (Loom, Replay, Handoffs, Court) sit behind a More menu beside it.",
       "html": "<div class=\"ds-tabs\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">Score</button><button role=\"tab\" aria-selected=\"false\">Loops</button><button role=\"tab\" aria-selected=\"false\">Loom</button><button role=\"tab\" aria-selected=\"false\">Replay</button></div>",
-      "css": ".ds-tabs{display:inline-flex;border:1px solid var(--border,#6d6863);border-radius:8px;overflow:hidden;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ds-tabs button{border:0;border-radius:0;background:transparent;color:var(--text-dim,#a9a39e);padding:7px 16px;cursor:pointer;font:inherit}.ds-tabs button+button{border-left:1px solid var(--border,#6d6863)}.ds-tabs button[aria-selected=true]{background:color-mix(in srgb,var(--selected,#3adfd7) 18%,transparent);color:var(--text,#ebe7e4)}.ds-tabs button:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:-2px}"
+      "css": ".ds-tabs{display:inline-flex;border:1px solid var(--border,#6d6863);border-radius:8px;overflow:hidden;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ds-tabs button{border:0;border-radius:0;background:transparent;color:var(--text-dim,#a9a39e);padding:7px 16px;cursor:pointer;font:inherit}.ds-tabs button+button{border-left:1px solid var(--border,#6d6863)}.ds-tabs button[aria-selected=true]{background:var(--selected,#2c2825);color:var(--text,#ebe7e4)}.ds-tabs button:focus-visible{outline:2px solid var(--focus,#5abdf2);outline-offset:-2px}"
     },
     {
       "name": "Badges",
@@ -625,7 +619,7 @@
       "refersTo": "unit-row",
       "description": "A bordered row per project: name, a needs-you count, and its worktrees by status in words (\"1 needs you · 3 working · 20 idle · 59 unknown\", zeros left out, unknown with the ◌ mark and never idle). A single click selects it into the inspector as a neutral --bg-hover fill; Enter or a double click opens it.",
       "html": "<div class=\"ds-row ds-selected\" aria-current=\"true\"><span class=\"ds-row-label\">alpha</span><span class=\"ds-row-needs\">1?</span><span class=\"ds-row-dim\">1 needs you · 3 working · 20 idle · 59 unknown</span></div><div class=\"ds-row ds-fog\"><span class=\"ds-row-label\">beta</span><span class=\"ds-row-dim\">no worktree data</span></div>",
-      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;min-height:28px;border:1px solid var(--border,#6d6863);border-radius:6px;background:var(--bg-panel,#1a1614);padding:4px 10px;margin:4px 0;font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,'Segoe UI',Roboto,sans-serif;color:var(--text,#ebe7e4)}.ds-row:hover{background:var(--bg-hover,#25211e)}.ds-row.ds-selected{background:var(--bg-hover,#25211e);outline:1px solid var(--border,#6d6863);outline-offset:-1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#a9a39e)}.ds-row-label{flex:0 0 12rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-needs{color:var(--warn,#daa932);font-weight:700}.ds-row-dim{color:var(--text-dim,#a9a39e);font-size:12px}"
+      "css": ".ds-row{display:flex;align-items:center;gap:4px 12px;min-height:28px;border:1px solid var(--border,#6d6863);border-radius:6px;background:var(--bg-panel,#1a1614);padding:4px 10px;margin:4px 0;font:13px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,'Segoe UI',Roboto,sans-serif;color:var(--text,#ebe7e4)}.ds-row:hover{background:var(--bg-hover,#25211e)}.ds-row.ds-selected{background:var(--selected,#2c2825);outline:1px solid var(--border,#6d6863);outline-offset:-1px}.ds-row.ds-fog{border-style:dashed;color:var(--text-dim,#a9a39e)}.ds-row-label{flex:0 0 12rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-row-needs{color:var(--warn,#daa932);font-weight:700}.ds-row-dim{color:var(--text-dim,#a9a39e);font-size:12px}"
     },
     {
       "name": "Range",
@@ -654,10 +648,10 @@
   ],
   "narrative": {
     "northStar": "The Operations Board",
-    "overview": "**Creative North Star: \"The Operations Board\"**\n\nAgent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense, flat and dark, and colour is spent on state, not decoration. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, \"unknown\"), never as a guess.\n\nOne token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for location, pressed state and the primary action, `--needs` for \"needs you\", `--selected` for selection in the graph and session tabs, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.\n\nProduct intent (register, users, tone) lives in [PRODUCT.md](PRODUCT.md).\n\nThis system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI tiles, gradient accents, identical card grids), the observability \"dark blue with neon\" skin, glassmorphism and gradient text, chat-app friendliness (avatars, bubbles, emoji status), and any surface that identifies a thing by its hash when a human name exists.",
+    "overview": "**Creative North Star: \"The Operations Board\"**\n\nAgent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense, flat and dark, and colour is spent on state, not decoration. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, \"unknown\"), never as a guess.\n\nOne token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for the primary action, `--needs` for \"needs you\", `--selected` as the neutral fill behind whatever is selected, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.\n\nProduct intent (register, users, tone) lives in [PRODUCT.md](PRODUCT.md).\n\nThis system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI tiles, gradient accents, identical card grids), the observability \"dark blue with neon\" skin, glassmorphism and gradient text, chat-app friendliness (avatars, bubbles, emoji status), and any surface that identifies a thing by its hash when a human name exists.",
     "keyCharacteristics": [
       "Monospace for data, sans for prose; tabular numerals on clocks and ranges.",
-      "Flat surfaces, 1px hairlines; shadows only on the transient popovers (graph search results, graph overflow menu, actions menu), the selected workspace pill, the modal scrims, focus rings that cannot be outlines and the fleet change flash.",
+      "Flat surfaces, 1px hairlines; shadows only on the transient popovers (graph search results, graph overflow menu, actions menu), the modal scrims, focus rings that cannot be outlines and the fleet change flash.",
       "Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).",
       "Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.",
       "Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.",

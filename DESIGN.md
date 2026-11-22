@@ -10,7 +10,7 @@ colors:
   text-dim: "#a9a39e"
   accent: "#fe7802"
   needs: "#f3b01d"
-  selected: "#3adfd7"
+  selected: "#2c2825"
   focus: "#5abdf2"
   stale: "#a0968f"
   fog: "#454e58"
@@ -32,7 +32,7 @@ colors:
   series-5: "#d9d36a"
   replay-alt: "#b48be0"
   replay-alt-bg: "#231c2b"
-  selected-wash: "#3adfd72e"
+  selected-wash: "#2c2825"
 typography:
   body:
     fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, system-ui, Segoe UI, Roboto, sans-serif"
@@ -175,7 +175,7 @@ components:
 
 Agent Firehose is read the way a flight-operations board or a well-kept lab notebook is read: between turns, at a glance, to answer four questions. Which agent needs me. What is each one doing. Where, meaning which checkout and branch. What did a finished session actually do. The interface is therefore dense and flat, in the light or dark appearance the system is set to, and colour is spent on state, not decoration. Every row carries evidence from captured events, and missing evidence is drawn as absence (dashed borders, "unknown"), never as a guess.
 
-One token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for location, pressed state and the primary action, `--needs` for "needs you", `--selected` for selection in the graph and session tabs, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.
+One token layer in `apps/tauri-desktop/src/styles.css` (`:root`) is the only place colour, type size and the sans face are defined. Neutrals are a near-black ink tinted toward the accent hue (60) at very low chroma, with hairline borders separating panels instead of shadows. Data (ids, paths, branches, timestamps, counts) is set in the platform monospace at 13px; prose (headings, notes, help text, onboarding) is set in the system sans. Hierarchy comes from dimming (`--text` against `--text-dim`) and from weight; the five-step type scale tops out at 16px. Colour is a vocabulary with fixed meanings: `--accent` for the primary action, `--needs` for "needs you", `--selected` as the neutral fill behind whatever is selected, `--focus` for the keyboard ring, and `--ok`, `--warn`, `--err` for landed, caution and fault. The workspace graph consumes the same tokens; it no longer has a palette of its own.
 
 Product intent (register, users, tone) lives in [PRODUCT.md](PRODUCT.md).
 
@@ -188,7 +188,7 @@ This system explicitly rejects the SaaS analytics dashboard (hero metrics, KPI t
 - Attention earns colour: accent-family tokens appear only on focus, selection, the primary action, needs-you and errors (tested by selector).
 - Density first: five type steps, 11px to 16px, every `font-size` a `var(--fs-*)`.
 - Rows and lanes, not cards: a unit of the fleet is a bordered row whose border style encodes its state.
-- Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. One global `:focus-visible` rule in `styles.css` draws a 2px `--focus` indicator on every focusable surface, including feed rows, session items and Project beads (the graph keeps `--selected`). Session cards, feed rows and beads activate with Enter and Space. Keys are owned by `src/keys.ts`; element-local handlers share their descriptors with the registry. Glyph geometry and badge strings live in `src/glyphs.ts`. `?` opens the generated legend (`ui/legend.ts`), which mirrors `viewHelp` in `internal/tui/view.go`.
+- Keyboard parity is a requirement: every clickable row must have a keyboard path and a focus-visible treatment. One global `:focus-visible` rule in `styles.css` draws a 2px `--focus` indicator on every focusable surface, including feed rows, session items and Project beads. Session cards, feed rows and beads activate with Enter and Space. Keys are owned by `src/keys.ts`; element-local handlers share their descriptors with the registry. Glyph geometry and badge strings live in `src/glyphs.ts`. `?` opens the generated legend (`ui/legend.ts`), which mirrors `viewHelp` in `internal/tui/view.go`.
 
 ## 2. Colors
 
@@ -208,7 +208,7 @@ Each token has a hex fallback in `:root` and, for neutrals, roles and fills, an 
 | `--text-dim` | oklch(0.72 0.01 60) | #a9a39e | 7.7 | 7.2 |
 | `--accent` | oklch(0.72 0.19 50) | #fe7802 | 7.2 | 6.8 |
 | `--needs` | oklch(0.8 0.16 80) | #f3b01d | 10.1 | 9.4 |
-| `--selected` | oklch(0.82 0.13 190) | #3adfd7 | 11.6 | 10.9 |
+| `--selected` | oklch(0.28 0.008 60) | #2c2825 | neutral fill | neutral fill |
 | `--focus` | oklch(0.76 0.12 235) | #5abdf2 | 9.1 | 8.6 |
 | `--stale` | oklch(0.68 0.015 60) | #a0968f | 6.6 | 6.2 |
 | `--fog` | oklch(0.42 0.02 250) | #454e58 | 2.3 | 2.1 |
@@ -240,7 +240,7 @@ Fill pairs (text on a coloured fill):
 
 Notes:
 
-- `--border` is 3:1 or better against both panel backgrounds (non-text UI contrast), so borders read brighter than a typical dark theme. Soft dividers (feed rows, lane baselines, the graph frame) use `color-mix()` of `--border`; selection washes are `color-mix()` of `--selected` over `--bg-panel` or transparent at 16 to 20%. Neither is a token; the frontmatter's `selected-wash` (`#3adfd72e`, the 18% session-tab wash) is a derived value for the linter, not a `:root` property.
+- `--border` is 3:1 or better against both panel backgrounds (non-text UI contrast), so borders read brighter than a typical dark theme. Soft dividers (feed rows, lane baselines, the graph frame) use `color-mix()` of `--border`; selection is the `--selected` token used whole, never mixed. The frontmatter's `selected-wash` repeats it for the linter.
 - `--bg-*` neutrals are surfaces, not text. `--fog` is a stroke colour (graph ground), not text.
 - `--replay-alt` / `--replay-alt-bg` mark the hypothetical lane and fork anchor in Replay. Hex only.
 - Some tokens are consumed only from TypeScript and have no rule in `styles.css`: `--fog`, `--replay-alt`, `--replay-alt-bg`, `--series-3`, `--series-4`, `--series-5`, `--observed` (Replay captured) and `--stale` (Ecosystem unknown, plus the quiet airspace band). Do not delete them as unused.
@@ -259,7 +259,7 @@ Chosen by `@media (prefers-color-scheme: light)`: a hex `:root` block, plus an `
 | `--text-dim` | oklch(0.46 0.008 60) | #5c5754 |
 | `--accent` | oklch(0.52 0.16 45) | #af4200 |
 | `--needs` | oklch(0.5 0.12 65) | #915200 |
-| `--selected` | oklch(0.5 0.09 190) | #00736f |
+| `--selected` | oklch(0.9 0.006 60) | #e1ddda |
 | `--focus` | oklch(0.55 0.15 250) | #0f74c5 |
 | `--stale` | oklch(0.47 0.015 60) | #615953 |
 | `--fog` | oklch(0.78 0.015 250) | #b0b8c1 |
@@ -278,7 +278,7 @@ The per-session identity hue is data (`--hue`, set per row). Its saturation and 
 ### Roles
 - **Accent** (`--accent`): pressed toggles (lanes, score, attention filters), the primary button's border and text (the inspector's Open), the current checkout's border on fleet rows and forks, the current tick on the score. A selected row and the selected view segment are neutral fills, not accent. It means "you are here", "this is on" or "this is the action". It is no longer on the brand word or the onboarding heading, and no button is filled with it.
 - **Needs** (`--needs`): the "needs you" badge (`--bg` text on `--needs`), bold state words and lane labels for sessions waiting on the operator, needs ticks on lanes and the score, the dwell bar of a needing row.
-- **Selected** (`--selected`): selection inside the workspace graph (nodes, edges, labels, tabs, map presets, the event table row) and the session lens tabs' wash. Inside `.workspace-graph` it is also the focus ring.
+- **Selected** (`--selected`): a neutral fill, one step past `--bg-hover`, behind the selected row, the current sidebar item, the selected segment and pressed toggles. It is only ever a `background` or SVG `fill`; `--text`, `--text-dim`, `--needs`, `--err` and `--ok` all read on it at 4.5:1 in both appearances. Selected marks that cannot take a fill (graph edges, node and chip strokes) use `--text`.
 - **Focus** (`--focus`): the 2px keyboard ring everywhere in the shell outside the graph.
 - **Ok / Warn / Err** (`--ok`, `--warn`, `--err`): landed, copied and healthy; caution, paused and storm outlines; faults, failed worktrees, error ticks and error badges.
 - **Stale / Fog**: muted states. `--stale` is a quiet text-capable grey, `--fog` a ground stroke.
@@ -293,20 +293,20 @@ The per-session identity hue is data (`--hue`, set per row). Its saturation and 
 
 ### Accent rules
 
-Attention earns colour. `--accent`, `--needs`, `--selected` and `--focus` appear only on:
+Attention earns colour. `--accent`, `--needs` and `--focus` appear only on:
 
-- focus (`:focus`, `:focus-visible`, `:focus-within`, `.focus`), which uses `--focus` (`--selected` inside the graph)
-- selection (`.selected`, `aria-pressed|selected|current`, `.active`, `.current`)
+- focus (`:focus`, `:focus-visible`, `:focus-within`, `.focus`), which uses `--focus` everywhere, the graph included
+- the Score playhead (`.score-tick.current`), the one place the accent marks a position
 - the primary action (`.primary`)
 - needs you (`.needs`, `.attention`, `.attention-kind` selectors and similar)
 - errors (`.err`, `.error`, `.failed`)
 
 The allowlist is by selector in `tokens.test.ts` (accent policy). Everything else, including the brand, the feed source column (`.cell.source`), captured/observed rows, notices, decorative bars and hover states, uses `--text`, `--text-dim`, `--border`, `--warn` or a neutral. `.attention-kind` itself uses `--text-dim`; it is not an accent user. Do not carry state by colour alone: keep the text label, and prefer a shape or dashed border for muted states.
 
-All focus rings except the graph's use `--focus`, through the global `:focus-visible` rule or a per-surface override. The graph keeps `--selected`.
+All focus rings use `--focus`, through the global `:focus-visible` rule or a per-surface override. Selection never uses the accent: `tokens.test.ts` (neutral selection) fails on any selected, pressed or current state painted with `--accent`, and on `--selected` used as anything but a fill.
 
 ### Named Rules
-**The Accent Budget Rule.** `--accent` marks location, pressed state and the primary action, nothing else. If a screen shows accent on more than one thing the operator did not just choose, something is miscoloured. Selection in the graph and session tabs is `--selected`, and the keyboard ring is `--focus`, so the accent is never doing three jobs at once.
+**The Accent Budget Rule.** `--accent` marks the one primary action on a screen and the Score playhead, nothing else. Selection is the neutral `--selected` fill, needs-you is `--needs`, and the keyboard ring is `--focus`, so colour on screen means something wants the operator.
 
 **The Word Beside the Dot Rule.** No hue carries state alone. `--needs`, `--ok`, `--warn` and `--err` always sit next to the word they mean ("needs you", "landed", "paused", "failed"), because the user may be colour-blind, the display may be dimmed, or the badge may be the only thing in view.
 
@@ -351,11 +351,11 @@ The onboarding sheet's `h2` declares no size and keeps the browser's default `h2
 
 ## 4. Elevation
 
-The system is flat. Depth is conveyed by hairlines and by two tonal steps (`--bg` page, `--bg-panel` controls and rows, `--bg-hover` on hover), never by shadow. Borders also encode state on fleet rows: solid for a known unit, dashed for fog (no recent evidence), dotted for a unit with no repository, `--accent` for the current checkout, `--err` for a failed one. The only shadows are the modal scrims (`color-mix(in srgb, var(--bg) N%, transparent)` at 86% for onboarding, 72% for the keys legend and 70% for the prune confirmation), the graph's search results and overflow menu (`0 12px 32px` of `--bg` at 75%), the actions menu (`0 12px 32px` of `--bg` at 85%), a soft `drop-shadow` of `--selected` on the selected workspace pill, focus rings drawn as 2px box-shadows on the graph canvas and map strip, and the fleet row change flash.
+The system is flat. Depth is conveyed by hairlines and by two tonal steps (`--bg` page, `--bg-panel` controls and rows, `--bg-hover` on hover), never by shadow. Borders also encode state on fleet rows: solid for a known unit, dashed for fog (no recent evidence), dotted for a unit with no repository, `--text` for the current checkout, `--err` for a failed one. The only shadows are the modal scrims (`color-mix(in srgb, var(--bg) N%, transparent)` at 86% for onboarding, 72% for the keys legend and 70% for the prune confirmation), the graph's search results and overflow menu (`0 12px 32px` of `--bg` at 75%), the actions menu (`0 12px 32px` of `--bg` at 85%), focus rings drawn as 2px box-shadows on the graph canvas and map strip, and the fleet row change flash.
 
 ### Shadow Vocabulary
 - **Popover lift** (`box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 75%, transparent)`): only for a transient list floating over the graph (search results, the overflow menu). The actions menu over Fleet and Project uses the same offset at 85%.
-- **Ring focus** (`box-shadow: inset 0 0 0 2px var(--selected)` on the graph canvas, `0 0 0 2px var(--focus)` on the map strip): focus where an outline cannot wrap the target. Outline is preferred everywhere an outline fits.
+- **Ring focus** (`box-shadow: inset 0 0 0 2px var(--focus)` on the graph canvas, `0 0 0 2px var(--focus)` on the map strip): focus where an outline cannot wrap the target. Outline is preferred everywhere an outline fits.
 - **Change flash** (`0 0 0 2px var(--text-dim)` fading to transparent): the fleet row change animation.
 
 ### Named Rules
@@ -380,12 +380,12 @@ The shell is a tool people keep open all day, so motion is rare (the graph's poi
 - **Press:** `scale: 0.97` (the individual property, so it composes with positioning transforms) over 120ms `--ease-out` on `:active`, off under reduced motion. Nav buttons and session lens tabs stay still: they are switched constantly.
 - **Hover / Focus:** hover shifts the fill to `--bg-hover`; focus-visible draws a 2px `--focus` outline with 1px to 3px offset (per panel today; the shell should own it).
 - **Primary:** same shape with an `--accent` border and `--accent` text; no filled accent buttons exist.
-- **Pressed / toggled** (`aria-pressed="true"`, `.active`): `--accent` border and text in the shell; inside the graph, `--selected` text on a `--selected` wash.
+- **Pressed / toggled** (`aria-pressed="true"`, `.active`): `--selected` fill, `--text`, a `--text-dim` border.
 - **Nav item:** borderless, backgroundless, left-aligned, at least 28px tall; the current item is a neutral `--bg-hover` fill (see Chrome).
 
 ### Segmented groups (tabs, graph Fit/All, session lenses)
 - **Style:** an 8px-radius `--border` frame with `overflow: hidden`; children are square buttons with `7px 16px` padding separated by 1px hairlines.
-- **State:** the selected segment in the Session altitude is an 18% `--selected` wash with `--text`; in the graph it is `--selected` text on a 20% `--selected` wash over `--bg-panel`. Keyboard: Arrow, Home and End move selection; focus-visible is a 2px `--focus` outline inset by 2px.
+- **State:** the selected segment is the `--selected` fill with `--text` at weight 600, in the shell and in the graph alike. Keyboard: Arrow, Home and End move selection; focus-visible is a 2px `--focus` outline inset by 2px.
 
 ### Chips and badges
 - **Badge:** `--fs-xs`, 700, uppercase, 0.04em tracking, 3px radius, `--border`, `0.1rem 0.35rem` padding. Idle and dim variants are `--text-dim` on no fill.
@@ -422,7 +422,7 @@ Where a demoted view lives (MS-9). One 28px button reading "More" (or the name o
 
 ### Inputs / Fields
 - **Style:** `--bg-panel` fill, 1px `--border`, 6px radius, `0.3rem 0.5rem` padding, body font; selects match inputs.
-- **Focus:** 2px `--focus` outline, 3px offset in the panels; graph fields use a `--selected` border on the search frame and a `--selected` outline.
+- **Focus:** 2px `--focus` outline, 3px offset in the panels; graph fields use a `--focus` border on the search frame and a `--focus` outline.
 - **Search:** a native `type="search"` that stretches to fill its bar.
 
 ### Chrome: sidebar and toolbar
@@ -460,7 +460,7 @@ SVG rows of time: an axis in `--fs-xs` `--text-dim` with 1-on-3 dashed `--border
 The workspace graph consumes the same tokens. `--g-*` and `--muted` no longer exist. It is scoped under `.workspace-graph`, set in `--font-sans` at `--fs-base` on `--bg`, with its toolbar on `--bg-panel` and controls on `--bg-hover`.
 
 - `--attention`, `--working`, `--observed`, `--none` are the four agent states and are pinned byte-for-byte to `AGENT_STATE_COLOR` in `src/ui/graph/names.ts` (tested by reading that file as text). They are hex only. Until the slice 9 follow-up moves `names.ts` onto the tokens, change a state colour in both places or the parity test fails.
-- Selection is `--selected`, focus is `--selected` (outline) or `--text` (the pill, chip or node stroke, where an outline would box the SVG group), the ground stroke is `--fog`, conflicts use `--warn`/`--err`.
+- Selection is a `--selected` fill on the pill with `--text` strokes on pills, chips, nodes and edges; focus is `--focus` (outline, or the pill, chip or node stroke where an outline would box the SVG group), the ground stroke is `--fog`, conflicts use `--warn`/`--err`.
 - Ecosystem leaves: attempt `--focus`, complete `--ok`, failed `--err`, unknown `--stale`. Handoff series use `--series-1..5`. Replay captured uses `--observed`; the hypothetical lane uses `--replay-alt` on `--replay-alt-bg`.
 - TS renderers emit `var(--token)` strings or classes, not hex.
 - Camera: a camera jump the mouse starts (clicking a search result or an inspector parent link) pans over 240ms with the `--ease-in-out` curve (computed in TS as the quartic ease-in-out, `canvas.ts`). Jumps the keyboard starts (Enter in search, Space or Enter on a parent link), jumps that also switch tabs, and every jump under reduced motion land in one frame. Wheel, drag, any arrow key (on the canvas or a focused node), fit and the edge hints stop a running pan where it is.

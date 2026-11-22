@@ -42,8 +42,8 @@ describe("chrome targets (MS-11, MS-12)", () => {
 
   test("selection is a neutral fill; colour is only for needs you", () => {
     const active = body(".nav-btn.active");
-    expect(active).toContain("var(--bg-hover)");
-    expect(active).not.toMatch(/--(?:accent|selected|needs)/);
+    expect(active).toContain("var(--selected)");
+    expect(active).not.toMatch(/--(?:accent|needs)/);
     expect(body(".nav-count.needs")).toContain("var(--needs)");
   });
 });

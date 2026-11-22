@@ -39,7 +39,9 @@ const appTs = walk(SRC)
 // ---- the contract --------------------------------------------------------------------------
 
 const NEUTRALS = ["--bg", "--bg-panel", "--bg-hover", "--border", "--text", "--text-dim"];
-const ROLES = ["--accent", "--needs", "--selected", "--focus", "--stale", "--fog", "--ok", "--warn", "--err"];
+const ROLES = ["--accent", "--needs", "--focus", "--stale", "--fog", "--ok", "--warn", "--err"];
+// MS-6: selection is a neutral fill, a surface like --bg-hover, not an accent-family colour.
+const SELECTION = ["--selected"];
 const FILLS = ["--on-err", "--on-fill"];
 const STATUS = ["--attention", "--working", "--observed", "--none"];
 const SERIES = [1, 2, 3, 4, 5].map((n) => `--series-${n}`);
@@ -47,9 +49,9 @@ const TYPE = ["--fs-xs", "--fs-sm", "--fs-base", "--fs-md", "--fs-lg", "--font-s
 const RADII = ["--radius-sm", "--radius-md", "--radius-lg"];
 // Saturation and lightness of the per-session identity hue: data colour that must read on both themes.
 const IDENTITY = ["--hue-s", "--hue-l"];
-const COLOUR_TOKENS = [...NEUTRALS, ...ROLES, ...FILLS, ...STATUS, ...SERIES];
+const COLOUR_TOKENS = [...NEUTRALS, ...SELECTION, ...ROLES, ...FILLS, ...STATUS, ...SERIES];
 // Status tokens stay equal to ui/graph/names.ts in hex; they carry no oklch override.
-const NEEDS_OKLCH = [...NEUTRALS, ...ROLES, ...FILLS];
+const NEEDS_OKLCH = [...NEUTRALS, ...SELECTION, ...ROLES, ...FILLS];
 
 // Properties set locally on an element (not on :root); everything else must resolve on :root.
 const LOCAL_PROPS = ["--hue"]; // ui/sessions.ts:181 sets --hue per band row
@@ -380,9 +382,48 @@ describe("radius scale", () => {
   });
 });
 
+describe("neutral selection (MS-6)", () => {
+  const chroma = (v: string): number => Number(v.match(/^oklch\(\s*[\d.]+\s+([\d.]+)/)![1]);
+  const selectionSel = /\.selected\b|\.active\b|\.current\b|\[aria-(?:pressed|selected|current|checked)="?(?:true|page)"?\]/;
+  // The Score playhead is a position in time, the one place the accent marks "here".
+  const ACCENT_POSITION = [".score-tick.current"];
+
+  test("--selected carries no more chroma than the neutral surfaces, in both appearances", () => {
+    expect(chroma(tokens.oklch["--selected"])).toBeLessThanOrEqual(0.012);
+    expect(chroma(tokens.lightOklch["--selected"])).toBeLessThanOrEqual(0.012);
+  });
+
+  test.each(MODES.flatMap((m) => ["--text", "--text-dim", "--needs", "--err", "--ok"].map((t) => [m, t] as const)))("[%s] %s reads on the selected fill", (mode, t) => {
+    expect(contrast(hexOf(t, mode), hexOf("--selected", mode)), `${t} on --selected`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(MODES)("[%s] the selected fill is told apart from hover and the page", (mode) => {
+    for (const s of ["--bg", "--bg-panel", "--bg-hover"]) expect(hexOf("--selected", mode)).not.toBe(hexOf(s, mode));
+  });
+
+  test("--selected is only ever a fill, never a text, stroke, border or ring colour", () => {
+    const bad: string[] = [];
+    for (const r of rules) {
+      if (r.selector === ":root") continue;
+      for (const m of r.body.matchAll(/(?:^|[;{\s])([\w-]+)\s*:\s*([^;}]*var\(\s*--selected\s*\)[^;}]*)/g)) {
+        if (!/^(?:background|background-color|fill)$/.test(m[1])) bad.push(`${r.selector} { ${m[1]}: ${m[2].trim()} }`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  test("no selected, pressed or current state is painted with the accent", () => {
+    const bad = rules
+      .filter((r) => /var\(\s*--accent\s*[,)]/.test(r.body))
+      .flatMap((r) => r.selector.split(/,(?![^(]*\))/).map((x) => x.trim()))
+      .filter((x) => selectionSel.test(x) && !/\.primary\b/.test(x) && !ACCENT_POSITION.includes(x));
+    expect(bad).toEqual([]);
+  });
+});
+
 describe("accent policy", () => {
   // Accent-family colour is for: needs you, selection, the focus ring, the primary action, errors.
-  const ACCENT_USERS = /var\(\s*--(?:accent|needs|selected|focus)\s*[,)]/;
+  const ACCENT_USERS = /var\(\s*--(?:accent|needs|focus)\s*[,)]/;
   const ALLOWED = [
     /:focus(?:-visible|-within)?\b/, // focus ring
     /\.focus\b/,

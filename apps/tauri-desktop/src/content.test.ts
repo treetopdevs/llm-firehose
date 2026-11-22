@@ -56,13 +56,13 @@ describe("content targets (MS-11)", () => {
 describe("selection is neutral (MS-6)", () => {
   test.each([".fleet-row.selected", ".fleet-need.selected", ".fleet-fork.selected", ".session-item.picked", ".worktree-item.picked"])("%s is a neutral fill, not accent", (sel) => {
     const b = body(sel);
-    expect(b, sel).toContain("var(--bg-hover)");
-    expect(b, sel).not.toMatch(/--(?:accent|selected|needs)/);
+    expect(b, sel).toContain("var(--selected)");
+    expect(b, sel).not.toMatch(/--(?:accent|needs)/);
   });
 
   test("the selected view segment and the More button naming a view are neutral", () => {
     expect(body('.fleet-enc[aria-selected="true"]')).not.toMatch(/--accent/);
-    expect(body(".more-btn.current")).toContain("var(--bg-hover)");
+    expect(body(".more-btn.current")).toContain("var(--selected)");
   });
 
   test("an unknown value is drawn with its mark, in the dim colour, never as a state colour", () => {
