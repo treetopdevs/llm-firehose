@@ -1736,3 +1736,4 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-rest { display: flex; align-items: center; gap: 10px; min-height: 24px; padding: 2px 8px; color: var(--text-dim); font-size: var(--fs-sm); }
 .fleet-showall { min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; color: var(--text-dim); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
 .fleet-showall:hover { background: var(--bg-hover); color: var(--text); }
+.toolbar-title { align-items: center; }
