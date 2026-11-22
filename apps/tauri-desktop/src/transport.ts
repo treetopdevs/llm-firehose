@@ -114,7 +114,9 @@ export function createTransport(deps: TransportDeps): Transport {
     return { text, title: drawn.title };
   }
   const retitle = (): void => {
-    range.title = readout(store.get()).title;
+    const { title } = readout(store.get());
+    range.title = title;
+    if (applies) trigger.title = title;
   };
 
   function paint(): void {

@@ -165,6 +165,22 @@ test('explicit window readout', () => {
   expect(preset(t, '2h').getAttribute('aria-pressed')).toBe('false');
 });
 
+describe('the trigger tooltip follows whether the range applies', () => {
+  test('it explains why the range is inert, and the range readout comes back when it applies again', () => {
+    const { t } = setup();
+    const trigger = q(t, '.transport-trigger');
+    const range = q(t, '.transport-range');
+    const shown = range.title;
+    expect(shown).not.toBe('');
+    expect(trigger.title).toBe(shown);
+    t.setApplies(false);
+    expect(trigger.title).toBe('The range does not apply to this view');
+    t.setApplies(true);
+    expect(trigger.title).toBe(range.title);
+    expect(trigger.title).toBe(shown);
+  });
+});
+
 describe('altitude from the displayed panel', () => {
   test('session panel disables window controls, Live still acts', () => {
     const { store, t, track } = setup();
