@@ -135,6 +135,19 @@ describe("session rows: select and open", () => {
     expect(panel.selectedKey()).toBeUndefined();
   });
 
+  test("without an inspector sink a settled refresh still drops a key that is no longer listed", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" }), summary({ id: "s2" })]);
+    attentionSays([inbox({ id: "s1" }), inbox({ id: "s2" })]);
+    const panel = createSessions(() => {}, () => [], undefined, undefined, createScope(), undefined, () => {});
+    document.body.replaceChildren(panel.root);
+    await panel.refresh();
+    items(panel.root).find((n) => n.getAttribute("data-id") === "s1")!.click();
+    expect(panel.selectedKey()).toBe("claude-code\u0000s1");
+    sessions.mockResolvedValue([summary({ id: "s2" })]);
+    await panel.refresh();
+    expect(panel.selectedKey()).toBeUndefined();
+  });
+
   test("Escape clears the selection and the inspector, claims the key, and a second Escape is left to the shell", async () => {
     sessions.mockResolvedValue([summary({ id: "s1" })]);
     attentionSays([inbox({ id: "s1" })]);

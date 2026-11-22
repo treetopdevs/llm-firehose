@@ -560,16 +560,17 @@ export function createSessions(
     for (const n of listBox.querySelectorAll<HTMLElement>(ITEMS)) {
       const on = picked !== undefined && itemKey(n) === picked;
       n.classList.toggle("picked", on);
-      if (on) n.setAttribute("aria-current", "true");
-      else if (n.classList.contains("session-item")) n.removeAttribute("aria-current");
+      // A row that is not picked goes back to its base state: a session row has none, a worktree row has the one it was drawn with.
+      if (on || (n.classList.contains("worktree-item") && n.getAttribute("data-wt") === selectedWt)) n.setAttribute("aria-current", "true");
+      else n.removeAttribute("aria-current");
     }
   }
   /** Tells the inspector what is selected, once per change; nothing is ever shown unasked. */
   function syncInspector(settled: boolean): void {
-    if (!opts.inspect) return;
     let subject = picked !== undefined ? pickables.get(picked)?.() : undefined;
-    // Only a settled draw may decide the row is gone; a held key waits for its rows.
+    // Only a settled draw may decide the row is gone; a held key waits for its rows. This holds with or without a sink.
     if (picked !== undefined && !subject && settled) picked = undefined;
+    if (!opts.inspect) return;
     const sig = subject ? JSON.stringify([subject.kind, subject.key, subject.title, subject.status, subject.facts, subject.id, (subject.actions ?? []).map((a) => a.id)]) : undefined;
     if (sig === inspectedSig) return;
     inspectedSig = sig;

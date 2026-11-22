@@ -97,6 +97,33 @@ describe("the list at the Worktree rung", () => {
     expect(panel.selectedKey()).toBe("wt\0mid");
   });
 
+  test("selecting another worktree leaves aria-current on that row alone, and clearing the selection removes it", async () => {
+    const { panel } = panelOver(three);
+    await panel.refresh();
+    const current = () => items(panel.root).filter((n) => n.hasAttribute("aria-current")).map((n) => n.getAttribute("data-wt"));
+    items(panel.root)[0].click();
+    expect(current()).toEqual(["new"]);
+    items(panel.root)[1].click();
+    expect(current()).toEqual(["mid"]);
+    panel.clearSelection();
+    expect(current()).toEqual([]);
+  });
+
+  test("the worktree Back returned from keeps its own aria-current while another is selected, and after clearing", async () => {
+    const { panel, store } = panelOver(three);
+    store.narrow({ project: "repoA", worktree: "mid" });
+    store.narrow({ worktree: undefined });
+    await panel.refresh();
+    const current = () => items(panel.root).filter((n) => n.hasAttribute("aria-current")).map((n) => n.getAttribute("data-wt"));
+    expect(current()).toEqual(["mid"]);
+    items(panel.root)[0].click();
+    expect(current()).toEqual(["new", "mid"]);
+    items(panel.root)[2].click();
+    expect(current()).toEqual(["mid", "old"]);
+    panel.clearSelection();
+    expect(current()).toEqual(["mid"]);
+  });
+
   test("says how many worktrees it lists, uncapped", async () => {
     const many = Array.from({ length: 450 }, (_, i) => wt(`w${i}`));
     const { panel } = panelOver(many);
