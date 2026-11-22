@@ -3464,6 +3464,24 @@ describe("select, open, back (inspector)", () => {
       await vi.waitFor(() => expect(picked()).toEqual(["r2"]));
     });
 
+    test("Back into a session's history in the Worktree panel brings the history back, not an empty area", async () => {
+      const { b } = await sessionsBoot(["r1", "r2"]);
+      itemAt("r1").click();
+      openIt(itemAt("r1"));
+      const events = () => document.querySelector(".sessions-events")!;
+      await vi.waitFor(() => expect(events().querySelector(".session-events-list")).not.toBeNull());
+      await settle();
+      esc(); // the selected row first
+      esc(); // then the session leaves scope, so its history is dropped
+      await settle();
+      expect(events().querySelector(".session-events-list")).toBeNull();
+      expect(b.scope.get().session).toBeUndefined();
+      backBtn().click();
+      expect(b.active()).toBe("sessions");
+      expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
+      await vi.waitFor(() => expect(events().querySelector(".session-events-list")).not.toBeNull());
+    });
+
     test("with nothing selected, Back leaves focus on the view's heading, not the body", async () => {
       const b = await boot({ worktrees: twoRepos() });
       await ready(b);

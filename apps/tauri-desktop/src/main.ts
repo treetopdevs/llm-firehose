@@ -606,6 +606,9 @@ function travel(dir: "back" | "forward"): boolean {
           ? { needsOnly: p.view === "needs" }
           : undefined,
   );
+  // The Worktree panel shows a session's history only once it has been told to open it; a place that has a session
+  // in scope there (Back into an opened session) brings that history back, as the list's own Open does.
+  if (name === "sessions" && p.session) void sessionsPanel.openSession(p.session.id, p.worktree ? p.session.source : undefined);
   restoreSelection(name, entry.state.sel, entry.state.at);
   syncHistory();
   return true;
