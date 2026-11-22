@@ -3248,6 +3248,56 @@ describe("history: back, forward, scroll and focus", () => {
   });
 });
 
+test("a scroll event queued by clearing the content does not erase the mark of the place being restored", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+  await new Promise((r) => setTimeout(r, 0));
+  const fleet = document.querySelector<HTMLElement>(".content .fleet")!;
+  const size = (scrollHeight: number) => {
+    Object.defineProperty(fleet, "scrollHeight", { value: scrollHeight, configurable: true });
+    Object.defineProperty(fleet, "clientHeight", { value: 400, configurable: true });
+  };
+  size(2000);
+  fleet.scrollTop = 300;
+  fleet.dispatchEvent(new Event("scroll"));
+  openIt(fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!);
+  await new Promise((r) => setTimeout(r, 0));
+  // Back: the panel is not tall yet (its rows are loading), and the browser reports the clamp to the top.
+  size(0);
+  fleet.scrollTop = 0;
+  esc();
+  await new Promise((r) => setTimeout(r, 0));
+  fleet.dispatchEvent(new Event("scroll"));
+  // The user leaves again before the rows arrive: the place must still remember where it was.
+  openIt(fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.active()).toBe("project");
+  esc();
+  await new Promise((r) => setTimeout(r, 0));
+  size(2000);
+  await vi.waitFor(() => expect(fleet.scrollTop).toBe(300));
+});
+
+test("an open More menu is closed when its panel is left", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  const trigger = document.querySelector<HTMLButtonElement>(".fleet-views .more-btn")!;
+  trigger.click();
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  b.nav("files").click();
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  expect(trigger.closest(".more")!.querySelector<HTMLElement>(".more-pop")!.hidden).toBe(true);
+  // The same for the Session menu, which the shell moves into the toolbar.
+  b.scope.set({ session: { id: S1, source: S1_SOURCE }, window: "live" });
+  b.nav("session").click();
+  const st = document.querySelector<HTMLButtonElement>(".session-views .more-btn")!;
+  st.click();
+  expect(st.getAttribute("aria-expanded")).toBe("true");
+  b.nav("files").click();
+  expect(st.getAttribute("aria-expanded")).toBe("false");
+});
+
 // MS-8: select fills the inspector, open pushes history, Back restores the selection.
 describe("select, open, back (inspector)", () => {
   const settle = () => new Promise((r) => setTimeout(r, 0));

@@ -120,6 +120,8 @@ export interface RestoreOpts {
   /** How many animation frames to keep trying while the view loads (default 90, about 1.5 s). */
   frames?: number;
   raf?: (fn: () => void) => number;
+  /** Called once when nothing is left to restore or the frames ran out (not when cancelled). */
+  done?: () => void;
 }
 
 /** Puts each mark back, by keyed row when it exists, else by pixel once the content is tall enough. Returns a cancel. */
@@ -147,6 +149,7 @@ export function restoreScroll(root: Element, marks: ScrollMark[], opts: RestoreO
       return true;
     });
     if (pending.length > 0 && left-- > 0) raf(attempt);
+    else opts.done?.();
   };
   attempt();
   return () => {

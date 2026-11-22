@@ -1186,6 +1186,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     },
     deactivate() {
       active = false;
+      more?.close();
       // The shell closes the pane on a panel change. A selection is for the visit: coming back by Back restores it by key.
       inspected = undefined;
       dropSelection();

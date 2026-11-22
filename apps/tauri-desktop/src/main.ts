@@ -479,6 +479,9 @@ let here: Place | undefined;
 let travelling = false;
 let recordQueued = false;
 let cancelScrollRestore: () => void = () => {};
+// While a scroll restore is pending the content is still short or just cleared: the scroll events that reports
+// belong to the clearing, not to the user, and must not overwrite the place's stored marks.
+let restoringScroll = false;
 const viewOf = (): string | undefined =>
   active === "fleet" ? fleetPanel.encoding : active === "project" ? projectPanel.encoding() : active === "session" ? sessionPanel.tab() : active === "sessions" && sessionsPanel.needsOnly() ? "needs" : undefined;
 function placeNow(): Place {
@@ -509,8 +512,12 @@ function recordPlace(): void {
     syncHistory();
     if (!moved || first) return;
     cancelScrollRestore();
+    restoringScroll = false;
     const marks = places.recall(place);
-    cancelScrollRestore = marks ? restoreScroll(content, marks) : () => {};
+    if (marks) {
+      restoringScroll = true;
+      cancelScrollRestore = restoreScroll(content, marks, { done: () => { restoringScroll = false; } });
+    } else cancelScrollRestore = () => {};
     handFocus();
   });
 }
@@ -593,7 +600,7 @@ scope.subscribe(() => recordPlace());
 content.addEventListener(
   "scroll",
   (e) => {
-    if (!here || travelling || !(e.target instanceof Element)) return;
+    if (!here || travelling || restoringScroll || !(e.target instanceof Element)) return;
     const el = e.target;
     const kept = (places.recall(here) ?? []).filter((m) => (m.sel ? content.querySelector(m.sel) : content) !== el);
     const mark = markOf(content, el);

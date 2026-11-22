@@ -270,6 +270,8 @@ export function createSession(deps: SessionDeps): SessionPanel {
   }
 
   function deactivate(): void {
+    // The menu is the panel's; an open one must not outlive it (and its outside-click listener with it).
+    more.close();
     if (!entered) return;
     leave();
     entered = false;
