@@ -1442,6 +1442,21 @@ test("transport: a session older than the held range reads Session · whole (MS-
   await vi.waitFor(() => expect(tpRange()).toBe("Session · whole"));
 });
 
+test("leaving a session for All projects by the sidebar puts the held range back (a session's zoom does not leak into Fleet)", async () => {
+  const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  tpPreset("24h").click();
+  const held = b.scope.get().window;
+  b.scope.narrow({ session: { id: S1, source: S1_SOURCE } });
+  b.nav("session").click();
+  b.scope.narrow({ window: { from: NOW - 600_000, to: NOW - 300_000 } }); // the session's own zoom
+  b.nav("fleet").click();
+  expect(b.active()).toBe("fleet");
+  expect(b.scope.get().session).toBeUndefined();
+  expect(b.scope.get().window).toEqual(held);
+  expect(tpRange()).not.toContain("whole");
+});
+
 test("transport: preset carry rules", async () => {
   const b = await boot({
     worktrees: twoRepos(), sessions: [sessionRow("s-n1")],

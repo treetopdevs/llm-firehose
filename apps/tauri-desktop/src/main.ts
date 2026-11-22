@@ -447,6 +447,10 @@ export function go(name: GoName, rawPatch?: ScopePatch & { encoding?: ProjectEnc
 }
 
 function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEncoding; needsOnly?: boolean }) {
+  // All projects reads the range, not a session. A session left for it by the sidebar (which writes no scope) must
+  // give the held range back, or the session's own zoom would be drawn over every project (MS-7). A session installed
+  // whole (scope.set) holds no range and keeps what it was given.
+  if (name === "fleet" && scope.get().session && scope.held() !== undefined) scope.narrow({ session: undefined });
   // An open menu, a pending confirmation or an in-flight action belongs to the panel that started it.
   if (name !== active) actions.cancelAll();
   // Registration can happen elsewhere (Workspace toolbar): re-read roots on arrival.
