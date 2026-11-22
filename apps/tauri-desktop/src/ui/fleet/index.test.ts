@@ -698,6 +698,33 @@ describe("expandable project rows (MS-10)", () => {
     expect(byKey(key("fork", "repoA", "wt-open")).parentElement).toBe(parentOf);
   });
 
+  test("rows do not move under the pointer between the two clicks of a double click (Codex finding 4)", async () => {
+    const { panel, byKey, data } = setup();
+    data.sessions = [...baseSessions(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    await panel.activate();
+    const order = (): Array<string | null> => kids(rowOf(byKey, "repoA")).map((c) => c.getAttribute("data-key"));
+    expect(order()).toEqual([key("fork", "repoA", "wt-open"), key("fork", "repoA", "wt-idle")]);
+    const second = byKey(key("fork", "repoA", "wt-idle"));
+    second.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    // The first worktree stops needing anything while the user is mid double click: the list would shift up.
+    data.sessions = [S.fog(), S.workB(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(order()).toEqual([key("fork", "repoA", "wt-open"), key("fork", "repoA", "wt-idle")]);
+    expect(byKey(key("fork", "repoA", "wt-idle"))).toBe(second);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(order()).toEqual([key("fork", "repoA", "wt-idle")]);
+  });
+
+  test("a click that selects is drawn at once even while rows are held still", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const c = byKey(key("fork", "repoA", "wt-open"));
+    c.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    c.click();
+    expect(c.classList.contains("selected")).toBe(true);
+  });
+
   test("a child selects on click and opens on double click exactly as the chips did, with the same key", async () => {
     const { panel, byKey, go } = setup();
     await panel.activate();

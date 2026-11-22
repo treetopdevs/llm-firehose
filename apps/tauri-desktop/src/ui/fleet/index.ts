@@ -97,6 +97,8 @@ export interface FleetPanel {
 }
 
 const CHANGE_MS = 1600;
+/** A pointer press holds the drawn rows still this long, so the second click of a double click lands on what the first did. */
+const HOLD_MS = 600;
 const EVENT_REFRESH_MS = 1000;
 const LANES_REDRAW_MS = 250;
 const AIRSPACE_WINDOW_MS = 15 * 60_000;
@@ -193,6 +195,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let active = false;
   let primed = false;
   let lastKey: string | undefined;
+  let lastSelPart = "";
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
+  let redrawHeld = false;
   let statusKind: StatusKind = "";
   let lastLabels = "{}";
   // Expansion (MS-10). The user's choice per project row wins; absent that, a row starts open only if a worktree needed
@@ -277,6 +282,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     foot,
     hint,
   );
+
+  root.addEventListener("pointerdown", () => {
+    if (holdTimer !== undefined) clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      holdTimer = undefined;
+      if (redrawHeld) { redrawHeld = false; if (active) recompute(); }
+    }, HOLD_MS);
+  }, true);
 
   function notify(msg: string): void {
     setText(toast, msg);
@@ -432,9 +445,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     renderStatus();
     syncFlags();
     syncButtons();
-    const key = [encoding, scopeKey(store.get()), selRow ?? "", selNeed ?? "", selFork ?? "", signature(result), expansionKey(), encodingKey(now)].join("\u0001");
-    if (force || key !== lastKey || encoding === "lanes" || encoding === "dwell") {
+    const selPart = [selRow ?? "", selNeed ?? "", selFork ?? ""].join("\u0001");
+    const key = [encoding, scopeKey(store.get()), selPart, signature(result), expansionKey(), encodingKey(now)].join("\u0001");
+    // A press just happened: data that would shift the rows waits until the double-click window has passed. A selection,
+    // a toggle or any other act of the user's own is drawn at once.
+    if (!force && holdTimer !== undefined && encoding === "map" && key !== lastKey && selPart === lastSelPart) {
+      redrawHeld = true;
+    } else if (force || key !== lastKey || encoding === "lanes" || encoding === "dwell") {
       lastKey = key;
+      lastSelPart = selPart;
       draw(now);
     } else if (encoding === "map") {
       // Entries cached at the last draw are stale; read the latest derivation by id.
@@ -1294,6 +1313,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       timer = undefined;
       if (eventTimer !== undefined) clearTimeout(eventTimer);
       eventTimer = undefined;
+      if (holdTimer !== undefined) clearTimeout(holdTimer);
+      holdTimer = undefined;
+      redrawHeld = false;
       if (toastTimer !== undefined) clearTimeout(toastTimer);
       toastTimer = undefined;
       setText(toast, "");
