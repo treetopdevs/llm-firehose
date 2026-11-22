@@ -1575,7 +1575,18 @@ test("transport: older daemon (404) mounts, presets work, no extra /worktrees re
   b.nav("fleet").click();
   await vi.waitFor(() => expect(document.querySelector(".fleet-row-label")).not.toBeNull());
   expect(document.querySelector(".fleet-unsupported")).not.toBeNull();
-  const n = b.urls.filter((u) => u.includes("/worktrees")).length;
+  // The row above is drawn from /attention, which can land before the launch reads of /worktrees
+  // (the shell's resolver read and Fleet's own) have all been issued. Let those settle first, so
+  // the count below is the launch's and anything after it is the preset's.
+  const count = (): number => b.urls.filter((u) => u.includes("/worktrees")).length;
+  let settled = -1;
+  await vi.waitFor(async () => {
+    const before = count();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(count()).toBe(before);
+    settled = before;
+  });
+  const n = settled;
   const sets = vi.fn();
   b.scope.subscribe(sets);
   tpPreset("24h").click();
