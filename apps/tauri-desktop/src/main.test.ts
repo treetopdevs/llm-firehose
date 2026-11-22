@@ -3469,6 +3469,49 @@ test("toolbar: Cmd comma opens Settings", async () => {
   expect(document.querySelector(".toolbar-place")?.textContent).toBe("Settings");
 });
 
+test("global nav keys stay quiet while a modal dialog is open", async () => {
+  const b = await boot();
+  b.nav("files").click();
+  await flush();
+  expect(b.active()).toBe("files");
+  document.querySelector<HTMLButtonElement>(".legend-btn")!.click();
+  expect(document.querySelector('[aria-modal="true"]')).not.toBeNull();
+  const key = (k: string, init: KeyboardEventInit = {}) => {
+    const e = new KeyboardEvent("keydown", { key: k, metaKey: true, bubbles: true, cancelable: true, ...init });
+    document.dispatchEvent(e);
+    return e;
+  };
+  const shell = document.querySelector<HTMLElement>(".shell")!;
+  const mode = shell.dataset.sidebar;
+  expect(key("[").defaultPrevented).toBe(false);
+  expect(key("]").defaultPrevented).toBe(false);
+  expect(key(",").defaultPrevented).toBe(false);
+  expect(key("s", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(b.active()).toBe("files");
+  expect(shell.dataset.sidebar).toBe(mode);
+});
+
+test("narrow window: the sidebar overlay closes on a scrim click and on Escape", async () => {
+  const mq = { matches: true, addEventListener: () => {}, removeEventListener: () => {} };
+  vi.stubGlobal("matchMedia", () => mq);
+  await boot();
+  const shell = document.querySelector<HTMLElement>(".shell")!;
+  const scrim = () => document.querySelector<HTMLElement>(".sidebar-scrim");
+  expect(shell.dataset.sidebarVisible).toBe("false");
+  toolbarBtn("toolbar-sidebar").click();
+  expect(shell.dataset.sidebar).toBe("shown");
+  expect(scrim()).not.toBeNull();
+  scrim()!.click();
+  expect(shell.dataset.sidebar).toBe("auto");
+  expect(shell.dataset.sidebarVisible).toBe("false");
+  toolbarBtn("toolbar-sidebar").click();
+  expect(shell.dataset.sidebar).toBe("shown");
+  const e = esc();
+  expect(e.defaultPrevented).toBe(true);
+  expect(shell.dataset.sidebar).toBe("auto");
+  expect(toolbarBtn("toolbar-sidebar").getAttribute("aria-expanded")).toBe("false");
+});
+
 test("history: Needs you is a place; Back and Forward restore it, not a bare Worktree list", async () => {
   const b = await boot({ sessions: [sessionRow(S1)], attentionSessions: [attn(S1)], worktrees: [wtRow()] });
   await flush();

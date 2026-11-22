@@ -339,8 +339,10 @@ input, select {
 @media (min-width: 900px) {
   .shell[data-sidebar="hidden"] .sidebar { display: none; }
 }
+.sidebar-scrim { display: none; }
 @media (max-width: 899px) {
   .shell:not([data-sidebar="shown"]) .sidebar { display: none; }
+  .shell[data-sidebar="shown"] .sidebar-scrim { display: block; position: absolute; inset: 0; z-index: 15; background: var(--scrim); }
   .shell[data-sidebar="shown"] .sidebar { position: absolute; z-index: 20; top: 0; bottom: 0; left: 0; box-shadow: 0 0 24px var(--shadow); }
 }
 /* Under 1100px the inspector overlays the content instead of pushing it. */

@@ -43,7 +43,7 @@ import { createRoots } from "./ui/actions/roots";
 import { remapScope } from "./privacy-remap";
 import type { IdentitySet } from "./privacy-remap";
 import type { ScopePatch, SessionRef } from "./scope";
-import { ascentTarget, createEscapeHandler } from "./escape";
+import { ascentTarget, createEscapeHandler, isEscapeEligible } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
 import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
@@ -542,6 +542,10 @@ function legendContext(): PanelContext {
   return { panel: active };
 }
 
+/** A dialog (legend, prune confirmation, onboarding) owns the keyboard while it is open. */
+const dialogOpen = (): boolean => document.querySelector('[aria-modal="true"], .action-dialog, .onboarding-overlay') !== null;
+const navEnabled = (): boolean => app.isConnected && !dialogOpen();
+
 registerKeys([
   {
     scope: "global",
@@ -549,7 +553,7 @@ registerKeys([
     display: "⌘[",
     label: "go back to the previous place",
     // A shell that is no longer mounted must not answer for the one that is.
-    enabled: () => app.isConnected,
+    enabled: navEnabled,
     modifiers: "any",
     handler: (e) => {
       if (!e.metaKey || !travel("back")) return false;
@@ -562,7 +566,7 @@ registerKeys([
     display: "⌘]",
     label: "go forward again",
     // A shell that is no longer mounted must not answer for the one that is.
-    enabled: () => app.isConnected,
+    enabled: navEnabled,
     modifiers: "any",
     handler: (e) => {
       if (!e.metaKey || !travel("forward")) return false;
@@ -574,7 +578,7 @@ registerKeys([
     keys: ["s", "S"],
     display: "⌃⌘S",
     label: "show or hide the sidebar",
-    enabled: () => app.isConnected,
+    enabled: navEnabled,
     modifiers: "any",
     handler: (e) => {
       if (!e.metaKey || !e.ctrlKey) return false;
@@ -587,7 +591,7 @@ registerKeys([
     keys: [","],
     display: "⌘,",
     label: "open Settings",
-    enabled: () => app.isConnected,
+    enabled: navEnabled,
     modifiers: "any",
     handler: (e) => {
       if (!e.metaKey) return false;
@@ -601,6 +605,12 @@ registerKeys([
     label: "go up one level (clear a selection, then leave the view)",
     modifiers: "any",
     handler: (e) => {
+      // The narrow-window sidebar overlay is the topmost thing: Escape dismisses it before anything else.
+      if (overlayOpen() && isEscapeEligible(e)) {
+        e.preventDefault();
+        closeOverlay();
+        return;
+      }
       ascendOnEscape(e);
     },
   },
@@ -653,6 +663,11 @@ function applySidebar(): void {
   shell.dataset.sidebarVisible = String(sidebarShown());
   toolbar.setSidebarShown(sidebarShown());
 }
+const overlayOpen = (): boolean => sidebarMode === "shown" && !!narrowQuery?.matches;
+function closeOverlay(): void {
+  sidebarMode = "auto";
+  applySidebar();
+}
 function toggleSidebar(): void {
   sidebarMode = sidebarShown() ? "hidden" : "shown";
   applySidebar();
@@ -677,7 +692,10 @@ content.addEventListener("click", (e) => {
   });
 });
 const stage = el("div", { class: "stage" }, toolbar.root, shellNote, el("div", { class: "layout" }, content, detailPane));
-const shell = el("div", { class: "shell", "data-sidebar": "auto" }, sidebar.root, stage);
+// Under 900px the open sidebar covers its own toggle: a click outside it closes it.
+const sidebarScrim = el("div", { class: "sidebar-scrim", "aria-hidden": "true" });
+sidebarScrim.addEventListener("click", closeOverlay);
+const shell = el("div", { class: "shell", "data-sidebar": "auto" }, sidebar.root, sidebarScrim, stage);
 narrowQuery?.addEventListener?.("change", applySidebar);
 applySidebar();
 applyWindowChrome(shell, toolbar.root, sidebar.root, macOverlayActive(window, navigator.userAgent));
