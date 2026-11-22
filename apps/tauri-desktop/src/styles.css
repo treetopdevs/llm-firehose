@@ -1670,7 +1670,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-map { gap: 0; }
 .fleet-row { position: relative; border-width: 0 0 1px; border-color: color-mix(in srgb, var(--border) 35%, transparent); border-radius: 0; background: none; padding: 6px 16px; gap: 2px 16px; flex-wrap: wrap; }
 .fleet-row:hover { background: var(--bg-panel); }
-.fleet-row.selected { background: var(--selected); outline: none; }
+.fleet-row.selected { background: var(--selected); outline-color: transparent; }
 .fleet-row.current, .fleet-row.failed { border-color: color-mix(in srgb, var(--border) 35%, transparent); }
 .fleet-row.failed .fleet-row-label { color: var(--err); }
 /* The whole row selects, not only its label. */
@@ -1707,3 +1707,12 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .sessions-head:not(:has(> :not(.sessions-scope):not(.sessions-needs))) { display: none; }
 .sessions { gap: 0; }
 .sessions-count, .sessions-scope-note { padding: 0 12px; }
+/* A crumb is shown only where it names the place; All projects, Needs you, Files, Doctor and Settings stand alone. */
+.toolbar-title:not([data-named]) .toolbar-crumb { display: none; }
+.toolbar-views [role="tablist"] button[aria-selected="true"], .toolbar-views [role="tablist"] button[aria-pressed="true"], .toolbar-views .session-tabs button[aria-selected="true"] { background: var(--selected); color: var(--text); font-weight: 600; }
+/* One row: the title gives way (ellipsis) before the switcher or the range wrap. */
+.toolbar { flex-wrap: nowrap; }
+.toolbar-title { flex: 0 1 auto; }
+.toolbar-crumb .crumb { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbar-range { margin-left: auto; }
+.toolbar-views { margin-right: 0; }
