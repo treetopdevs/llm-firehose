@@ -564,6 +564,24 @@ describe("Fleet encoding buttons", () => {
   });
 });
 
+// MS-9: nothing is deleted. Dwell, Matrix and Airspace left the switcher and the Fleet code still serves them by name,
+// so each gets one test that reaches it by name and sees it render (the existing detail tests sit beside their features).
+describe("retired Fleet views stay reachable by name and render", () => {
+  test.each([
+    ["dwell", ".fleet-dwell-list .fleet-dwell-row"],
+    ["matrix", "table.fleet-matrix tbody tr"],
+    ["airspace", ".fleet-band"],
+  ] as const)("%s", async (enc, selector) => {
+    const { panel, q } = setup();
+    panel.encoding = enc;
+    await panel.activate();
+    expect(panel.encoding).toBe(enc);
+    expect(q(".fleet-enc[aria-selected='true']")).toHaveLength(0); // no tab claims it
+    expect(q(selector).length).toBeGreaterThan(0);
+    expect(q(".fleet-map")).toHaveLength(0);
+  });
+});
+
 const fakeHost = (name: string) => {
   const root = document.createElement("section");
   root.className = `fake-host-${name}`;
