@@ -142,10 +142,10 @@ export function createTransport(deps: TransportDeps): Transport {
   let destroyed = false;
 
   function paint(): void {
-    drawn();
+    render();
     syncClock();
   }
-  function drawn(): void {
+  function render(): void {
     const s = store.get();
     const g = geometry(s);
     const key = JSON.stringify([s.window, s.liveSpanMs ?? null, span(), session, session && outside(s), g.left.toFixed(3), g.width.toFixed(3), g.pct]);
