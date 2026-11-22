@@ -283,6 +283,7 @@ export function createScore(
    * Playback's moves only mark the event when the pane was closed.
    */
   function setPlayhead(next: number, fromPlayback = false) {
+    if (!loadedKey) return;
     if (!fromPlayback) sound.stop();
     at = next;
     // Follow the cursor when it leaves the window; this redraws once per window width.
@@ -301,6 +302,8 @@ export function createScore(
 
   /** Puts the cursor on one specific event, even when several share its instant. */
   function select(target: ScoreEvent) {
+    // While a session loads, the score still holds the previous one: selecting from it would open a pane no session owns.
+    if (!loadedKey) return;
     sound.stop();
     at = target.at;
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));

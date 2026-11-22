@@ -190,6 +190,26 @@ describe("session score view", () => {
     expect(onClear).toHaveBeenCalledTimes(1);
   });
 
+  test("selecting an event while another session loads does nothing, so no pane is left without an owner", async () => {
+    const onSelect = vi.fn();
+    const onClear = vi.fn();
+    const panel = createScore(onSelect, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    let finish!: (v: FirehoseEvent[]) => void;
+    sessionEvents.mockImplementationOnce(() => new Promise<FirehoseEvent[]>((r) => (finish = r)));
+    const opening = panel.open("another-session", session[0].source);
+    onSelect.mockClear();
+    panel.root.querySelector<HTMLElement>('button[aria-label="jump to next event"]')!.click();
+    expect(onSelect).not.toHaveBeenCalled();
+    finish(session);
+    await opening;
+    pick(panel);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    await panel.open(SID, session[0].source);
+    expect(onClear).toHaveBeenCalled(); // the owner is recorded, so a later session change clears it
+  });
+
   test("a pane the user closed is not cleared again when another session opens", async () => {
     const onClear = vi.fn();
     let dismiss: () => void = () => {};
