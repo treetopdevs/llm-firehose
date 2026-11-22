@@ -6,6 +6,7 @@ import { ApiError, attention as fetchAttention, sessions as fetchSessions, workt
 import type { AttentionSession, AttentionSnapshot, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { onSelectOpen } from "../../select-open";
+import { createMoreMenu } from "../more-menu";
 import type { Inspected } from "../inspector";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
@@ -95,7 +96,11 @@ const EVENT_REFRESH_MS = 1000;
 const LANES_REDRAW_MS = 250;
 const AIRSPACE_WINDOW_MS = 15 * 60_000;
 const BLOCKS = "▁▂▃▄▅▆▇█";
-const ENCODING_LABEL: Record<Encoding, string> = { map: "Map", dwell: "Waiting", matrix: "Table", lanes: "Lanes", airspace: "By state", strata: "Strata", ecosystem: "Patches", events: "Events" };
+/** Visible labels. Waiting, Table and By state are retired from the switcher (MS-9): the List carries what they showed. */
+const ENCODING_LABEL: Record<Encoding, string> = { map: "List", dwell: "Waiting", matrix: "Table", lanes: "Lanes", airspace: "By state", strata: "Strata", ecosystem: "Patches", events: "Events" };
+/** The tabs of the switcher, and the views that sit behind More (MS-9). The rest stay reachable by name, not by tab. */
+const TAB_ENCODINGS: readonly Encoding[] = ["map", "lanes", "events"];
+const MORE_ENCODINGS: readonly Encoding[] = ["strata", "ecosystem"];
 const FALLBACK_W = 800;
 const TOAST_MS = 2500;
 const NO_NEEDS = "no sessions need you";
@@ -213,7 +218,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let mapEntries: Array<{ row: FleetRow; refs: RowRefs; needs: Array<{ need: FleetNeed; refs: NeedRefs; node: Element }> }> = [];
 
   // Header, built once.
-  const encButtons = ENCODINGS.filter((enc) => !isHostEncoding(enc) || deps.hosts?.[enc] !== undefined).map((enc) => {
+  const encButtons = TAB_ENCODINGS.filter((enc) => !isHostEncoding(enc) || deps.hosts?.[enc] !== undefined).map((enc) => {
     const b = el("button", { class: "fleet-enc", type: "button", "data-enc": enc, role: "tab", "aria-selected": "false", tabindex: "-1" }, ENCODING_LABEL[enc]);
     b.addEventListener("click", () => setEncoding(enc));
     b.addEventListener("keydown", (ev) => {
@@ -230,6 +235,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     });
     return b;
   });
+  const moreEncodings = MORE_ENCODINGS.filter((enc) => isHostEncoding(enc) && deps.hosts?.[enc] !== undefined);
+  const more = moreEncodings.length > 0
+    ? createMoreMenu({
+        label: "More views",
+        items: moreEncodings.map((id) => ({ id, label: ENCODING_LABEL[id] })),
+        onPick: (id) => setEncoding(id as Encoding),
+        itemAttrs: (id) => ({ "data-enc": id }),
+      })
+    : undefined;
   const staleChip = el("span", { class: "fleet-stale", title: "Showing the last data received; a refresh is overdue" }, "stale");
   const flags = el("span", { class: "fleet-flags" });
   const statusBox = el("div", { class: "fleet-status", role: "status" });
@@ -242,7 +256,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const root = el(
     "section",
     { class: "fleet", "aria-label": "All projects" },
-    el("header", { class: "fleet-header" }, el("h2", {}, "All projects"), el("div", { class: "fleet-encs", role: "tablist", "aria-label": "Encoding" }, ...encButtons), flags),
+    el("header", { class: "fleet-header" }, el("h2", {}, "All projects"), el("div", { class: "fleet-views" }, el("div", { class: "fleet-encs", role: "tablist", "aria-label": "Encoding" }, ...encButtons), more?.root), flags),
     statusBox,
     toast,
     body,
@@ -429,6 +443,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setAttr(b, "aria-selected", on ? "true" : "false");
       setAttr(b, "tabindex", on ? "0" : "-1");
     }
+    more?.setCurrent(MORE_ENCODINGS.includes(encoding) ? encoding : undefined);
     hint.hidden = isHostEncoding(encoding) && encoding !== "events";
     const wantHint = encoding === "events" ? EVENTS_HINT : TABLE_HINT;
     if (hint.textContent !== wantHint) hint.textContent = wantHint;
@@ -1163,7 +1178,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     },
     deactivate() {
       active = false;
-      inspected = undefined; // the shell closes the pane on a panel change; a kept selection is shown again on return
+      // The shell closes the pane on a panel change. A selection is for the visit: coming back by Back restores it by key.
+      inspected = undefined;
+      dropSelection();
       deactivateHosts();
       unsub?.();
       unsub = undefined;

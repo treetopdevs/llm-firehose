@@ -171,7 +171,7 @@ test("entering Loom closes and empties the open shared detail pane", async () =>
   expect(pane.childElementCount).toBe(0);
   expect(document.querySelector(".loom")).not.toBeNull();
   expect(active()).toBe("session");
-  expect(document.querySelector("#session-tab-loom")?.getAttribute("aria-selected")).toBe("true");
+  expect(document.querySelector("#session-tab-loom")?.getAttribute("aria-checked")).toBe("true");
 });
 
 test("leaving Files aborts its pending history request", async () => {
@@ -390,7 +390,10 @@ const resolverOf = (members: string[]): ScopeResolver => ({
 
 // Session altitude helpers: the six lenses are tabs of the "session" nav entry.
 const tabBtn = (t: string) => document.querySelector<HTMLElement>(`#session-tab-${t}`)!;
-const tabOn = (t: string) => tabBtn(t)?.getAttribute("aria-selected") === "true";
+// Score and Loops are tabs (aria-selected); the notebooks are items of the More menu (aria-checked).
+const tabOn = (t: string) => tabBtn(t)?.getAttribute("aria-selected") === "true" || tabBtn(t)?.getAttribute("aria-checked") === "true";
+/** Open is a double click (MS-8); a single click only selects. */
+const openIt = (n: Element): void => { n.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); };
 const openTab = (b: Boot, t: string) => {
   b.nav("session").click();
   tabBtn(t).click();
@@ -1009,7 +1012,7 @@ test("Fleet descents carry the window; row, fork and need open project, sessions
   expect(fleetRows().length).toBe(2);
   // Row head -> Project, window kept, no stale worktree/session.
   const rowB = fleetRows().find((r) => label(r) !== label(fleetRows().find((x) => x.querySelector(".fleet-need"))!))!;
-  rowB.querySelector<HTMLElement>(".fleet-row-head")!.click();
+  openIt(rowB.querySelector<HTMLElement>(".fleet-row-head")!);
   expect(b.active()).toBe("project");
   expect(b.scope.get()).toMatchObject({ project: "repoB", window: win });
   expect(b.scope.get().worktree).toBeUndefined();
@@ -1017,13 +1020,13 @@ test("Fleet descents carry the window; row, fork and need open project, sessions
   b.nav("fleet").click();
   await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
   const forkA = [...document.querySelectorAll<HTMLElement>(".fleet-fork")].find((f) => f.closest(".fleet-row")?.querySelector(".fleet-need"))!;
-  forkA.click();
+  openIt(forkA);
   // Changed (fleet-altitude item 3): a fork narrows project+worktree and descends to Sessions, not Project.
   expect(b.active()).toBe("sessions");
   expect(b.scope.get()).toMatchObject({ project: "repoA", worktree: "wt-open", window: win });
   b.nav("fleet").click();
   await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());
-  document.querySelector<HTMLElement>(".fleet-need")!.click();
+  openIt(document.querySelector<HTMLElement>(".fleet-need")!);
   expect(b.active()).toBe("session");
   expect(tabOn("score")).toBe(true);
   expect(b.scope.get().session).toEqual({ id: "s-n1", source: "codex" });
@@ -1033,7 +1036,7 @@ test("Escape from Sessions reached by a Fleet fork widens to the worktree list, 
   const b = await boot({ worktrees: twoRepos() });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
   await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
-  document.querySelector<HTMLElement>(".fleet-fork")!.click();
+  openIt(document.querySelector<HTMLElement>(".fleet-fork")!);
   expect(b.active()).toBe("sessions");
   expect(b.scope.get().worktree).toBeDefined();
   expect(esc().defaultPrevented).toBe(true);
@@ -1137,10 +1140,17 @@ test("tab keyboard: ArrowRight, End and Home move the selected tab, focus and th
   expect(document.activeElement?.id).toBe("session-tab-loops");
   expect(visiblePanels()).toHaveLength(1);
   expect(visiblePanels()[0]!.id).toBe("session-panel-loops");
+  // Only Score and Loops are tabs now (MS-9): End stays on the last of them, and Court is chosen from More.
   press("End");
+  expect(tabOn("loops")).toBe(true);
+  expect(document.activeElement?.id).toBe("session-tab-loops");
+  document.querySelector<HTMLElement>(".session-views .more-btn")!.click();
+  expect(document.activeElement?.id).toBe("session-tab-loom");
+  tabBtn("court").click();
   expect(tabOn("court")).toBe(true);
-  expect(document.activeElement?.id).toBe("session-tab-court");
   expect(visiblePanels()[0]!.id).toBe("session-panel-court");
+  expect(document.activeElement).toBe(document.querySelector(".session-views .more-btn"));
+  tabBtn("score").focus();
   press("Home");
   expect(tabOn("score")).toBe(true);
   expect(document.activeElement?.id).toBe("session-tab-score");
@@ -1429,7 +1439,7 @@ test("transport: preset carry rules", async () => {
   tpPreset("24h").click();
   const win = b.scope.get().window;
   expect(win).toEqual({ from: NOW - DAY_MS, to: NOW });
-  document.querySelector<HTMLElement>(".fleet-need")!.click();
+  openIt(document.querySelector<HTMLElement>(".fleet-need")!);
   expect(b.active()).toBe("session");
   expect(b.scope.get().window).toEqual(win);
   const head = document.querySelector<HTMLElement>("#session-panel-score .session-lens-head")!;
@@ -2318,13 +2328,15 @@ test("? panel context: Doctor has no panel keys, Session lists score keys, Proje
 // Fleet host encodings and the alias router (slice 14, T4)
 // ---------------------------------------------------------------------------
 
-const fleetEnc = (e: string) => document.querySelector<HTMLButtonElement>(`.fleet-enc[data-enc=${e}]`)!;
+// A tab (List, Lanes, Events) or, for Strata and Patches, an item of the More menu (MS-9).
+const fleetEnc = (e: string) => document.querySelector<HTMLButtonElement>(`.fleet-enc[data-enc=${e}], .fleet-views .more-item[data-enc=${e}]`)!;
 
 test("go('strata') lands on Fleet with Strata pressed and its own heading in the body", async () => {
   const b = await boot({ worktrees: [wtRow()] });
   b.go("strata");
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("strata").getAttribute("aria-selected")).toBe("true");
+  expect(fleetEnc("strata").getAttribute("aria-checked")).toBe("true");
+  expect(document.querySelector(".fleet-views .more-btn")!.textContent).toContain("Strata");
   expect(document.querySelector(".fleet-body .strata h2")?.textContent).toBe("Session stratigraphy");
   expect(document.querySelector(".fleet-body .ecosystem")).toBeNull();
 });
@@ -2334,7 +2346,7 @@ test("go('ecosystem') lands on Fleet Patches; leaving it removes the panel", asy
   b.go("ecosystem");
   expect(b.active()).toBe("fleet");
   expect(fleetEnc("ecosystem").textContent).toBe("Patches");
-  expect(fleetEnc("ecosystem").getAttribute("aria-selected")).toBe("true");
+  expect(fleetEnc("ecosystem").getAttribute("aria-checked")).toBe("true");
   expect(document.querySelector(".fleet-body .ecosystem h2")?.textContent).toBe("Patch ecosystem");
   fleetEnc("map").click();
   expect(document.querySelector(".ecosystem")).toBeNull();
@@ -2351,7 +2363,8 @@ test("go('workspace') lands on the Project Graph chip", async () => {
 test("transport follows (panel, encoding): Fleet drawn encodings, Project chips, session", async () => {
   const b = await boot({ worktrees: [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b" })] });
   b.nav("fleet").click();
-  for (const e of ["map", "dwell", "matrix", "lanes", "airspace"]) {
+  // Waiting, Table and By state are retired from the switcher (MS-9), so only the tabs are reachable here.
+  for (const e of ["map", "lanes"]) {
     fleetEnc(e).click();
     expect(applies(), e).toBe(true);
   }
@@ -2485,7 +2498,7 @@ test("onEvent gating: the feed refreshes only on Fleet Events, once per animatio
   const rowsNow = () => document.querySelectorAll(".feed-row").length;
   const flushFrames = () => { const f = frames.splice(0); f.forEach((cb) => cb()); };
   b.nav("fleet").click();
-  for (const e of ["map", "dwell", "matrix", "lanes", "airspace", "strata", "ecosystem"]) {
+  for (const e of ["map", "lanes", "strata", "ecosystem"]) {
     fleetEnc(e).click();
     frames.length = 0;
     sendEvent(b, feedEvent(`g-${e}`));
@@ -2526,13 +2539,13 @@ test("Fleet Events mount is the shared event list: one pushed event appears once
 test("Escape ascent lands on Fleet in the user's last encoding and writes nothing to it; go('live') is the only selector", async () => {
   const b = await boot({ worktrees: [wtRow(), wtRow({ repo_id: "repoB", worktree_id: "wt-b" })] });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
-  fleetEnc("matrix").click();
+  fleetEnc("lanes").click();
   b.nav("project").click();
   await vi.waitFor(() => expect(laneOrEmpty()).not.toBeNull());
   b.scope.narrow({ project: "repoA" });
   esc();
   expect(b.active()).toBe("fleet");
-  expect(fleetEnc("matrix").getAttribute("aria-selected")).toBe("true");
+  expect(fleetEnc("lanes").getAttribute("aria-selected")).toBe("true");
   // Explicit go('live') selects Events, and the later ascent keeps it.
   b.scope.replaceContext({});
   b.go("live");
@@ -3120,7 +3133,7 @@ describe("history: back, forward, scroll and focus", () => {
     await settle();
     const head = fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!;
     head.focus();
-    head.click();
+    openIt(head);
     expect(b.active()).toBe("project");
     await settle();
   };
@@ -3190,13 +3203,96 @@ describe("history: back, forward, scroll and focus", () => {
     Object.defineProperty(fleet, "clientHeight", { value: 400, configurable: true });
     fleet.scrollTop = 300;
     fleet.dispatchEvent(new Event("scroll"));
-    fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!.click();
+    openIt(fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!);
     await settle();
     fleet.scrollTop = 0; // what a browser does to a detached scroller
     esc();
     expect(b.active()).toBe("fleet");
     await settle();
     expect(document.querySelector<HTMLElement>(".content .fleet")!.scrollTop).toBe(300);
+  });
+});
+
+// MS-8: select fills the inspector, open pushes history, Back restores the selection.
+describe("select, open, back (inspector)", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const pane = () => document.querySelector<HTMLElement>(".detail")!;
+  const backBtn = () => document.querySelector<HTMLElement>(".toolbar-back")!;
+  const ready = async (b: Boot) => {
+    await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+    await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+    await settle();
+  };
+  const headOf = (i: number) => fleetRows()[i].querySelector<HTMLElement>(".fleet-row-head")!;
+
+  test("the pane stays closed until something is selected; a click selects and fills it without moving anywhere", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    expect(pane().classList.contains("open")).toBe(false);
+    headOf(0).click();
+    expect(pane().classList.contains("open")).toBe(true);
+    expect(pane().getAttribute("data-inspector")).toBe("project");
+    expect(b.active()).toBe("fleet");
+    expect(b.scope.get().project).toBeUndefined();
+    await settle();
+    expect(backBtn().getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).not.toBe(pane().querySelector("h2"));
+  });
+
+  test("the inspector's Open button and a double click open the project, which is a history stop; Back restores the selection", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    headOf(0).click();
+    const title = pane().querySelector("h2")!.textContent;
+    pane().querySelector<HTMLElement>(".inspector-open")!.click();
+    expect(b.active()).toBe("project");
+    expect(pane().classList.contains("open")).toBe(false);
+    await settle();
+    expect(backBtn().getAttribute("aria-disabled")).toBe("false");
+    backBtn().click();
+    expect(b.active()).toBe("fleet");
+    await vi.waitFor(() => expect(pane().getAttribute("data-inspector")).toBe("project"));
+    expect(pane().querySelector("h2")!.textContent).toBe(title);
+    expect(fleetRows().filter((r) => r.classList.contains("selected"))).toHaveLength(1);
+  });
+
+  test("Escape clears the selection and closes the inspector before it leaves anything", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    headOf(0).click();
+    expect(pane().classList.contains("open")).toBe(true);
+    const e = esc(headOf(0));
+    expect(e.defaultPrevented).toBe(false);
+    expect(pane().classList.contains("open")).toBe(false);
+    expect(fleetRows().some((r) => r.classList.contains("selected"))).toBe(false);
+    expect(b.active()).toBe("fleet");
+  });
+
+  test("the close button drops the selection too", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    headOf(1).click();
+    pane().querySelector<HTMLElement>(".detail-close")!.click();
+    expect(pane().classList.contains("open")).toBe(false);
+    expect(fleetRows().some((r) => r.classList.contains("selected"))).toBe(false);
+  });
+
+  test("an arrow key moves the selection and the inspector follows it", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    headOf(0).focus();
+    headOf(0).dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(headOf(1));
+    expect(fleetRows()[1].classList.contains("selected")).toBe(true);
+    expect(pane().querySelector("h2")!.textContent).toBe(fleetRows()[1].querySelector(".fleet-row-label")!.textContent);
+  });
+
+  test("moving to another panel closes the inspector", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    headOf(0).click();
+    b.nav("files").click();
+    expect(pane().classList.contains("open")).toBe(false);
   });
 });
 

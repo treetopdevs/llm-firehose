@@ -17,6 +17,7 @@ import {
   type SessionTabContext,
 } from "./context";
 import { LOCAL } from "../../keys";
+import { createMoreMenu } from "../more-menu";
 
 export interface SessionLens {
   root: HTMLElement;
@@ -54,6 +55,10 @@ export interface SessionPanel {
   lens(tab: SessionTab): SessionLens;
 }
 
+/** Score and Loops are views of activity; the other four are notebooks and sit behind More (MS-9). */
+const VISIBLE_TABS: readonly SessionTab[] = ["score", "loops"];
+const MORE_TABS: readonly SessionTab[] = SESSION_TABS.filter((t) => !VISIBLE_TABS.includes(t));
+
 const TITLES: Record<SessionTab, string> = {
   score: "Score",
   loops: "Loops",
@@ -88,18 +93,29 @@ export function createSession(deps: SessionDeps): SessionPanel {
   const panels = {} as Record<SessionTab, HTMLElement>;
   const heads = {} as Record<SessionTab, HTMLElement>;
 
+  // The notebooks are the More menu's items; they keep the ids and panel wiring a tab had.
+  const more = createMoreMenu({
+    label: "More",
+    items: MORE_TABS.map((t) => ({ id: t, label: TITLES[t] })),
+    onPick: (id) => select(id as SessionTab),
+    itemAttrs: (id) => ({ id: `session-tab-${id}`, "aria-controls": `session-panel-${id}` }),
+  });
   for (const t of SESSION_TABS) {
-    const b = el("button", {
-      type: "button",
-      role: "tab",
-      id: `session-tab-${t}`,
-      "aria-selected": "false",
-      "aria-controls": `session-panel-${t}`,
-      tabindex: "-1",
-    }, TITLES[t]);
-    b.addEventListener("click", () => select(t));
-    tabs[t] = b;
-    tablist.append(b);
+    if (VISIBLE_TABS.includes(t)) {
+      const b = el("button", {
+        type: "button",
+        role: "tab",
+        id: `session-tab-${t}`,
+        "aria-selected": "false",
+        "aria-controls": `session-panel-${t}`,
+        tabindex: "-1",
+      }, TITLES[t]);
+      b.addEventListener("click", () => select(t));
+      tabs[t] = b;
+      tablist.append(b);
+    } else {
+      tabs[t] = more.items.get(t)!;
+    }
     heads[t] = el("div", { class: "session-lens-head dim", "aria-live": "polite" });
     panels[t] = el("div", {
       role: "tabpanel",
@@ -109,21 +125,21 @@ export function createSession(deps: SessionDeps): SessionPanel {
     }, heads[t]);
     panels[t].hidden = true;
   }
-  root.append(el("h2", {}, "Session"), tablist, ...SESSION_TABS.map((t) => panels[t]));
+  root.append(el("h2", {}, "Session"), el("div", { class: "session-views" }, tablist, more.root), ...SESSION_TABS.map((t) => panels[t]));
 
   tablist.addEventListener("keydown", (e) => {
     if (!LOCAL.sessionTabs.matches(e)) return;
-    const i = SESSION_TABS.indexOf(current);
+    const i = Math.max(0, VISIBLE_TABS.indexOf((e.target as HTMLElement).id.replace("session-tab-", "") as SessionTab));
     let n: number;
     switch (e.key) {
-      case "ArrowRight": n = (i + 1) % SESSION_TABS.length; break;
-      case "ArrowLeft": n = (i - 1 + SESSION_TABS.length) % SESSION_TABS.length; break;
+      case "ArrowRight": n = (i + 1) % VISIBLE_TABS.length; break;
+      case "ArrowLeft": n = (i - 1 + VISIBLE_TABS.length) % VISIBLE_TABS.length; break;
       case "Home": n = 0; break;
-      case "End": n = SESSION_TABS.length - 1; break;
+      case "End": n = VISIBLE_TABS.length - 1; break;
       default: return;
     }
     e.preventDefault();
-    const t = SESSION_TABS[n]!;
+    const t = VISIBLE_TABS[n]!;
     select(t);
     tabs[t].focus();
   });
@@ -136,10 +152,14 @@ export function createSession(deps: SessionDeps): SessionPanel {
   function paintTabs(): void {
     for (const t of SESSION_TABS) {
       const on = t === current;
-      tabs[t].setAttribute("aria-selected", on ? "true" : "false");
-      tabs[t].tabIndex = on ? 0 : -1;
+      if (VISIBLE_TABS.includes(t)) {
+        tabs[t].setAttribute("aria-selected", on ? "true" : "false");
+        // A notebook is showing: the first tab keeps the tab stop so the strip stays reachable.
+        tabs[t].tabIndex = on || (t === "score" && MORE_TABS.includes(current)) ? 0 : -1;
+      }
       panels[t].hidden = !on;
     }
+    more.setCurrent(MORE_TABS.includes(current) ? current : undefined);
   }
 
   function renderHead(): void {

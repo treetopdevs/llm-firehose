@@ -62,13 +62,16 @@ beforeEach(() => {
 });
 
 describe("session panel", () => {
-  test("tablist structure and aria wiring", () => {
+  test("tablist structure and aria wiring: Score and Loops are tabs, the notebooks are the More menu's items (MS-9)", () => {
     const list = panel.root.querySelector(".session-tabs.graph-tabs")!;
     expect(list.getAttribute("role")).toBe("tablist");
     expect(list.getAttribute("aria-label")).toBe("Session lenses");
     const tabs = [...list.querySelectorAll('[role="tab"]')];
-    expect(tabs.map((t) => t.id)).toEqual(SESSION_TABS.map((t) => `session-tab-${t}`));
-    for (const t of tabs) {
+    expect(tabs.map((t) => t.id)).toEqual(["session-tab-score", "session-tab-loops"]);
+    const items = [...panel.root.querySelectorAll(".session-views .more-item")];
+    expect(items.map((t) => t.id)).toEqual(["session-tab-loom", "session-tab-replay", "session-tab-handoffs", "session-tab-court"]);
+    // Every lens still has a labelled tabpanel, whether its label is a tab or a menu item.
+    for (const t of [...tabs, ...items]) {
       const p = panel.root.querySelector(`#${t.getAttribute("aria-controls")}`)!;
       expect(p.getAttribute("role")).toBe("tabpanel");
       expect(p.getAttribute("aria-labelledby")).toBe(t.id);
@@ -76,8 +79,37 @@ describe("session panel", () => {
     panel.activate();
     expect(tabs.filter((t) => t.getAttribute("aria-selected") === "true")).toHaveLength(1);
     expect(tabs.filter((t) => t.getAttribute("tabindex") === "0")).toHaveLength(1);
-    expect(tabs.filter((t) => t.getAttribute("tabindex") === "-1")).toHaveLength(5);
+    expect(tabs.filter((t) => t.getAttribute("tabindex") === "-1")).toHaveLength(1);
     expect([...panel.root.querySelectorAll('[role="tabpanel"]')].filter((p) => !(p as HTMLElement).hidden)).toHaveLength(1);
+  });
+
+  test("More names the notebook that is showing, marks it, and keeps the tab strip reachable", () => {
+    panel.activate();
+    const more = panel.root.querySelector<HTMLButtonElement>(".more-btn")!;
+    expect(more.textContent).toContain("More");
+    panel.select("court");
+    expect(more.textContent).toContain("Court");
+    expect(tabBtn("court").getAttribute("aria-checked")).toBe("true");
+    expect(tabBtn("loom").getAttribute("aria-checked")).toBe("false");
+    expect(tabBtn("score").getAttribute("aria-selected")).toBe("false");
+    expect(tabBtn("score").tabIndex).toBe(0);
+    panel.select("loops");
+    expect(more.textContent).toContain("More");
+  });
+
+  test("choosing from More opens the notebook; Escape closes the menu and returns focus to it", () => {
+    panel.activate();
+    const more = panel.root.querySelector<HTMLButtonElement>(".more-btn")!;
+    more.click();
+    expect(document.activeElement).toBe(tabBtn("loom"));
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.activeElement!.dispatchEvent(esc);
+    expect(document.activeElement).toBe(more);
+    expect(panel.tab()).toBe("score");
+    more.click();
+    tabBtn("handoffs").click();
+    expect(panel.tab()).toBe("handoffs");
+    expect(onTabShown).toHaveBeenLastCalledWith("handoffs");
   });
 
   test("activate defaults to score, loads once, other lenses untouched; named tab wins", () => {
@@ -125,7 +157,7 @@ describe("session panel", () => {
     expect(onTabShown).toHaveBeenLastCalledWith("loom");
   });
 
-  test("keyboard: arrows/Home/End move and focus; others ignored", () => {
+  test("keyboard: arrows/Home/End move between the two tabs and focus; others ignored", () => {
     panel.activate();
     let e = key("score", "ArrowRight");
     expect(e.defaultPrevented).toBe(true);
@@ -134,15 +166,15 @@ describe("session panel", () => {
     e = key("loops", "ArrowLeft");
     expect(panel.tab()).toBe("score");
     key("score", "ArrowLeft");
-    expect(panel.tab()).toBe("court");
-    key("court", "Home");
+    expect(panel.tab()).toBe("loops");
+    key("loops", "Home");
     expect(panel.tab()).toBe("score");
     key("score", "End");
-    expect(panel.tab()).toBe("court");
+    expect(panel.tab()).toBe("loops");
     for (const k of ["Escape", "a", "Enter"]) {
-      e = key("court", k);
+      e = key("loops", k);
       expect(e.defaultPrevented).toBe(false);
-      expect(panel.tab()).toBe("court");
+      expect(panel.tab()).toBe("loops");
     }
   });
 

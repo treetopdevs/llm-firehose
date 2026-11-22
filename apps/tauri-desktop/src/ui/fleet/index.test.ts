@@ -62,6 +62,12 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const byKey = (k: string) => q("[data-key]").find((n) => n.getAttribute("data-key") === k)!;
   return { store, api, data, go, panel, q, byKey };
 }
+/** Picks a view as a user would: a tab, an item of the More menu, else (a retired view) by name. */
+const chooseEnc = (panel: FleetPanel, q: (s: string) => HTMLElement[], enc: string): void => {
+  const b = q(`.fleet-enc[data-enc='${enc}'], .more-item[data-enc='${enc}']`)[0];
+  if (b) b.click();
+  else panel.encoding = enc as never;
+};
 /** Open is a double click (MS-8); a single click only selects. */
 const openIt = (n: Element): void => { n.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); };
 const key = (e: string, ...parts: string[]) => `${e}:${parts.join("|")}`;
@@ -535,7 +541,7 @@ describe("keys", () => {
     document.body.append(panel.root);
     const shown = () => listKeys().filter((r) => r.scope === "fleet").map((r) => r.display);
     expect(shown()).toEqual(["Enter", "1–9", "n / N", "Space"]);
-    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    chooseEnc(panel, q, "dwell");
     expect(shown()).toEqual(["Enter", "n / N", "Space"]);
     for (const enc of ["lanes", "matrix", "airspace"]) {
       panel.encoding = enc as never;
@@ -545,12 +551,16 @@ describe("keys", () => {
 });
 
 describe("Fleet encoding buttons", () => {
-  test("visible labels in order are Map, Waiting, Table, Lanes, By state; ids unchanged", async () => {
+  test("the switcher is List and Lanes; Waiting, Table and By state are retired from it but still resolve by name (MS-9)", async () => {
     const { panel, q } = setup();
     await panel.activate();
     const btns = q(".fleet-enc");
-    expect(btns.map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state"]);
-    expect(btns.map((b) => b.getAttribute("data-enc"))).toEqual(["map", "dwell", "matrix", "lanes", "airspace"]);
+    expect(btns.map((b) => b.textContent)).toEqual(["List", "Lanes"]);
+    expect(btns.map((b) => b.getAttribute("data-enc"))).toEqual(["map", "lanes"]);
+    for (const enc of ["dwell", "matrix", "airspace"] as const) {
+      panel.encoding = enc;
+      expect(panel.encoding).toBe(enc);
+    }
   });
 });
 
@@ -568,24 +578,29 @@ const hostRig = () => {
 const NON_HOST = ["map", "dwell", "matrix", "lanes", "airspace"] as const;
 
 describe("Fleet host encodings", () => {
-  test("hosts add Strata and Patches buttons; without hosts they are absent", async () => {
+  test("Events is a tab; Strata and Patches sit behind More; without hosts there is no More", async () => {
     const { panel, q } = hostRig();
     await panel.activate();
-    expect(q(".fleet-enc").map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state", "Strata", "Patches", "Events"]);
-    expect(q(".fleet-enc").map((b) => b.getAttribute("data-enc")).slice(5)).toEqual(["strata", "ecosystem", "events"]);
+    expect(q(".fleet-enc").map((b) => b.textContent)).toEqual(["List", "Lanes", "Events"]);
+    expect(q(".fleet-views .more-btn")).toHaveLength(1);
+    expect(q(".fleet-views .more-item").map((b) => [b.textContent, b.getAttribute("data-enc")])).toEqual([["Strata", "strata"], ["Patches", "ecosystem"]]);
     const bare = setup();
-    expect(bare.q(".fleet-enc")).toHaveLength(5);
+    expect(bare.q(".fleet-enc")).toHaveLength(2);
+    expect(bare.q(".more-btn")).toHaveLength(0);
   });
 
   test("clicking Strata mounts its root in .fleet-body and activates once; Patches swaps it", async () => {
     const { panel, q, strata, ecosystem } = hostRig();
     await panel.activate();
-    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    q(".more-item[data-enc='strata']")[0]!.click();
     expect(q(".fleet-body > .fake-host-strata")).toHaveLength(1);
     expect(strata.activate).toHaveBeenCalledTimes(1);
-    expect(q(".fleet-enc[aria-selected='true']").map((b) => b.textContent)).toEqual(["Strata"]);
+    // No tab is selected; More names the view that is showing.
+    expect(q(".fleet-enc[aria-selected='true']")).toHaveLength(0);
+    expect(q(".more-btn")[0]!.textContent).toContain("Strata");
+    expect(q(".more-item[data-enc='strata']")[0]!.getAttribute("aria-checked")).toBe("true");
     expect(q(".fleet-hint")[0]!.hidden).toBe(true);
-    q(".fleet-enc[data-enc='ecosystem']")[0]!.click();
+    q(".more-item[data-enc='ecosystem']")[0]!.click();
     expect(strata.deactivate).toHaveBeenCalledTimes(1);
     expect(q(".fleet-body > .fake-host-strata")).toHaveLength(0);
     expect(q(".fleet-body > .fake-host-ecosystem")).toHaveLength(1);
@@ -600,10 +615,10 @@ describe("Fleet host encodings", () => {
     for (const dest of [...NON_HOST, host === "strata" ? "ecosystem" : "strata", "deactivate"] as const) {
       const rig = hostRig();
       await rig.panel.activate();
-      rig.q(`.fleet-enc[data-enc='${host}']`)[0]!.click();
+      chooseEnc(rig.panel, rig.q, host);
       expect(rig[host].activate).toHaveBeenCalledTimes(1);
       if (dest === "deactivate") rig.panel.deactivate();
-      else rig.q(`.fleet-enc[data-enc='${dest}']`)[0]!.click();
+      else chooseEnc(rig.panel, rig.q, dest);
       expect(rig[host].deactivate, dest).toHaveBeenCalledTimes(1);
       expect(rig.q(`.fake-host-${host}`), dest).toHaveLength(0);
       rig.panel.deactivate();
@@ -615,14 +630,14 @@ describe("Fleet host encodings", () => {
     const { panel, q, go } = hostRig();
     await panel.activate();
     expect(listKeys().filter((r) => r.scope === "fleet").map((r) => r.display)).toEqual(["Enter", "1–9", "n / N", "Space"]);
-    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    chooseEnc(panel, q, "strata");
     expect(listKeys().filter((r) => r.scope === "fleet")).toEqual([]);
     press(" ");
     press("1");
     press("n");
     press("Enter");
     expect(go).not.toHaveBeenCalled();
-    q(".fleet-enc[data-enc='map']")[0]!.click();
+    chooseEnc(panel, q, "map");
     expect(listKeys().filter((r) => r.scope === "fleet")).toHaveLength(4);
   });
 
@@ -662,24 +677,24 @@ describe("encoding tablist", () => {
     await panel.activate();
     const key = (enc: string, k: string) => q(`.fleet-enc[data-enc='${enc}']`)[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
     key("map", "ArrowRight");
-    expect(panel.encoding).toBe("dwell");
-    expect(q(".fleet-enc[tabindex='0']").map((b) => b.dataset.enc)).toEqual(["dwell"]);
-    key("dwell", "End");
-    expect(panel.encoding).toBe("airspace");
-    key("airspace", "ArrowRight");
+    expect(panel.encoding).toBe("lanes");
+    expect(q(".fleet-enc[tabindex='0']").map((b) => b.dataset.enc)).toEqual(["lanes"]);
+    key("lanes", "End");
+    expect(panel.encoding).toBe("lanes");
+    key("lanes", "ArrowRight");
     expect(panel.encoding).toBe("map");
     key("map", "ArrowLeft");
-    expect(panel.encoding).toBe("airspace");
-    key("airspace", "Home");
+    expect(panel.encoding).toBe("lanes");
+    key("lanes", "Home");
     expect(panel.encoding).toBe("map");
   });
 
   test("click, Enter and Space on a tab select it", async () => {
     const { panel, q } = setup();
     await panel.activate();
-    const t = q(".fleet-enc[data-enc='matrix']")[0]!;
+    const t = q(".fleet-enc[data-enc='lanes']")[0]!;
     t.click();
-    expect(panel.encoding).toBe("matrix");
+    expect(panel.encoding).toBe("lanes");
     expect(t.getAttribute("aria-selected")).toBe("true");
   });
 });
@@ -690,7 +705,7 @@ describe("encodings", () => {
     expect(panel.encoding).toBe("map");
     await panel.activate();
     expect(q(".fleet-enc[aria-selected='true']").map((b) => b.getAttribute("data-enc"))).toEqual(["map"]);
-    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    chooseEnc(panel, q, "dwell");
     expect(panel.encoding).toBe("dwell");
     expect(q(".fleet-row")).toHaveLength(0);
     expect(q(".fleet-dwell-row").length).toBeGreaterThan(0);
@@ -1476,7 +1491,7 @@ describe("Fleet Events host", () => {
     expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
     expect(events.activate).toHaveBeenCalledTimes(1);
     expect(q(".fleet-enc[data-enc='events']")[0]!.getAttribute("aria-selected")).toBe("true");
-    q(".fleet-enc[data-enc='map']")[0]!.click();
+    chooseEnc(panel, q, "map");
     expect(events.deactivate).toHaveBeenCalledTimes(1);
     expect(q(".fake-host-events")).toHaveLength(0);
     q(".fleet-enc[data-enc='events']")[0]!.click();

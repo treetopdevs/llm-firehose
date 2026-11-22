@@ -10,6 +10,8 @@ import { createConnector } from "./connect";
 import { clear, el } from "./dom";
 import { FEED_RING, FeedState } from "./state";
 import { renderDetail } from "./ui/detail";
+import { inspectorShowing, renderInspector } from "./ui/inspector";
+import type { Inspected } from "./ui/inspector";
 import { createAttention } from "./ui/attention";
 import { createCourt } from "./ui/court";
 import { createDoctor } from "./ui/doctor";
@@ -192,10 +194,26 @@ const feedPanel = createEventList(liveSource(feedState, { renderLimit: 1000 }), 
   },
   resetWindow: () => scope.narrow({ window: "live" }),
 });
+// A selection (click or arrow) fills the shared pane; nothing navigates until Open. Closing the pane drops the
+// selection in the panel that made it, and each change is written into the current history entry (MS-8).
+const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
+  if (!s && !inspectorShowing(detailPane)) return;
+  renderInspector(detailPane, s, { onClose: clear, menu: actions });
+  rememberSelection();
+};
+/** Writes the selection into the current history entry right away, so a move made a moment later still returns to it. */
+function rememberSelection(): void {
+  const cur = places.current();
+  if (!cur || cur.place.panel !== active) return;
+  const sel = active === "fleet" ? fleetPanel.selectedKey() : undefined;
+  const { sel: _gone, ...rest } = cur.state;
+  places.record(cur.place, sel ? { ...rest, sel } : rest);
+}
 const fleetPanel = createFleet({
   store: scope,
   actions,
   roots,
+  inspect: inspectFor(() => fleetPanel.clearSelection()),
   go: (name, patch): void => {
     go(name, patch);
   },
@@ -419,7 +437,7 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
 // A place is the panel, its view and what is in scope. Every show(), view switch and scope change
 // asks for a record; they are coalesced so one user move is one entry. The range is not part of a
 // place, so changing it never adds an entry and going back never changes it.
-const places = createHistory<{ cell?: CellScope }>();
+const places = createHistory<{ cell?: CellScope; sel?: string }>();
 let here: Place | undefined;
 let travelling = false;
 let recordQueued = false;
@@ -448,7 +466,8 @@ function recordPlace(): void {
     const first = here === undefined;
     const moved = !here || !samePlace(here, place);
     const cell = scope.get().cell;
-    places.record(place, cell ? { cell } : {});
+    const sel = active === "fleet" ? fleetPanel.selectedKey() : undefined;
+    places.record(place, { ...(cell ? { cell } : {}), ...(sel ? { sel } : {}) });
     travelling = false;
     here = place;
     syncHistory();
@@ -478,6 +497,8 @@ function travel(dir: "back" | "forward"): boolean {
           ? { needsOnly: p.view === "needs" }
           : undefined,
   );
+  // The selection comes back by key, once the rows are there.
+  if (name === "fleet") fleetPanel.selectKey(entry.state.sel);
   syncHistory();
   return true;
 }
@@ -667,7 +688,7 @@ function hostViews(): void {
     parent.insertBefore(node, next && next.parentNode === parent ? next : null);
     hosted = undefined;
   }
-  const node = panels[active].root.querySelector<HTMLElement>(".fleet-encs, .project-chips, .session-tabs");
+  const node = panels[active].root.querySelector<HTMLElement>(".fleet-views, .project-chips, .session-views");
   if (!node?.parentNode) return;
   hosted = { node, parent: node.parentNode, next: node.nextSibling };
   toolbar.viewSlot.append(node);
