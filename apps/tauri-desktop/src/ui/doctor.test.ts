@@ -74,3 +74,44 @@ test("a warning whose evidence cannot be inspected says so inside Doctor", async
   p.redraw();
   expect(p.root.querySelector(".doctor-warnings [role=status]")!.textContent).toContain("unavailable");
 });
+
+const warnBtn = (p: ReturnType<typeof createDoctor>) => [...p.root.querySelectorAll("button")].find((b) => b.textContent === "Inspect warning")!;
+const gapBtn = (p: ReturnType<typeof createDoctor>) => [...p.root.querySelectorAll("button")].find((b) => b.textContent === "Inspect capture gap")!;
+const statusOf = (p: ReturnType<typeof createDoctor>) => p.root.querySelector<HTMLElement>(".doctor-warnings [role=status]")!;
+
+test("a warning inspection that was superseded is not reported as unavailable evidence", async () => {
+  api.doctor.mockReset().mockResolvedValue([{ name: "spool", ok: true, detail: "writable" }]);
+  const p = createDoctor({ issues: () => issues, onInspectWarning: async () => null, onInspectGap: () => {} });
+  await p.refresh();
+  await settle();
+  warnBtn(p).click();
+  await settle();
+  expect(statusOf(p).hidden).toBe(true);
+});
+
+test("a gap selected while a warning is loading keeps the status clear when the warning then fails", async () => {
+  api.doctor.mockReset().mockResolvedValue([{ name: "spool", ok: true, detail: "writable" }]);
+  let fail!: (ok: boolean) => void;
+  const p = createDoctor({ issues: () => issues, onInspectWarning: () => new Promise<boolean>((r) => { fail = r; }), onInspectGap: () => {} });
+  await p.refresh();
+  await settle();
+  warnBtn(p).click();
+  gapBtn(p).click();
+  fail(false);
+  await settle();
+  expect(statusOf(p).hidden).toBe(true);
+});
+
+test("an older warning failure after a newer warning succeeded does not show the error", async () => {
+  api.doctor.mockReset().mockResolvedValue([{ name: "spool", ok: true, detail: "writable" }]);
+  const done: Array<(ok: boolean) => void> = [];
+  const p = createDoctor({ issues: () => issues, onInspectWarning: () => new Promise<boolean>((r) => { done.push(r); }), onInspectGap: () => {} });
+  await p.refresh();
+  await settle();
+  warnBtn(p).click();
+  warnBtn(p).click();
+  done[1](true);
+  done[0](false);
+  await settle();
+  expect(statusOf(p).hidden).toBe(true);
+});

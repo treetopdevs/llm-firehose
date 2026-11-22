@@ -457,6 +457,20 @@ test("a gap selected while a warning is still loading is not replaced by the war
   expect(selected).toHaveBeenLastCalledWith(expect.objectContaining({ name: "capture.gap" }));
 });
 
+test("a warning inspection superseded by a gap resolves null, even when its read failed, and writes no status", async () => {
+  const selected = vi.fn();
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  Object.assign(snapshot, { gaps: [{ source: "firehose", time: new Date(now).toISOString(), summary: "Unreadable spool line" }] });
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  let release!: (r: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise<Response>((r) => { release = r; }));
+  const pending = p.inspectWarning("w1");
+  p.inspectGap(p.captureIssues().gaps[0]);
+  release(new Response("nope", { status: 500 }));
+  expect(await pending).toBeNull();
+});
+
 test("the panel heading is the nav label and the old name is gone", async () => {
   const p = mount();
   expect(p.root.querySelector("h2")?.textContent).toBe("Needs you");

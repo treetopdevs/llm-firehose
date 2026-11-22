@@ -154,18 +154,17 @@ export function createAttention(options: AttentionOptions) {
   let needing = 0;
   const countListeners = new Set<() => void>();
   let inspection = 0;
-  /** True when the evidence was handed to the inspector; false when it could not be read (or a newer selection superseded it). */
-  async function inspect(id: string): Promise<boolean> {
+  /** True when the evidence was handed to the inspector; false when it could not be read; null when a newer selection superseded it (not a failure). */
+  async function inspect(id: string): Promise<boolean | null> {
     const version = ++inspection;
     try {
       const ev = await capturedEvent(id);
-      if (disposed || version !== inspection) return false;
+      if (disposed || version !== inspection) return null;
       options.onSelect(ev);
       return true;
     } catch {
-      if (!disposed && version === inspection)
-        status.textContent =
-          "Captured evidence is unavailable. Try again after reconnecting.";
+      if (disposed || version !== inspection) return null;
+      status.textContent = "Captured evidence is unavailable. Try again after reconnecting.";
       return false;
     }
   }

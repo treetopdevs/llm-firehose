@@ -10,8 +10,8 @@ const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigra
 export interface DoctorDeps {
   /** The capture warnings and gaps of the last attention snapshot (MS-9: Doctor is where they are listed). */
   issues?: () => { gaps: readonly { source: string; time: string; summary: string }[]; warnings: readonly AttentionEvidence[] };
-  /** Resolves false when the warning's evidence could not be shown; Doctor then says so itself, since the panel that reported it is not on screen. */
-  onInspectWarning?: (eventId: string) => void | boolean | Promise<void | boolean>;
+  /** Resolves false when the warning's evidence could not be shown; Doctor then says so itself, since the panel that reported it is not on screen. Null means a newer selection superseded it, which is not a failure. */
+  onInspectWarning?: (eventId: string) => void | boolean | null | Promise<void | boolean | null>;
   onInspectGap?: (gap: { source: string; time: string; summary: string }) => void;
 }
 
@@ -24,6 +24,8 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
   const adaptersBox = el("div", { class: "doctor-adapters" });
   const inspectStatus = el("p", { class: "error", role: "status" });
   inspectStatus.hidden = true;
+  /** Counts inspections started here; only the latest may report, and a gap selection supersedes a warning still loading. */
+  let inspecting = 0;
   root.append(heading, checksBox, warningsBox, adaptersBox);
 
   /** Capture warnings and gaps: never part of the Needs you queue or its count, always here and on the sidebar badge. */
@@ -36,7 +38,7 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
     }
     for (const gap of gaps) {
       const inspect = el("button", { type: "button", "data-key": `gap:${gap.source}` }, "Inspect capture gap");
-      inspect.addEventListener("click", () => deps.onInspectGap?.(gap));
+      inspect.addEventListener("click", () => { inspecting++; inspectStatus.hidden = true; deps.onInspectGap?.(gap); });
       warningsBox.append(
         el("article", { class: "capture-warning" }, el("p", {}, gap.summary), el("p", { class: "dim" }, "Unreadable history · this diagnostic is not a captured event."), inspect),
       );
@@ -44,11 +46,14 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
     for (const w of warnings) {
       const inspect = el("button", { type: "button", "data-key": `warning:${w.event_id}` }, "Inspect warning");
       inspect.addEventListener("click", () => {
+        const mine = ++inspecting;
         inspectStatus.hidden = true;
-        void Promise.resolve(deps.onInspectWarning?.(w.event_id)).then(
-          (ok) => { if (ok === false) { inspectStatus.textContent = "Captured evidence for that warning is unavailable. Try again after reconnecting."; inspectStatus.hidden = false; } },
-          () => { inspectStatus.textContent = "Captured evidence for that warning is unavailable. Try again after reconnecting."; inspectStatus.hidden = false; },
-        );
+        const unavailable = () => {
+          if (mine !== inspecting) return;
+          inspectStatus.textContent = "Captured evidence for that warning is unavailable. Try again after reconnecting.";
+          inspectStatus.hidden = false;
+        };
+        void Promise.resolve(deps.onInspectWarning?.(w.event_id)).then((ok) => { if (ok === false) unavailable(); }, unavailable);
       });
       warningsBox.append(
         el(
