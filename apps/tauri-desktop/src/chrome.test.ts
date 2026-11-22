@@ -22,6 +22,7 @@ describe("chrome targets (MS-11, MS-12)", () => {
     [".transport-hold", 28],
     [".transport-track", 24],
     [".toolbar-views button", 28],
+    [".toolbar-views .session-tabs button", 28],
   ])("%s is tall enough", (selector, min) => {
     const m = /(?:min-)?height:\s*(\d+)px/.exec(body(selector));
     expect(m, selector).not.toBeNull();

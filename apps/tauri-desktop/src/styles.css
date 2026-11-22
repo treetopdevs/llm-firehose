@@ -1652,8 +1652,10 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .toolbar-title[data-named] .crumb > span:last-child { color: var(--text); font-weight: 600; font-size: var(--fs-md); }
 /* One segmented control for the view switcher. */
 .toolbar-views [role="tablist"], .toolbar-views .session-tabs { display: inline-flex; gap: 2px; padding: 2px; border: 0; border-radius: var(--radius-md); background: var(--bg-panel); overflow: visible; }
-.toolbar-views [role="tablist"] button, .toolbar-views .session-tabs button { border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); padding: 0 12px; min-height: 24px; }
+.toolbar-views [role="tablist"] button, .toolbar-views .session-tabs button { border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); padding: 0 12px; min-height: 28px; }
 .toolbar-views .session-tabs button + button { border-left: 0; }
+/* Tauri drags only the element that carries the marker: the breadcrumb's names are plain text, so the mouse passes through them to it. */
+.shell[data-titlebar="overlay"] .toolbar-crumb * { pointer-events: none; }
 .toolbar-views [role="tablist"] button:hover { color: var(--text); }
 .toolbar-views .more-btn { border-color: transparent; color: var(--text-dim); }
 .transport-trigger { font-family: var(--font-sans); }

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, test, beforeEach } from "vitest";
 import { createSidebar, createToolbar } from "./chrome";
+import { el } from "./dom";
 import { applyWindowChrome, macOverlayActive } from "./window";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -54,6 +55,17 @@ describe("applyWindowChrome", () => {
       expect(el.matches("button, a, input, select, textarea, [role=button], [role=tab], [tabindex]")).toBe(false);
     }
     expect(tb.root.querySelector(".toolbar-back")!.closest("button")!.hasAttribute("data-tauri-drag-region")).toBe(false);
+  });
+
+  test("a populated breadcrumb is dragged through its descendants (they do not take the mouse)", () => {
+    applyWindowChrome(shell, tb.root, sb.root, true);
+    const crumb = el("span", { class: "scope-crumb dim" }, el("span", { class: "crumb" }, el("span", {}, "project"), el("span", {}, "session")));
+    tb.crumbSlot.append(crumb);
+    const css = read("src/styles.css");
+    // Tauri marks only the element carrying the attribute, so the segments must be transparent to the pointer.
+    expect(tb.crumbSlot.hasAttribute("data-tauri-drag-region")).toBe(true);
+    expect(crumb.querySelector("button, a, [tabindex], [role=button]")).toBeNull();
+    expect(css).toMatch(/\.shell\[data-titlebar="overlay"\] \.toolbar-crumb \*\s*\{[^}]*pointer-events:\s*none/);
   });
 
   test("turning it off again removes everything", () => {

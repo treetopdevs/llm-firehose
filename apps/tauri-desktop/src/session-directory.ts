@@ -19,7 +19,7 @@ export interface SessionDirectory {
 const COOLDOWN_MS = 10_000;
 const keyOf = (source: string, id: string) => `${source}\0${id}`;
 const same = (a: SessionLike, b: SessionLike) =>
-  a.title === b.title && a.agent === b.agent && a.repo === b.repo && a.cwd === b.cwd;
+  a.title === b.title && a.agent === b.agent && a.repo === b.repo && a.cwd === b.cwd && a.first_time === b.first_time && a.last_time === b.last_time;
 
 export function createSessionDirectory(
   loader?: () => Promise<readonly SessionLike[]>,
