@@ -437,11 +437,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   // ---- header / status --------------------------------------------------
 
+  let lastTab: HTMLElement | undefined;
   function syncButtons(): void {
+    const current = encButtons.find((b) => b.getAttribute("data-enc") === encoding);
+    if (current) lastTab = current;
+    // In a More view no tab is selected, but the last tab used keeps the tab stop so the tablist stays reachable.
+    const stop = current ?? lastTab ?? encButtons[0];
     for (const b of encButtons) {
-      const on = b.getAttribute("data-enc") === encoding;
-      setAttr(b, "aria-selected", on ? "true" : "false");
-      setAttr(b, "tabindex", on ? "0" : "-1");
+      setAttr(b, "aria-selected", b === current ? "true" : "false");
+      setAttr(b, "tabindex", b === stop ? "0" : "-1");
     }
     more?.setCurrent(MORE_ENCODINGS.includes(encoding) ? encoding : undefined);
     hint.hidden = isHostEncoding(encoding) && encoding !== "events";

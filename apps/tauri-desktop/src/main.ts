@@ -70,7 +70,15 @@ const showDetail = (ev: FirehoseEvent) =>
 // selection in the panel that made it, and each change is written into the current history entry (MS-8).
 const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
   if (!s && !inspectorShowing(detailPane)) return;
-  renderInspector(detailPane, s, { onClose: clear, menu: actions });
+  const close = () => {
+    // The Close button is about to leave the DOM: hand focus back to the row the pane described.
+    const sel = content.querySelector<HTMLElement>(".selected");
+    const target = sel?.matches("[tabindex]") ? sel : sel?.querySelector<HTMLElement>('[tabindex="0"]');
+    const held = detailPane.contains(document.activeElement);
+    clear();
+    if (held) target?.focus();
+  };
+  renderInspector(detailPane, s, { onClose: close, menu: actions });
   rememberSelection();
 };
 /** Writes the selection into the current history entry right away, so a move made a moment later still returns to it. */

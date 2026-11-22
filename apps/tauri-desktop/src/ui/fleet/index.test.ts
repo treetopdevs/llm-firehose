@@ -597,6 +597,8 @@ describe("Fleet host encodings", () => {
     expect(strata.activate).toHaveBeenCalledTimes(1);
     // No tab is selected; More names the view that is showing.
     expect(q(".fleet-enc[aria-selected='true']")).toHaveLength(0);
+    // The tablist stays reachable: exactly one tab keeps the tab stop while a More view shows.
+    expect(q(".fleet-enc[tabindex='0']")).toHaveLength(1);
     expect(q(".more-btn")[0]!.textContent).toContain("Strata");
     expect(q(".more-item[data-enc='strata']")[0]!.getAttribute("aria-checked")).toBe("true");
     expect(q(".fleet-hint")[0]!.hidden).toBe(true);

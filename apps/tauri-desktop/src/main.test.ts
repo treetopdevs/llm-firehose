@@ -3277,6 +3277,18 @@ describe("select, open, back (inspector)", () => {
     expect(fleetRows().some((r) => r.classList.contains("selected"))).toBe(false);
   });
 
+  test("closing the inspector from its Close button returns focus to the row it described", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await ready(b);
+    headOf(1).click();
+    const close = pane().querySelector<HTMLElement>(".detail-close")!;
+    close.focus();
+    expect(document.activeElement).toBe(close);
+    close.click();
+    expect(pane().classList.contains("open")).toBe(false);
+    expect(document.activeElement).toBe(headOf(1));
+  });
+
   test("an arrow key moves the selection and the inspector follows it", async () => {
     const b = await boot({ worktrees: twoRepos() });
     await ready(b);

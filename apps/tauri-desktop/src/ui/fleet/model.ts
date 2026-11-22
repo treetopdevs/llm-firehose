@@ -191,6 +191,7 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
  * worktree's own last activity is recent, or a live session in it says it is idle. An open worktree
  * with neither is unknown, never idle (MS-10).
  */
+const UNKNOWN_LINE = "\nunknown: ";
 function setKind(f: FleetFork, r: Pick<WorktreeLifetimeView, "state_reason">, idleSessions: number): void {
   delete f.reason;
   if (f.needs > 0) f.kind = "needs";
@@ -204,10 +205,14 @@ function setKind(f: FleetFork, r: Pick<WorktreeLifetimeView, "state_reason">, id
   } else if (f.state === "unknown") { f.kind = "unknown"; f.reason = r.state_reason || "state could not be determined"; }
   else f.kind = f.state;
   // The quiet-for-hours flag must not claim idleness the summary denies.
-  if (f.kind === "unknown" && f.idle) {
-    f.idle = false;
-    f.ariaLabel = `${f.label}, ${f.state}`;
-  }
+  if (f.kind === "unknown" && f.idle) f.idle = false;
+  // The chip says what the summary says: an open worktree with no evidence draws the unknown mark and
+  // announces why, rather than reading as open.
+  const unknown = f.kind === "unknown";
+  f.glyph = unknown ? FORK_GLYPH.unknown : FORK_GLYPH[f.state] ?? FORK_GLYPH.unknown;
+  f.ariaLabel = unknown ? `${f.label}, unknown${f.reason ? `, ${f.reason}` : ""}` : `${f.label}, ${f.state}${f.idle ? ", idle" : ""}`;
+  const base = f.tooltip.split(UNKNOWN_LINE)[0]!;
+  f.tooltip = unknown && f.state === "open" && f.reason ? `${base}${UNKNOWN_LINE}${f.reason}` : base;
 }
 
 /** One status count of a row summary. */

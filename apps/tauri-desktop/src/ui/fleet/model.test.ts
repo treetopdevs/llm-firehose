@@ -523,6 +523,19 @@ describe("worktree status and the row summary (MS-10)", () => {
     expect(summarize(r).text).toBe("1 idle · 1 unknown");
   });
 
+  test("an open worktree classified unknown draws the unknown mark and announces why, not open", () => {
+    const r = rowOf([mk("old", "open", { last_time: iso(NOW - 8 * 24 * 60 * MIN) }), mk("fresh", "open", { last_time: iso(NOW - 60 * MIN) })]);
+    const old = r.forks.find((f) => f.id === "old")!;
+    expect(old.glyph).toBe(FORK_GLYPH.unknown);
+    expect(old.ariaLabel).toContain("unknown");
+    expect(old.ariaLabel).not.toContain(", open");
+    expect(old.ariaLabel).toContain("no activity captured in the last 7 days");
+    expect(old.tooltip).toContain("no activity captured in the last 7 days");
+    const fresh = r.forks.find((f) => f.id === "fresh")!;
+    expect(fresh.glyph).toBe(FORK_GLYPH.open);
+    expect(fresh.ariaLabel).toContain(", open");
+  });
+
   test("a live session that reports idle in the worktree is positive evidence, however old the worktree's own last time", () => {
     const r = rowOf([mk("quiet", "open", { last_time: iso(NOW - 20 * 24 * 60 * MIN) })], [att({ id: "s", repo_id: "r", worktree_id: "quiet", state: "idle" })]);
     expect(r.forks[0]!.kind).toBe("idle");
