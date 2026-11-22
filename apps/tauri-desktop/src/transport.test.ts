@@ -626,10 +626,9 @@ describe('review fixes', () => {
   describe('the visible readout follows the clock while a live range is held over a session', () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
-    const open = (applies = true) => {
+    const open = (applies = true, ext: { from?: number; to?: number } = { from: NOW - 90 * 60_000, to: NOW - 30 * 60_000 }) => {
       let n = NOW;
       const store = createScope();
-      const ext = { from: NOW - 90 * 60_000, to: NOW - 30 * 60_000 };
       const t = createTransport({ store, now: () => n, effectiveLiveSpan: () => 2 * H, sessionSpan: () => ext });
       made.push(t);
       document.body.append(t.root);
@@ -643,6 +642,20 @@ describe('review fixes', () => {
       expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
       advance(H);
       expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('a session opened at the instant its start sits on the range start repaints a millisecond later, not a span later', () => {
+      // Two-hour range; the session started exactly two hours ago, so the start is still covered now and not at now + 1.
+      const { t, advance } = open(true, { from: NOW - 2 * H, to: NOW - H });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+      advance(1);
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('a session whose end is ahead of the clock repaints when the clock reaches that end', () => {
+      // Producer clocks can run ahead: the end is 30 minutes in the future, so the range does not cover it yet.
+      const { t, advance } = open(true, { from: NOW - 30 * 60_000, to: NOW + 30 * 60_000 });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+      advance(30 * 60_000 + 1);
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
     });
     test('no timer runs while the range does not apply, after leaving the session, or after destroy', () => {
       const a = open(false);

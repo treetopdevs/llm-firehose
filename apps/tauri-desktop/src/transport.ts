@@ -131,9 +131,12 @@ export function createTransport(deps: TransportDeps): Transport {
     if (!ext) return;
     const n = now();
     const sp = span();
-    const edges = [ext.from, ext.to].filter((v): v is number => v !== undefined && v + sp > n);
-    if (edges.length === 0) return;
-    const wait = Math.min(Math.min(...edges) + sp - n + 1, 2 ** 31 - 1);
+    // Coverage changes when the clock reaches an endpoint (one ahead of this clock comes into range)
+    // and when the range start passes one (endpoint + span). An instant equal to now still counts:
+    // the state it stands for ends a millisecond later.
+    const times = [ext.from, ext.to].flatMap((v) => (v === undefined ? [] : [v, v + sp])).filter((t) => t >= n);
+    if (times.length === 0) return;
+    const wait = Math.min(Math.min(...times) - n + 1, 2 ** 31 - 1);
     clock = setTimeout(() => {
       clock = null;
       paint();
