@@ -279,7 +279,7 @@ type BootOpts = {
   firstRun?: boolean;
   sessions?: unknown[]; repos?: unknown[] | (() => unknown[] | Promise<unknown[]>); snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
-  attentionWarnings?: unknown[];
+  attentionWarnings?: unknown[]; attentionGaps?: unknown[];
   worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean | number; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
   // /workspace-graph/timeline answers a valid EventPage; /workspace-graph/activity a valid ActivityResponse.
   timeline?: EventPage | ((q: URLSearchParams) => EventPage);
@@ -324,7 +324,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
       return json({ status: "ok", version: "test", schema_version: 1 });
     }
     if (p === "/attention/event" && opts.attentionEvent) return json(await opts.attentionEvent(u.searchParams.get("id") ?? ""));
-    if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: opts.attentionWarnings ?? [] });
+    if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: opts.attentionWarnings ?? [], ...(opts.attentionGaps ? { gaps: opts.attentionGaps } : {}) });
     if (p === "/sessions") return json(opts.sessions ?? []);
     if (p.startsWith("/sessions/")) return json(opts.sessionEvents ?? scoreFixture);
     if (p === "/events") return json(opts.events ?? []);
@@ -3651,6 +3651,22 @@ describe("Project's Sessions view (MS-9)", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(wtItems().find((n) => n.classList.contains("picked"))));
   });
 
+  test("switching from Sessions to another view closes the inspector it filled, and the entry keeps the selection", async () => {
+    const b = await toSessionsView();
+    const pane = () => document.querySelector<HTMLElement>(".detail")!;
+    wtItems()[1].click();
+    expect(pane().classList.contains("open")).toBe(true);
+    await flushTurn();
+    chip("lanes").click();
+    expect(selectedChip()).toBe("lanes");
+    expect(pane().classList.contains("open")).toBe(false);
+    await flushTurn();
+    cmd("[");
+    expect(selectedChip()).toBe("sessions");
+    await vi.waitFor(() => expect(wtItems().filter((n) => n.classList.contains("picked"))).toHaveLength(1));
+    expect(b.active()).toBe("project");
+  });
+
   test("Escape from an opened worktree returns to the project's list in the same view; Escape again goes up to All projects", async () => {
     const b = await toSessionsView();
     openIt(wtItems()[0]);
@@ -3663,6 +3679,65 @@ describe("Project's Sessions view (MS-9)", () => {
     esc();
     expect(b.active()).toBe("fleet");
   });
+});
+
+test("a worktree row of All projects selected, opened and Back again is selected and focused", async () => {
+  const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow("s-n1")], attentionSessions: [needy("s-n1", "repoA", { worktree_id: "wt-open" })] });
+  await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
+  await new Promise((r) => setTimeout(r, 0));
+  const child = () => document.querySelector<HTMLElement>(".fleet-fork")!;
+  child().click();
+  expect(child().classList.contains("selected")).toBe(true);
+  openIt(child());
+  expect(b.active()).toBe("sessions");
+  await new Promise((r) => setTimeout(r, 0));
+  document.querySelector<HTMLButtonElement>(".toolbar-back")!.click();
+  expect(b.active()).toBe("fleet");
+  await vi.waitFor(() => expect(child().classList.contains("selected")).toBe(true));
+  await vi.waitFor(() => expect(document.activeElement).toBe(child()));
+});
+
+test("a gone selection falls to the nearest drawn row and never opens a collapsed project", async () => {
+  const wts = (repo: string, label: string) => [wtRow({ repo_id: repo, worktree_id: `${repo}-w1`, label: `/w/${label}1` }), wtRow({ repo_id: repo, worktree_id: `${repo}-w2`, label: `/w/${label}2` })];
+  const opts = { worktrees: [...wts("pa", "a"), ...wts("pb", "b"), ...wts("pc", "c")] as unknown[] };
+  const b = await boot(opts);
+  await vi.waitFor(() => expect(fleetRows().length).toBe(3));
+  await new Promise((r) => setTimeout(r, 0));
+  const disclosure = (): string[] => [...document.querySelectorAll<HTMLElement>(".fleet-disclose")].map((d) => d.getAttribute("aria-expanded")!);
+  const heads = (): HTMLElement[] => fleetRows().map((r) => r.querySelector<HTMLElement>(".fleet-row-head")!);
+  const before = disclosure();
+  expect(before).toEqual(["false", "false", "false"]);
+  heads()[2].click();
+  openIt(heads()[2]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.active()).toBe("project");
+  opts.worktrees = [...wts("pa", "a"), ...wts("pb", "b")];
+  document.querySelector<HTMLButtonElement>(".toolbar-back")!.click();
+  await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+  await vi.waitFor(() => expect(fleetRows().filter((r) => r.classList.contains("selected"))).toHaveLength(1));
+  expect(disclosure()).toEqual(["false", "false"]);
+  expect(fleetRows()[1].classList.contains("selected")).toBe(true);
+});
+
+test("Doctor's Inspect buttons fill the pane for a warning and for a gap", async () => {
+  const at = iso(NOW - 1000);
+  const b = await boot({
+    attentionWarnings: [{ event_id: "w1", kind: "capture_warning", source: "codex", summary: "unmapped Codex rollout record x", time: at, observed_at: at }],
+    attentionGaps: [{ source: "firehose", time: at, summary: "Unreadable spool line" }],
+    attentionEvent: async (id) => ({ id, source: "codex", category: "meta", time: at, summary: "captured warning" }),
+  });
+  const pane = () => document.querySelector<HTMLElement>(".detail")!;
+  const badge = () => document.querySelector<HTMLElement>(".nav-btn[data-panel=doctor] .nav-count")!;
+  await vi.waitFor(() => expect(badge().textContent).toBe("2"));
+  b.nav("doctor").click();
+  await vi.waitFor(() => expect(document.querySelectorAll(".content .doctor-warnings .capture-warning")).toHaveLength(2));
+  const inspect = (label: string) => [...document.querySelectorAll<HTMLButtonElement>(".content .doctor-warnings button")].find((x) => x.textContent === label)!;
+  inspect("Inspect capture gap").click();
+  expect(pane().classList.contains("open")).toBe(true);
+  expect(pane().textContent).toContain("Unreadable spool line");
+  pane().classList.remove("open");
+  inspect("Inspect warning").click();
+  await vi.waitFor(() => expect(pane().classList.contains("open")).toBe(true));
 });
 
 // ---- the toolbar (MS-1, MS-7, MS-8) -------------------------------------------------------------------------------

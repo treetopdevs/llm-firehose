@@ -93,13 +93,13 @@ const selectionPanelFor = (name: string) =>
   name === "fleet" ? fleetPanel : name === "sessions" || (name === "project" && projectPanel.encoding() === "sessions") ? sessionsPanel : undefined;
 /** The selected row of the panel being shown, if it has one. */
 const selectedKeyHere = (): string | undefined => selectionPanelFor(active)?.selectedKey();
-/** The shown panel's selectable rows, when it has any. */
-const selectableHere = (): string[] => selectionPanelFor(active)?.selectableKeys() ?? [];
+/** The shown panel's drawn rows, when it has any: a selection's place in the list is counted among what is on screen. */
+const visibleHere = (): string[] => selectionPanelFor(active)?.visibleKeys() ?? [];
 /** What a history entry keeps of the selection: its key and its place in the list. */
 function selectionState(): { sel?: string; at?: number } {
   const sel = selectedKeyHere();
   if (!sel) return {};
-  const at = selectableHere().indexOf(sel);
+  const at = visibleHere().indexOf(sel);
   return at >= 0 ? { sel, at } : { sel };
 }
 
@@ -217,8 +217,8 @@ const projectPanel = createProject({
   },
   projectLabel: (id) => fleetLabels[id],
   onEncoding: () => syncTransport(),
-  // The Sessions chip (MS-9) shows the Worktree list in place. Leaving keeps its selection for the history entry, as every panel does; the next activate() starts a visit clean.
-  sessions: { root: sessionsPanel.root, activate: () => sessionsPanel.activate({ needsOnly: false }), deactivate: () => {} },
+  // The Sessions chip (MS-9) shows the Worktree list in place. Leaving closes the pane its selection filled but keeps the selection for the history entry (clearing it would erase that); the next activate() starts a visit clean.
+  sessions: { root: sessionsPanel.root, activate: () => sessionsPanel.activate({ needsOnly: false }), deactivate: () => { if (inspectorShowing(detailPane)) renderDetail(detailPane, null, () => {}); } },
 });
 projectPanel.setConnected(false);
 // The lens panels Fleet hosts as its Strata and Patches encodings.
@@ -568,8 +568,10 @@ function restoreSelection(name: PanelName, sel: string | undefined, at: number |
     // A redraw that dropped our pick (its row is gone) leaves nothing selected; a different row is the user's own choice.
     const cur = panel.selectedKey();
     if (ours !== undefined && cur !== undefined && cur !== ours) { end(); return true; }
-    const keys = panel.selectableKeys();
-    const pick = keys.includes(sel) ? sel : keys.length > 0 ? keys[Math.min(Math.max(at ?? 0, 0), keys.length - 1)] : undefined;
+    // The exact key may be a worktree behind a collapsed row (it is then revealed); only the fallback is by what is drawn,
+    // so a project is never opened because another row disappeared.
+    const keys = panel.visibleKeys();
+    const pick = panel.selectableKeys().includes(sel) ? sel : keys.length > 0 ? keys[Math.min(Math.max(at ?? 0, 0), keys.length - 1)] : undefined;
     if (pick === undefined) return false;
     if (panel.selectedKey() !== pick) panel.selectKey(pick);
     ours = panel.selectedKey();
@@ -885,7 +887,7 @@ attentionPanel.onCount(syncSidebar);
 // inspection like Needs you's Inspect does, so a delayed fetch is dropped once the user has moved on.
 attentionPanel.onCount(() => { if (active === "doctor") panels.doctor.redraw(); });
 panels.doctor.root.addEventListener("click", (e) => {
-  if ((e.target as Element | null)?.closest?.('[data-key^="warning:"]')) inspectClickGeneration = navGeneration;
+  if ((e.target as Element | null)?.closest?.('[data-key^="warning:"], [data-key^="gap:"]')) inspectClickGeneration = navGeneration;
 }, true);
 syncSidebar();
 

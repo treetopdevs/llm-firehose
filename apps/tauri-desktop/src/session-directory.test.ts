@@ -43,6 +43,13 @@ describe("session directory", () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  test("an entry without last_time (an /attention row) does not erase the one a /sessions row gave", () => {
+    const d = createSessionDirectory();
+    d.remember([s({ first_time: "2026-11-01T00:00:00Z", last_time: "2026-11-02T00:00:00Z" })]);
+    d.remember([s()]);
+    expect(d.lookup({ id: A, source: "codex" })?.last_time).toBe("2026-11-02T00:00:00Z");
+  });
+
   test("an entry without first_time neither notifies nor erases the one that had it", () => {
     const d = createSessionDirectory();
     d.remember([s({ first_time: "2026-11-01T00:00:00Z" })]);

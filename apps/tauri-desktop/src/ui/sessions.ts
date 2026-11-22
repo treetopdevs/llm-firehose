@@ -43,6 +43,8 @@ export type SessionsPanel = {
   selectKey(key: string | undefined): void;
   /** The keys a selection can take, in the order the rows are drawn (the shell restores by key, else by place in this list). */
   selectableKeys(): string[];
+  /** The keys of the rows drawn now; the same list here, since every row is drawn. */
+  visibleKeys(): string[];
 };
 
 /** Rows drawn per page; the rest wait behind a "Show N more" button. */
@@ -765,6 +767,7 @@ export function createSessions(
     clearSelection: () => pick(undefined),
     selectedKey: () => picked,
     selectableKeys: () => [...listBox.querySelectorAll(ITEMS)].map(itemKey),
+    visibleKeys: () => [...listBox.querySelectorAll(ITEMS)].map(itemKey),
     selectKey(key) {
       picked = key;
       markPicked();

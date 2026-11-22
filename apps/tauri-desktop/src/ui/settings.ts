@@ -92,7 +92,7 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
     return el(
       "div",
       { class: "settings-sound" },
-      el("label", { class: "mode-option", for: "replay-sound" }, box, el("strong", {}, "replay sound"), el("span", { class: "dim" }, " — quiet local tones while a session replays in the Score")),
+      el("label", { class: "mode-option", for: "replay-sound" }, box, el("strong", {}, "replay sound"), el("span", { class: "dim" }, ": quiet local tones while a session replays in the Score")),
       status,
       el("p", { class: "dim" }, `Tones: ${tones}; other 196 Hz. At most one latest crossed observation every 150 ms; dense events and first or final observations may be silent. This is not an error detector. Tones describe captured categories, not success. Leaving the Score, hiding the page or opening another session switches sound off until the next play.`),
     );

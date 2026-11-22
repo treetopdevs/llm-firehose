@@ -485,7 +485,7 @@ export function createAttention(options: AttentionOptions) {
         category: "meta",
         name: "capture.gap",
         severity: "warn",
-        summary: "Capture warning — not recorded in history",
+        summary: "Capture warning: not recorded in history",
         payload: { message: gap.summary },
       });
     },

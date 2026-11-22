@@ -36,9 +36,9 @@ export function createSessionDirectory(
   function put(s: SessionLike, gen: number): boolean {
     const k = keyOf(s.source, s.id);
     const prev = entries.get(k);
-    // An entry without first_time or title (an /attention row) never erases one a /sessions row supplied.
+    // An entry without first_time, last_time or title (an /attention row) never erases one a /sessions row supplied.
     const merged = { ...s };
-    for (const f of ["first_time", "title"] as const)
+    for (const f of ["first_time", "last_time", "title"] as const)
       if (merged[f] === undefined && prev?.s[f] !== undefined) merged[f] = prev.s[f];
     entries.set(k, { s: merged, gen });
     let set = byId.get(s.id);

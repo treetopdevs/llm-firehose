@@ -90,6 +90,8 @@ export interface FleetPanel {
   selectKey(key: string | undefined): void;
   /** The keys a selection can take, in drawn order (the shell restores by key, else by place in this list). */
   selectableKeys(): string[];
+  /** The keys of the rows that are drawn now (a collapsed project hides its worktrees), in drawn order; a selection falls back by place in this list. */
+  visibleKeys(): string[];
   /** Puts keyboard focus on the row a selection key names, when it is drawn. */
   focusKey(key: string): void;
   /** The stable fork order for a repository (Project seeds its lanes from it); undefined before the first load or for an unknown repo. */
@@ -330,6 +332,11 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (!row || !row.forks.some((f) => f.id === wtId)) return;
     openChoice.set(repo, true);
     if (!childrenOf(row.forks).some((f) => f.id === wtId)) showAll.add(repo);
+  }
+  /** The worktrees a row draws under its head: none collapsed, the needs-you and working ones open, all of them after Show all. */
+  function drawnForks(row: FleetRow): FleetFork[] {
+    if (row.forks.length === 0 || !isOpen(row.id)) return [];
+    return showAll.has(row.id) ? stripOf(row.forks, true).shown : childrenOf(row.forks);
   }
   function setOpen(row: FleetRow, open: boolean): void {
     openChoice.set(row.id, open);
@@ -686,7 +693,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setAttr(disclose, "title", open ? "Collapse worktrees" : "Show the worktrees that need you or are working");
     setText(disclose, open ? "▾" : "▸");
     setClass(node, "expanded", open);
-    const shown = open ? (all ? stripOf(row.forks, true).shown : childrenOf(row.forks)) : [];
+    const shown = drawnForks(row);
     const kidEntries: Array<{ fork: FleetFork; refs: ForkRefs }> = [];
     const forkNodes: Element[] = shown.map((f) => {
       const k = keyed("fork:" + row.id + "|" + f.id, () => el("div", { class: "fleet-fork", tabindex: "0", role: "button" }), seen);
@@ -1257,6 +1264,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     selectedKey: () => (selNeed !== undefined ? `need:${selNeed}` : selFork !== undefined ? `fork:${selFork}` : selRow !== undefined ? `row:${selRow}` : undefined),
     // Every row, then its worktrees (revealed on demand) and its needs, in the order they are drawn.
     selectableKeys: () => result.rows.flatMap((r) => [`row:${r.id}`, ...stripOf(r.forks, true).shown.map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
+    visibleKeys: () => result.rows.flatMap((r) => [`row:${r.id}`, ...drawnForks(r).map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
     selectKey(k) {
       if (k === undefined) { this.clearSelection(); return; }
       const at = k.indexOf(":");
