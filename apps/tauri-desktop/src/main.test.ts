@@ -1429,6 +1429,16 @@ test("transport: altitude follows the displayed panel, not scope.session", async
   expect(tpRange()).toBe("Live · whole session");
 });
 
+test("transport: a session older than the held range reads Session · whole (MS-7)", async () => {
+  const old = sessionRow(S1, { source: S1_SOURCE, first_time: iso(NOW - 3 * 86_400_000), last_time: iso(NOW - 2 * 86_400_000) });
+  const b = await boot({ worktrees: twoRepos(), sessions: [old] });
+  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  tpPreset("24h").click();
+  b.scope.narrow({ session: { id: S1, source: S1_SOURCE } });
+  b.nav("session").click();
+  await vi.waitFor(() => expect(tpRange()).toBe("Session · whole"));
+});
+
 test("transport: preset carry rules", async () => {
   const b = await boot({
     worktrees: twoRepos(), sessions: [sessionRow("s-n1")],

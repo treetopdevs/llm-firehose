@@ -385,7 +385,17 @@ export const TRANSPORT_PANELS: ReadonlySet<string> = new Set(["project", "fleet"
 const transport = createTransport({
   store: scope,
   effectiveLiveSpan: () => (active === "fleet" ? fleetPanel.effectiveLiveSpan() : liveSpanOf(scope.get())),
+  sessionSpan: (ref) => {
+    const s = sessionDirectory.lookup(ref);
+    const t = (v: string | undefined): number | undefined => {
+      const n = v ? Date.parse(v) : NaN;
+      return Number.isFinite(n) ? n : undefined;
+    };
+    return s ? { from: t(s.first_time), to: t(s.last_time) } : undefined;
+  },
 });
+// A session named late (the directory fills from /sessions and /attention) can change whether the range covers it.
+sessionDirectory.subscribe(() => transport.refresh());
 
 /** Whether the shell transport is shown: scope-window panels, minus Fleet's host encodings (Events, Strata, Patches). */
 const transportShown = (): boolean => TRANSPORT_PANELS.has(active) && !(active === "fleet" && isHostEncoding(fleetPanel.encoding));

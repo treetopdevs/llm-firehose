@@ -73,6 +73,8 @@ export interface ScopeResolver {
 
 export interface ScopeStore {
   get(): Scope;
+  /** The range kept while a session is in scope (put back when it is left); undefined when none is held. */
+  held(): ScopeWindow | undefined;
   altitude(): Altitude;
   set(next: Scope): void;
   narrow(patch: ScopePatch): void;
@@ -206,6 +208,7 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
 
   const store: ScopeStore = {
     get: () => current,
+    held: () => (current.session ? outerWindow : undefined),
     altitude() {
       if (current.session) return 'session';
       if (current.worktree) return 'worktree';
@@ -407,10 +410,10 @@ export function formatRange(
   w: ScopeWindow,
   now: number,
   liveSpanMs?: number,
-  opts?: { wholeSession?: boolean },
+  opts?: { wholeSession?: boolean; /** MS-7: the held range does not cover the session. */ outside?: boolean },
 ): { text: string; title: string } {
   if (w === 'live' && opts?.wholeSession) {
-    const t = 'Live · whole session';
+    const t = opts.outside ? 'Session · whole' : 'Live · whole session';
     return { text: t, title: t };
   }
   const span = w === 'live' ? (validSpan(liveSpanMs) ? liveSpanMs : DEFAULT_LIVE_SPAN_MS) : w.to - w.from;

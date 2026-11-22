@@ -23,6 +23,8 @@ export interface TransportDeps {
   store: ScopeStore;
   now?: () => number;
   effectiveLiveSpan?: () => number;
+  /** The time span (ms) of the session in scope, as far as it is known; used to tell when the held range does not cover it. */
+  sessionSpan?: (ref: NonNullable<Scope['session']>) => { from?: number; to?: number } | undefined;
 }
 
 export interface Transport {
@@ -96,8 +98,16 @@ export function createTransport(deps: TransportDeps): Transport {
 
   // Readout and tooltip use the span the panel actually draws (the effective span that
   // Hold and scrubbing also use), so a preference the panel ignores is never claimed.
+  /** MS-7: while a session is shown, whether the range held from before it leaves the session partly or wholly out. */
+  function outside(s: Scope): boolean {
+    const held = store.held();
+    const ext = s.session ? deps.sessionSpan?.(s.session) : undefined;
+    if (!held || !ext || (ext.from === undefined && ext.to === undefined)) return false;
+    const r = resolveRange(held, now(), held === 'live' ? span() : undefined);
+    return (ext.from !== undefined && ext.from < r.from) || (ext.to !== undefined && ext.to > r.to) || (ext.from !== undefined && ext.from > r.to);
+  }
   function readout(s: Scope): { text: string; title: string } {
-    if (session) return formatRange(s.window, now(), s.liveSpanMs, { wholeSession: true });
+    if (session) return formatRange(s.window, now(), s.liveSpanMs, { wholeSession: true, outside: outside(s) });
     const drawn = formatRange(s.window, now(), span());
     if (s.window !== 'live') return drawn;
     const text = s.liveSpanMs !== undefined ? `Live · last ${formatSpan(span())}` : 'Live';
@@ -110,7 +120,7 @@ export function createTransport(deps: TransportDeps): Transport {
   function paint(): void {
     const s = store.get();
     const g = geometry(s);
-    const key = JSON.stringify([s.window, s.liveSpanMs ?? null, span(), session, g.left.toFixed(3), g.width.toFixed(3), g.pct]);
+    const key = JSON.stringify([s.window, s.liveSpanMs ?? null, span(), session, session && outside(s), g.left.toFixed(3), g.width.toFixed(3), g.pct]);
     if (key === lastKey) return;
     lastKey = key;
     const live = s.window === 'live';

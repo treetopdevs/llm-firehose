@@ -67,6 +67,22 @@ test('session id or source change resets window unless patch carries window', ()
 });
 
 // MS-7: the range is the user's; a session's zoom is local to the session.
+test('held() names the range kept while a session is in scope', () => {
+  const s = createScope();
+  expect(s.held()).toBeUndefined();
+  s.narrow({ window: { from: 100, to: 900 } });
+  expect(s.held()).toBeUndefined();
+  s.narrow({ session: { id: 'a' } });
+  expect(s.held()).toEqual({ from: 100, to: 900 });
+  s.narrow({ session: { id: 'b' } });
+  expect(s.held()).toEqual({ from: 100, to: 900 });
+  s.narrow({ session: undefined });
+  expect(s.held()).toBeUndefined();
+  const w = createScope();
+  w.set({ session: { id: 'a' }, window: 'live' });
+  expect(w.held()).toBeUndefined(); // installed whole: nothing to restore
+});
+
 describe('the range set before a session comes back when the session is left', () => {
   const R = { from: 100, to: 900 };
   const ZOOM = { from: 300, to: 400 };
@@ -443,6 +459,8 @@ describe('window helpers', () => {
     expect(formatRange('live', now).text).toBe('Live');
     expect(formatRange('live', now, 7_200_000).text).toBe('Live · last 2 h');
     expect(formatRange('live', now, undefined, { wholeSession: true }).text).toBe('Live · whole session');
+    // MS-7: a session the held range does not cover reads "Session · whole".
+    expect(formatRange('live', now, undefined, { wholeSession: true, outside: true }).text).toBe('Session · whole');
     const w = { from: new Date(2026, 9, 31, 9, 0).getTime(), to: new Date(2026, 9, 31, 17, 0).getTime() };
     const r = formatRange(w, now);
     expect(r.text).toBe('Oct 31, 09:00 › Oct 31, 17:00 · 8 h');

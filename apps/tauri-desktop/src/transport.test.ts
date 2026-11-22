@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { isEscapeClaimed } from './escape';
 import { PRESETS, createScope, formatRange, liveSpanOf, presetWindow, type ScopeStore } from './scope';
-import { createTransport, type Transport } from './transport';
+import { createTransport, type Transport, type TransportDeps } from './transport';
 
 const NOW = Date.UTC(2026, 10, 1, 12, 0, 0);
 const H = 3_600_000;
@@ -19,9 +19,9 @@ const flushRaf = (): void => {
 };
 
 let made: Transport[] = [];
-function setup(opts: { span?: () => number; store?: ScopeStore } = {}) {
+function setup(opts: { span?: () => number; store?: ScopeStore; sessionSpan?: TransportDeps['sessionSpan'] } = {}) {
   const store = opts.store ?? createScope();
-  const t = createTransport({ store, now: () => NOW, effectiveLiveSpan: opts.span ?? (() => liveSpanOf(store.get())) });
+  const t = createTransport({ store, now: () => NOW, effectiveLiveSpan: opts.span ?? (() => liveSpanOf(store.get())), sessionSpan: opts.sessionSpan });
   made.push(t);
   document.body.append(t.root);
   const track = t.root.querySelector<HTMLElement>('.transport-track')!;
@@ -188,6 +188,47 @@ describe('altitude from the displayed panel', () => {
     store.subscribe(fn);
     q(t, '.transport-live').click();
     expect(store.get().window).toBe('live');
+  });
+  describe('Session · whole (MS-7)', () => {
+    const inSession = (span: { from?: number; to?: number } | undefined, held: 'live' | { from: number; to: number }) => {
+      let known = span;
+      const { store, t } = setup({ sessionSpan: () => known });
+      store.narrow({ window: held });
+      store.narrow({ session: { id: 's' } });
+      t.setPanel('session');
+      return { store, t, learn: (s: typeof span) => { known = s; t.refresh(); } };
+    };
+    test('a session the held range does not cover reads Session · whole', () => {
+      const { t } = inSession({ from: NOW - 3 * D, to: NOW - 2 * D }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+      expect(q(t, '.transport-trigger').getAttribute('aria-label')).toBe('Time range: Session · whole');
+    });
+    test('a session inside the held range keeps Live · whole session', () => {
+      const { t } = inSession({ from: NOW - 3 * H, to: NOW - H }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+    });
+    test('the held live range counts as the last live span', () => {
+      const { t } = inSession({ from: NOW - 10 * D, to: NOW - 9 * D }, 'live');
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('no known extent, or a session installed whole, never claims the range failed to cover', () => {
+      const { t } = inSession(undefined, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+      const w = createScope();
+      const t2 = createTransport({ store: w, now: () => NOW, sessionSpan: () => ({ from: NOW - 30 * D, to: NOW - 29 * D }) });
+      made.push(t2);
+      w.set({ session: { id: 's' }, window: 'live' });
+      t2.setPanel('session');
+      expect(q(t2, '.transport-range').textContent).toBe('Live · whole session');
+    });
+    test('an extent that arrives late repaints, and leaving the session puts the range back', () => {
+      const { store, t, learn } = inSession(undefined, { from: NOW - D, to: NOW });
+      learn({ from: NOW - 5 * D, to: NOW - 4 * D });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+      t.setPanel('project');
+      store.narrow({ session: undefined });
+      expect(q(t, '.transport-range').textContent).not.toContain('whole');
+    });
   });
   test('navigating away re-enables controls even though session is retained', () => {
     for (const panel of ['project', 'fleet']) {
