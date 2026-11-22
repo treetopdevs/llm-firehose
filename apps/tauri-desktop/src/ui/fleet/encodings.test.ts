@@ -138,9 +138,10 @@ describe("lane stripe identity", () => {
   test("stays the data-derived session hue, never a state token", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("src/ui/fleet/encodings.ts", "utf8");
-    expect(src).toContain("hsl(${sessionHue(lane.id)} 55% 55%)");
+    expect(src).toContain("hsl(${sessionHue(lane.id)} var(--hue-s) var(--hue-l))");
     expect(src).not.toMatch(/#[0-9a-f]{3,6}\b/i);
     const stripe = src.split("\n").find((l) => l.includes("width: 3"))!;
-    expect(stripe).not.toMatch(/var\(--/);
+    // Only the theme's saturation and lightness; the hue itself is data.
+    expect(stripe).not.toMatch(/var\(--(?!hue-[sl]\))/);
   });
 });
