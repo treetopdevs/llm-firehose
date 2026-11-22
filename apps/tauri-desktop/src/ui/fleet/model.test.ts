@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { AttentionSession, WorktreeLifetimeView } from "../../api";
 import { FIXTURE_ROWS, NOW, att, iso, row } from "./model.fixtures";
 import {
-  ENCODINGS, FORK_GLYPH, GLYPH_CAP, IDLE_MARK, NOREPO_KEY, buildFleet, displayRepoLabel, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, signature, stripOf,
+  ENCODINGS, FORK_GLYPH, GLYPH_CAP, IDLE_MARK, NOREPO_KEY, buildFleet, describeRest, displayRepoLabel, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, signature, stripOf, summarize,
 } from "./model";
 import type { FleetInput, FleetNeed } from "./model";
 import { forkAriaLabel } from "./model";
@@ -485,5 +485,65 @@ describe("fork aria labels carry idle and needs", () => {
     expect(forkAriaLabel({ ...f, needs: 1 })).toBe(`${f.ariaLabel}, 1 needs you`);
     expect(forkAriaLabel({ ...f, needs: 0 })).toBe(f.ariaLabel);
     expect(forkAriaLabel({ ...f, needs: 2 })).not.toMatch(/cost|12/);
+  });
+});
+
+describe("worktree status and the row summary (MS-10)", () => {
+  const mk = (id: string, state: WorktreeLifetimeView["state"], extra: Partial<WorktreeLifetimeView> = {}) =>
+    row({ repo_id: "r", worktree_id: id, label: `/x/${id}`, state, last_time: iso(NOW - MIN), ...extra });
+  const rowOf = (wts: WorktreeLifetimeView[], sessions: AttentionSession[] = []) => buildFleet(input({ worktrees: wts, sessions })).rows[0]!;
+
+  test("a worktree is needs you, working, idle, unknown, landed, never diverged or gone, in that order of claim", () => {
+    const r = rowOf(
+      [mk("n", "open"), mk("w", "open"), mk("i", "open", { last_time: iso(NOW - 5 * 60 * MIN) }), mk("u", "unknown"), mk("l", "landed"), mk("d", "never_diverged"), mk("g", "gone", { last_observed: iso(NOW - MIN) })],
+      [att({ id: "s1", repo_id: "r", worktree_id: "n", waitMs: MIN }), att({ id: "s2", repo_id: "r", worktree_id: "w" })],
+    );
+    const kinds = Object.fromEntries(r.forks.map((f) => [f.id, f.kind]));
+    expect(kinds).toEqual({ n: "needs", w: "working", i: "idle", u: "unknown", l: "landed", d: "never_diverged", g: "gone" });
+  });
+
+  test("an open worktree with no evidence time is unknown, never idle, and says why", () => {
+    const r = rowOf([mk("blank", "open", { last_time: "", sessions: [] }), mk("bad", "open", { last_time: "not a time", sessions: [] })]);
+    for (const f of r.forks) {
+      expect(f.kind).toBe("unknown");
+      expect(f.reason).toBe("no activity time captured");
+      expect(f.idle).toBe(false);
+    }
+  });
+
+  test("an unknown state carries the daemon's reason, else a plain one", () => {
+    const r = rowOf([mk("a", "unknown", { state_reason: "git not readable" }), mk("b", "unknown")]);
+    expect(r.forks.find((f) => f.id === "a")!.reason).toBe("git not readable");
+    expect(r.forks.find((f) => f.id === "b")!.reason).toBe("state could not be determined");
+  });
+
+  test("the summary counts worktrees by kind, omits zeros, and reads like the mock", () => {
+    const wts = [mk("n", "open"), ...Array.from({ length: 3 }, (_, i) => mk(`w${i}`, "open")), ...Array.from({ length: 4 }, (_, i) => mk(`i${i}`, "open", { last_time: iso(NOW - 9 * 60 * MIN) })), ...Array.from({ length: 2 }, (_, i) => mk(`u${i}`, "unknown"))];
+    const sessions = [att({ id: "s0", repo_id: "r", worktree_id: "n", waitMs: MIN }), ...[0, 1, 2].map((i) => att({ id: `sw${i}`, repo_id: "r", worktree_id: `w${i}` }))];
+    const s = summarize(rowOf(wts, sessions));
+    expect(s.text).toBe("1 needs you · 3 working · 4 idle · 2 unknown");
+    expect(s.parts.map((p) => p.kind)).toEqual(["needs", "working", "idle", "unknown"]);
+  });
+
+  test("a row with no worktree data says so instead of 0", () => {
+    const r = buildFleet(input({ worktrees: [], sessions: [att({ id: "x", repo_id: "ghost", waitMs: MIN })] })).rows[0]!;
+    expect(summarize(r).text).toBe("no worktree data");
+  });
+
+  test("a known project with no worktrees says none", () => {
+    const r = rowOf([mk("only", "gone", { last_observed: iso(NOW) })]);
+    expect(summarize({ ...r, forks: [] }).text).toBe("no worktrees");
+  });
+
+  test("the rest of a row is counted by kind, for the Show all control", () => {
+    const wts = [mk("n", "open"), mk("i0", "open", { last_time: iso(NOW - 9 * 60 * MIN) }), mk("i1", "open", { last_time: iso(NOW - 9 * 60 * MIN) }), mk("u", "unknown")];
+    const r = rowOf(wts, [att({ id: "s", repo_id: "r", worktree_id: "n", waitMs: MIN })]);
+    expect(describeRest(r.forks.filter((f) => f.kind !== "needs"))).toBe("2 idle · 1 unknown");
+  });
+
+  test("needs you and working worktrees rank ahead of the rest in the strip", () => {
+    const wts = [mk("a-idle", "open", { last_time: iso(NOW - 9 * 60 * MIN), ahead: 1 }), mk("b-work", "open"), mk("c-need", "open"), mk("d-unk", "unknown")];
+    const r = rowOf(wts, [att({ id: "s1", repo_id: "r", worktree_id: "c-need", waitMs: MIN }), att({ id: "s2", repo_id: "r", worktree_id: "b-work" })]);
+    expect(stripOf(r.forks, false).shown.map((f) => f.id)).toEqual(["c-need", "b-work", "a-idle", "d-unk"]);
   });
 });

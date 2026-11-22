@@ -5,6 +5,8 @@
 import { ApiError, attention as fetchAttention, sessions as fetchSessions, worktrees as fetchWorktrees } from "../../api";
 import type { AttentionSession, AttentionSnapshot, FirehoseEvent, SessionSummary, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
+import { onSelectOpen } from "../../select-open";
+import type { Inspected } from "../inspector";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
 import type { KeyBinding } from "../../keys";
@@ -24,8 +26,8 @@ import type { SessionDirectory } from "../../session-directory";
 import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
 import { FORK_GLYPH, IDLE_MARK, NEEDS_MARK, NO_DATA_MARK, NO_PROJECT_MARK } from "../../glyphs";
-import { ENCODINGS, NOREPO_KEY, isHostEncoding, buildFleet, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf } from "./model";
-import type { Encoding, HostEncoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
+import { ENCODINGS, KIND_WORD, NOREPO_KEY, isHostEncoding, buildFleet, describeRest, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf, summarize } from "./model";
+import type { Encoding, FleetFork, HostEncoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
 export type { Encoding, HostEncoding } from "./model";
 
@@ -64,6 +66,8 @@ export interface FleetDeps {
   actions?: ActionsUi;
   /** The app-owned repo-roots store (graph resolver raw labels). */
   roots?: Roots;
+  /** A selection fills the inspector (null clears it). Selecting never navigates. */
+  inspect?: (s: Inspected | null) => void;
 }
 
 export interface FleetPanel {
@@ -76,6 +80,12 @@ export interface FleetPanel {
   encoding: Encoding;
   /** The trailing span the live view draws now: the user-set span for Lanes, else the default. */
   effectiveLiveSpan(): number;
+  /** Drops the selection (and the inspector it filled). */
+  clearSelection(): void;
+  /** The key of the selected row, need or worktree, for the history entry. */
+  selectedKey(): string | undefined;
+  /** Selects by key once the rows are drawn; a key that is gone falls to the nearest surviving row. */
+  selectKey(key: string | undefined): void;
   /** The stable fork order for a repository (Project seeds its lanes from it); undefined before the first load or for an unknown repo. */
   forkOrder(repo: string): readonly string[] | undefined;
 }
@@ -163,6 +173,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let encoding: Encoding = "map";
   let selRow: string | undefined;
   let selNeed: string | undefined;
+  /** A selected worktree, as "repo\u0000worktree". */
+  let selFork: string | undefined;
+  /** What the inspector was last given, so a redraw only speaks when the selection or its data changed. */
+  let inspected: string | undefined;
   let connected = true;
   let failedOffline = false;
   let active = false;
@@ -262,6 +276,96 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     nav("score", { project: s?.repo_id || undefined, worktree: s?.worktree_id || undefined, session: source !== undefined ? { id, source } : { id } });
   }
 
+  // ---- selection and the inspector (MS-8) --------------------------------
+
+  const forkSel = (repo: string, wtId: string): string => `${repo}${SEP}${wtId}`;
+  function selectRow(id: string): void { selRow = id; selNeed = undefined; selFork = undefined; recompute(); }
+  function selectNeed(k: string): void { selNeed = k; selRow = undefined; selFork = undefined; recompute(); }
+  function selectFork(repo: string, wtId: string): void { selFork = forkSel(repo, wtId); selRow = undefined; selNeed = undefined; recompute(); }
+  function dropSelection(): void { selRow = undefined; selNeed = undefined; selFork = undefined; }
+
+  const statusOfFork = (f: FleetFork): Inspected["status"] => {
+    const mark = f.kind === "needs" ? NEEDS_MARK : f.kind === "working" ? FORK_GLYPH.open : f.kind === "idle" ? IDLE_MARK : f.kind === "unknown" ? FORK_GLYPH.unknown : FORK_GLYPH[f.state];
+    return { word: KIND_WORD[f.kind], mark, ...(f.reason ? { reason: f.reason } : {}), ...(f.kind === "needs" ? { needs: true } : {}) };
+  };
+
+  function inspectedNow(now: number): Inspected | undefined {
+    if (selNeed !== undefined) {
+      const n = result.needs.find((x) => x.key === selNeed);
+      if (!n) return undefined;
+      const row = result.rows.find((r) => r.id === n.repoId);
+      return {
+        kind: "session", key: n.key, title: n.label,
+        status: { word: n.stale ? "needs you (stale)" : "needs you", mark: NEEDS_MARK, needs: true, ...(n.stale ? { reason: "no recent activity captured; the request is still pending" } : {}) },
+        facts: [
+          { label: "waiting", value: formatAge(n.dwellMs) },
+          { label: "asked", value: n.summary || undefined },
+          { label: "project", value: row?.label },
+          { label: "agent", value: n.source },
+        ],
+        id: { label: "session id", value: n.id },
+        open: { label: "Open session", run: () => openNeed(n) },
+        actions: actionsForSession({ source: n.source, id: n.id }),
+      };
+    }
+    if (selFork !== undefined) {
+      const [repo, wtId] = selFork.split(SEP);
+      const row = result.rows.find((r) => r.id === repo);
+      const f = row?.forks.find((x) => x.id === wtId);
+      if (!row || !f) return undefined;
+      const view = (wt ?? []).find((w) => w.repo_id === repo && w.worktree_id === wtId);
+      return {
+        kind: "worktree", key: selFork, title: f.short || f.label,
+        status: statusOfFork(f),
+        facts: [
+          { label: "project", value: row.label },
+          { label: "state", value: f.state },
+          { label: "last activity", value: f.lastMs > 0 ? formatAge(Math.max(0, now - f.lastMs)) : undefined },
+          { label: "needs you", value: f.needs > 0 ? String(f.needs) : "none" },
+          { label: "path", value: f.label, mono: true },
+        ],
+        open: { label: "Open worktree sessions", run: () => nav("sessions", { project: repo, worktree: wtId, session: undefined, cell: undefined }) },
+        actions: view ? actionsForWorktree(view) : undefined,
+      };
+    }
+    if (selRow !== undefined) {
+      const row = result.rows.find((r) => r.id === selRow);
+      if (!row) return undefined;
+      const sum = summarize(row);
+      const unknown = !row.known && !row.noRepo;
+      const navigable = row.known && !row.noRepo;
+      return {
+        kind: "project", key: row.id, title: row.label,
+        status: row.needsCount > 0
+          ? { word: needYouCount(row.needsCount), mark: NEEDS_MARK, needs: true }
+          : unknown
+            ? { word: "unknown", mark: FORK_GLYPH.unknown, reason: "seen in the needs-you snapshot only: no worktree data captured for this project" }
+            : { word: row.noRepo ? "no project" : sum.text, mark: row.noRepo ? NO_PROJECT_MARK : FORK_GLYPH.open },
+        facts: [
+          { label: "worktrees", value: row.known ? sum.text : undefined },
+          { label: "longest wait", value: row.needsCount > 0 ? formatAge(row.longestDwellMs) : "none" },
+          { label: "last activity", value: row.lastMs > 0 ? formatAge(Math.max(0, now - row.lastMs)) : undefined },
+        ],
+        ...(row.noRepo ? {} : { id: { label: "project id", value: row.id } }),
+        open: { label: "Open project", run: () => { const r = result.rows.find((x) => x.id === row.id); if (r && navigable) openRow(r); } },
+        actions: row.noRepo ? undefined : repoActions(row.id),
+      };
+    }
+    return undefined;
+  }
+
+  /** Tells the inspector what is selected, once per change; nothing is ever shown unasked. */
+  function syncInspector(now: number): void {
+    if (!deps.inspect) return;
+    const wants = selRow !== undefined || selNeed !== undefined || selFork !== undefined;
+    let subject = wants && encoding === "map" ? inspectedNow(now) : undefined;
+    if (wants && !subject && encoding === "map" && (att !== undefined || wt !== undefined) && !inflight) { dropSelection(); subject = undefined; }
+    const sig = subject ? JSON.stringify([subject.kind, subject.key, subject.title, subject.status, subject.facts, subject.id, subject.open.label, (subject.actions ?? []).map((a) => a.id)]) : undefined;
+    if (sig === inspected) return;
+    inspected = sig;
+    try { deps.inspect(subject ?? null); } catch { /* a sink must not break the view */ }
+  }
+
   // ---- derivation -------------------------------------------------------
 
   const resolveLabel = (id: string): string | undefined => store.resolver()?.labels({ project: id, window: "live" } as Scope).project;
@@ -287,7 +391,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     renderStatus();
     syncFlags();
     syncButtons();
-    const key = [encoding, scopeKey(store.get()), selRow ?? "", selNeed ?? "", signature(result), encodingKey(now)].join("\u0001");
+    const key = [encoding, scopeKey(store.get()), selRow ?? "", selNeed ?? "", selFork ?? "", signature(result), encodingKey(now)].join("\u0001");
     if (force || key !== lastKey || encoding === "lanes" || encoding === "dwell") {
       lastKey = key;
       draw(now);
@@ -304,6 +408,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         }
       }
     }
+    syncInspector(now);
   }
 
   function emitLabels(): void {
@@ -419,7 +524,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         head.setAttribute("data-unit", "repo");
         head.setAttribute("data-repo", row.id);
       }
-      onActivate(head, () => { const r = result.rows.find((x) => x.id === row.id); if (r) openRow(r); });
+      onSelectOpen(
+        head,
+        {
+          select: () => selectRow(row.id),
+          open: () => { const r = result.rows.find((x) => x.id === row.id); if (r) openRow(r); },
+        },
+        { siblings: () => mapEntries.map((e) => e.refs.head) },
+      );
       node.append(head);
       // Same affordance as Project's header: one visible Actions button per
       // repository region, a sibling of the head (never nested in role=button).
@@ -446,8 +558,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setText(refs.glyph, row.noRepo ? NO_PROJECT_MARK : row.known ? FORK_GLYPH.open : FORK_GLYPH.unknown);
     setText(refs.label, row.label);
     setText(refs.needs, row.needsCount > 0 ? `${row.needsCount}?` : "");
-    setText(refs.counts, row.known ? `${row.openForks}${FORK_GLYPH.open} ${row.idleForks}${IDLE_MARK}` : "");
-    setAttr(refs.counts, "title", "open worktrees, idle worktrees (ahead of main, quiet for hours)" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
+    setText(refs.counts, summarize(row).text);
+    setAttr(refs.counts, "title", "worktrees by status; unknown means no recent evidence was captured" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
@@ -461,13 +573,18 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         k.node.append(fr.glyph, fr.label, fr.needs);
         forkRefs.set(k.node, fr);
         // A fork narrows project and worktree and descends to Sessions.
-        onActivate(k.node, () => nav("sessions", { project: row.id, worktree: f.id, session: undefined, cell: undefined }));
+        onSelectOpen(
+          k.node,
+          { select: () => selectFork(row.id, f.id), open: () => nav("sessions", { project: row.id, worktree: f.id, session: undefined, cell: undefined }) },
+          { siblings: () => [...k.node.parentElement?.querySelectorAll(".fleet-fork") ?? []] },
+        );
       }
       setAttr(k.node, "data-unit", "fork");
       setAttr(k.node, "data-repo", row.id);
       setAttr(k.node, "data-wt", f.id);
       setClass(k.node, "idle", f.idle);
       setClass(k.node, "current", sc.project === row.id && sc.worktree === f.id);
+      setClass(k.node, "selected", selFork === forkSel(row.id, f.id));
       for (const st of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${st}`, f.state === st);
       setAttr(k.node, "title", f.tooltip);
       setAttr(k.node, "aria-label", forkAriaLabel(f));
@@ -495,7 +612,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       }
       setText(m.node, open ? "collapse" : `+${strip.more}`);
       setAttr(m.node, "aria-expanded", open ? "true" : "false");
-      setAttr(m.node, "aria-label", open ? "collapse worktrees" : `show ${strip.more} more worktrees`);
+      const rest = describeRest(strip.hidden);
+      setAttr(m.node, "aria-label", open ? "collapse worktrees" : `show all ${strip.more} more worktrees${rest ? `: ${rest}` : ""}`);
+      setAttr(m.node, "title", open ? "" : rest);
       forkNodes.push(m.node);
     }
     reconcile(refs.forks, forkNodes);
@@ -507,7 +626,11 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         nr = { label: el("span", { class: "fleet-need-label" }), dwell: el("span", { class: "fleet-need-dwell" }), summary: el("span", { class: "fleet-need-summary" }) };
         k.node.append(el("span", { class: "fleet-need-mark", "aria-hidden": "true" }, NEEDS_MARK), nr.label, nr.dwell, nr.summary);
         needRefs.set(k.node, nr);
-        onActivate(k.node, () => { const cur = result.needs.find((x) => x.key === n.key); if (cur) openNeed(cur); });
+        onSelectOpen(
+          k.node,
+          { select: () => selectNeed(n.key), open: () => { const cur = result.needs.find((x) => x.key === n.key); if (cur) openNeed(cur); } },
+          { siblings: () => [...root.querySelectorAll(".fleet-need")] },
+        );
       }
       setAttr(k.node, "data-unit", "need");
       setAttr(k.node, "data-repo", n.repoId);
@@ -703,8 +826,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     nodes.clear();
     mapEntries = [];
     lastKey = undefined;
-    selRow = undefined; // a selection is only meaningful where it is drawn
-    selNeed = undefined;
+    dropSelection(); // a selection is only meaningful where it is drawn
+    syncInspector(nowFn());
     if (!active) return;
     recompute(true);
     if (next === "lanes") void loadSessions();
@@ -923,6 +1046,12 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const need = selNeed !== undefined && selectable ? result.needs.find((n) => n.key === selNeed) : undefined;
     const row = selRow !== undefined && encoding === "map" ? result.rows.find((r) => r.id === selRow) : undefined;
     if (need) { e.preventDefault(); openNeed(need); return true; }
+    if (selFork !== undefined && encoding === "map") {
+      const [repo, wtId] = selFork.split(SEP);
+      e.preventDefault();
+      nav("sessions", { project: repo, worktree: wtId, session: undefined, cell: undefined });
+      return true;
+    }
     if (row && row.known && !row.noRepo) { e.preventDefault(); openRow(row); return true; }
     return false;
   }
@@ -933,8 +1062,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const row = result.rows[Number(e.key) - 1];
     if (!row) return false;
     e.preventDefault();
-    selRow = row.id; selNeed = undefined;
-    recompute();
+    selectRow(row.id);
     if (t !== document.body) focusKey("row:" + row.id);
     return true;
   }
@@ -945,8 +1073,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const n = nextNeed(visibleNeeds(nowFn()), selNeed, e.key === "n" ? 1 : -1);
     e.preventDefault();
     if (!n) { notify(NO_NEEDS); return true; }
-    selNeed = n.key; selRow = undefined;
-    recompute();
+    selectNeed(n.key);
     if (t !== document.body) focusKey(needNodeKey(n.key));
     return true;
   }
@@ -979,8 +1106,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   // Capture phase so the claim lands before the shared bubble-phase ascent handler.
   function onEscapeCapture(e: KeyboardEvent): void {
     if (!LOCAL.fleetClear.matches(e) || !active || !root.isConnected || !isEscapeEligible(e)) return;
-    if (selRow === undefined && selNeed === undefined) return;
-    selRow = undefined; selNeed = undefined;
+    if (selRow === undefined && selNeed === undefined && selFork === undefined) return;
+    dropSelection();
     recompute();
     claimEscape(e);
   }
@@ -997,6 +1124,21 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   return {
     root,
     get encoding() { return encoding; },
+    clearSelection() {
+      if (selRow === undefined && selNeed === undefined && selFork === undefined) return;
+      dropSelection();
+      recompute();
+    },
+    selectedKey: () => (selNeed !== undefined ? `need:${selNeed}` : selFork !== undefined ? `fork:${selFork}` : selRow !== undefined ? `row:${selRow}` : undefined),
+    selectKey(k) {
+      if (k === undefined) { this.clearSelection(); return; }
+      const at = k.indexOf(":");
+      const kind = k.slice(0, at);
+      const id = k.slice(at + 1);
+      if (kind === "need") selectNeed(id);
+      else if (kind === "fork") { const [repo, wtId] = id.split(SEP); selectFork(repo!, wtId!); }
+      else selectRow(id);
+    },
     forkOrder: (repo: string): readonly string[] | undefined => order.forks[repo],
     effectiveLiveSpan: (): number => (encoding === "lanes" ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : DEFAULT_LIVE_SPAN_MS),
     set encoding(e: Encoding) { setEncoding(e); },
@@ -1021,6 +1163,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     },
     deactivate() {
       active = false;
+      inspected = undefined; // the shell closes the pane on a panel change; a kept selection is shown again on return
       deactivateHosts();
       unsub?.();
       unsub = undefined;

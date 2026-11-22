@@ -29,6 +29,12 @@ export const GONE_RECENT_MS = 7 * 24 * 3_600_000;
 const SPARK_BUCKETS = 14;
 const SPARK_BUCKET_MS = IDLE_AFTER_MS * 3; // 12h: fourteen buckets cover the seven-day live window
 
+/** What a worktree is doing, as far as captured evidence says (MS-10). Unknown is its own answer, never idle. */
+export type ForkKind = "needs" | "working" | "idle" | "unknown" | "landed" | "never_diverged" | "gone";
+/** The words a summary uses for each kind, in the order it lists them. */
+export const KIND_ORDER: readonly ForkKind[] = ["needs", "working", "idle", "unknown", "landed", "never_diverged", "gone"];
+export const KIND_WORD: Record<ForkKind, string> = { needs: "needs you", working: "working", idle: "idle", unknown: "unknown", landed: "landed", never_diverged: "never diverged", gone: "gone" };
+
 export interface FleetFork {
   id: string;
   label: string;
@@ -45,6 +51,12 @@ export interface FleetFork {
   tooltip: string;
   /** Needs-you sessions attributed to this fork by worktree_id. */
   needs: number;
+  /** Live sessions working in this fork, by worktree_id. */
+  working: number;
+  /** The one status the row summary counts this worktree under. */
+  kind: ForkKind;
+  /** Why the status is unknown; set only for an unknown. */
+  reason?: string;
   lastMs: number;
   spans: Array<{ first: number; last: number }>;
 }
@@ -144,8 +156,11 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
     .map((s) => ({ first: time(s.first_time), last: time(s.last_time) }))
     .filter((s) => Number.isFinite(s.first) && Number.isFinite(s.last))
     .map((s) => ({ first: Math.min(s.first, s.last), last: Math.max(s.first, s.last) }));
-  const idle = isIdleWorker(r, now);
-  return {
+  const lastMs = time(r.last_time);
+  const evidence = Number.isFinite(lastMs) || spans.length > 0;
+  // Idle needs evidence that it went quiet; with none, the worktree is unknown, not idle.
+  const idle = evidence && isIdleWorker(r, now);
+  const fork: FleetFork = {
     id: r.worktree_id,
     label,
     short: lastSegment(label),
@@ -157,13 +172,54 @@ export function forkOf(r: WorktreeLifetimeView, now: number): FleetFork {
     ariaLabel: `${label}, ${r.state}${idle ? ", idle" : ""}`,
     tooltip: tooltipOf(r, label),
     needs: 0,
-    lastMs: finiteOr(time(r.last_time), 0),
+    working: 0,
+    kind: "unknown",
+    lastMs: finiteOr(lastMs, 0),
     spans,
   };
+  setKind(fork, r, evidence);
+  return fork;
+}
+
+/** Re-derives kind and reason once needs and working are known. */
+function setKind(f: FleetFork, r: Pick<WorktreeLifetimeView, "state_reason">, evidence: boolean): void {
+  delete f.reason;
+  if (f.needs > 0) f.kind = "needs";
+  else if (f.working > 0) f.kind = "working";
+  else if (f.state === "open") {
+    if (evidence) f.kind = "idle";
+    else { f.kind = "unknown"; f.reason = "no activity time captured"; }
+  } else if (f.state === "unknown") { f.kind = "unknown"; f.reason = r.state_reason || "state could not be determined"; }
+  else f.kind = f.state;
+}
+
+/** One status count of a row summary. */
+export interface SummaryPart { kind: ForkKind; count: number; text: string }
+
+const countText = (parts: readonly SummaryPart[]): string => parts.map((p) => p.text).join(" · ");
+
+function partsOf(forks: readonly Pick<FleetFork, "kind">[]): SummaryPart[] {
+  const n = new Map<ForkKind, number>();
+  for (const f of forks) n.set(f.kind, (n.get(f.kind) ?? 0) + 1);
+  return KIND_ORDER.filter((k) => n.has(k)).map((k) => ({ kind: k, count: n.get(k)!, text: `${n.get(k)} ${KIND_WORD[k]}` }));
+}
+
+/** "1 needs you · 3 working · 20 idle · 59 unknown": worktrees by status, zeros left out. */
+export function summarize(row: Pick<FleetRow, "known" | "noRepo" | "forks">): { parts: SummaryPart[]; text: string } {
+  if (row.noRepo) return { parts: [], text: "" };
+  if (!row.known) return { parts: [], text: "no worktree data" };
+  if (row.forks.length === 0) return { parts: [], text: "no worktrees" };
+  const parts = partsOf(row.forks);
+  return { parts, text: countText(parts) };
+}
+
+/** The count line for what a collapsed row leaves out. */
+export function describeRest(forks: readonly Pick<FleetFork, "kind">[]): string {
+  return countText(partsOf(forks));
 }
 
 const RANK = (f: FleetFork): number =>
-  f.state === "open" ? (f.idle ? 0 : 1) : f.state === "landed" ? 2 : f.state === "never_diverged" ? 3 : f.state === "unknown" ? 4 : 5;
+  f.kind === "needs" ? -2 : f.kind === "working" ? -1 : f.state === "open" ? (f.idle ? 0 : 1) : f.state === "landed" ? 2 : f.state === "never_diverged" ? 3 : f.state === "unknown" ? 4 : 5;
 
 /**
  * The glyphs a row draws: open+idle first, then open, landed, never_diverged,
@@ -213,11 +269,11 @@ export function buildFleet(input: FleetInput): FleetResult {
     else byRepo.set(w.repo_id, [w]);
   }
 
-  type Acc = { failed: boolean; needs: FleetNeed[]; working: number; idle: number; last: number; repoName?: string };
+  type Acc = { failed: boolean; needs: FleetNeed[]; working: number; idle: number; last: number; repoName?: string; workingBy: Map<string, number> };
   const acc = new Map<string, Acc>();
   const accOf = (id: string): Acc => {
     let a = acc.get(id);
-    if (!a) acc.set(id, (a = { failed: false, needs: [], working: 0, idle: 0, last: 0 }));
+    if (!a) acc.set(id, (a = { failed: false, needs: [], working: 0, idle: 0, last: 0, workingBy: new Map() }));
     return a;
   };
   const unattributed: AttentionSession[] = [];
@@ -236,7 +292,10 @@ export function buildFleet(input: FleetInput): FleetResult {
         label: sessionName(s), dwellMs: Math.max(0, now - since), failed: isFailure(s), summary: s.pending?.summary ?? "",
         stale: !!stale,
       });
-    } else if (s.state === "working") a.working++;
+    } else if (s.state === "working") {
+      a.working++;
+      if (s.worktree_id) a.workingBy.set(s.worktree_id, (a.workingBy.get(s.worktree_id) ?? 0) + 1);
+    }
     else if (!isFailure(s)) a.idle++;
   }
   unattributed.sort((a, b) => cmp(sessionKey(a), sessionKey(b)));
@@ -246,7 +305,7 @@ export function buildFleet(input: FleetInput): FleetResult {
   const rows = new Map<string, FleetRow>();
   for (const id of rowIds) {
     const wts = byRepo.get(id) ?? [];
-    const a = acc.get(id) ?? { failed: false, needs: [], working: 0, idle: 0, last: 0 };
+    const a = acc.get(id) ?? { failed: false, needs: [], working: 0, idle: 0, last: 0, workingBy: new Map<string, number>() };
     const forkOrder = orderLanes(input.order?.forks[id], wts);
     order.forks[id] = forkOrder;
     const byWt = new Map(wts.map((w) => [w.worktree_id, w]));
@@ -255,6 +314,10 @@ export function buildFleet(input: FleetInput): FleetResult {
     for (const n of needs) {
       const f = forks.find((x) => x.id === n.worktreeId);
       if (f) f.needs++;
+    }
+    for (const f of forks) {
+      f.working = a.workingBy.get(f.id) ?? 0;
+      setKind(f, byWt.get(f.id)!, Number.isFinite(f.lastMs) && f.lastMs > 0 || f.spans.length > 0);
     }
     const noRepo = id === NOREPO_KEY;
     let label: string;
@@ -320,7 +383,7 @@ export function longestWaiting(needs: readonly FleetNeed[]): FleetNeed | undefin
 export function signature(r: FleetResult): string {
   return JSON.stringify([
     r.rows.map((x) => [x.id, x.label, x.known, !!x.noRepo, x.digest, x.openForks, x.idleForks, x.goneRecent, x.goneUnknown, x.needs.map((n) => [n.key, n.failed, n.stale, n.worktreeId ?? "", n.label, n.summary]), x.failed, x.working, x.idle,
-      x.forks.map((f) => [f.id, f.label, f.state, f.idle, f.old, f.ageUnknown, f.needs, f.glyph, f.ariaLabel, f.tooltip])]),
+      x.forks.map((f) => [f.id, f.label, f.state, f.idle, f.old, f.ageUnknown, f.needs, f.working, f.kind, f.glyph, f.ariaLabel, f.tooltip])]),
     r.unattributed.map(sessionKey),
   ]);
 }

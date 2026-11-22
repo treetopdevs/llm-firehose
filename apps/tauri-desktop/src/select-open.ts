@@ -35,7 +35,8 @@ export function onSelectOpen(node: Element, h: SelectOpen, opts: SelectOpenOptio
     if (!fromControl(e)) h.open();
   });
   node.addEventListener(ROW_SELECT_EVENT, () => h.select());
-  node.addEventListener("keydown", (e) => {
+  node.addEventListener("keydown", (ev) => {
+    const e = ev as KeyboardEvent;
     if (fromControl(e)) return;
     if (LOCAL.activate.matches(e)) {
       e.preventDefault();
