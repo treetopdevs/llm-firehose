@@ -327,6 +327,31 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   inside `core:default`. Known caveat from Tauri: an unfocused overlay window cannot be dragged.
   Not verified: WKWebView rendering, real drag, traffic-light placement and the inset widths.
 
+### Review follow-up on 2026-11-22
+
+Fixed after review: the four global nav keys (⌘[, ⌘], ⌘, and ⌃⌘S) now stay quiet while a dialog is
+open (legend, prune confirmation, onboarding); under 900px the open sidebar overlay has a scrim and
+closes on a click outside it and on Escape; an open worktree classified unknown draws the unknown
+mark and its chip is announced with the reason; a More view (Strata, Patches) leaves the last used
+Fleet tab as the tab stop; the inspector's Close button hands focus back to the selected row.
+
+Deferred, so MS-6, MS-7, MS-8, MS-9 and MS-10 are not fully delivered:
+
+- **MS-6, neutral selection token.** `--selected` is still the teal accent value. Rows, the sidebar
+  and chips use a neutral fill, but the graph tabs, inspector primary action, map presets, crumb
+  and session tabs, and the Lanes, attention, Score and Fleet fork "current" states still read
+  `--selected` or `--accent`. Moving them needs a neutral token in both themes, the `DESIGN.md`
+  table and the accent allow-list test updated together.
+- **MS-7, "Session · whole".** The toolbar shows "Live · whole session" in a session. It does not
+  yet switch to "Session · whole" when the held range does not cover the session.
+- **MS-8, nearest surviving row.** A kept selection whose row is gone is dropped, not moved to the
+  nearest surviving row, and Back restores the selection without moving focus to that row (focus goes
+  to the view heading).
+- **MS-9.** Replay sound is still in the Score; install buttons are still in onboarding as well
+  as Doctor; Project has no Sessions view of its own (it descends to Sessions).
+- **MS-10.** Project rows keep the "+N" chip instead of expanding to needs you and working
+  worktrees with one rest line and "Show all".
+
 ## Answered on 2026-11-22
 
 - MS-4: macOS is the only target today; Linux and Windows are on the roadmap. The overlay
