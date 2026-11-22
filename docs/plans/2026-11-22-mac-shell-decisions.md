@@ -270,9 +270,10 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   with Score.
 - Slices 3 to 5 not started.
 
-## Open
+## Answered on 2026-11-22
 
-- MS-4: is macOS the only product target?
-- A view switch (Lanes to Graph, Score to Loops) is recorded as a place, so Back steps
-  through views as well as screens. If that feels like too many stops, views can update
-  the current entry instead.
+- MS-4: macOS is the only target today; Linux and Windows are on the roadmap. The overlay
+  title bar therefore lives in a macOS-only Tauri config, and the toolbar must work
+  unchanged under a standard title bar.
+- A view switch (Lanes to Graph, Score to Loops) stays a history stop for now.
+- Commits on `feat/mac-shell` are approved, one or more per slice. No push without asking.
