@@ -2907,6 +2907,19 @@ test("privacy change: project remaps to the new id, worktree and session clear, 
   expect(shellNote()).toBeNull();
 });
 
+test("privacy change: Back does not return to a place that names the old project id", async () => {
+  const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
+  const b = await privacyBoot(state);
+  b.go("project", { project: OLD_ID }, true);
+  await settle();
+  await pickMode(b, "minimal");
+  await waitFor(() => expect(b.scope.get().project).toBe(NEW_ID));
+  await settle();
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "[", metaKey: true, bubbles: true, cancelable: true }));
+  expect(b.active()).toBe("project");
+  expect(b.scope.get().project).toBe(NEW_ID);
+});
+
 test("privacy change with an unmatched label gives project undefined plus a note", async () => {
   const state: PrivacyState = { mode: "full", repos: [repoOf(OLD_ID, "alpha")], calls: 0 };
   const b = await privacyBoot(state, {

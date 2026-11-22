@@ -40,7 +40,7 @@ import { createTransport } from "./transport";
 import { graphAPI } from "./ui/graph/api";
 import { createActions } from "./ui/actions";
 import { createRoots } from "./ui/actions/roots";
-import { remapScope } from "./privacy-remap";
+import { remapPlace, remapScope } from "./privacy-remap";
 import type { IdentitySet } from "./privacy-remap";
 import type { ScopePatch, SessionRef } from "./scope";
 import { ascentTarget, createEscapeHandler, isEscapeEligible } from "./escape";
@@ -374,6 +374,9 @@ async function handlePrivacyChange(before: IdentitySet = snapshotBeforeSave()): 
   if (result.kind === "remapped") scope.narrow(result.patch);
   else if (result.kind === "cleared") scope.narrow({ project: undefined, worktree: undefined, session: undefined, window: current.window });
   if (result.kind !== "unchanged") showShellNote(result.note);
+  // Back and Forward must not return to a place that names an identity the new mode no longer has.
+  places.rewrite((p) => remapPlace(p, before, after));
+  here = places.current()?.place ?? here;
   // Panels re-read only after the scope is settled.
   void projectPanel.refresh();
   void workspacePanel.refresh();

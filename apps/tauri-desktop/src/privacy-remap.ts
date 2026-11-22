@@ -52,3 +52,20 @@ export function remapScope(sc: Scope, before: IdentitySet, after: IdentitySet): 
     note: `${PREFIX}: project kept as ${projectName(old.id, old.label).label}.${inner}`,
   };
 }
+
+/**
+ * A history place after a privacy change, the way remapScope treats the scope: a project that still exists is
+ * kept, one that can be matched takes its new id (worktree and session are not remappable and are dropped), and
+ * anything else, or identities that could not be verified (`after` undefined), loses its identity.
+ */
+export function remapPlace<P extends { project?: string; worktree?: string; session?: { id: string; source?: string } }>(place: P, before: IdentitySet, after: IdentitySet | undefined): P {
+  const has = place.project !== undefined || place.worktree !== undefined || place.session !== undefined;
+  if (!has) return place;
+  const cleared = { ...place, project: undefined, worktree: undefined, session: undefined };
+  if (!after) return cleared;
+  const sc: Scope = { window: "live", ...(place.project !== undefined ? { project: place.project } : {}), ...(place.worktree !== undefined ? { worktree: place.worktree } : {}), ...(place.session !== undefined ? { session: place.session } : {}) };
+  const r = remapScope(sc, before, after);
+  if (r.kind === "unchanged") return place;
+  if (r.kind === "cleared") return cleared;
+  return { ...place, project: r.patch.project, worktree: undefined, session: undefined };
+}

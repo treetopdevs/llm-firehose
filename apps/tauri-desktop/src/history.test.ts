@@ -102,6 +102,35 @@ function scroller(cls: string, rows: string[]): { root: HTMLElement; list: HTMLE
   return { root, list };
 }
 
+describe("rewrite (identities changed under the entries)", () => {
+  test("every place is mapped, entries that become the same place merge, and the position follows", () => {
+    const h = createHistory<{ n: number }>();
+    h.record({ panel: "fleet" }, { n: 1 });
+    h.record({ panel: "project", project: "old" }, { n: 2 });
+    h.record({ panel: "files", project: "old" }, { n: 3 });
+    h.record({ panel: "files", project: "new" }, { n: 4 });
+    h.rewrite((p) => (p.project === "old" ? { ...p, project: "new" } : p));
+    expect(h.current()!.place).toEqual({ panel: "files", project: "new" });
+    expect(h.current()!.state).toEqual({ n: 4 });
+    expect(h.back()!.place).toEqual({ panel: "project", project: "new" });
+    expect(h.back()!.place).toEqual({ panel: "fleet" });
+    expect(h.back()).toBeUndefined();
+  });
+  test("scroll marks of a place whose identity changed are dropped; the others stay", () => {
+    const h = createHistory<number>();
+    const fleet = { panel: "fleet" };
+    const proj = { panel: "project", project: "old" };
+    h.record(fleet, 1);
+    h.record(proj, 2);
+    h.remember(fleet, [{ sel: "", top: 5 }]);
+    h.remember(proj, [{ sel: "", top: 9 }]);
+    h.rewrite((p) => (p.project === "old" ? { ...p, project: "new" } : p));
+    expect(h.recall(fleet)).toEqual([{ sel: "", top: 5 }]);
+    expect(h.recall(proj)).toBeUndefined();
+    expect(h.recall({ panel: "project", project: "new" })).toBeUndefined();
+  });
+});
+
 describe("scroll marks", () => {
   test("capture records each scrolled element by class, with the first visible keyed row and its offset", () => {
     const { root, list } = scroller("fleet other", ["a", "b", "c"]);

@@ -40,6 +40,11 @@ export interface History<S> {
   canForward(): boolean;
   remember(place: Place, marks: ScrollMark[]): void;
   recall(place: Place): ScrollMark[] | undefined;
+  /**
+   * Maps every place (identities changed under the entries, as in a privacy-mode change). Entries that become the same
+   * place merge into the later one, the position follows, and scroll marks of a place that changed are dropped.
+   */
+  rewrite(fn: (place: Place) => Place): void;
 }
 
 export function createHistory<S>(cap = 50): History<S> {
@@ -77,6 +82,24 @@ export function createHistory<S>(cap = 50): History<S> {
       else scroll.set(placeKey(place), marks);
     },
     recall: (place) => scroll.get(placeKey(place)),
+    rewrite(fn) {
+      const next: Entry<S>[] = [];
+      let idx = -1;
+      entries.forEach((e, i) => {
+        const place = fn(e.place);
+        const last = next[next.length - 1];
+        if (last && samePlace(last.place, place)) next[next.length - 1] = { place, state: e.state };
+        else next.push({ place, state: e.state });
+        if (i === at) idx = next.length - 1;
+      });
+      entries = next;
+      at = idx;
+      for (const k of [...scroll.keys()]) {
+        const [panel, view, project, worktree, id, source] = JSON.parse(k) as string[];
+        const was: Place = { panel: panel!, ...(view ? { view } : {}), ...(project ? { project } : {}), ...(worktree ? { worktree } : {}), ...(id ? { session: { id, ...(source ? { source } : {}) } } : {}) };
+        if (placeKey(fn(was)) !== k) scroll.delete(k);
+      }
+    },
   };
 }
 
