@@ -122,7 +122,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     soundState = state;
     replaySoundSetting.report(state);
   });
-  replaySoundSetting.subscribe(() => { if (!replaySoundSetting.get()) sound.disable(); });
+  replaySoundSetting.subscribe(() => { if (!replaySoundSetting.get()) sound.disable(true); });
   const windowNote = el("p", { class: "dim score-window-note", hidden: "" });
   const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, overview, chart);
   const clipId = `score-clip-${++clipSeq}`;

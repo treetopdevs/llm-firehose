@@ -41,6 +41,19 @@ test("blocked audio and a cue failure remain visible while replay continues",asy
  h.context.createOscillator.mockImplementationOnce(()=>{throw Error("device failed")});panel.tick(1100);
  expect(replaySoundSetting.state()).toBe("unavailable");const before=panel.playhead();panel.tick(1000);expect(panel.playhead()).toBeGreaterThan(before);panel.deactivate();
 });
+test("leaving the Score or opening another session does not erase an audio failure; switching the choice off does",async()=>{
+ const h=audioHost(),panel=createScore(vi.fn());document.body.append(panel.root);await panel.open(real.session_id!,real.source);
+ replaySoundSetting.set(true);
+ h.context.resume.mockRejectedValueOnce(Error("blocked"));button(panel.root,"play").click();await Promise.resolve();await Promise.resolve();
+ expect(replaySoundSetting.state()).toBe("unavailable");
+ panel.deactivate();
+ expect(replaySoundSetting.state()).toBe("unavailable");
+ await panel.open(real.session_id!,real.source);
+ expect(replaySoundSetting.state()).toBe("unavailable");
+ replaySoundSetting.set(false);
+ expect(replaySoundSetting.state()).toBe("off");
+ panel.deactivate();
+});
 test("a tick observing a detached paused panel disables audio",async()=>{
  const h=audioHost(),panel=createScore(vi.fn());document.body.append(panel.root);await panel.open(real.session_id!,real.source);
  replaySoundSetting.set(true);button(panel.root,"play").click();await Promise.resolve();panel.root.remove();panel.tick(0);expect(h.context.close).toHaveBeenCalledOnce();panel.deactivate();
