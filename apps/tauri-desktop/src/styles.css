@@ -1643,3 +1643,67 @@ span.agent-dot.big { width: 14px; height: 14px; }
 /* Unknown stays unknown: the mark, then the word, in the dim colour (MS-10). */
 .cell.unknown, .cell.state.unknown { color: var(--text-dim); font-style: italic; }
 .cell.state.unknown::before { content: attr(data-mark) " "; font-style: normal; }
+
+/* ---- Rows, not cards (MS-6, MS-10). Lists sit on hairlines; the toolbar names the place. ---- */
+/* The toolbar carries the place name, so each panel's own h2 is kept for assistive tech and as
+   the focus target after a move, and is not drawn. */
+.content h2:not(.onboarding-card h2):not(.detail h2) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* With something in scope the title is the thing's name: ancestors dim, the last segment strong. */
+.toolbar-title[data-named] .toolbar-place { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); }
+.toolbar-title[data-named] .toolbar-crumb { color: var(--text-dim); }
+.toolbar-title[data-named] .crumb > span:last-child { color: var(--text); font-weight: 600; font-size: var(--fs-md); }
+/* One segmented control for the view switcher. */
+.toolbar-views [role="tablist"], .toolbar-views .session-tabs { display: inline-flex; gap: 2px; padding: 2px; border: 0; border-radius: var(--radius-md); background: var(--bg-panel); overflow: visible; }
+.toolbar-views [role="tablist"] button, .toolbar-views .session-tabs button { border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); padding: 0 12px; min-height: 24px; }
+.toolbar-views .session-tabs button + button { border-left: 0; }
+.toolbar-views [role="tablist"] button:hover { color: var(--text); }
+.toolbar-views .more-btn { border-color: transparent; color: var(--text-dim); }
+.transport-trigger { font-family: var(--font-sans); }
+/* Explanations of gestures live in the keys legend (?), not under every list. */
+.fleet-hint, .project-hint { display: none; }
+/* The sidebar picks the project; the panel does not repeat the picker. */
+.project-header .project-repo { display: none; }
+.project-chart { border: 0; background: none; border-radius: 0; }
+
+.fleet { padding: 4px 0 12px; gap: 6px; }
+.fleet-header, .fleet-status, .fleet-foot, .fleet-note { padding-left: 16px; padding-right: 16px; }
+.fleet-map { gap: 0; }
+.fleet-row { position: relative; border-width: 0 0 1px; border-color: color-mix(in srgb, var(--border) 35%, transparent); border-radius: 0; background: none; padding: 6px 16px; gap: 2px 16px; flex-wrap: wrap; }
+.fleet-row:hover { background: var(--bg-panel); }
+.fleet-row.selected { background: var(--selected); outline: none; }
+.fleet-row.current, .fleet-row.failed { border-color: color-mix(in srgb, var(--border) 35%, transparent); }
+.fleet-row.failed .fleet-row-label { color: var(--err); }
+/* The whole row selects, not only its label. */
+.fleet-row-head { flex: 1 1 24rem; position: static; }
+.fleet-row-head::after { content: ""; position: absolute; inset: 0; }
+.fleet-row-head:hover { background: none; }
+.fleet-row-label { flex: 0 0 13rem; font-weight: 600; }
+.fleet-counts { flex: 1 1 auto; min-width: 0; }
+.fleet-spark { order: 1; margin-left: 0; position: relative; }
+.fleet-row > .unit-actions { order: 2; position: relative; margin: 0; min-height: 24px; padding: 0 8px; font-size: var(--fs-sm); color: var(--text-dim); opacity: 0; }
+.fleet-row:hover > .unit-actions, .fleet-row.selected > .unit-actions, .fleet-row > .unit-actions:focus-visible { opacity: 1; }
+.fleet-forks, .fleet-queue { order: 3; flex: 1 0 100%; position: relative; padding-left: calc(13rem + 26px); }
+.fleet-fork, .fleet-need, .fleet-more { position: relative; }
+
+.sessions-list { width: auto; max-width: none; flex: 1 1 auto; }
+.session-item, .worktree-item { border-width: 0 0 1px; border-color: color-mix(in srgb, var(--border) 35%, transparent); border-radius: 0; margin: 0; padding: 8px 12px; }
+.session-item:hover, .worktree-item:hover { background: var(--bg-panel); }
+.session-item.picked, .worktree-item.picked, .worktree-item.selected { background: var(--selected); border-color: color-mix(in srgb, var(--border) 35%, transparent); }
+/* No side stripes: the session's identity hue stays on Lanes and Score, where it tells sessions apart. */
+.session-item .band-row, .worktree-item .band-row { border-left: 0; padding-left: 0; }
+.session-item .session-sub, .worktree-item .session-sub, .session-last { padding-left: 0; }
+.session-item .score-open, .session-item .loops-open { opacity: 0; }
+.session-item:hover .score-open, .session-item:hover .loops-open, .session-item.picked .score-open, .session-item.picked .loops-open, .session-item .score-open:focus-visible, .session-item .loops-open:focus-visible { opacity: 1; }
+
+/* Needs you and capture warnings: rows on hairlines, no card, no side stripe. */
+.attention-inbox { max-width: none; margin: 0; }
+.attention-rows { gap: 0; padding: 0; }
+.attention-row, .capture-warning { border-width: 0 0 1px; border-color: color-mix(in srgb, var(--border) 35%, transparent); border-radius: 0; background: none; padding: 10px 12px; }
+.capture-warning { border-left: 0; }
+.attention-row h3 { margin: 0 0 2px; }
+.attention-row p, .capture-warning p { margin: 2px 0; }
+/* The sidebar and the toolbar already say where this list is; the panel does not repeat it. */
+.sessions-head .sessions-scope, .sessions-head .sessions-needs, .sessions-inbox-caption { display: none; }
+.sessions-head:not(:has(> :not(.sessions-scope):not(.sessions-needs))) { display: none; }
+.sessions { gap: 0; }
+.sessions-count, .sessions-scope-note { padding: 0 12px; }

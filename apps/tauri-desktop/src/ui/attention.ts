@@ -1,3 +1,4 @@
+import { READ_DEADLINE_MS } from "../deadlines";
 import { attention, capturedEvent } from "../api";
 import type {
   AttentionEvidence,
@@ -453,7 +454,7 @@ export function createAttention(options: AttentionOptions) {
   async function load(version: number) {
     const controller = new AbortController();
     abort = controller;
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), READ_DEADLINE_MS);
     try {
       const result = await attention(controller.signal);
       if (disposed || !connected || version !== epoch) return;

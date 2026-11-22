@@ -1,3 +1,4 @@
+import { READ_DEADLINE_MS } from "../../deadlines";
 // Fleet altitude: one row per repository, forks as branches off the row, the
 // needs-you queue as units you click. The old fleet panels (dwell, matrix,
 // lanes, airspace) are encodings of this one view. Reads scope for highlight
@@ -158,7 +159,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   };
   const nowFn = deps.now ?? Date.now;
   const refreshMs = deps.refreshMs ?? 15000;
-  const timeoutMs = deps.loadTimeoutMs ?? 10000;
+  const timeoutMs = deps.loadTimeoutMs ?? READ_DEADLINE_MS;
 
   // Data. wt === undefined means /worktrees has not answered (or is unsupported).
   let wt: WorktreeLifetimeView[] | undefined;

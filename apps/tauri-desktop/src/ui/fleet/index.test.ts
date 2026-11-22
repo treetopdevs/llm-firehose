@@ -1907,6 +1907,23 @@ describe("select and open (MS-8)", () => {
     expect(subjects(inspect).at(-1)).toBeNull();
   });
 
+  test("a daemon that needs 30 seconds to answer still fills the list: slow is not failed", async () => {
+    vi.useFakeTimers();
+    const store: ScopeStore = createScope();
+    const later = <T>(v: T): Promise<T> => new Promise((res) => setTimeout(() => res(v), 30_000));
+    const panel = createFleet({ store, go: vi.fn() as never, events: () => [], api: { worktrees: () => later(FIXTURE_ROWS), attention: () => later({ sessions: baseSessions(), warnings: [] }), sessions: () => Promise.resolve([]) }, now: () => nowMs, refreshMs: 10 * 60_000 });
+    document.body.append(panel.root);
+    panels.push(panel);
+    void panel.activate();
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(panel.root.querySelector(".fleet-error")).toBeNull();
+    expect(panel.root.querySelector(".fleet-loading")).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await flush();
+    expect(panel.root.querySelector(".fleet-error")).toBeNull();
+    expect(panel.root.querySelectorAll(".fleet-row").length).toBeGreaterThan(0);
+  });
+
   test("the overflow control names what it hides, by status", async () => {
     const store: ScopeStore = createScope();
     const wts = Array.from({ length: 20 }, (_, i) => row({ repo_id: "big", worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${i}`, state: i < 15 ? "open" : "unknown", last_time: iso(NOW - MIN) }));

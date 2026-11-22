@@ -116,5 +116,13 @@ describe("toolbar", () => {
     expect(deps.onBack).toHaveBeenCalledOnce();
     tb.setPlace("All projects");
     expect(tb.root.querySelector(".toolbar-place")!.textContent).toBe("All projects");
+    // With something in scope the crumb is the title: the level word stays in the tree, marked.
+    const title = tb.root.querySelector(".toolbar-title")!;
+    expect(title.hasAttribute("data-named")).toBe(false);
+    tb.setNamed(true);
+    expect(title.hasAttribute("data-named")).toBe(true);
+    expect(tb.root.querySelector(".toolbar-place")!.textContent).toBe("All projects");
+    tb.setNamed(false);
+    expect(title.hasAttribute("data-named")).toBe(false);
   });
 });

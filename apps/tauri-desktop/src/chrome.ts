@@ -191,6 +191,8 @@ export interface Toolbar {
   viewSlot: HTMLElement;
   crumbSlot: HTMLElement;
   setPlace(label: string): void;
+  /** True when the crumb names the place, so the level word is kept for assistive tech only. */
+  setNamed(named: boolean): void;
   setHistory(canBack: boolean, canForward: boolean): void;
   setSidebarShown(shown: boolean): void;
 }
@@ -235,6 +237,9 @@ export function createToolbar(deps: ToolbarDeps): Toolbar {
     crumbSlot,
     setPlace(label) {
       place.textContent = label;
+    },
+    setNamed(named) {
+      title.toggleAttribute("data-named", named);
     },
     setHistory(canBack, canForward) {
       back.setAttribute("aria-disabled", String(!canBack));

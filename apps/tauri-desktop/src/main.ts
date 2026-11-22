@@ -768,6 +768,10 @@ function currentItem(): SidebarCurrent {
 function syncChrome(): void {
   sidebar.setCurrent(currentItem());
   toolbar.setPlace(needsView() ? "Needs you" : PANEL_TITLES[active]);
+  // With something in scope the crumb is the title; the level word stays for assistive tech.
+  const sc = scope.get();
+  const scoped = active === "project" || active === "sessions" || active === "session";
+  toolbar.setNamed(scoped && !needsView() && !!(sc.project || sc.worktree || sc.session));
 }
 roots.subscribe(syncSidebar);
 scope.onResolver(syncSidebar);
