@@ -3173,6 +3173,31 @@ describe("history: back, forward, scroll and focus", () => {
     expect(b.scope.get().window).toEqual(win);
   });
 
+  test("Back, Forward and Back through a session leave the project's 24h range at 24h (MS-8)", async () => {
+    const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+    await toProject(b);
+    tpPreset("24h").click();
+    const held = b.scope.get();
+    expect(held.window).toEqual({ from: NOW - 86_400_000, to: NOW });
+    b.scope.narrow({ session: { id: S1, source: S1_SOURCE } });
+    b.nav("session").click();
+    await settle();
+    expect(b.scope.get().window).toBe("live"); // the session's own zoom
+    cmd("[");
+    expect(b.active()).toBe("project");
+    expect(b.scope.get().window).toEqual(held.window);
+    await settle();
+    cmd("]");
+    expect(b.active()).toBe("session");
+    expect(b.scope.get().window).toBe("live");
+    expect(b.scope.held()).toEqual(held.window);
+    await settle();
+    cmd("[");
+    expect(b.active()).toBe("project");
+    expect(b.scope.get().window).toEqual(held.window);
+    expect(b.scope.get().liveSpanMs).toBe(held.liveSpanMs);
+  });
+
   test("[ without the command key is left alone, and forward at the newest place does nothing", async () => {
     const b = await boot({ worktrees: twoRepos() });
     await toProject(b);
