@@ -153,6 +153,31 @@ describe("session score view", () => {
     expect(onSelect).toHaveBeenCalled();
   });
 
+  test("opening a different session clears the detail pane that showed the previous session's event", async () => {
+    const onSelect = vi.fn();
+    const onClear = vi.fn();
+    const panel = createScore(onSelect, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    expect(onClear).not.toHaveBeenCalled(); // nothing of any session was on the pane yet
+    pick(panel);
+    expect(onSelect).toHaveBeenCalled();
+    await panel.open("another-session", session[0].source);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    await panel.open(SID, session[0].source); // the pane is already clear
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  test("reloading the same session in place leaves the detail pane alone", async () => {
+    const onClear = vi.fn();
+    const panel = createScore(() => {}, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    pick(panel);
+    await panel.open(SID, session[0].source);
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
   test("a failed fetch is shown, not thrown", async () => {
     sessionEvents.mockRejectedValue(new Error("daemon away"));
     const panel = createScore(() => {});

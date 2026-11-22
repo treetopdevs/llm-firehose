@@ -109,7 +109,12 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
 const sameWindowValue = (a: ScopeWindow, b: ScopeWindow): boolean =>
   a === "live" || b === "live" ? a === b : a.from === b.from && a.to === b.to;
 
-export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void, store: ScopeStore = createScope()): ScorePanel {
+export function createScore(
+  onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void,
+  store: ScopeStore = createScope(),
+  /** Empties the detail pane when the Score moves to another session, so the pane never shows the previous session's event. */
+  clearDetail: () => void = () => {},
+): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
   const bar = el("div", { class: "score-bar" });
@@ -724,6 +729,11 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     sound.disable();
     const v = ++version;
     const priorKey = loadedKey, priorAt = at;
+    // The pane shows the previous session's event: a different session must not leave it there.
+    if (shown && !sameSession(priorKey ?? undefined, { id, ...(source !== undefined ? { source } : {}) } as SessionRef)) {
+      shown = false;
+      try { clearDetail(); } catch { /* a pane sink must not break the load */ }
+    }
     loadedKey = null;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.

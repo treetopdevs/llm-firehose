@@ -273,6 +273,7 @@ const makeScore = () => createScore((ev, sessionSiblings, signature, dismiss) =>
     sessionDirectory,
   ),
   scope,
+  () => { if (!inspectorShowing(detailPane)) renderDetail(detailPane, null, () => {}); },
 );
 // A host that owns subscriptions brings its own deactivate; the rest re-run refresh to settle.
 const adapt = (p: { root: HTMLElement; refresh(): unknown; deactivate?(): unknown }) => ({ root: p.root, refresh: p.refresh, deactivate: p.deactivate ?? p.refresh });
