@@ -275,6 +275,8 @@ const NAMED: Record<keyof typeof LOCAL, string[]> = {
   inspectorCompare: ['Enter'],
   actionMenu: ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'],
   actionDialog: ['Tab', 'Escape'],
+  rowSelect: ['ArrowUp', 'ArrowDown'],
+  moreMenu: ['ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape', 'Tab'],
   fleetClear: ['Escape'],
   laneClear: ['Escape'],
   feedRows: ['ArrowUp', 'ArrowDown', 'Home', 'End'],
@@ -389,6 +391,8 @@ describe('local key descriptors', () => {
   const SRC = join(process.cwd(), 'src');
   const LISTENERS: Record<string, { keydown: number; uses: Array<keyof typeof LOCAL> }> = {
     'dom.ts': { keydown: 1, uses: ['activate'] },
+    'select-open.ts': { keydown: 1, uses: ['activate', 'rowSelect'] },
+    'ui/more-menu.ts': { keydown: 1, uses: ['moreMenu'] },
     'ui/score/index.ts': { keydown: 2, uses: ['scoreTrack', 'scoreStep', 'scorePlay'] },
     'ui/activity/index.ts': { keydown: 3, uses: ['mapDir', 'mapStrip', 'mapStripReset'] },
     'transport.ts': { keydown: 3, uses: ['transportShift', 'transportLive', 'transportCancel'] },
