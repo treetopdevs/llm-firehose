@@ -72,7 +72,7 @@ const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
   if (!s && !inspectorShowing(detailPane)) return;
   const close = () => {
     // The Close button is about to leave the DOM: hand focus back to the row the pane described.
-    const sel = content.querySelector<HTMLElement>(".selected");
+    const sel = content.querySelector<HTMLElement>(".selected, .picked");
     const target = sel?.matches("[tabindex]") ? sel : sel?.querySelector<HTMLElement>('[tabindex="0"]');
     const held = detailPane.contains(document.activeElement);
     clear();

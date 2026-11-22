@@ -723,10 +723,13 @@ const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty"
 
 test("the folded panels have no sidebar entry; launch lands on All projects", async () => {
   const b = await boot();
-  expect(b.nav("strata")).toBeNull();
-  expect(b.nav("ecosystem")).toBeNull();
-  expect(b.nav("workspace")).toBeNull();
-  for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone), gone).toBeNull();
+  // b.nav() answers null for any panel that is not a sidebar item without reading the DOM, so ask the sidebar itself.
+  const sidebarPanels = [...document.querySelectorAll<HTMLElement>(".sidebar [data-panel]")].map((n) => n.dataset.panel);
+  expect(sidebarPanels.length).toBeGreaterThan(0);
+  for (const gone of ["strata", "ecosystem", "workspace", "dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) {
+    expect(sidebarPanels, gone).not.toContain(gone);
+    expect(document.querySelector(`.sidebar [data-panel="${gone}"]`), gone).toBeNull();
+  }
   expect([...document.querySelectorAll(".sidebar .nav-heading")].map((h) => h.textContent)).toEqual(["Projects", "Capture"]);
   expect(b.active()).toBe("fleet");
 });
@@ -3466,6 +3469,17 @@ describe("select, open, back (inspector)", () => {
       expect(itemAt("r1").getAttribute("data-key")).toBe("codex\0r1");
     });
 
+    test("closing the inspector from its Close button returns focus to the picked session row", async () => {
+      await sessionsBoot(["r1", "r2"]);
+      itemAt("r2").click();
+      const close = pane().querySelector<HTMLElement>(".detail-close")!;
+      close.focus();
+      expect(document.activeElement).toBe(close);
+      close.click();
+      expect(pane().classList.contains("open")).toBe(false);
+      expect(itemAt("r2").contains(document.activeElement)).toBe(true);
+    });
+
     test("Back restores the selected row and puts focus on it", async () => {
       const { b } = await sessionsBoot(["r1", "r2"]);
       await selectOpenLeave(b, "r2");
@@ -3671,7 +3685,7 @@ describe("Project's Sessions view (MS-9)", () => {
     const b = await toSessionsView();
     openIt(wtItems()[0]);
     expect(b.scope.get().worktree).toBe("wt-a");
-    await vi.waitFor(() => expect(document.querySelectorAll(".content .project-encoding-body .session-item").length).toBeGreaterThanOrEqual(0));
+    await vi.waitFor(() => expect(document.querySelectorAll(".content .project-encoding-body .session-item").length).toBeGreaterThanOrEqual(1));
     esc();
     expect(b.scope.get().worktree).toBeUndefined();
     expect(b.active()).toBe("project");
