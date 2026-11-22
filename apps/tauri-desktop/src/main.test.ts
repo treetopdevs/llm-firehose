@@ -3312,6 +3312,41 @@ describe("select, open, back (inspector)", () => {
     expect(pane().querySelector(".inspector-id-value")!.textContent).toBe("r1");
   });
 
+  test("opening a needs-you chip from the inspector lands on Score with the pane closed, not on a stale inspector", async () => {
+    const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow("s-n1")], attentionSessions: [needy("s-n1", "repoA", { worktree_id: "wt-open" })] });
+    await ready(b);
+    await vi.waitFor(() => expect(document.querySelector(".fleet-need")).not.toBeNull());
+    document.querySelector<HTMLElement>(".fleet-need")!.click();
+    expect(pane().getAttribute("data-inspector")).toBe("session");
+    pane().querySelector<HTMLElement>(".inspector-open")!.click();
+    expect(b.active()).toBe("session");
+    expect(pane().classList.contains("open")).toBe(false);
+    expect(pane().hasAttribute("data-inspector")).toBe(false);
+  });
+
+  test("a session row's Score button from a selected row also closes the inspector", async () => {
+    const b = await boot({ sessions: [sessionRow("r1")] });
+    b.nav("sessions").click();
+    await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
+    document.querySelector<HTMLElement>(".session-item[data-id='r1']")!.click();
+    expect(pane().getAttribute("data-inspector")).toBe("session");
+    document.querySelector<HTMLElement>(".session-item .score-open")!.click();
+    expect(b.active()).toBe("session");
+    expect(pane().classList.contains("open")).toBe(false);
+  });
+
+  test("arriving at Sessions again (Needs you) clears a selection and its inspector together", async () => {
+    const b = await boot({ sessions: [sessionRow("r1")] });
+    b.nav("sessions").click();
+    await vi.waitFor(() => expect(document.querySelector(".session-item[data-id='r1']")).not.toBeNull());
+    document.querySelector<HTMLElement>(".session-item[data-id='r1']")!.click();
+    expect(pane().classList.contains("open")).toBe(true);
+    b.go("attention");
+    await settle();
+    expect(pane().classList.contains("open")).toBe(false);
+    expect(document.querySelector(".session-item.picked")).toBeNull();
+  });
+
   test("moving to another panel closes the inspector", async () => {
     const b = await boot({ worktrees: twoRepos() });
     await ready(b);

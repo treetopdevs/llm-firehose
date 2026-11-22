@@ -288,7 +288,7 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   - **All projects list.** The Map encoding became the merged list (id `map`, label List). A project
     row reads its worktrees by status in words ("1 needs you · 3 working · 20 idle · 59 unknown",
     zeros left out). A worktree is needs you, working, idle, unknown, landed, never diverged or gone;
-    an open worktree with no readable activity time is unknown with `◌` and a reason, never idle. The
+    idle needs evidence (its own last activity within 7 days, or a live session reporting idle), so an open worktree with no readable time or none that recent is unknown with `◌` and a reason, never idle. The
     "+N" chip names what it hides. Needs you and working worktrees lead the strip. Waiting, Table and
     By state are retired from the switcher and still resolve by name.
   - **Select, open, back (MS-8).** `src/select-open.ts`: a click or an arrow selects and fills the

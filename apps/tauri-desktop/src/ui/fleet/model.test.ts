@@ -511,6 +511,23 @@ describe("worktree status and the row summary (MS-10)", () => {
     }
   });
 
+  test("an open worktree with no recent evidence is unknown, not idle, and says how long it has been quiet (MS-10)", () => {
+    const r = rowOf([mk("old", "open", { last_time: iso(NOW - 8 * 24 * 60 * MIN), ahead: 2 }), mk("edge", "open", { last_time: iso(NOW - 6 * 24 * 60 * MIN) })]);
+    const old = r.forks.find((f) => f.id === "old")!;
+    expect(old.kind).toBe("unknown");
+    expect(old.reason).toBe("no activity captured in the last 7 days");
+    // The quiet-for-hours flag does not claim idleness either, so the chip and the summary agree.
+    expect(old.idle).toBe(false);
+    expect(old.ariaLabel).not.toContain("idle");
+    expect(r.forks.find((f) => f.id === "edge")!.kind).toBe("idle");
+    expect(summarize(r).text).toBe("1 idle · 1 unknown");
+  });
+
+  test("a live session that reports idle in the worktree is positive evidence, however old the worktree's own last time", () => {
+    const r = rowOf([mk("quiet", "open", { last_time: iso(NOW - 20 * 24 * 60 * MIN) })], [att({ id: "s", repo_id: "r", worktree_id: "quiet", state: "idle" })]);
+    expect(r.forks[0]!.kind).toBe("idle");
+  });
+
   test("an unknown state carries the daemon's reason, else a plain one", () => {
     const r = rowOf([mk("a", "unknown", { state_reason: "git not readable" }), mk("b", "unknown")]);
     expect(r.forks.find((f) => f.id === "a")!.reason).toBe("git not readable");

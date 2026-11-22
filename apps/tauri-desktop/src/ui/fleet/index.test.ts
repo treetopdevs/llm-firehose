@@ -250,7 +250,7 @@ describe("navigation", () => {
     ["fork", () => key("fork", "repoA", "wt-landed"), ""],
     ["need", () => needKey("claude-code", "sa"), ""],
     ["lane", () => `claude-code\u0000sa`, ""],
-  ])("%s click keeps the historical window in the real store", async (name, k, sub) => {
+  ])("%s open keeps the historical window in the real store", async (name, k, sub) => {
     const { panel, store, byKey, data } = setup({ scope: populated(), realGo: true });
     data.events = [ev({ id: "e1", session_id: "sa", time: iso(hist.to - 10_000) })];
     if (name === "lane") panel.encoding = "lanes";

@@ -748,9 +748,9 @@ export function createSessions(
   }, REFRESH_MS);
 
   async function activate(o?: { needsOnly?: boolean }) {
-    // A selection is for the visit; Back restores one by key afterwards.
-    picked = undefined;
-    inspectedSig = undefined;
+    // A selection is for the visit; Back restores one by key afterwards. Clearing goes through the inspector
+    // so a pane left open by the last visit closes with it.
+    if (picked !== undefined) pick(undefined);
     if (o?.needsOnly !== undefined) applyNeeds(o.needsOnly);
     drawScopeLine();
     await Promise.all([refresh(), needs ? refreshInbox() : undefined]);

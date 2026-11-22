@@ -417,7 +417,8 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if (active === "fleet" && name !== "fleet") fleetPanel.deactivate();
   // Only a real panel change closes the shared pane, and not on the panel the inspector belongs to.
   if (name !== active) navGeneration++;
-  if (name !== active && !inspectorBelongsTo(name)) renderDetail(detailPane, null, () => {});
+  // An event detail may follow into the Session altitude; a selection's inspector never leaves its panel.
+  if (name !== active && (!inspectorBelongsTo(name) || inspectorShowing(detailPane))) renderDetail(detailPane, null, () => {});
   if (active === "session" && name !== "session") sessionPanel.deactivate();
   if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
