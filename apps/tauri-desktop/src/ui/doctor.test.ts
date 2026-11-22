@@ -43,3 +43,34 @@ test("with none, Doctor says so, and redraw() picks up a new snapshot without re
   expect(p.root.querySelectorAll(".capture-warning")).toHaveLength(2);
   expect(api.doctor).toHaveBeenCalledTimes(1);
 });
+
+test("capture diagnostics stay listed while the checks load and after they fail, and redraw() still reaches them", async () => {
+  let release!: () => void;
+  api.doctor.mockReset().mockImplementation(() => new Promise((_ok, no) => { release = () => no(new Error("daemon down")); }));
+  let now: typeof issues = { gaps: [], warnings: [] };
+  const p = createDoctor({ issues: () => now, onInspectWarning: () => {}, onInspectGap: () => {} });
+  const loading = p.refresh();
+  expect(p.root.querySelector(".doctor-warnings")).not.toBeNull();
+  release();
+  await loading;
+  await settle();
+  expect(p.root.querySelector(".error")).not.toBeNull();
+  expect(p.root.querySelector(".doctor-warnings")).not.toBeNull();
+  now = issues;
+  p.redraw();
+  expect(p.root.querySelectorAll(".doctor-warnings .capture-warning")).toHaveLength(2);
+});
+
+test("a warning whose evidence cannot be inspected says so inside Doctor", async () => {
+  api.doctor.mockReset().mockResolvedValue([{ name: "spool", ok: true, detail: "writable" }]);
+  const p = createDoctor({ issues: () => issues, onInspectWarning: async () => false, onInspectGap: () => {} });
+  await p.refresh();
+  await settle();
+  [...p.root.querySelectorAll("button")].find((b) => b.textContent === "Inspect warning")!.click();
+  await settle();
+  const msg = p.root.querySelector(".doctor-warnings [role=status]")!;
+  expect(p.root.contains(msg)).toBe(true);
+  expect(msg.textContent).toContain("unavailable");
+  p.redraw();
+  expect(p.root.querySelector(".doctor-warnings [role=status]")!.textContent).toContain("unavailable");
+});

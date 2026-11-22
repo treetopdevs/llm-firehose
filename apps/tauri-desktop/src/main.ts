@@ -304,7 +304,7 @@ const panels = {
   files: createFiles(sessionDirectory),
   doctor: createDoctor({
     issues: () => attentionPanel.captureIssues(),
-    onInspectWarning: (id) => void attentionPanel.inspectWarning(id),
+    onInspectWarning: (id) => attentionPanel.inspectWarning(id),
     onInspectGap: (gap) => attentionPanel.inspectGap(gap),
   }),
   settings: createSettings({ onPrivacySaving: () => snapshotBeforeSave(), onPrivacyChanged: (_mode, before) => handlePrivacyChange(before as IdentitySet | undefined) }),

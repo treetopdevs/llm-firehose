@@ -10,7 +10,8 @@ const INSTALLABLE = ["claude-code", "claude-otel", "codex", "opencode", "antigra
 export interface DoctorDeps {
   /** The capture warnings and gaps of the last attention snapshot (MS-9: Doctor is where they are listed). */
   issues?: () => { gaps: readonly { source: string; time: string; summary: string }[]; warnings: readonly AttentionEvidence[] };
-  onInspectWarning?: (eventId: string) => void;
+  /** Resolves false when the warning's evidence could not be shown; Doctor then says so itself, since the panel that reported it is not on screen. */
+  onInspectWarning?: (eventId: string) => void | boolean | Promise<void | boolean>;
   onInspectGap?: (gap: { source: string; time: string; summary: string }) => void;
 }
 
@@ -19,11 +20,16 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
   const root = el("section", { class: "doctor", tabindex: "-1", "aria-label": "Doctor" });
   const heading = el("h2", {}, "Doctor");
   const warningsBox = el("div", { class: "doctor-warnings" });
+  const checksBox = el("div", { class: "doctor-checks" });
+  const adaptersBox = el("div", { class: "doctor-adapters" });
+  const inspectStatus = el("p", { class: "error", role: "status" });
+  inspectStatus.hidden = true;
+  root.append(heading, checksBox, warningsBox, adaptersBox);
 
   /** Capture warnings and gaps: never part of the Needs you queue or its count, always here and on the sidebar badge. */
   function paintWarnings(): void {
     const { gaps, warnings } = deps.issues?.() ?? { gaps: [], warnings: [] };
-    warningsBox.replaceChildren(el("h3", {}, "capture warnings"));
+    warningsBox.replaceChildren(el("h3", {}, "capture warnings"), inspectStatus);
     if (gaps.length + warnings.length === 0) {
       warningsBox.append(el("p", { class: "dim" }, "No capture warnings."));
       return;
@@ -37,7 +43,13 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
     }
     for (const w of warnings) {
       const inspect = el("button", { type: "button", "data-key": `warning:${w.event_id}` }, "Inspect warning");
-      inspect.addEventListener("click", () => deps.onInspectWarning?.(w.event_id));
+      inspect.addEventListener("click", () => {
+        inspectStatus.hidden = true;
+        void Promise.resolve(deps.onInspectWarning?.(w.event_id)).then(
+          (ok) => { if (ok === false) { inspectStatus.textContent = "Captured evidence for that warning is unavailable. Try again after reconnecting."; inspectStatus.hidden = false; } },
+          () => { inspectStatus.textContent = "Captured evidence for that warning is unavailable. Try again after reconnecting."; inspectStatus.hidden = false; },
+        );
+      });
       warningsBox.append(
         el(
           "article",
@@ -51,10 +63,11 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
   }
 
   async function refresh() {
-    root.replaceChildren(heading, el("p", { class: "dim" }, "running checks…"));
+    checksBox.replaceChildren(el("p", { class: "dim" }, "running checks…"));
+    adaptersBox.replaceChildren();
+    paintWarnings();
     try {
       const checks = await doctor();
-      root.replaceChildren(heading);
       const list = el("div", { class: "doctor-list" });
       for (const c of checks) {
         list.append(
@@ -67,9 +80,8 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
           ),
         );
       }
-      root.append(list);
+      checksBox.replaceChildren(list);
       paintWarnings();
-      root.append(warningsBox);
 
       const status = el("p", { class: "install-status dim" }, "");
       const buttons = el("div", { class: "doctor-actions" });
@@ -78,9 +90,10 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
         btn.addEventListener("click", () => runAdapterInstall(adapter, status, { onDone: refresh }));
         buttons.append(btn);
       }
-      root.append(el("h3", {}, "adapters"), buttons, status);
+      adaptersBox.replaceChildren(el("h3", {}, "adapters"), buttons, status);
     } catch (err) {
-      root.replaceChildren(heading, el("p", { class: "error" }, failureMessage("run the setup checks", err)));
+      checksBox.replaceChildren(el("p", { class: "error" }, failureMessage("run the setup checks", err)));
+      adaptersBox.replaceChildren();
     }
   }
 

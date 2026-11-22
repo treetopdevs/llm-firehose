@@ -206,6 +206,15 @@ test("a warning is inspected through the panel, once, by its event id", async ()
   expect(fetcher.mock.calls.filter(([u]) => u.includes("/attention/event?id=w1"))).toHaveLength(1);
 });
 
+test("inspecting a warning answers whether the evidence could be shown", async () => {
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  const p = mount();
+  await p.refresh();
+  expect(await p.inspectWarning("w1")).toBe(true);
+  fetcher.mockImplementationOnce(async () => new Response("no", { status: 500 }));
+  expect(await p.inspectWarning("w1")).toBe(false);
+});
+
 test("notifications require opt-in and send once for a new episode across reconnect and restart", async () => {
   const delivered: string[] = [];
   const notifications = {

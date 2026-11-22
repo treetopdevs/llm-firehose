@@ -154,15 +154,19 @@ export function createAttention(options: AttentionOptions) {
   let needing = 0;
   const countListeners = new Set<() => void>();
   let inspection = 0;
-  async function inspect(id: string) {
+  /** True when the evidence was handed to the inspector; false when it could not be read (or a newer selection superseded it). */
+  async function inspect(id: string): Promise<boolean> {
     const version = ++inspection;
     try {
       const ev = await capturedEvent(id);
-      if (!disposed && version === inspection) options.onSelect(ev);
+      if (disposed || version !== inspection) return false;
+      options.onSelect(ev);
+      return true;
     } catch {
       if (!disposed && version === inspection)
         status.textContent =
           "Captured evidence is unavailable. Try again after reconnecting.";
+      return false;
     }
   }
   const keyOf = (s: AttentionSession) => `${s.source}\0${s.id}`;
