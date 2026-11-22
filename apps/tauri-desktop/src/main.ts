@@ -88,10 +88,13 @@ function rememberSelection(): void {
   const { sel: _gone, at: _at, ...rest } = cur.state;
   places.record(cur.place, { ...rest, ...selectionState() });
 }
+/** The panel whose rows a selection lives in: Fleet's list, or the Worktree list (its own panel, or Project's Sessions view). */
+const selectionPanelFor = (name: string) =>
+  name === "fleet" ? fleetPanel : name === "sessions" || (name === "project" && projectPanel.encoding() === "sessions") ? sessionsPanel : undefined;
 /** The selected row of the panel being shown, if it has one. */
-const selectedKeyHere = (): string | undefined => (active === "fleet" ? fleetPanel.selectedKey() : active === "sessions" ? sessionsPanel.selectedKey() : undefined);
+const selectedKeyHere = (): string | undefined => selectionPanelFor(active)?.selectedKey();
 /** The shown panel's selectable rows, when it has any. */
-const selectableHere = (): string[] => (active === "fleet" ? fleetPanel.selectableKeys() : active === "sessions" ? sessionsPanel.selectableKeys() : []);
+const selectableHere = (): string[] => selectionPanelFor(active)?.selectableKeys() ?? [];
 /** What a history entry keeps of the selection: its key and its place in the list. */
 function selectionState(): { sel?: string; at?: number } {
   const sel = selectedKeyHere();
@@ -214,6 +217,8 @@ const projectPanel = createProject({
   },
   projectLabel: (id) => fleetLabels[id],
   onEncoding: () => syncTransport(),
+  // The Sessions chip (MS-9) shows the Worktree list in place. Leaving keeps its selection for the history entry, as every panel does; the next activate() starts a visit clean.
+  sessions: { root: sessionsPanel.root, activate: () => sessionsPanel.activate({ needsOnly: false }), deactivate: () => {} },
 });
 projectPanel.setConnected(false);
 // The lens panels Fleet hosts as its Strata and Patches encodings.
@@ -539,7 +544,7 @@ let cancelSelectionRestore: () => void = () => {};
  */
 function restoreSelection(name: PanelName, sel: string | undefined, at: number | undefined, frames = 90): void {
   cancelSelectionRestore();
-  const panel = name === "fleet" ? fleetPanel : name === "sessions" ? sessionsPanel : undefined;
+  const panel = selectionPanelFor(name);
   if (!panel || sel === undefined) return;
   let cancelled = false;
   let left = frames;
@@ -622,7 +627,7 @@ const ascendOnEscape = createEscapeHandler({
   afterAscend: (alt, from, prev) => {
     const target = ascentTarget(prev, alt, from, sessionsPanel.hasWorktreeList());
     if (target !== "stay") show(target);
-    else if (from === "sessions") void sessionsPanel.refresh();
+    else if (from === "sessions" || (from === "project" && projectPanel.encoding() === "sessions")) void sessionsPanel.refresh();
   },
 });
 /** The panel and encoding the legend scopes its key lists to. */

@@ -3548,6 +3548,68 @@ test("capture warnings appear in Doctor only, counted on its badge, never in the
   expect(document.querySelector(".content .doctor-warnings")!.textContent).toContain("unmapped Codex rollout record x");
 });
 
+describe("Project's Sessions view (MS-9)", () => {
+  const wtItems = () => [...document.querySelectorAll<HTMLElement>(".content .project-encoding-body .worktree-item")];
+  const cmd = (k: string) => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: k, metaKey: true, bubbles: true, cancelable: true }));
+  const flushTurn = () => new Promise((r) => setTimeout(r, 0));
+  const toSessionsView = async () => {
+    const b = await bootProject({ worktrees: [wtRow({ repo_id: "r1", worktree_id: "wt-a", label: "/w/a" }), wtRow({ repo_id: "r1", worktree_id: "wt-b", label: "/w/b" })] });
+    // Projects are opened with their id (the sidebar, a Fleet row); the panel does not pick one itself.
+    b.go("project", { project: "r1" }, true);
+    await flushTurn();
+    chip("sessions").click();
+    await vi.waitFor(() => expect(wtItems().length).toBe(2));
+    return b;
+  };
+
+  test("a Sessions chip sits with Lanes, Graph, Map and Events and shows the project's worktree list in place", async () => {
+    const b = await toSessionsView();
+    expect([...document.querySelectorAll(".project-chips [role=tab]")].map((t) => t.textContent)).toEqual(["Lanes", "Graph", "Map", "Events", "Sessions"]);
+    expect(selectedChip()).toBe("sessions");
+    expect(b.active()).toBe("project");
+    expect(document.querySelector(".content .project .sessions")).not.toBeNull();
+    expect(b.scope.get().project).toBe("r1");
+  });
+
+  test("it is a view of the Project place: Back returns to Lanes and Forward to Sessions", async () => {
+    const b = await toSessionsView();
+    await flushTurn();
+    cmd("[");
+    expect(b.active()).toBe("project");
+    expect(selectedChip()).toBe("lanes");
+    await flushTurn();
+    cmd("]");
+    expect(selectedChip()).toBe("sessions");
+    await vi.waitFor(() => expect(wtItems().length).toBe(2));
+  });
+
+  test("a selected worktree row is kept in the history entry and comes back after leaving", async () => {
+    const b = await toSessionsView();
+    wtItems()[1].click();
+    expect(document.querySelector(".detail")!.getAttribute("data-inspector")).toBe("worktree");
+    await flushTurn();
+    b.nav("files").click();
+    await flushTurn();
+    cmd("[");
+    expect(selectedChip()).toBe("sessions");
+    await vi.waitFor(() => expect(wtItems().filter((n) => n.classList.contains("picked"))).toHaveLength(1));
+    await vi.waitFor(() => expect(document.activeElement).toBe(wtItems().find((n) => n.classList.contains("picked"))));
+  });
+
+  test("Escape from an opened worktree returns to the project's list in the same view; Escape again goes up to All projects", async () => {
+    const b = await toSessionsView();
+    openIt(wtItems()[0]);
+    expect(b.scope.get().worktree).toBe("wt-a");
+    await vi.waitFor(() => expect(document.querySelectorAll(".content .project-encoding-body .session-item").length).toBeGreaterThanOrEqual(0));
+    esc();
+    expect(b.scope.get().worktree).toBeUndefined();
+    expect(b.active()).toBe("project");
+    await vi.waitFor(() => expect(wtItems().length).toBe(2));
+    esc();
+    expect(b.active()).toBe("fleet");
+  });
+});
+
 // ---- the toolbar (MS-1, MS-7, MS-8) -------------------------------------------------------------------------------
 
 const toolbarBtn = (cls: string) => document.querySelector<HTMLButtonElement>(`.toolbar .${cls}`)!;

@@ -12,7 +12,7 @@ import { FIXTURE_ROWS, NOW, row } from "./model.fixtures";
 import { orderLanes, pickRepo } from "./model";
 import fixture from "../activity/fixture.activity.json";
 import { createProject, splitGoPatch } from "./index";
-import type { ProjectGraphHost, ProjectPanel } from "./index";
+import type { ProjectGraphHost, ProjectPanel, ProjectSessionsHost } from "./index";
 
 const { worktreesMock, worktreeMock, activity } = vi.hoisted(() => ({ worktreesMock: vi.fn(), worktreeMock: vi.fn(), activity: vi.fn() }));
 vi.mock("../../api", async (orig) => ({
@@ -56,7 +56,13 @@ function fakeGraph(registered: string[] = []) {
   return { g: g as unknown as ProjectGraphHost & typeof g, emitView: (v: "graph" | "events") => viewFn?.(v) };
 }
 
-function setup(opts: { registered?: string[]; worktreeOrder?: (r: string) => readonly string[] | undefined; withGraph?: boolean; initial?: Parameters<typeof createScope>[0]; onEncoding?: (e: import("./index").ProjectEncoding) => void } = {}) {
+function fakeSessions() {
+  const root = document.createElement("div");
+  root.className = "fake-sessions";
+  return { root, activate: vi.fn(() => Promise.resolve()), deactivate: vi.fn() } satisfies ProjectSessionsHost;
+}
+
+function setup(opts: { sessions?: ProjectSessionsHost; registered?: string[]; worktreeOrder?: (r: string) => readonly string[] | undefined; withGraph?: boolean; initial?: Parameters<typeof createScope>[0]; onEncoding?: (e: import("./index").ProjectEncoding) => void } = {}) {
   const store: ScopeStore = createScope(opts.initial);
   const go = vi.fn();
   const fg = fakeGraph(opts.registered);
@@ -66,6 +72,7 @@ function setup(opts: { registered?: string[]; worktreeOrder?: (r: string) => rea
     now: () => NOW,
     refreshMs: 15000,
     ...(opts.withGraph === false ? {} : { graph: fg.g }),
+    ...(opts.sessions ? { sessions: opts.sessions } : {}),
     ...(opts.worktreeOrder ? { worktreeOrder: opts.worktreeOrder } : {}),
     ...(opts.onEncoding ? { onEncoding: opts.onEncoding } : {}),
   });
@@ -122,6 +129,64 @@ describe("chips", () => {
     const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     chip("graph").dispatchEvent(esc);
     expect(isEscapeClaimed(esc)).toBe(false);
+  });
+});
+
+describe("Sessions view (MS-9): the old Worktree rung as a view of Project", () => {
+  test("a fifth tab, Sessions, exists only when the shell hosts the sessions list", async () => {
+    const { panel, q } = setup({ sessions: fakeSessions() });
+    await panel.activate();
+    expect(q('.project-chips [role="tab"]').map((t) => t.textContent)).toEqual(["Lanes", "Graph", "Map", "Events", "Sessions"]);
+    expect(q('.project-chips [role="tab"]').map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false"]);
+  });
+
+  test("choosing it hosts the list, binds the project, leaves Lanes and Graph, and records the encoding", async () => {
+    const seen: string[] = [];
+    const sessions = fakeSessions();
+    const { panel, store, g, chip, q } = setup({ sessions, onEncoding: (e) => seen.push(e) });
+    await panel.activate();
+    chip("graph").click();
+    chip("sessions").click();
+    expect(panel.encoding()).toBe("sessions");
+    expect(store.get().project).toBe(DEFAULT);
+    expect(sessions.activate).toHaveBeenCalledTimes(1);
+    expect(q(".project-encoding-body")[0]!.contains(sessions.root)).toBe(true);
+    expect(q(".project-encoding-body")[0]!.hidden).toBe(false);
+    expect(q(".project-lanes-body")[0]!.hidden).toBe(true);
+    expect(g.hide).toHaveBeenCalled();
+    expect(seen.at(-1)).toBe("sessions");
+    expect(chip("sessions").getAttribute("aria-selected")).toBe("true");
+  });
+
+  test("leaving it, or leaving Project, releases the list; it is the same node each time it comes back", async () => {
+    const sessions = fakeSessions();
+    const { panel, chip, q } = setup({ sessions });
+    await panel.activate();
+    chip("sessions").click();
+    chip("lanes").click();
+    expect(sessions.deactivate).toHaveBeenCalledTimes(1);
+    expect(sessions.root.isConnected).toBe(false);
+    chip("sessions").click();
+    expect(q(".project-encoding-body")[0]!.contains(sessions.root)).toBe(true);
+    panel.deactivate();
+    expect(sessions.deactivate).toHaveBeenCalledTimes(2);
+  });
+
+  test("activate({ encoding: 'sessions' }) opens straight on it (history Back, go())", async () => {
+    const sessions = fakeSessions();
+    const { panel } = setup({ sessions });
+    await panel.activate({ encoding: "sessions" });
+    expect(panel.encoding()).toBe("sessions");
+    expect(sessions.activate).toHaveBeenCalled();
+  });
+
+  test("the arrow keys include it in the ring", async () => {
+    const { panel, chip } = setup({ sessions: fakeSessions() });
+    await panel.activate();
+    chip("events").focus();
+    chip("events").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(panel.encoding()).toBe("sessions");
+    expect(document.activeElement).toBe(chip("sessions"));
   });
 });
 
