@@ -66,6 +66,74 @@ test('session id or source change resets window unless patch carries window', ()
   expect(s.get().window).toEqual({ from: 2, to: 3 });
 });
 
+// MS-7: the range is the user's; a session's zoom is local to the session.
+describe('the range set before a session comes back when the session is left', () => {
+  const R = { from: 100, to: 900 };
+  const ZOOM = { from: 300, to: 400 };
+
+  test('ascend restores it, not live', () => {
+    const s = createScope();
+    s.narrow({ project: 'p', window: R });
+    s.narrow({ session: { id: 'a' } });
+    expect(s.get().window).toBe('live'); // the whole session
+    s.narrow({ window: ZOOM });
+    expect(s.ascend()).toBe('project');
+    expect(s.get().window).toEqual(R);
+  });
+
+  test('clearing the session by narrow or replaceContext restores it', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ window: ZOOM });
+    s.narrow({ session: undefined });
+    expect(s.get().window).toEqual(R);
+    s.narrow({ session: { id: 'a' } });
+    s.replaceContext({ project: 'q' });
+    expect(s.get()).toEqual({ project: 'q', window: R });
+  });
+
+  test('moving from one session to another keeps the outer range for the way out', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ window: ZOOM });
+    s.narrow({ session: { id: 'b' } });
+    expect(s.get().window).toBe('live');
+    s.ascend();
+    expect(s.get().window).toEqual(R);
+  });
+
+  test('a window named in the same patch that leaves the session wins', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ session: undefined, window: ZOOM });
+    expect(s.get().window).toEqual(ZOOM);
+  });
+
+  test('a live range comes back as live, and a session entered by set() has nothing to restore', () => {
+    const s = createScope();
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ window: ZOOM });
+    s.ascend();
+    expect(s.get().window).toBe('live');
+    const t = createScope({ session: { id: 'a' }, window: ZOOM });
+    t.ascend();
+    expect(t.get().window).toBe('live');
+  });
+
+  test('reset forgets it', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.reset();
+    s.narrow({ session: { id: 'b' } });
+    s.ascend();
+    expect(s.get().window).toBe('live');
+  });
+});
+
 test('altitude is deepest rung', () => {
   const s = createScope();
   s.narrow({ project: 'p' });

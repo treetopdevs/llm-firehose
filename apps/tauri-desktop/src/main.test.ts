@@ -3035,3 +3035,97 @@ test("finishing onboarding hands focus to the Doctor panel it lands on", async (
   expect(document.activeElement).toBe(doctor);
   expect(doctor.getAttribute("aria-label")).toBe("Doctor");
 });
+
+// MS-8: back and forward through the places visited, scroll kept per place, focus handed to the new view.
+describe("history: back, forward, scroll and focus", () => {
+  const cmd = (k: string, init: KeyboardEventInit = {}) => {
+    const e = new KeyboardEvent("keydown", { key: k, metaKey: true, bubbles: true, cancelable: true, ...init });
+    document.body.dispatchEvent(e);
+    return e;
+  };
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const toProject = async (b: Boot) => {
+    await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+    await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+    await settle();
+    const head = fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!;
+    head.focus();
+    head.click();
+    expect(b.active()).toBe("project");
+    await settle();
+  };
+
+  test("⌘[ returns to the previous place and ⌘] goes forward again; the scope comes with it", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await toProject(b);
+    const project = b.scope.get().project;
+    expect(project).toBeDefined();
+    expect(cmd("[").defaultPrevented).toBe(true);
+    expect(b.active()).toBe("fleet");
+    expect(b.scope.get().project).toBeUndefined();
+    await settle();
+    expect(cmd("]").defaultPrevented).toBe(true);
+    expect(b.active()).toBe("project");
+    expect(b.scope.get().project).toBe(project);
+  });
+
+  test("a range change is not a place, and going back keeps the range", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await toProject(b);
+    const win = { from: NOW - 86_400_000, to: NOW - 3_600_000 };
+    b.scope.narrow({ window: win });
+    await settle();
+    cmd("[");
+    expect(b.active()).toBe("fleet");
+    expect(b.scope.get().window).toEqual(win);
+  });
+
+  test("[ without the command key is left alone, and forward at the newest place does nothing", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await toProject(b);
+    expect(cmd("[", { metaKey: false }).defaultPrevented).toBe(false);
+    expect(b.active()).toBe("project");
+    expect(cmd("]").defaultPrevented).toBe(false);
+    expect(b.active()).toBe("project");
+  });
+
+  test("Escape is a move like any other: back after an ascent returns to the session", async () => {
+    const b = await boot({ sessions: [sessionRow(S1)] });
+    b.scope.set({ project: "P", worktree: "W", session: { id: S1 }, window: "live" });
+    b.nav("session").click();
+    await settle();
+    esc();
+    expect(b.active()).toBe("sessions");
+    await settle();
+    cmd("[");
+    expect(b.active()).toBe("session");
+    expect(b.scope.get()).toMatchObject({ project: "P", worktree: "W", session: { id: S1 } });
+  });
+
+  test("a move that removes the focused element hands focus to the new view, never the body", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await toProject(b);
+    const content = document.querySelector(".content")!;
+    expect(content.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  test("a place's scroll position is put back when the user returns to it", async () => {
+    const b = await boot({ worktrees: twoRepos() });
+    await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+    await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+    await settle();
+    const fleet = document.querySelector<HTMLElement>(".content .fleet")!;
+    Object.defineProperty(fleet, "scrollHeight", { value: 2000, configurable: true });
+    Object.defineProperty(fleet, "clientHeight", { value: 400, configurable: true });
+    fleet.scrollTop = 300;
+    fleet.dispatchEvent(new Event("scroll"));
+    fleetRows()[0].querySelector<HTMLElement>(".fleet-row-head")!.click();
+    await settle();
+    fleet.scrollTop = 0; // what a browser does to a detached scroller
+    esc();
+    expect(b.active()).toBe("fleet");
+    await settle();
+    expect(document.querySelector<HTMLElement>(".content .fleet")!.scrollTop).toBe(300);
+  });
+});

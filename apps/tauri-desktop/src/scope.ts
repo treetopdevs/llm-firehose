@@ -8,8 +8,9 @@
 //   ahead of the pair being delivered when a subscriber re-entrantly narrows;
 //   those changes are queued and delivered in order.
 // - liveSpanMs is a user PREFERENCE for how far 'live' looks back at Project and
-//   (when set) Fleet Lanes. Direct session selection resets window to live but keeps
-//   the preference; navigations that pass an explicit window (Fleet) carry it. The
+//   (when set) Fleet Lanes. Direct session selection resets window to live (the whole
+//   session) but keeps the preference, and leaving the session restores the range that
+//   was in force before it (MS-7); navigations that pass an explicit window (Fleet) carry it. The
 //   Session altitude treats live as the whole session and ignores the span.
 // - `cell` is a deliberate escape hatch: SessionSummary carries no
 //   repo_id/worktree_id, so the sessions matrix selects by CellScope instead.
@@ -154,9 +155,15 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
     }
   };
 
+  // The range in force before a session was entered. A session's window is its own zoom
+  // ('live' is the whole session), so the user's range is put back when the session is left.
+  let outerWindow: ScopeWindow | undefined;
+
   const commit = (next: Scope) => {
     if (sameScope(current, next)) return;
     const prev = current;
+    if (!prev.session && next.session) outerWindow = prev.window;
+    else if (!next.session) outerWindow = undefined;
     current = next;
     queue.push([next, prev]);
     deliver();
@@ -180,7 +187,7 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
     if (has(patch, 'cell')) next.cell = patch.cell;
 
     let win: ScopeWindow = base.window ?? 'live';
-    if (!sameSession(next.session, prev.session)) win = 'live';
+    if (!sameSession(next.session, prev.session)) win = next.session ? 'live' : (outerWindow ?? 'live');
     if (has(patch, 'window') && patch.window !== undefined) {
       const pw = patch.window;
       if (pw === 'live') win = 'live';
@@ -205,7 +212,11 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
       if (current.project) return 'project';
       return 'fleet';
     },
-    set: (next) => commit(freezeScope(next)),
+    // An explicit state has no history: a session entered this way has no outer range to restore.
+    set: (next) => {
+      commit(freezeScope(next));
+      outerWindow = undefined;
+    },
     narrow: (patch) => commit(compute(current, patch)),
     replaceContext(patch) {
       const base: Partial<Scope> = { window: current.window };
@@ -214,7 +225,7 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
     },
     ascend() {
       let next: Scope;
-      if (current.session) next = freezeScope({ ...current, session: undefined, window: 'live' });
+      if (current.session) next = freezeScope({ ...current, session: undefined, window: outerWindow ?? 'live' });
       else if (current.worktree) next = freezeScope({ ...current, worktree: undefined });
       else if (current.project) next = freezeScope({ ...current, project: undefined, cell: undefined });
       else if (current.cell) next = freezeScope({ ...current, cell: undefined });
@@ -226,7 +237,10 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
       subs.add(fn);
       return () => void subs.delete(fn);
     },
-    reset: () => commit(freezeScope({})),
+    reset: () => {
+      outerWindow = undefined;
+      commit(freezeScope({}));
+    },
     setResolver(r) {
       resolverRef = r;
       for (const fn of [...resolverSubs]) fn();

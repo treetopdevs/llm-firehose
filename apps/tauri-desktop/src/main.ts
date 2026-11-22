@@ -47,6 +47,8 @@ import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
 import { createSessionDirectory } from "./session-directory";
 import { inspectorBelongsTo, isAlias, resolveAlias } from "./nav";
+import { createHistory, markOf, restoreScroll, samePlace, type Place } from "./history";
+import type { CellScope } from "./ui/workspace/model";
 import type { AliasName } from "./nav";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -257,6 +259,7 @@ const sessionPanel = createSession({
   },
   onTabShown: (tab) => {
     if (tab === "loom" || tab === "court" || tab === "handoffs" || tab === "replay") renderDetail(detailPane, null, () => {});
+    recordPlace();
   },
 });
 const panels = {
@@ -376,6 +379,8 @@ const transportShown = (): boolean => TRANSPORT_PANELS.has(active) && !(active =
 function syncTransport(): void {
   transport.setVisible(transportShown());
   transport.refresh();
+  // Every show() and every encoding switch passes through here.
+  recordPlace();
 }
 
 /** Narrows (or, with replace, replaces) the shared scope, then shows the panel. */
@@ -430,6 +435,75 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   syncTransport();
 }
 
+// --- places: back, forward, scroll memory and focus hand-off (MS-8) ------------------------------------------
+// A place is the panel, its view and what is in scope. Every show(), view switch and scope change
+// asks for a record; they are coalesced so one user move is one entry. The range is not part of a
+// place, so changing it never adds an entry and going back never changes it.
+const places = createHistory<{ cell?: CellScope }>();
+let here: Place | undefined;
+let travelling = false;
+let recordQueued = false;
+let cancelScrollRestore: () => void = () => {};
+const viewOf = (): string | undefined =>
+  active === "fleet" ? fleetPanel.encoding : active === "project" ? projectPanel.encoding() : active === "session" ? sessionPanel.tab() : undefined;
+function placeNow(): Place {
+  const sc = scope.get();
+  return { panel: active, view: viewOf(), project: sc.project, worktree: sc.worktree, session: sc.session };
+}
+/** Focus must never be left on <body> or on a node the move removed: the new view's heading takes it. */
+function handFocus(): void {
+  const a = document.activeElement;
+  if (a && a !== document.body && a.isConnected) return;
+  const target = content.querySelector<HTMLElement>("h2") ?? (content.firstElementChild as HTMLElement | null);
+  if (!target) return;
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
+}
+function recordPlace(): void {
+  if (recordQueued) return;
+  recordQueued = true;
+  queueMicrotask(() => {
+    recordQueued = false;
+    const place = placeNow();
+    const first = here === undefined;
+    const moved = !here || !samePlace(here, place);
+    const cell = scope.get().cell;
+    places.record(place, cell ? { cell } : {});
+    travelling = false;
+    here = place;
+    if (!moved || first) return;
+    cancelScrollRestore();
+    const marks = places.recall(place);
+    cancelScrollRestore = marks ? restoreScroll(content, marks) : () => {};
+    handFocus();
+  });
+}
+/** Back or forward one place. False when there is nowhere to go. */
+function travel(dir: "back" | "forward"): boolean {
+  const entry = dir === "back" ? places.back() : places.forward();
+  if (!entry) return false;
+  travelling = true;
+  const p = entry.place;
+  scope.replaceContext({ project: p.project, worktree: p.worktree, session: p.session, cell: entry.state.cell });
+  if (p.panel === "fleet" && p.view) fleetPanel.encoding = p.view as typeof fleetPanel.encoding;
+  const name = p.panel as PanelName;
+  show(name, name === "session" && p.view ? { tab: p.view as SessionTab } : name === "project" && p.view ? { encoding: p.view as ProjectEncoding } : undefined);
+  return true;
+}
+scope.subscribe(() => recordPlace());
+// Scroll events do not bubble; capture sees every scroller inside the content area.
+content.addEventListener(
+  "scroll",
+  (e) => {
+    if (!here || travelling || !(e.target instanceof Element)) return;
+    const el = e.target;
+    const kept = (places.recall(here) ?? []).filter((m) => (m.sel ? content.querySelector(m.sel) : content) !== el);
+    const mark = markOf(content, el);
+    places.remember(here, mark ? [...kept, mark] : kept);
+  },
+  true,
+);
+
 const SCOPE_PANELS: ReadonlySet<string> = new Set(["sessions", "session", "project", "fleet"]);
 const ascendOnEscape = createEscapeHandler({
   store: scope,
@@ -451,6 +525,32 @@ function legendContext(): PanelContext {
 }
 
 registerKeys([
+  {
+    scope: "global",
+    keys: ["["],
+    display: "⌘[",
+    label: "go back to the previous place",
+    // A shell that is no longer mounted must not answer for the one that is.
+    enabled: () => app.isConnected,
+    modifiers: "any",
+    handler: (e) => {
+      if (!e.metaKey || !travel("back")) return false;
+      e.preventDefault();
+    },
+  },
+  {
+    scope: "global",
+    keys: ["]"],
+    display: "⌘]",
+    label: "go forward again",
+    // A shell that is no longer mounted must not answer for the one that is.
+    enabled: () => app.isConnected,
+    modifiers: "any",
+    handler: (e) => {
+      if (!e.metaKey || !travel("forward")) return false;
+      e.preventDefault();
+    },
+  },
   {
     scope: "global",
     ...QUEUE_KEYS.escape,
