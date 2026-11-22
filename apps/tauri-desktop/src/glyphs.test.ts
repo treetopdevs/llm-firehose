@@ -265,6 +265,7 @@ describe("no stray vocabulary literals", () => {
     "ui/fleet/encodings.ts:…": "label truncation ellipsis, not the idle mark",
     "ui/graph/names.ts:…": "name truncation ellipsis, not the idle mark",
     "ui/detail.ts:×": "close button label for the detail drawer: a control, not a worktree-state mark",
+    "ui/inspector.ts:×": "close button label for the inspector, which shares the detail drawer: a control, not a worktree-state mark",
     "ui/doctor.ts:✓": "doctor check pass mark: a check result, not a worktree state",
     "ui/onboarding.ts:✓": "onboarding check pass mark: a check result, not a worktree state",
     "ui/graph/api.ts:?": "git porcelain status code for an untracked file",
