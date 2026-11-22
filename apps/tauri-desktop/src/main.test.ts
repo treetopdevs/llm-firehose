@@ -98,17 +98,12 @@ test("the score view has no sidebar entry; shown with nothing in scope it starts
   expect(active()).toBe("session");
   expect(document.querySelector(".score")).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("open a session");
-  const close=vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal("AudioContext",class {state="running";resume=vi.fn().mockResolvedValue(undefined);close=close;onstatechange=null;});
-  document.querySelector<HTMLButtonElement>('[aria-label="Enable replay sound"]')!.click();
-  await Promise.resolve();
-  expect(document.querySelector('[aria-label="Disable replay sound"]')).not.toBeNull();
-  expect(document.querySelector(".score")?.textContent).toContain("Replay sound on");
+  // Replay sound is a Settings choice (MS-9); the Score carries no control for it.
+  expect(document.querySelector('[aria-label="Enable replay sound"]')).toBeNull();
   document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=fleet]")!.click();
-  expect(close).toHaveBeenCalledOnce();
   btn.click();
   expect(document.querySelector("#session-tab-score")?.getAttribute("aria-selected")).toBe("true");
-  expect(document.querySelector('[aria-label="Enable replay sound"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Enable replay sound"]')).toBeNull();
 });
 
 test("the loops view has no sidebar entry; shown with nothing in scope it starts empty", async () => {

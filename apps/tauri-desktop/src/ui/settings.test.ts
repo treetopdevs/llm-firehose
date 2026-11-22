@@ -84,3 +84,21 @@ test("no configured address row when the config matches", async () => {
   expect(dts).toContain("daemon address");
   expect(dts).not.toContain("configured address");
 });
+
+test("replay sound lives in Settings: an off-by-default checkbox with its tones, bound to the shared setting", async () => {
+  const { replaySoundSetting } = await import("./score/sound-setting");
+  replaySoundSetting.reset();
+  const s = createSettings();
+  await s.refresh();
+  const box = s.root.querySelector<HTMLInputElement>("#replay-sound")!;
+  expect(box.type).toBe("checkbox");
+  expect(box.checked).toBe(false);
+  expect(s.root.querySelector(`label[for="replay-sound"]`)!.textContent).toContain("replay sound");
+  expect(s.root.textContent).toContain("196 Hz");
+  box.checked = true;
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(replaySoundSetting.get()).toBe(true);
+  replaySoundSetting.report("unavailable");
+  expect(s.root.querySelector(".replay-sound-status")!.textContent).toContain("unavailable");
+  replaySoundSetting.reset();
+});

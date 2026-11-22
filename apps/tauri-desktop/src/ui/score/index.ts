@@ -5,7 +5,8 @@
 // full event list that highlights the event under it and drives the detail
 // pane. Gaps are real time at every speed.
 
-import { createReplaySound, REPLAY_PITCHES } from "./sound";
+import { createReplaySound } from "./sound";
+import { replaySoundSetting } from "./sound-setting";
 import type { SoundState } from "./sound";
 import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
@@ -114,21 +115,16 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   const bar = el("div", { class: "score-bar" });
   const overview = el("div", { class: "score-overview" });
   const chart = el("div", { class: "score-chart" });
-  const soundButton = el("button", {"aria-label": "Enable replay sound", "aria-pressed": "false"}, "Enable replay sound");
-  const soundStatus = el("span", {role: "status"}, "Replay sound off");
+  // Replay sound is chosen in Settings (MS-9). The Score plays tones only while that choice is on, and opens
+  // audio when playback starts (a user action); the device's state is reported for Settings to show.
   let soundState: SoundState = "off";
   const sound = createReplaySound(state => {
     soundState = state;
-    const label = state === "on" || state === "enabling" ? "Disable replay sound" : "Enable replay sound";
-    soundButton.textContent = label; soundButton.setAttribute("aria-label", label);
-    soundButton.setAttribute("aria-pressed", String(state === "on" || state === "enabling"));
-    soundStatus.textContent = state === "unavailable" ? "Replay sound unavailable. Playback still works; you can retry." : `Replay sound ${state}`;
+    replaySoundSetting.report(state);
   });
-  soundButton.addEventListener("click", () => { if (soundState === "on" || soundState === "enabling") sound.disable(); else void sound.enable(); });
-  const soundControls = el("details", {}, el("summary", {}, "Optional replay sound"), soundButton, soundStatus,
-    el("p", {}, `Quiet local tones during playback only; off by default. ${Object.entries(REPLAY_PITCHES).map(([category, hz]) => `${category} ${hz} Hz`).join(", ")}; other 196 Hz. At most one latest crossed observation every 150 ms; dense events and first/final observations may be silent. This is not an error detector. Tones describe captured categories, not success. Leaving Score, hiding the page, or opening another session switches sound off.`));
+  replaySoundSetting.subscribe(() => { if (!replaySoundSetting.get()) sound.disable(); });
   const windowNote = el("p", { class: "dim score-window-note", hidden: "" });
-  const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, soundControls, overview, chart);
+  const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, overview, chart);
   const clipId = `score-clip-${++clipSeq}`;
 
   let sessionId = "";
@@ -203,6 +199,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     if (!playing) sound.stop();
     playBtn.setAttribute("aria-pressed", String(playing));
     playBtn.textContent = playing ? "❚❚" : "▶";
+    if (playing && !wasPlaying && replaySoundSetting.get() && soundState !== "on" && soundState !== "enabling") void sound.enable();
     if (playing) {
       // Starting playback: no detail fetch may be in flight while the cursor
       // moves, and a pane showing full fields drops back to projected ones.
