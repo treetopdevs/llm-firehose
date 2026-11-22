@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, expectTypeOf, test } from "vitest";
 import { remapPlace, remapScope } from "./privacy-remap";
 import { createScope } from "./scope";
 import type { Scope } from "./scope";
@@ -97,6 +97,13 @@ describe("remapPlace (history entries follow a privacy change)", () => {
     expect(remapPlace(bare, before, after)).toBe(bare);
     const same = { panel: "project", project: "sha256-aaa", worktree: "w9" };
     expect(remapPlace(same, before, after)).toBe(same);
+  });
+  test("the result type admits cleared identity fields (checked by tsc, not at run time)", () => {
+    const r = remapPlace({ panel: "project", project: "p" }, before, undefined);
+    expectTypeOf(r.project).toEqualTypeOf<string | undefined>();
+    expectTypeOf(r.worktree).toEqualTypeOf<string | undefined>();
+    expectTypeOf(r.panel).toEqualTypeOf<string>();
+    expect(r.project).toBeUndefined();
   });
   test("a project that cannot be matched, or identities that could not be verified, clear the identity of the place", () => {
     const dup = { repos: [repo("x1", "alpha"), repo("x2", "alpha")] };

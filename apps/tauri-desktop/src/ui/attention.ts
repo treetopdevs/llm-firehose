@@ -478,6 +478,7 @@ export function createAttention(options: AttentionOptions) {
     inspectWarning: (id: string) => inspect(id),
     /** Fills the inspector with a gap (a diagnostic, not a captured event). */
     inspectGap(gap: { source: string; time: string; summary: string }): void {
+      inspection++; // a warning still loading must not replace this selection
       options.onSelect({
         id: "",
         source: gap.source,

@@ -432,6 +432,22 @@ test("unrecorded capture gaps are held for Doctor, counted on its badge and insp
   );
 });
 
+test("a gap selected while a warning is still loading is not replaced by the warning", async () => {
+  const selected = vi.fn();
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  Object.assign(snapshot, { gaps: [{ source: "firehose", time: new Date(now).toISOString(), summary: "Unreadable spool line" }] });
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  let release!: (r: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise<Response>((r) => { release = r; }));
+  const pending = p.inspectWarning("w1");
+  p.inspectGap(p.captureIssues().gaps[0]);
+  release(new Response(JSON.stringify({ id: "w1", source: "codex", category: "permission", time: new Date(now).toISOString(), summary: "captured request" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await pending;
+  expect(selected).toHaveBeenCalledTimes(1);
+  expect(selected).toHaveBeenLastCalledWith(expect.objectContaining({ name: "capture.gap" }));
+});
+
 test("the panel heading is the nav label and the old name is gone", async () => {
   const p = mount();
   expect(p.root.querySelector("h2")?.textContent).toBe("Needs you");

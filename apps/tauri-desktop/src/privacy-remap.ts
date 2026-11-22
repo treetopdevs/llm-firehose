@@ -58,14 +58,18 @@ export function remapScope(sc: Scope, before: IdentitySet, after: IdentitySet): 
  * kept, one that can be matched takes its new id (worktree and session are not remappable and are dropped), and
  * anything else, or identities that could not be verified (`after` undefined), loses its identity.
  */
-export function remapPlace<P extends { project?: string; worktree?: string; session?: { id: string; source?: string } }>(place: P, before: IdentitySet, after: IdentitySet | undefined): P {
+type Identity = { project?: string; worktree?: string; session?: { id: string; source?: string } };
+/** The place with its three identity fields typed as optional, whatever the caller's type promised. */
+export type Remapped<P extends Identity> = Omit<P, keyof Identity> & Identity;
+
+export function remapPlace<P extends Identity>(place: P, before: IdentitySet, after: IdentitySet | undefined): Remapped<P> {
   const has = place.project !== undefined || place.worktree !== undefined || place.session !== undefined;
-  if (!has) return place;
+  if (!has) return place as Remapped<P>;
   const cleared = { ...place, project: undefined, worktree: undefined, session: undefined };
   if (!after) return cleared;
   const sc: Scope = { window: "live", ...(place.project !== undefined ? { project: place.project } : {}), ...(place.worktree !== undefined ? { worktree: place.worktree } : {}), ...(place.session !== undefined ? { session: place.session } : {}) };
   const r = remapScope(sc, before, after);
-  if (r.kind === "unchanged") return place;
+  if (r.kind === "unchanged") return place as Remapped<P>;
   if (r.kind === "cleared") return cleared;
   return { ...place, project: r.patch.project, worktree: undefined, session: undefined };
 }
