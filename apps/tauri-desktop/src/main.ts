@@ -40,7 +40,7 @@ import { createActions } from "./ui/actions";
 import { createRoots } from "./ui/actions/roots";
 import { remapScope } from "./privacy-remap";
 import type { IdentitySet } from "./privacy-remap";
-import type { Scope, ScopePatch, SessionRef } from "./scope";
+import type { ScopePatch, SessionRef } from "./scope";
 import { ascentTarget, createEscapeHandler } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
 import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
@@ -151,14 +151,9 @@ scope.onResolver(() => attentionPanel.redraw());
 // Altitudes (D94-D98): Fleet > Project > Worktree (sessions) > Session (score).
 // The nav is those four plus Files, Doctor and Settings; the retired lens names
 // (live, attention, strata, ecosystem, workspace) are aliases (see nav.ts).
-// The old fleet panels are encodings inside Fleet. Landing is Project, then once
-// to Fleet when there is more than one repository (see onRows below). The
-// attention strip is visible at every altitude.
+// The old fleet panels are encodings inside Fleet. Launch lands on Fleet (All projects, MS-8) and
+// never moves afterwards. The attention strip is visible at every altitude.
 let fleetLabels: Record<string, string> = {};
-let repoCount = 0;
-let landingPending = false;
-const isUntouchedLive = (sc: Scope): boolean =>
-  sc.window === "live" && !sc.project && !sc.worktree && !sc.session && !sc.cell;
 // Privacy mode for the Map encoding's names; refreshed whenever Project reloads rows.
 let privacyMode: string | undefined;
 const loadPrivacyMode = (): void => {
@@ -175,16 +170,8 @@ const projectPanel = createProject({
   go: (name, patch): void => {
     go(name, patch);
   },
-  onRows: (rows) => {
+  onRows: () => {
     loadPrivacyMode();
-    repoCount = new Set(rows.map((r) => r.repo_id)).size;
-    if (!landingPending) return;
-    landingPending = false;
-    if (active === "project" && repoCount > 1 && isUntouchedLive(scope.get())) show("fleet");
-  },
-  // The landing rule judges the first load only; a later recovery must not move the user.
-  onLoadFailed: () => {
-    landingPending = false;
   },
   projectLabel: (id) => fleetLabels[id],
   onEncoding: () => syncTransport(),
@@ -349,7 +336,7 @@ const statusText = el("span", { class: "status-text dim" }, "connecting…");
 const compatBanner = el("div", { class: "compat-banner" });
 const eventCount = el("span", { class: "event-count dim" }, "");
 
-let active: PanelName = "project";
+let active: PanelName = "fleet";
 const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
   ["Altitudes", ["fleet", "project", "sessions", "session"]],
   ["Housekeeping", ["files", "doctor", "settings"]],
@@ -409,8 +396,6 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if (name !== active) actions.cancelAll();
   // Registration can happen elsewhere (Workspace toolbar): re-read roots on arrival.
   if ((name === "fleet" || name === "project") && name !== active) void roots.refresh();
-  // Any navigation other than the boot landing decides the landing rule.
-  if (name !== "project") landingPending = false;
   if (active === "project" && name !== "project") projectPanel.deactivate();
   if (active === "fleet" && name !== "fleet") fleetPanel.deactivate();
   // Only a real panel change closes the shared pane, and not on the panel the inspector belongs to.
@@ -645,8 +630,11 @@ void connector.connect();
 setInterval(() => {
   void connector.connect();
 }, 3000);
-show("project");
-landingPending = true;
+show("fleet");
+// Membership, worktree names and lifetimes come from the Project panel's rows. Load them here so
+// they do not depend on which panel is shown first (the landing is Fleet, not Project). After
+// show(): leaving the initial Project state deactivates it, which would drop an earlier request.
+void scope.resolver()?.refresh?.();
 
 if (!isOnboarded()) {
   app.append(

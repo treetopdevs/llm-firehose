@@ -129,6 +129,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
 
   let rows: WorktreeLifetimeView[] = [];
   let status: Status = "idle";
+  // Rows came from a successful /worktrees read, by the panel or by the shell while it was hidden.
+  let rowsKnown = false;
+  // The last hidden read failed (daemon down at boot): the next connection retries it.
+  let rowsFailed = false;
   let connected = true;
   let failedOffline = false;
   const orders = new Map<string, string[]>();
@@ -240,7 +244,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       // The roots-backed folder name (D126f) answers ahead of any placeholder, so Worktree, Fleet and the crumb read one name.
       const rooted = rootsName(sc.project);
       if (rooted !== undefined) out.project = rooted;
-      else if (graph && sc.project !== undefined && status === "ready" && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
+      else if (graph && sc.project !== undefined && (status === "ready" || rowsKnown) && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
       return out;
     },
   });
@@ -710,10 +714,13 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       if (token === loadToken && !active && !signal?.aborted) {
         const changed = labelSignature(data) !== labelSignature(rows);
         rows = data;
+        rowsKnown = true;
+        rowsFailed = false;
         // Views drawn from the old names (Worktree header, Fleet, crumb) must redraw.
         if (changed) store.touchResolver();
       }
     } catch {
+      if (token === loadToken && !active) rowsFailed = true;
       // keep the last known membership
     }
   }
@@ -730,6 +737,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       const data = await api.worktrees(ctl.signal);
       if (token !== loadToken || ctl.signal.aborted || !active) return;
       rows = data;
+      rowsKnown = true;
       status = "ready";
       failedOffline = false;
       render();
@@ -996,6 +1004,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     setConnected(c) {
       connected = c;
       if (c && failedOffline && active) void load();
+      // The shell's boot read failed while the daemon was down: take the rows now, hidden or not.
+      else if (c && !active && rowsFailed) void refreshRows();
     },
   };
 }

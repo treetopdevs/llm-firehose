@@ -734,8 +734,6 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     fullById = new Map();
     currentId = undefined;
     setPlaying(false);
-    // Closing the pane, or another selection, while this loads keeps the load from rendering.
-    const sel = selection;
     sessionId = id;
     clear(head);
     clear(overview);
@@ -792,10 +790,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       draw();
       // A load that lands after the user left the Score, or closed the pane,
       // draws but leaves the shared detail pane alone.
+      // Opening a score only marks the event under the playhead: the detail pane opens when the
+      // user selects something (MS-8), so playback before that also stays out of it.
       const under = eventAt(score, at);
       if (under) {
         mark(under);
-        if (root.isConnected && sel === selection) render(under.event);
+        shown = false;
+        dismissed = true;
       }
     } catch (err) {
       if (v !== version) return;

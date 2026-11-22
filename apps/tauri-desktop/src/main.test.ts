@@ -16,7 +16,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-test("Project is the landing view; live and the attention strip remain available", async () => {
+test("All projects (Fleet) is the landing view; live and the attention strip remain available", async () => {
   document.body.innerHTML = '<div id="app"></div>';
   vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
@@ -45,8 +45,8 @@ test("Project is the landing view; live and the attention strip remain available
     ),
   );
   await import("./main");
-  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("project");
-  expect(document.querySelector(".content .project")).not.toBeNull();
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("fleet");
+  expect(document.querySelector(".content .fleet")).not.toBeNull();
   expect(document.querySelector(".attention-strip")).not.toBeNull();
   const btn = (n: string) =>
     document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${n}]`)!;
@@ -268,7 +268,7 @@ type BootOpts = {
   firstRun?: boolean;
   sessions?: unknown[]; repos?: unknown[] | (() => unknown[] | Promise<unknown[]>); snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
-  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
+  worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean | number; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
   // /workspace-graph/timeline answers a valid EventPage; /workspace-graph/activity a valid ActivityResponse.
   timeline?: EventPage | ((q: URLSearchParams) => EventPage);
   activity?: ActivityResponse | ((q: URLSearchParams) => ActivityResponse);
@@ -292,7 +292,9 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
   vi.stubGlobal("EventSource", class { onopen: (() => void) | null = null; onerror = null; onmessage: ((m: { data: string }) => void) | null = null; constructor() { sources.push(this); } close() {} });
   const urls: string[] = [];
   const worktreeSignals: Array<AbortSignal | undefined> = [];
-  let failNext = opts.worktreesFailFirst === true;
+  const failAt = opts.worktreesFailFirst === true ? 1 : opts.worktreesFailFirst || 0;
+  let seen = 0;
+  // A number fails that 1-based /worktrees request: at launch the shell and Fleet read first, Project is third.
   const json = (b: unknown) => new Response(JSON.stringify(b));
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     urls.push(url);
@@ -301,7 +303,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     if (p === "/worktrees") {
       worktreeSignals.push(init?.signal ?? undefined);
       if (opts.worktreesGate) await opts.worktreesGate;
-      if (failNext) { failNext = false; throw new TypeError("network down"); }
+      if (++seen === failAt) throw new TypeError("network down");
       if (opts.worktreesStatus && opts.worktreesStatus !== 200) return new Response("not found", { status: opts.worktreesStatus });
       return json(opts.worktrees ?? []);
     }
@@ -347,6 +349,13 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
     document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${name}]`)!;
   return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, go, active: () => document.querySelector(".nav-btn.active")?.getAttribute("data-panel") };
 }
+
+// Launch lands on Fleet (MS-8); these tests exercise Project, so they open it first.
+const bootOnProject = async (opts: BootOpts = {}): Promise<Boot> => {
+  const b = await boot(opts);
+  b.nav("project").click();
+  return b;
+};
 
 // The workspace graph is the Graph chip of Project (it has no sidebar entry any more).
 const chip = (e: string) => document.querySelector<HTMLButtonElement>(`.project-chips [data-encoding=${e}]`)!;
@@ -397,6 +406,18 @@ test("openScore and openLoops narrow scope.session and show the panel; score ope
   expect(b.active()).toBe("session");
   expect(tabOn("loops")).toBe(true);
   expect(b.scope.get().session).toEqual({ id: S1, source: "codex" });
+});
+
+test("opening Score does not open the detail pane; selecting an event does", async () => {
+  const b = await boot({ sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+  b.nav("sessions").click();
+  await vi.waitFor(() => expect(document.querySelector<HTMLElement>(".score-open")).not.toBeNull());
+  document.querySelector<HTMLElement>(".score-open")!.click();
+  await vi.waitFor(() => expect(document.querySelector(".score-tick")).not.toBeNull());
+  const pane = document.querySelector<HTMLElement>(".detail")!;
+  expect(pane.classList.contains("open")).toBe(false);
+  document.querySelector<SVGElement>(".score-tick")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  expect(pane.classList.contains("open")).toBe(true);
 });
 
 test("F3: Score A, Loops B, then the Score nav button shows B; an unset scope.session does not reopen", async () => {
@@ -617,8 +638,8 @@ test("footer crumb sits between the status text and the event count and never as
   expect(crumb.textContent).toContain("(unknown)");
   b.scope.setResolver({ sessions: () => undefined, labels: () => ({ project: "Alpha", worktree: "main" }) });
   expect(crumb.textContent).toBe("Alpha › main");
-  // Landing on Project issues the one /worktrees request; the crumb adds none.
-  expect(b.urls.filter((u) => new URL(u).pathname === "/worktrees")).toHaveLength(1);
+  // Landing on Fleet issues two /worktrees requests: the shell's own load for the scope resolver and Fleet's list. The crumb adds none.
+  expect(b.urls.filter((u) => new URL(u).pathname === "/worktrees")).toHaveLength(2);
 });
 
 test("graph round trip: a second project scope loads that repository; sessions filter only through the resolver", async () => {
@@ -698,25 +719,29 @@ test("sidebar groups altitudes, lenses and housekeeping; the folded panels are g
   heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
   expect(b.nav("workspace")).toBeNull();
   for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeNull();
-  expect(b.active()).toBe("project");
+  expect(b.active()).toBe("fleet");
 });
 
 test.each([
   ["rows", [wtRow()], ".project-lane"],
   ["no rows", [], ".project-empty"],
-])("landing requests /worktrees once, does not write scope, aborts on leaving (%s)", async (_n, worktrees, sel) => {
+])("landing requests /worktrees twice (resolver rows and Fleet's list), does not write scope; Project adds its own and aborts it on leaving (%s)", async (_n, worktrees, sel) => {
   const b = await boot({ worktrees });
-  expect(b.worktreeSignals).toHaveLength(1);
-  expect(b.worktreeSignals[0]?.aborted).toBe(false);
+  // The shell loads the resolver's rows itself, and Fleet loads its own list.
+  expect(b.worktreeSignals).toHaveLength(2);
+  await vi.waitFor(() => expect(document.querySelector(".content .fleet")).not.toBeNull());
+  expect(b.scope.get()).toEqual({ window: "live" });
+  b.nav("project").click();
   await vi.waitFor(() => expect(laneOrEmpty()).not.toBeNull());
   expect(document.querySelector(sel)).not.toBeNull();
-  expect(b.scope.get()).toEqual({ window: "live" });
-  expect(b.worktreeSignals).toHaveLength(1);
+  const own = b.worktreeSignals[b.worktreeSignals.length - 1];
+  expect(own?.aborted).toBe(false);
   b.nav("settings").click();
-  expect(b.worktreeSignals[0]?.aborted).toBe(true);
+  expect(own?.aborted).toBe(true);
+  const n = b.worktreeSignals.length;
   b.nav("project").click();
-  expect(b.worktreeSignals).toHaveLength(2);
-  expect(b.worktreeSignals[1]?.aborted).toBe(false);
+  expect(b.worktreeSignals).toHaveLength(n + 1);
+  expect(b.worktreeSignals[n]?.aborted).toBe(false);
 });
 
 function expectProjectInert(b: Boot) {
@@ -732,7 +757,7 @@ function expectProjectInert(b: Boot) {
 }
 
 test("SSE reconnect refreshes Project only while it is the active panel", async () => {
-  const b = await boot({ worktrees: [wtRow()] });
+  const b = await bootOnProject({ worktrees: [wtRow()] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   expect(b.sources.length).toBeGreaterThan(0);
   const n = b.worktreeSignals.length;
@@ -746,7 +771,7 @@ test("SSE reconnect refreshes Project only while it is the active panel", async 
 });
 
 test("lane click scopes the sessions list", async () => {
-  const b = await boot({
+  const b = await bootOnProject({
     worktrees: [wtRow()],
     sessions: [sessionRow("s-o1"), sessionRow("s-x")],
   });
@@ -762,7 +787,7 @@ test("lane click scopes the sessions list", async () => {
 });
 
 test("Escape from a lane's sessions widens to the worktree list, then to Fleet", async () => {
-  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow("s-o1"), sessionRow("s-x")] });
+  const b = await bootOnProject({ worktrees: [wtRow()], sessions: [sessionRow("s-o1"), sessionRow("s-x")] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   document.querySelector<SVGGElement>(".project-lane")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await vi.waitFor(() => expect(document.querySelectorAll(".session-item")).toHaveLength(1));
@@ -790,7 +815,7 @@ test("Escape from a selected worktree of a project with no rows still goes to Pr
 });
 
 test("Escape with a cell in scope never promises a list the panel will not draw", async () => {
-  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow("s-o1")] });
+  const b = await bootOnProject({ worktrees: [wtRow()], sessions: [sessionRow("s-o1")] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   b.scope.narrow({ project: "repoA", worktree: "wt-open", cell: { where: "w", agent: "a", label: "l" } });
   b.nav("sessions").click();
@@ -816,7 +841,7 @@ test("older daemon: /worktrees 404 renders the unsupported notice without touchi
   const unhandled: unknown[] = [];
   const onUnhandled = (e: unknown) => unhandled.push(e);
   process.on("unhandledRejection", onUnhandled);
-  const b = await boot({ worktreesStatus: 404 });
+  const b = await bootOnProject({ worktreesStatus: 404 });
   await vi.waitFor(() => expect(document.querySelector(".project-unsupported")).not.toBeNull());
   b.go("live");
   expect(b.active()).toBe("fleet");
@@ -830,16 +855,17 @@ test("older daemon: /worktrees 404 renders the unsupported notice without touchi
 test("cold start recovery: a failed first load shows Connecting, then lanes once the daemon is healthy", async () => {
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
-  await boot({ worktrees: [wtRow()], worktreesFailFirst: true, healthGate: gate });
+  await bootOnProject({ worktrees: [wtRow()], worktreesFailFirst: 3, healthGate: gate });
   await vi.waitFor(() => expect(document.querySelector(".project-connecting")).not.toBeNull());
   expect(document.querySelector(".project-error")).toBeNull();
   release();
-  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
-  expect(document.querySelector(".project-connecting")).toBeNull();
+  // The shell already read the rows while Project was hidden, so lanes may draw before the recovery; the notice clears with it.
+  await vi.waitFor(() => expect(document.querySelector(".project-connecting")).toBeNull());
+  expect(document.querySelector(".project-lane")).not.toBeNull();
 });
 
 test("Escape ascends Project: worktree to project stays on Project, project to fleet lands on Live (one repo); inputs are excluded", async () => {
-  const b = await boot({ worktrees: [wtRow()] });
+  const b = await bootOnProject({ worktrees: [wtRow()] });
   await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
   b.scope.narrow({ project: "repoA", worktree: wtRow().worktree_id });
   const before = b.scope.get();
@@ -883,28 +909,28 @@ const needy = (id: string, repoId: string | undefined, over: Record<string, unkn
 };
 const fleetRows = () => [...document.querySelectorAll(".fleet-row")];
 
-test("landing: one repository stays on Project", async () => {
+test("landing: one repository lands on All projects and stays there", async () => {
   const b = await boot({ worktrees: [wtRow()] });
-  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await vi.waitFor(() => expect(document.querySelector(".fleet-row")).not.toBeNull());
   await new Promise((r) => setTimeout(r, 0));
-  expect(b.active()).toBe("project");
+  expect(b.active()).toBe("fleet");
 });
 
-test("landing: two repositories move to Fleet once; the project request is aborted, the fleet request is live", async () => {
+test("landing: two repositories land on All projects and never move; a later visit to Project stays on Project", async () => {
   const b = await boot({ worktrees: twoRepos() });
-  await vi.waitFor(() => expect(b.active()).toBe("fleet"));
-  expect(document.querySelector(".content .fleet")).not.toBeNull();
-  expect(b.worktreeSignals[0]?.aborted).toBe(true);
-  expect(b.worktreeSignals[1]?.aborted).toBe(false);
+  await vi.waitFor(() => expect(document.querySelector(".content .fleet")).not.toBeNull());
+  await vi.waitFor(() => expect(document.querySelectorAll(".fleet-row").length).toBeGreaterThan(1));
+  expect(b.active()).toBe("fleet");
+  // The landing never opened Project, so nothing of its was started and then aborted.
+  expect(b.worktreeSignals.every((x) => !x?.aborted)).toBe(true);
   expect(b.scope.get()).toEqual({ window: "live" });
-  // Decided once: a later visit to Project stays on Project after its load.
   b.nav("project").click();
   await vi.waitFor(() => expect(document.querySelector(".project-lane, select.project-repo")).not.toBeNull());
   await new Promise((r) => setTimeout(r, 0));
   expect(b.active()).toBe("project");
 });
 
-test("landing: navigating away before the load lands cancels the move", async () => {
+test("landing: navigating away before the load lands does not bring the user back", async () => {
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
   const b = await boot({ worktrees: twoRepos(), worktreesGate: gate });
@@ -912,38 +938,37 @@ test("landing: navigating away before the load lands cancels the move", async ()
   release();
   await new Promise((r) => setTimeout(r, 0));
   expect(b.active()).toBe("fleet");
-  // Positive signal: a full two-repository load completes, and still nothing moves the user.
   b.nav("project").click();
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   expect(b.active()).toBe("project");
 });
 
-test("landing: narrowing the scope before the load lands cancels the move", async () => {
+test("landing: narrowing the scope before the load lands keeps the user on All projects", async () => {
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
   const b = await boot({ worktrees: twoRepos(), worktreesGate: gate });
   b.scope.narrow({ project: "repoA" });
   release();
-  // Positive signal: the Project load landed (its lanes are drawn).
-  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
-  expect(b.active()).toBe("project");
+  await new Promise((r) => setTimeout(r, 0));
+  await vi.waitFor(() => expect(document.querySelector(".content .fleet")).not.toBeNull());
+  expect(b.active()).toBe("fleet");
   expect(b.scope.get().project).toBe("repoA");
 });
 
-test("landing: a failed first load does not leave a redirect armed for a later recovery", async () => {
+test("landing: a failed first load lands on All projects and a later recovery does not move the user", async () => {
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
   const b = await boot({ worktrees: twoRepos(), worktreesFailFirst: true, healthGate: gate });
-  await vi.waitFor(() => expect(document.querySelector(".project-connecting")).not.toBeNull());
+  expect(b.active()).toBe("fleet");
   release();
-  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
-  expect(b.active()).toBe("project");
+  await new Promise((r) => setTimeout(r, 0));
+  expect(b.active()).toBe("fleet");
 });
 
-test("landing: an older daemon (404) stays on Project", async () => {
+test("landing: an older daemon (404) lands on All projects", async () => {
   const b = await boot({ worktreesStatus: 404 });
-  await vi.waitFor(() => expect(document.querySelector(".project-unsupported")).not.toBeNull());
-  expect(b.active()).toBe("project");
+  await vi.waitFor(() => expect(document.querySelector(".fleet-unsupported")).not.toBeNull());
+  expect(b.active()).toBe("fleet");
 });
 
 test("Escape: Project ascends to Fleet when there is more than one repository; Fleet clears the project and an empty scope claims nothing", async () => {
@@ -1403,7 +1428,7 @@ test("transport: preset carry rules", async () => {
 });
 
 test("transport: keys act on the track only; Escape still ascends", async () => {
-  const b = await boot({ worktrees: [wtRow()], sessions: [sessionRow(S1, { source: S1_SOURCE })] });
+  const b = await bootOnProject({ worktrees: [wtRow()], sessions: [sessionRow(S1, { source: S1_SOURCE })] });
   await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
   tpPreset("2h").click();
   const win = b.scope.get().window;
@@ -1432,7 +1457,7 @@ test("transport: keys act on the track only; Escape still ascends", async () => 
 });
 
 test("transport: a drag Escape beats the panel Escape, then the panel clears its cursor", async () => {
-  const b = await boot({ worktrees: [wtRow()] });
+  const b = await bootOnProject({ worktrees: [wtRow()] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   b.scope.narrow({ project: "repoA" });
   tpPreset("24h").click();
@@ -1457,7 +1482,7 @@ test("transport: a drag Escape beats the panel Escape, then the panel clears its
 });
 
 test("transport: Escape and ArrowLeft in body-appended inputs leave scope unchanged", async () => {
-  const b = await boot({ worktrees: [wtRow()] });
+  const b = await bootOnProject({ worktrees: [wtRow()] });
   await vi.waitFor(() => expect(document.querySelector("select.project-repo")).not.toBeNull());
   tpPreset("8h").click();
   b.scope.narrow({ project: "repoA" });
@@ -1511,7 +1536,7 @@ test("transport: older daemon (404) mounts, presets work, no extra /worktrees re
 test("transport: a window change does not restart the cold-start retry", async () => {
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
-  const b = await boot({ worktrees: [wtRow()], worktreesFailFirst: true, healthGate: gate });
+  const b = await bootOnProject({ worktrees: [wtRow()], worktreesFailFirst: 3, healthGate: gate });
   await vi.waitFor(() => expect(document.querySelector(".project-connecting")).not.toBeNull());
   const n = b.worktreeSignals.length;
   const sets = vi.fn();
@@ -1549,6 +1574,8 @@ const bootProject = async (extra: BootOpts = {}) => {
     snapshots: { r1: snapshotOf("r1", ["w1", "w2"]) },
     ...extra,
   });
+  // Launch lands on Fleet (MS-8); these tests start from Project.
+  b.nav("project").click();
   await projectLoaded();
   return b;
 };
@@ -1634,7 +1661,7 @@ test("scope: Graph then away then back leaves scope unchanged", async () => {
 });
 
 test("an explicit scope.project absent from /worktrees rows is preserved across every chip", async () => {
-  const b = await boot({
+  const b = await bootOnProject({
     worktrees: R1_ROWS,
     repos: [repoOf("r1"), repoOf("reg-only")],
     snapshots: { r1: snapshotOf("r1", ["w1"]), "reg-only": snapshotOf("reg-only", ["z1"]) },
@@ -1942,7 +1969,7 @@ test("the shell window reaches Map and Events", async () => {
 });
 
 test("older daemon: /worktrees 404 still renders the graph for repos[0], and Map works with scope.project", async () => {
-  const b = await boot({
+  const b = await bootOnProject({
     worktreesStatus: 404,
     repos: [repoOf("r1")],
     snapshots: { r1: snapshotOf("r1", ["w1"]) },
@@ -2140,7 +2167,7 @@ test("Fleet keys are listed and live only while Fleet is the active view", async
 });
 
 test("Project keys are listed only in the lanes encoding", async () => {
-  const b = await boot({ worktrees: [wtRow()] });
+  const b = await bootOnProject({ worktrees: [wtRow()] });
   const { listKeys } = await import("./keys");
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   expect(b.active()).toBe("project");
@@ -2631,8 +2658,12 @@ const pruneItem = () => [...document.querySelectorAll<HTMLButtonElement>(".actio
 
 test("boot reads graph repos once without ever activating the graph panel; Project menus have prune and registered state", async () => {
   const b = await boot({ worktrees: [wtRow()], repos: [REPO_ROOT] });
-  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await vi.waitFor(() => expect(document.querySelector(".fleet")).not.toBeNull());
   await vi.waitFor(() => expect(gitFetches().filter((f) => f.url.pathname === "/workspace-graph/repos")).toHaveLength(1));
+  // Arriving at Project re-reads roots (registration can happen elsewhere): the second read.
+  b.nav("project").click();
+  await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
+  await vi.waitFor(() => expect(gitFetches().filter((f) => f.url.pathname === "/workspace-graph/repos")).toHaveLength(2));
   expect(b.active()).toBe("project");
   expect(document.querySelector(".workspace-graph")).toBeNull();
   // /config is read for the privacy mode (Map encoding names), not for the graph.
@@ -2644,7 +2675,7 @@ test("boot reads graph repos once without ever activating the graph panel; Proje
 
 test("an unregistered repo offers Register root; choosing it registers, refreshes roots and the graph panel, and Fleet/Project", async () => {
   tauri.on = true;
-  const b = await boot({ worktrees: [wtRow({ state: "unknown", state_reason: "repo_unregistered" })], repos: [] });
+  const b = await bootOnProject({ worktrees: [wtRow({ state: "unknown", state_reason: "repo_unregistered" })], repos: [] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   await openRepoMenu();
   const reg = [...document.querySelectorAll<HTMLButtonElement>(".action-menu button")].find((x) => x.textContent?.startsWith("Register root"))!;
@@ -2666,7 +2697,7 @@ test("an unregistered repo offers Register root; choosing it registers, refreshe
 
 test("arriving at Project from another panel re-reads roots so registration made elsewhere is seen", async () => {
   tauri.on = true;
-  const b = await boot({ worktrees: [wtRow()], repos: [REPO_ROOT] });
+  const b = await bootOnProject({ worktrees: [wtRow()], repos: [REPO_ROOT] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   b.nav("fleet").click();
   const n0 = gitFetches().filter((f) => f.url.pathname === "/workspace-graph/repos").length;
@@ -2684,7 +2715,7 @@ test("navigation cancels actions: an open menu, a pending confirmation, and a pr
     if (cmd !== "prune_preview") return Promise.resolve({ removed: [], remaining: [], skipped: [] });
     return hold ? new Promise((r) => { release = r; }) : Promise.resolve(previewReply);
   };
-  const b = await boot({ worktrees: [wtRow()], repos: [REPO_ROOT] });
+  const b = await bootOnProject({ worktrees: [wtRow()], repos: [REPO_ROOT] });
   await vi.waitFor(() => expect(document.querySelector(".project-lane")).not.toBeNull());
   await vi.waitFor(() => expect(gitFetches().some((f) => f.url.pathname === "/workspace-graph/repos")).toBe(true));
   await new Promise((r) => setTimeout(r, 0));
@@ -3009,6 +3040,14 @@ describe("attention worktree names resolve against the session's own repo (slice
     b.go("attention");
     await vi.waitFor(() => expect(cardText()).toContain("alpha-open"));
     expect(cardText()).not.toContain(WT.slice(0, 8));
+  });
+  test("a boot read that failed is retried when the daemon connects, with Project never shown", async () => {
+    // Request 1 is Fleet's list, 2 is the shell's own read for the resolver.
+    const b = await boot({ worktrees: rows(), worktreesFailFirst: 2, attentionSessions: [needy("s-1", "repoA", { worktree_id: WT })] });
+    await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+    // Before any panel asks, the resolver already knows the rows.
+    await vi.waitFor(() => expect(b.scope.resolver()?.lifetimes?.({ window: "live", project: "repoA" })).toBeDefined());
+    expect(document.querySelector(".content .project")).toBeNull();
   });
   test("a different selected project does not change the label", async () => {
     const b = await boot({ worktrees: rows(), attentionSessions: [needy("s-1", "repoA", { worktree_id: WT })] });

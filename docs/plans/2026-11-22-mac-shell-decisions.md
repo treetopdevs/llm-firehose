@@ -172,6 +172,7 @@ Also in this decision:
   that landed on Fleet broke 51 shell tests, two of them for that reason. The resolver has
   to be loaded by the shell at boot (it already has a `refresh` that does not need the
   panel) before the landing can change, with the request-count tests updated to match.
+  Done in slice 2.
 - After every move, focus goes to the new view's heading or its restored row, never to
   `<body>`.
 
@@ -263,11 +264,14 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   would have been a white haze in light). `DESIGN.md` and `PRODUCT.md` updated for these;
   the Components section of `DESIGN.md` and `.impeccable/design.json` still describe the old
   chrome and are rewritten with slice 3.
-- **Slice 2, partly done.** In: the kept range (`scope.ts`), history with Back and Forward
-  on ⌘[ and ⌘] (`history.ts`), scroll memory per place restored by row key, focus handed to
-  the new view's heading. Not in: the launch landing (see MS-8), toolbar chevrons for Back
-  and Forward (they arrive with the toolbar in slice 3), and the detail pane that opens
-  with Score.
+- **Slice 2, done except toolbar chevrons.** In: the kept range (`scope.ts`), history with Back
+  and Forward on ⌘[ and ⌘] (`history.ts`), scroll memory per place restored by row key, focus
+  handed to the new view's heading, launch on All projects (the shell loads the resolver rows at
+  boot and again on connect if that read failed, so nothing depends on Project being shown
+  first), and no unasked detail pane (opening Score only marks the first event). Not in: toolbar
+  chevrons for Back and Forward (they arrive with the toolbar in slice 3). Launch now issues two
+  `/worktrees` requests (the shell's read for the resolver, and Fleet's own list) where it used
+  to issue one.
 - Slices 3 to 5 not started.
 
 ## Answered on 2026-11-22
