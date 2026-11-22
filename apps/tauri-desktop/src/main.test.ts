@@ -279,6 +279,7 @@ type BootOpts = {
   firstRun?: boolean;
   sessions?: unknown[]; repos?: unknown[] | (() => unknown[] | Promise<unknown[]>); snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
+  attentionWarnings?: unknown[];
   worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean | number; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
   // /workspace-graph/timeline answers a valid EventPage; /workspace-graph/activity a valid ActivityResponse.
   timeline?: EventPage | ((q: URLSearchParams) => EventPage);
@@ -323,7 +324,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
       return json({ status: "ok", version: "test", schema_version: 1 });
     }
     if (p === "/attention/event" && opts.attentionEvent) return json(await opts.attentionEvent(u.searchParams.get("id") ?? ""));
-    if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: [] });
+    if (p === "/attention") return json({ sessions: opts.attentionSessions ?? [], warnings: opts.attentionWarnings ?? [] });
     if (p === "/sessions") return json(opts.sessions ?? []);
     if (p.startsWith("/sessions/")) return json(opts.sessionEvents ?? scoreFixture);
     if (p === "/events") return json(opts.events ?? []);
@@ -3528,6 +3529,23 @@ test("sidebar counts: Needs you, Doctor and each project row come from the atten
   expect(row("r1").querySelector(".nav-sub")!.textContent).toBe("1 needs you · 1 active");
   expect(row("r2").querySelector(".nav-sub")!.textContent).toBe("1 active");
   expect(document.querySelector<HTMLElement>(".nav-btn[data-panel=doctor] .nav-count")!.hidden).toBe(true);
+});
+
+test("capture warnings appear in Doctor only, counted on its badge, never in the Needs you queue or its count (MS-9)", async () => {
+  const at = iso(NOW - 1000);
+  const b = await boot({
+    attentionWarnings: [{ event_id: "w1", kind: "capture_warning", source: "codex", summary: "unmapped Codex rollout record x", time: at, observed_at: at }],
+  });
+  const badge = () => document.querySelector<HTMLElement>(".nav-btn[data-panel=doctor] .nav-count")!;
+  await vi.waitFor(() => expect(badge().hidden).toBe(false));
+  expect(badge().textContent).toBe("1");
+  expect(document.querySelector<HTMLElement>(".nav-btn[data-panel=needs] .nav-count")!.hidden).toBe(true);
+  b.go("attention");
+  await new Promise((r) => setTimeout(r, 0));
+  expect(document.querySelector(".content .capture-warning")).toBeNull();
+  b.nav("doctor").click();
+  await vi.waitFor(() => expect(document.querySelectorAll(".content .doctor-warnings .capture-warning")).toHaveLength(1));
+  expect(document.querySelector(".content .doctor-warnings")!.textContent).toContain("unmapped Codex rollout record x");
 });
 
 // ---- the toolbar (MS-1, MS-7, MS-8) -------------------------------------------------------------------------------

@@ -279,7 +279,7 @@ export function createAttention(options: AttentionOptions) {
       el(
         "span",
         { class: "dim" },
-        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}${snapshot.warnings.length} capture warning(s) · ${snapshot.gaps?.length ?? 0} capture gap(s) · Coverage depends on captured observations`,
+        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}Coverage depends on captured observations`,
       ),
       doctor,
     );
@@ -344,62 +344,6 @@ export function createAttention(options: AttentionOptions) {
           a.id.localeCompare(b.id),
       );
     for (const s of all) rows.append(row(s));
-    for (const gap of snapshot.gaps ?? []) {
-      const inspectGap = el(
-        "button",
-        { "data-key": `gap:${gap.source}` },
-        "Inspect capture gap",
-      );
-      inspectGap.addEventListener("click", () =>
-        options.onSelect({
-          id: "",
-          source: gap.source,
-          time: gap.time,
-          category: "meta",
-          name: "capture.gap",
-          severity: "warn",
-          summary: "Capture warning — not recorded in history",
-          payload: { message: gap.summary },
-        }),
-      );
-      rows.append(
-        el(
-          "article",
-          { class: "capture-warning" },
-          el("p", {}, gap.summary),
-          el(
-            "p",
-            { class: "dim" },
-            "Unreadable history · this diagnostic is not a captured event.",
-          ),
-          inspectGap,
-        ),
-      );
-    }
-    for (const warning of snapshot.warnings.slice(0, 20)) {
-      const inspectWarning = el(
-        "button",
-        { "data-key": `warning:${warning.event_id}` },
-        "Inspect warning",
-      );
-      inspectWarning.addEventListener(
-        "click",
-        () => void inspect(warning.event_id),
-      );
-      rows.append(
-        el(
-          "article",
-          { class: "capture-warning" },
-          el("p", {}, `${warning.source}: ${warning.summary}`),
-          el(
-            "p",
-            { class: "dim" },
-            `Recorded ${formatAge(Math.max(0, Date.now() - Date.parse(warning.time)))} ago · recovery unknown`,
-          ),
-          inspectWarning,
-        ),
-      );
-    }
     if (prefs.warning)
       rows.prepend(el("p", { class: "error", role: "status" }, prefs.warning));
     if (!all.length)
@@ -524,8 +468,27 @@ export function createAttention(options: AttentionOptions) {
       }
       return out;
     },
-    /** Capture warnings in the last snapshot: the Doctor badge. */
-    warnings: () => snapshot.warnings.length,
+    /** Capture warnings and gaps in the last snapshot: the Doctor badge. They are Doctor's, not the queue's (MS-9). */
+    warnings: () => snapshot.warnings.length + (snapshot.gaps?.length ?? 0),
+    captureIssues: (): { gaps: readonly NonNullable<AttentionSnapshot["gaps"]>[number][]; warnings: readonly AttentionEvidence[] } => ({
+      gaps: snapshot.gaps ?? [],
+      warnings: snapshot.warnings.slice(0, 20),
+    }),
+    /** Fills the inspector with a captured warning's event. */
+    inspectWarning: (id: string) => inspect(id),
+    /** Fills the inspector with a gap (a diagnostic, not a captured event). */
+    inspectGap(gap: { source: string; time: string; summary: string }): void {
+      options.onSelect({
+        id: "",
+        source: gap.source,
+        time: gap.time,
+        category: "meta",
+        name: "capture.gap",
+        severity: "warn",
+        summary: "Capture warning — not recorded in history",
+        payload: { message: gap.summary },
+      });
+    },
     /** Calls fn whenever the strip is redrawn (so a snooze or refresh reaches other displays at once). */
     onCount(fn: () => void) { countListeners.add(fn); },
     setConnected,

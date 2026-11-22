@@ -172,7 +172,7 @@ test("rejects an old response after disconnect and recovers with an authoritativ
   expect(p.strip.textContent).toContain("1 needs you");
 });
 
-test("shows captured warnings and explains storage failures without losing the inbox", async () => {
+test("capture warnings are not in the Needs you queue or its count; they are held for Doctor (MS-9)", async () => {
   snapshot.warnings = [evidence("warning", "capture_warning")];
   const p = mount({
     storage: {
@@ -185,11 +185,25 @@ test("shows captured warnings and explains storage failures without losing the i
     },
   });
   await p.refresh();
-  expect(p.root.textContent).toContain("reason warning");
-  expect(p.strip.textContent).toContain("1 capture warning");
+  expect(p.root.querySelector(".capture-warning")).toBeNull();
+  expect(p.root.textContent).not.toContain("reason warning");
+  expect(p.strip.textContent).not.toContain("capture warning");
+  expect(p.count()).toBe(1); // the one session that needs you; the warning is not a need
+  expect(p.warnings()).toBe(1);
+  expect(p.captureIssues().warnings.map((w) => w.event_id)).toEqual(["warning"]);
   button(p.root, "Snooze 15 minutes").click();
   expect(p.root.textContent).toContain("could not be saved");
   expect(p.strip.textContent).toContain("1 snoozed");
+});
+
+test("a warning is inspected through the panel, once, by its event id", async () => {
+  const selected = vi.fn();
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  await p.inspectWarning("w1");
+  expect(selected).toHaveBeenCalledWith(expect.objectContaining({ summary: "captured request" }));
+  expect(fetcher.mock.calls.filter(([u]) => u.includes("/attention/event?id=w1"))).toHaveLength(1);
 });
 
 test("notifications require opt-in and send once for a new episode across reconnect and restart", async () => {
@@ -387,7 +401,7 @@ test("native episode identity preserves snooze when its supporting event changes
   expect(p.strip.textContent).toContain("1 snoozed");
 });
 
-test("unrecorded capture gaps are inspectable and show workspace identity separately", async () => {
+test("unrecorded capture gaps are held for Doctor, counted on its badge and inspectable; the queue shows workspace identity only", async () => {
   const selected = vi.fn();
   Object.assign(snapshot, {
     gaps: [
@@ -402,8 +416,11 @@ test("unrecorded capture gaps are inspectable and show workspace identity separa
   const p = mount({ onSelect: selected });
   await p.refresh();
   expect(p.root.textContent).toContain("/work/app");
-  expect(p.strip.textContent).toContain("1 capture gap");
-  button(p.root, "Inspect capture gap").click();
+  expect(p.root.querySelector(".capture-warning")).toBeNull();
+  expect(p.root.textContent).not.toContain("Unreadable spool line");
+  expect(p.strip.textContent).not.toContain("capture gap");
+  expect(p.warnings()).toBe(1);
+  p.inspectGap(p.captureIssues().gaps[0]);
   expect(selected).toHaveBeenCalledWith(
     expect.objectContaining({
       name: "capture.gap",

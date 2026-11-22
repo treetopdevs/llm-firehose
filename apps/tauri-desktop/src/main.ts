@@ -138,7 +138,7 @@ const attentionPanel=createAttention({onSelect:showInspected,onOpenSession:openS
 attentionPanel.setConnected(false);
 attentionPanel.root.addEventListener("click", (e) => {
   // Only an Inspect click starts an inspection; Working, Snooze and the rest must not revalidate a stale one.
-  if ((e.target as Element | null)?.closest?.('[data-key^="inspect:"], [data-key^="warning:"]')) inspectClickGeneration = navGeneration;
+  if ((e.target as Element | null)?.closest?.('[data-key^="inspect:"]')) inspectClickGeneration = navGeneration;
 }, true);
 const sessionsPanel = createSessions(showDetail, () => feedState.events(), openScore, openLoops, scope, sessionDirectory, (ref) => selectSession(scope, ref), { inbox: attentionPanel, inspect: inspectFor(() => sessionsPanel.clearSelection()) });
 
@@ -295,7 +295,11 @@ const panels = {
   sessions: sessionsPanel,
   session: sessionPanel,
   files: createFiles(sessionDirectory),
-  doctor: createDoctor(),
+  doctor: createDoctor({
+    issues: () => attentionPanel.captureIssues(),
+    onInspectWarning: (id) => void attentionPanel.inspectWarning(id),
+    onInspectGap: (gap) => attentionPanel.inspectGap(gap),
+  }),
   settings: createSettings({ onPrivacySaving: () => snapshotBeforeSave(), onPrivacyChanged: (_mode, before) => handlePrivacyChange(before as IdentitySet | undefined) }),
 } as const;
 
@@ -856,6 +860,12 @@ roots.subscribe(syncSidebar);
 scope.onResolver(syncSidebar);
 scope.subscribe(() => syncChrome());
 attentionPanel.onCount(syncSidebar);
+// Capture warnings are Doctor's: it redraws them from each snapshot while it is on screen. Inspecting one starts an
+// inspection like Needs you's Inspect does, so a delayed fetch is dropped once the user has moved on.
+attentionPanel.onCount(() => { if (active === "doctor") panels.doctor.redraw(); });
+panels.doctor.root.addEventListener("click", (e) => {
+  if ((e.target as Element | null)?.closest?.('[data-key^="warning:"]')) inspectClickGeneration = navGeneration;
+}, true);
 syncSidebar();
 
 // --- live data -------------------------------------------------------------
