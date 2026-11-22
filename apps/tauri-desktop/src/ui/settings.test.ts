@@ -102,3 +102,19 @@ test("replay sound lives in Settings: an off-by-default checkbox with its tones,
   expect(s.root.querySelector(".replay-sound-status")!.textContent).toContain("unavailable");
   replaySoundSetting.reset();
 });
+
+test("the device-local replay sound control stays when the daemon's settings cannot be read", async () => {
+  api.getConfig.mockReset().mockRejectedValue(new Error("daemon down"));
+  const s = createSettings();
+  await s.refresh();
+  await flush();
+  expect(s.root.querySelector(".error")).not.toBeNull();
+  expect(s.root.querySelector("#replay-sound")).not.toBeNull();
+  expect(s.root.querySelector("#mode-full")).toBeNull();
+  // And once the daemon answers, one control remains, beside privacy and engine.
+  api.getConfig.mockResolvedValue({ privacy_mode: "balanced" });
+  await s.refresh();
+  await flush();
+  expect(s.root.querySelectorAll("#replay-sound")).toHaveLength(1);
+  expect(s.root.querySelector("#mode-full")).not.toBeNull();
+});

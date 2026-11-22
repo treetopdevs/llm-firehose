@@ -156,7 +156,8 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
       exportBtn.addEventListener("click", () => downloadExport(exportStatus));
       root.append(el("h3", {}, "export"), exportBtn, exportStatus);
     } catch (err) {
-      root.replaceChildren(heading, el("p", { class: "error" }, failureMessage("load settings", err)));
+      // The sound choice is this device's own and needs no daemon, so it stays when the daemon's settings cannot be read.
+      root.replaceChildren(heading, el("p", { class: "error" }, failureMessage("load settings", err)), el("h3", {}, "replay sound"), replaySoundControl());
     }
   }
 
