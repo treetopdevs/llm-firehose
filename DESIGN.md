@@ -112,6 +112,11 @@ components:
   nav-item-active:
     backgroundColor: "{colors.bg-hover}"
     textColor: "{colors.text}"
+  toolbar:
+    backgroundColor: "{colors.bg}"
+    textColor: "{colors.text}"
+    padding: "0.25rem 0.8rem"
+    height: "44px"
   segment-group:
     backgroundColor: "{colors.bg}"
     textColor: "{colors.text-dim}"
@@ -408,7 +413,7 @@ The window is a source list beside a stage. The sidebar answers "where", the too
 
 **Sidebar** (`src/chrome.ts`, `createSidebar`)
 - **Frame:** 200px wide, `--bg-panel`, right `--border`, `0.8rem 0.5rem` padding, a 2px gap between items, scrolls on its own. The brand is the words "Agent Firehose" in `--text` at 700 weight, not accent coloured.
-- **Items, in order:** Needs you, All projects, a Projects heading with one row per registered project (alphabetical, so rows never jump as state changes), then Files and Doctor. Worktree and Session are levels, not things, and have no entry: they are reached by opening one. Fleet is named All projects in visible copy; the code name stays `fleet`.
+- **Items, in order:** Needs you, All projects, a Projects heading with one row per registered project (alphabetical, so rows never jump as state changes), then a Capture heading with Files and Doctor. All projects shows the project count. Worktree and Session are levels, not things, and have no entry: they are reached by opening one. Fleet is named All projects in visible copy; the code name stays `fleet`.
 - **Item:** a borderless, backgroundless, left-aligned button, at least 28px tall, `0.35rem 0.8rem` padding, 6px radius. Hover is `--bg-hover`.
 - **Selected:** the current item carries `aria-current="page"` and is drawn with a `--bg-hover` fill, `--text` and 600 weight. Selection is neutral; it is never accent coloured (MS-6), so the fill and the weight carry it, not hue alone.
 - **Counts are words:** the Needs you item has a count badge (`--needs`, tabular numerals, an `aria-label` such as "Needs you, 2 sessions"); the Doctor item has a count of capture warnings in `--text-dim`. A project row has a second line of `--fs-xs` text, "1 needs you · 3 active", where "needs you" is `--needs` and "active" is `--text-dim`. A bare dot never carries state. Counts come from the attention poll that already runs every 3 s and add no request.
@@ -417,8 +422,8 @@ The window is a source list beside a stage. The sidebar answers "where", the too
 
 **Toolbar** (`createToolbar`)
 - **Frame:** one row, `44px` minimum, `0.25rem 0.8rem` padding, bottom `--border`, wrapping when narrow. Controls are 28px tall.
-- **Order:** sidebar toggle, Back and Forward chevrons, the title, the view switcher, the range.
-- **History:** two borderless 28px chevron buttons named "Back" and "Forward", disabled (45% opacity) when the history has nowhere to go. They are the same moves as ⌘[ and ⌘].
+- **Order:** sidebar toggle, Back and Forward chevrons, the title, the view switcher, then the range at the far edge. A toolbar search (the mock shows one) is not built: the decisions doc gives it no scope.
+- **History:** two borderless 28px chevron buttons named "Back" and "Forward", `aria-disabled` and 45% opacity when the history has nowhere to go (not `disabled`, so a button that holds focus keeps it). They are the same moves as ⌘[ and ⌘].
 - **Title:** the place name in 600 weight `--fs-md` (All projects, Needs you, Files, Doctor, Settings; Project, Worktree and Session for opened levels), then the breadcrumb (project › worktree › session) in `--text-dim`, unresolved ids in monospace.
 - **View switcher:** the shown panel's own segmented group (Fleet encodings, Project chips, Session tabs) is hosted in the toolbar and handed back to its panel when another panel is shown, so there is one control for "what" and it keeps its keys and roles.
 - **Range:** the one time control, see below.
@@ -428,7 +433,7 @@ The window is a source list beside a stage. The sidebar answers "where", the too
 Every move is a place: a panel, its view and what is in scope. ⌘[ goes back and ⌘] forward, and so do the toolbar chevrons (`src/history.ts`, wired in `main.ts`). The time range is not part of a place: Back never changes it, and the range set before a session is opened comes back when the session is left. Each place remembers its scroll position by the key of its first visible row, and a move that removes the focused element hands focus to the new view's heading, never `<body>`.
 
 ### Range (signature component, `transport.ts`)
-The shell-owned time control, bound to the shared `scope.window`, mounted once in the toolbar. At rest it is one 28px button reading the range ("Live · last 8h", a tabular-numeric readout) with a caret, `aria-expanded` and `aria-haspopup`. Opening it shows a `--bg-panel` pop-up (10px radius, `--border`, `--shadow`, 340px wide) holding four presets (2h, 8h, 24h, 7d), Live, Hold or Return to live, a hint, and a 24px-high slider track with a 6px radius and a `--text-dim` thumb at 70% opacity that slides with a 120ms ease (disabled under reduced motion). Buttons in the pop-up are 28px, 4px radius; a pressed preset is a `--bg-hover` fill with 600 weight, not an accent. Focus moves into the pop-up on open; Escape, or a click outside, closes it and returns focus to the trigger without leaving the place; focus-visible is a 2px `--focus` outline. At the Session altitude presets, Hold and the track are inert (45% opacity, not-allowed cursor). On panels that do not read the range the control keeps its place but is hidden (`visibility: hidden`) so the toolbar does not jump. The track is a `role="slider"` with Arrow and Home keys; Escape during a drag restores the window.
+The shell-owned time control, bound to the shared `scope.window`, mounted once in the toolbar. At rest it is one 28px button reading the range ("Live · last 8h", a tabular-numeric readout) with a caret, `aria-expanded` and `aria-haspopup`. Opening it shows a `--bg-panel` pop-up (10px radius, `--border`, `--shadow`, 340px wide) holding four presets (2h, 8h, 24h, 7d), Live, Hold or Return to live, a hint, and a 24px-high slider track with a 6px radius and a `--text-dim` thumb at 70% opacity that slides with a 120ms ease (disabled under reduced motion). Buttons in the pop-up are 28px, 4px radius; a pressed preset is a `--bg-hover` fill with 600 weight, not an accent. Focus moves into the pop-up on open; Escape, or a click outside, closes it and returns focus to the trigger without leaving the place; focus-visible is a 2px `--focus` outline. At the Session altitude presets, Hold and the track are inert (45% opacity, not-allowed cursor). The control is always present (MS-7): on panels that do not read the range it is inert (`aria-disabled`, 45% opacity, a title saying so) and the range is untouched. The track is a `role="slider"` with Arrow and Home keys; Escape during a drag restores the window.
 
 ### Lanes (signature component)
 SVG rows of time: an axis in `--fs-xs` `--text-dim` with 1-on-3 dashed `--border` gridlines, a soft `--border` baseline, closed spans in `--text-dim` at 45% opacity and open spans in `--text` at 85% (the open span is not accent coloured; tested), ticks in `--text` (`--err` for errors, `--needs` for needs), and a transparent hit rectangle that fills `--bg-hover` on hover or keyboard focus (`:focus-visible`, so a click leaves no hover-like fill behind) and takes a 2px `--focus` stroke on focus-visible. Lane labels are `--fs-sm` `--text`, state words `--fs-xs` `--text-dim`, and a lane that needs the operator goes bold `--needs`. Arrow keys and 1 to 9 pick a lane, Enter opens it.

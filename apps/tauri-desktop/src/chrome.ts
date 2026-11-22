@@ -37,6 +37,8 @@ export interface Sidebar {
   setCurrent(c: SidebarCurrent): void;
   setProjects(rows: ProjectRow[]): void;
   setNeeds(n: number): void;
+  /** How many projects there are: the count beside All projects. */
+  setProjectCount(n: number): void;
   setWarnings(n: number): void;
   setStatus(kind: string, text: string): void;
   setEventCount(text: string): void;
@@ -56,7 +58,8 @@ export function createSidebar(deps: SidebarDeps): Sidebar {
   const needsCount = el("span", { class: "nav-count needs" });
   needsCount.hidden = true;
   const needsBtn = button("needs", "Needs you", { kind: "needs" }, needsCount);
-  const fleetBtn = button("fleet", "All projects", { kind: "fleet" });
+  const fleetCount = el("span", { class: "nav-count" });
+  const fleetBtn = button("fleet", "All projects", { kind: "fleet" }, fleetCount);
   const projects = el("div", { class: "nav-projects", role: "group", "aria-labelledby": "nav-projects-heading" });
   const projectsHeading = el("div", { class: "nav-heading", id: "nav-projects-heading" }, "Projects");
   const projectsEmpty = el("p", { class: "nav-empty dim" }, "No projects yet");
@@ -80,7 +83,8 @@ export function createSidebar(deps: SidebarDeps): Sidebar {
     projectsHeading,
     projects,
     projectsEmpty,
-    el("div", { class: "nav-group nav-library" }, filesBtn, doctorBtn),
+    el("div", { class: "nav-heading" }, "Capture"),
+    el("div", { class: "nav-group" }, filesBtn, doctorBtn),
     el(
       "div",
       { class: "sidebar-foot" },
@@ -152,6 +156,9 @@ export function createSidebar(deps: SidebarDeps): Sidebar {
       needsCount.textContent = String(n);
       needsBtn.setAttribute("aria-label", n > 0 ? `Needs you, ${plural(n, "session", "sessions")}` : "Needs you");
     },
+    setProjectCount(n) {
+      fleetCount.textContent = n > 0 ? String(n) : "";
+    },
     setWarnings(n) {
       warnings = n;
       doctorCount.hidden = n <= 0;
@@ -199,11 +206,12 @@ export function createToolbar(deps: ToolbarDeps): Toolbar {
   );
   const back = icon(el("button", { type: "button", class: "toolbar-btn toolbar-back", "aria-label": "Back", title: "Back (⌘[)" }), NAV_CHEVRON.back);
   const forward = icon(el("button", { type: "button", class: "toolbar-btn toolbar-forward", "aria-label": "Forward", title: "Forward (⌘])" }), NAV_CHEVRON.forward);
-  back.disabled = true;
-  forward.disabled = true;
+  // aria-disabled, not disabled: a disabled button that holds focus would drop it to <body> (MS-8).
+  back.setAttribute("aria-disabled", "true");
+  forward.setAttribute("aria-disabled", "true");
   sidebarBtn.addEventListener("click", () => deps.onToggleSidebar());
-  back.addEventListener("click", () => deps.onBack());
-  forward.addEventListener("click", () => deps.onForward());
+  back.addEventListener("click", () => back.getAttribute("aria-disabled") !== "true" && deps.onBack());
+  forward.addEventListener("click", () => forward.getAttribute("aria-disabled") !== "true" && deps.onForward());
 
   const place = el("span", { class: "toolbar-place" });
   const crumbSlot = el("span", { class: "toolbar-crumb" });
@@ -229,8 +237,8 @@ export function createToolbar(deps: ToolbarDeps): Toolbar {
       place.textContent = label;
     },
     setHistory(canBack, canForward) {
-      back.disabled = !canBack;
-      forward.disabled = !canForward;
+      back.setAttribute("aria-disabled", String(!canBack));
+      forward.setAttribute("aria-disabled", String(!canForward));
     },
     setSidebarShown(shown) {
       sidebarBtn.setAttribute("aria-expanded", String(shown));

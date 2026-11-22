@@ -337,7 +337,7 @@ const compatBanner = el("div", { class: "compat-banner" });
 
 let active: PanelName = "fleet";
 /** The Worktree panel opened as the Needs you queue: the sidebar item, not a level, owns that view. */
-let needsView = false;
+const needsView = (): boolean => active === "sessions" && sessionsPanel.needsOnly();
 /** Toolbar titles: the place the window is showing. Worktree and Session are reached by opening one, not from the sidebar. */
 export const PANEL_TITLES: Record<PanelName, string> = {
   fleet: "All projects",
@@ -360,7 +360,7 @@ const transport = createTransport({
 /** Whether the shell transport is shown: scope-window panels, minus Fleet's host encodings (Events, Strata, Patches). */
 const transportShown = (): boolean => TRANSPORT_PANELS.has(active) && !(active === "fleet" && isHostEncoding(fleetPanel.encoding));
 function syncTransport(): void {
-  transport.setVisible(transportShown());
+  transport.setApplies(transportShown());
   transport.refresh();
   // Every show() and every encoding switch passes through here.
   recordPlace();
@@ -400,18 +400,18 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if (active === "session" && name !== "session") sessionPanel.deactivate();
   if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
-  needsView = name === "sessions" && !!opts?.needsOnly;
   transport.setPanel(name);
   clear(content);
   content.append(panels[name].root);
   content.dataset.panel = name;
   hostViews();
-  syncChrome();
   if (name === "fleet") void fleetPanel.activate();
   else if (name === "project") void projectPanel.activate(opts?.encoding ? { encoding: opts.encoding } : undefined);
   else if (name === "sessions") void sessionsPanel.activate({ needsOnly: !!opts?.needsOnly });
   else if (name === "session") sessionPanel.activate(opts?.tab);
   else panels[name].refresh();
+  // After the panel has taken its mode (Needs you is the Worktree panel's own state).
+  syncChrome();
   syncTransport();
 }
 
@@ -425,7 +425,7 @@ let travelling = false;
 let recordQueued = false;
 let cancelScrollRestore: () => void = () => {};
 const viewOf = (): string | undefined =>
-  active === "fleet" ? fleetPanel.encoding : active === "project" ? projectPanel.encoding() : active === "session" ? sessionPanel.tab() : undefined;
+  active === "fleet" ? fleetPanel.encoding : active === "project" ? projectPanel.encoding() : active === "session" ? sessionPanel.tab() : active === "sessions" && sessionsPanel.needsOnly() ? "needs" : undefined;
 function placeNow(): Place {
   const sc = scope.get();
   return { panel: active, view: viewOf(), project: sc.project, worktree: sc.worktree, session: sc.session };
@@ -468,7 +468,16 @@ function travel(dir: "back" | "forward"): boolean {
   scope.replaceContext({ project: p.project, worktree: p.worktree, session: p.session, cell: entry.state.cell });
   if (p.panel === "fleet" && p.view) fleetPanel.encoding = p.view as typeof fleetPanel.encoding;
   const name = p.panel as PanelName;
-  show(name, name === "session" && p.view ? { tab: p.view as SessionTab } : name === "project" && p.view ? { encoding: p.view as ProjectEncoding } : undefined);
+  show(
+    name,
+    name === "session" && p.view
+      ? { tab: p.view as SessionTab }
+      : name === "project" && p.view
+        ? { encoding: p.view as ProjectEncoding }
+        : name === "sessions"
+          ? { needsOnly: p.view === "needs" }
+          : undefined,
+  );
   syncHistory();
   return true;
 }
@@ -583,6 +592,11 @@ registerKeys([
 const crumb = createBreadcrumb(scope, { directory: sessionDirectory });
 
 function selectSidebar(t: SidebarTarget): void {
+  // Under 900px the sidebar is an overlay: choosing a place dismisses it.
+  if (sidebarMode === "shown" && narrowQuery?.matches) {
+    sidebarMode = "auto";
+    applySidebar();
+  }
   switch (t.kind) {
     case "needs": go("attention"); break;
     case "fleet": show("fleet"); break;
@@ -626,6 +640,14 @@ const toolbar = createToolbar({
 });
 toolbar.crumbSlot.append(el("span", { class: "scope-crumb dim" }, crumb.root));
 toolbar.rangeSlot.append(transport.root);
+// The Needs you toggle inside the Worktree panel changes the view without a show(): keep the chrome and history in step.
+content.addEventListener("click", (e) => {
+  if (!(e.target as Element | null)?.closest?.(".sessions-needs")) return;
+  queueMicrotask(() => {
+    syncChrome();
+    recordPlace();
+  });
+});
 const stage = el("div", { class: "stage" }, toolbar.root, shellNote, el("div", { class: "layout" }, content, detailPane));
 const shell = el("div", { class: "shell", "data-sidebar": "auto" }, sidebar.root, stage);
 narrowQuery?.addEventListener?.("change", applySidebar);
@@ -660,7 +682,12 @@ function syncSidebar(): void {
     .list()
     .filter((r) => !roots.view?.(r.id))
     .map((r) => {
-      const resolved = scope.resolver()?.labels({ ...scope.get(), project: r.id, worktree: undefined }).project;
+      let resolved: string | undefined;
+      try {
+        resolved = scope.resolver()?.labels({ ...scope.get(), project: r.id, worktree: undefined }).project;
+      } catch {
+        resolved = undefined;
+      }
       const c = counts.get(r.id);
       return { id: r.id, label: projectName(r.id, resolved || roots.rawLabel(r.id)).label, needs: c?.needs ?? 0, active: c?.active ?? 0 };
     })
@@ -671,20 +698,21 @@ function syncSidebar(): void {
     projectKey = key;
     sidebar.setProjects(rows);
   }
+  sidebar.setProjectCount(rows.length);
   sidebar.setNeeds(attentionPanel.count());
   sidebar.setWarnings(attentionPanel.warnings());
   syncChrome();
 }
 function currentItem(): SidebarCurrent {
   if (active === "files" || active === "doctor" || active === "settings") return active;
-  if (needsView) return "needs";
+  if (needsView()) return "needs";
   const project = scope.get().project;
   if (active !== "fleet" && project !== undefined && projectIds.has(project)) return { project };
   return "fleet";
 }
 function syncChrome(): void {
   sidebar.setCurrent(currentItem());
-  toolbar.setPlace(needsView ? "Needs you" : PANEL_TITLES[active]);
+  toolbar.setPlace(needsView() ? "Needs you" : PANEL_TITLES[active]);
 }
 roots.subscribe(syncSidebar);
 scope.onResolver(syncSidebar);

@@ -21,6 +21,7 @@ describe("chrome targets (MS-11, MS-12)", () => {
     [".transport-trigger", 28],
     [".transport-hold", 28],
     [".transport-track", 24],
+    [".toolbar-views button", 28],
   ])("%s is tall enough", (selector, min) => {
     const m = /(?:min-)?height:\s*(\d+)px/.exec(body(selector));
     expect(m, selector).not.toBeNull();
@@ -105,9 +106,12 @@ describe("toolbar", () => {
     const forward = tb.root.querySelector<HTMLButtonElement>(".toolbar-forward")!;
     expect(back.getAttribute("aria-label")).toBe("Back");
     expect(forward.getAttribute("aria-label")).toBe("Forward");
-    expect([back.disabled, forward.disabled]).toEqual([true, true]);
+    const off = (b: HTMLElement) => b.getAttribute("aria-disabled") === "true";
+    expect([off(back), off(forward)]).toEqual([true, true]);
+    back.click();
+    expect(deps.onBack).not.toHaveBeenCalled();
     tb.setHistory(true, false);
-    expect([back.disabled, forward.disabled]).toEqual([false, true]);
+    expect([off(back), off(forward)]).toEqual([false, true]);
     back.click();
     expect(deps.onBack).toHaveBeenCalledOnce();
     tb.setPlace("All projects");

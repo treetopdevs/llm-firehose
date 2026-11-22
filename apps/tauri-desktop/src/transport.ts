@@ -30,6 +30,8 @@ export interface Transport {
   destroy(): void;
   paintCount(): number;
   setVisible(v: boolean): void;
+  /** Whether the shown panel reads the range. The control is always present (MS-7); where it does not apply it is inert. */
+  setApplies(applies: boolean): void;
   setPanel(id: string): void;
   /** Repaint after the displayed panel's effective live span may have changed. */
   refresh(): void;
@@ -44,6 +46,7 @@ export function createTransport(deps: TransportDeps): Transport {
   const span = (): number => deps.effectiveLiveSpan?.() ?? liveSpanOf(store.get());
 
   let session = false;
+  let applies = true;
   let paints = 0;
   let lastKey = '';
 
@@ -125,7 +128,7 @@ export function createTransport(deps: TransportDeps): Transport {
     const f = readout(s);
     range.textContent = f.text;
     range.title = f.title;
-    trigger.title = f.title;
+    if (applies) trigger.title = f.title;
     trigger.setAttribute('aria-label', `Time range: ${f.text}`);
     hint.textContent = session ? 'Zoom with the Score' : '';
     thumb.style.left = `${g.left}%`;
@@ -335,7 +338,11 @@ export function createTransport(deps: TransportDeps): Transport {
     claimEscape(e);
     closePop(true);
   }
-  on(trigger, 'click', () => (isOpen() ? closePop(true) : openPop()));
+  on(trigger, 'click', () => {
+    if (!applies) return;
+    if (isOpen()) closePop(true);
+    else openPop();
+  });
   on(root, 'focusout', (e) => {
     const next = (e as FocusEvent).relatedTarget as Node | null;
     if (next && !root.contains(next)) closePop(false);
@@ -352,6 +359,15 @@ export function createTransport(deps: TransportDeps): Transport {
         closePop(false);
       }
       root.hidden = !v;
+    },
+    setApplies(a) {
+      applies = a;
+      trigger.setAttribute('aria-disabled', String(!a));
+      trigger.title = a ? '' : 'The range does not apply to this view';
+      if (!a) {
+        abortDrag();
+        closePop(false);
+      } else retitle();
     },
     setPanel(id) {
       const next = id === 'session';

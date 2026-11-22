@@ -227,7 +227,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const hint = el("p", { class: "fleet-hint" }, TABLE_HINT);
   const root = el(
     "section",
-    { class: "fleet", "aria-label": "Fleet" },
+    { class: "fleet", "aria-label": "All projects" },
     el("header", { class: "fleet-header" }, el("h2", {}, "All projects"), el("div", { class: "fleet-encs", role: "tablist", "aria-label": "Encoding" }, ...encButtons), flags),
     statusBox,
     toast,

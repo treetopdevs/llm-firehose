@@ -728,7 +728,7 @@ test("the folded panels have no sidebar entry; launch lands on All projects", as
   expect(b.nav("ecosystem")).toBeNull();
   expect(b.nav("workspace")).toBeNull();
   for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone), gone).toBeNull();
-  expect(document.querySelectorAll(".sidebar .nav-heading")).toHaveLength(1);
+  expect([...document.querySelectorAll(".sidebar .nav-heading")].map((h) => h.textContent)).toEqual(["Projects", "Capture"]);
   expect(b.active()).toBe("fleet");
 });
 
@@ -1292,6 +1292,8 @@ import { windowLabel } from "./ui/session/context";
 
 const DAY_MS = 86_400_000;
 const tp = () => document.querySelector<HTMLElement>('[aria-label="Time window"]')!;
+// MS-7: the range is one control that is always present. Where the shown panel does not read it, it is inert.
+const applies = () => !tp().hidden && tp().querySelector(".transport-trigger")!.getAttribute("aria-disabled") !== "true";
 const tpAll = () => document.querySelectorAll('[aria-label="Time window"]');
 // The faked Date keeps advancing with real time; pin it each time a control is fetched
 // for an action so the window arithmetic is exact.
@@ -1331,24 +1333,24 @@ test("transport: mounted once in the toolbar, same node across navigation, no bo
   expect(b.scope.get()).toEqual({ window: "live" });
 });
 
-test("transport: visible only where consumed; the window persists while hidden", async () => {
+test("transport: always present, live only where consumed; the window persists while inert", async () => {
   const b = await boot({ worktrees: [wtRow()] });
   const { TRANSPORT_PANELS } = await import("./main");
   expect([...TRANSPORT_PANELS].sort()).toEqual(["fleet", "project", "session"]);
   for (const n of ["fleet", "project", "session"]) {
     b.nav(n).click();
-    expect(tp().hidden, n).toBe(false);
+    expect(applies(), n).toBe(true);
   }
   b.nav("project").click();
   tpPreset("24h").click();
   const win = b.scope.get().window;
   for (const n of ["attention", "settings"]) {
     if (n === "attention") b.go("attention"); else b.nav(n).click();
-    expect(tp().hidden, n).toBe(true);
+    expect(applies(), n).toBe(false);
     expect(b.scope.get().window).toEqual(win);
   }
   b.nav("project").click();
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   expect(b.scope.get().window).toEqual(win);
 });
 
@@ -2351,37 +2353,37 @@ test("transport follows (panel, encoding): Fleet drawn encodings, Project chips,
   b.nav("fleet").click();
   for (const e of ["map", "dwell", "matrix", "lanes", "airspace"]) {
     fleetEnc(e).click();
-    expect(tp().hidden, e).toBe(false);
+    expect(applies(), e).toBe(true);
   }
   fleetEnc("strata").click();
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   fleetEnc("ecosystem").click();
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   fleetEnc("lanes").click();
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   b.go("strata");
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   b.nav("project").click();
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   b.go("ecosystem");
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   b.nav("session").click();
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   b.go("strata");
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   // An Escape ascent back to Fleet from Project follows the remembered Fleet encoding.
   b.nav("project").click();
   await vi.waitFor(() => expect(document.querySelector(".project-lane, .project-empty")).not.toBeNull());
   b.scope.narrow({ project: "repoA" });
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   esc();
   expect(b.active()).toBe("fleet");
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   fleetEnc("map").click();
   b.nav("project").click();
   for (const e of ["graph", "map", "events", "lanes"]) {
     chip(e).click();
-    expect(tp().hidden, e).toBe(false);
+    expect(applies(), e).toBe(true);
   }
 });
 
@@ -2391,10 +2393,10 @@ test("transport: remembered Project encoding restore (A -> B -> A) keeps it visi
   b.scope.narrow({ project: "/w/a" });
   chip("map").click();
   b.scope.narrow({ project: "/w/b" });
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   b.scope.narrow({ project: "/w/a" });
   expect(document.querySelector(".project-chips [data-encoding=map]")!.getAttribute("aria-selected")).toBe("true");
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -2554,13 +2556,13 @@ test("transport: hidden on Fleet Events, go('live') keeps a historical window, P
   expect(win).not.toBe("live");
   b.scope.narrow({ project: "ghost" });
   b.go("live");
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   expect(b.scope.get().window).toEqual(win);
   b.scope.narrow({ project: "r1" });
   b.go("live");
   expect(b.active()).toBe("project");
   expect(selectedChip()).toBe("events");
-  expect(tp().hidden).toBe(false);
+  expect(applies()).toBe(true);
   expect(b.scope.get().window).toEqual(win);
 });
 
@@ -2568,7 +2570,7 @@ test("Home 'return to live' is not offered on Fleet Events", async () => {
   const b = await boot({ worktrees: [wtRow()] });
   const { listKeys } = await import("./keys");
   b.go("live");
-  expect(tp().hidden).toBe(true);
+  expect(applies()).toBe(false);
   expect(listKeys().some((r) => r.scope === "events")).toBe(true);
   expect(listKeys().some((r) => r.display === "Home" && r.label === "return to live")).toBe(false);
 });
@@ -3228,17 +3230,25 @@ test("toolbar: Back and Forward chevrons have names, follow the history and move
   const forward = toolbarBtn("toolbar-forward");
   expect(back.getAttribute("aria-label")).toBe("Back");
   expect(forward.getAttribute("aria-label")).toBe("Forward");
-  expect(back.disabled).toBe(true);
-  expect(forward.disabled).toBe(true);
+  const off = (b: HTMLElement) => b.getAttribute("aria-disabled") === "true";
+  expect(off(back)).toBe(true);
+  expect(off(forward)).toBe(true);
+  expect(back.disabled).toBe(false);
   b.nav("files").click();
   await flush();
-  expect(back.disabled).toBe(false);
-  expect(forward.disabled).toBe(true);
+  expect(off(back)).toBe(false);
+  expect(off(forward)).toBe(true);
+  back.focus();
   back.click();
   await flush();
   expect(b.active()).toBe("fleet");
-  expect(back.disabled).toBe(true);
-  expect(forward.disabled).toBe(false);
+  expect(off(back)).toBe(true);
+  // A button that becomes inert keeps focus: it is aria-disabled, not disabled (MS-8).
+  expect(document.activeElement).toBe(back);
+  back.click();
+  await flush();
+  expect(b.active()).toBe("fleet");
+  expect(off(forward)).toBe(false);
   forward.click();
   await flush();
   expect(b.active()).toBe("files");
@@ -3301,4 +3311,47 @@ test("toolbar: Cmd comma opens Settings", async () => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true, cancelable: true }));
   expect(b.active()).toBe("settings");
   expect(document.querySelector(".toolbar-place")?.textContent).toBe("Settings");
+});
+
+test("history: Needs you is a place; Back and Forward restore it, not a bare Worktree list", async () => {
+  const b = await boot({ sessions: [sessionRow(S1)], attentionSessions: [attn(S1)], worktrees: [wtRow()] });
+  await flush();
+  const item = () => document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=needs]")!;
+  item().click();
+  await flush();
+  b.nav("files").click();
+  await flush();
+  toolbarBtn("toolbar-back").click();
+  await flush();
+  expect(b.active()).toBe("sessions");
+  expect(item().getAttribute("aria-current")).toBe("page");
+  expect(document.querySelector(".toolbar-place")?.textContent).toBe("Needs you");
+  expect(document.querySelector(".sessions-needs[aria-pressed=true]")).not.toBeNull();
+  toolbarBtn("toolbar-back").click();
+  await flush();
+  expect(b.active()).toBe("fleet");
+  toolbarBtn("toolbar-forward").click();
+  await flush();
+  expect(document.querySelector(".toolbar-place")?.textContent).toBe("Needs you");
+  expect(document.querySelector(".sessions-needs[aria-pressed=true]")).not.toBeNull();
+  // The panel's own Needs you toggle moves the title and the sidebar with it.
+  document.querySelector<HTMLButtonElement>(".sessions-needs")!.click();
+  await flush();
+  expect(document.querySelector(".toolbar-place")?.textContent).toBe("Worktree");
+  expect(item().getAttribute("aria-current")).toBeNull();
+});
+
+test("toolbar: arrow keys move the hosted Fleet encoding, and hosted switchers are 28px targets", async () => {
+  await boot({ worktrees: twoRepos() });
+  const slot = () => document.querySelector<HTMLElement>(".toolbar-views")!;
+  await vi.waitFor(() => expect(slot().querySelector(".fleet-enc")).not.toBeNull());
+  const selected = () => slot().querySelector(".fleet-enc[aria-selected=true]")?.getAttribute("data-enc");
+  const first = slot().querySelector<HTMLElement>(".fleet-enc[aria-selected=true]")!;
+  const before = selected();
+  first.focus();
+  const e = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+  first.dispatchEvent(e);
+  expect(e.defaultPrevented).toBe(true);
+  expect(selected()).not.toBe(before);
+  expect((document.activeElement as HTMLElement).closest(".toolbar-views")).not.toBeNull();
 });

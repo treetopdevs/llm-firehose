@@ -178,6 +178,7 @@ body {
   display: flex;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 .stage {
   display: flex;
@@ -317,14 +318,17 @@ input, select {
   font-size: var(--fs-lg);
   line-height: 1;
 }
-.toolbar-btn:hover:not(:disabled) { background: var(--bg-hover); }
-.toolbar-btn:disabled { color: var(--text-dim); opacity: 0.45; cursor: default; }
+.toolbar-btn:hover:not([aria-disabled="true"]) { background: var(--bg-hover); }
+.toolbar-btn[aria-disabled="true"] { color: var(--text-dim); opacity: 0.45; cursor: default; }
 .toolbar-history { display: flex; gap: 2px; }
-.toolbar-title { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; }
+.toolbar-title { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; }
 .toolbar-place { font-weight: 600; font-size: var(--fs-md); }
 .toolbar-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.toolbar-views { display: flex; align-items: center; min-width: 0; flex-shrink: 0; }
+.toolbar-views { display: flex; align-items: center; min-width: 0; flex-shrink: 0; margin-right: auto; }
 .toolbar-views > * { margin: 0; }
+/* The panel's own switcher, hosted: 28px targets, and selection is a neutral fill (MS-6, MS-11). */
+.toolbar-views button { min-height: 28px; margin: 0; }
+.toolbar-views button[aria-selected="true"], .toolbar-views button[aria-pressed="true"] { background: var(--bg-hover); color: var(--text); border-color: var(--border); font-weight: 600; }
 .toolbar-range { flex-shrink: 0; position: relative; }
 /* Narrow windows: the sidebar collapses behind the toolbar toggle and overlays the content. */
 @media (min-width: 900px) {
@@ -332,7 +336,6 @@ input, select {
 }
 @media (max-width: 899px) {
   .shell:not([data-sidebar="shown"]) .sidebar { display: none; }
-  .shell[data-sidebar="shown"] .stage { position: relative; }
   .shell[data-sidebar="shown"] .sidebar { position: absolute; z-index: 20; top: 0; bottom: 0; left: 0; box-shadow: 0 0 24px var(--shadow); }
 }
 /* Under 1100px the inspector overlays the content instead of pushing it. */
