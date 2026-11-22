@@ -3456,6 +3456,34 @@ describe("select, open, back (inspector)", () => {
     expect(pane().querySelector(".inspector-id-value")!.textContent).toBe("r1");
   });
 
+  test("a Sessions refresh in flight when its view is left cannot clear the Fleet inspector when its row is gone", async () => {
+    const hold: { p?: Promise<void> } = {};
+    const intervals: Array<() => void> = [];
+    const sessions = [sessionRow("r1"), sessionRow("r2")];
+    const b = await boot({ worktrees: twoRepos(), sessions, sessionsHold: hold, intervals });
+    b.nav("sessions").click();
+    await vi.waitFor(() => expect(document.querySelectorAll(".session-item").length).toBe(2));
+    await settle();
+    document.querySelector<HTMLElement>(".session-item[data-id='r1']")!.click();
+    expect(pane().getAttribute("data-inspector")).toBe("session");
+    let release!: () => void;
+    hold.p = new Promise<void>((r) => { release = r; });
+    sessions.splice(0, 1); // the refresh no longer contains the selected row
+    for (const tick of intervals) tick();
+    await settle();
+    b.nav("fleet").click();
+    await vi.waitFor(() => expect(fleetRows().length).toBe(2));
+    await settle();
+    headOf(0).click();
+    expect(pane().getAttribute("data-inspector")).toBe("project");
+    release();
+    hold.p = undefined;
+    await settle();
+    await settle();
+    expect(pane().classList.contains("open")).toBe(true);
+    expect(pane().getAttribute("data-inspector")).toBe("project");
+  });
+
   describe("restore by key: rows carry data-key, a gone key falls to the nearest row, focus lands on the row", () => {
     const itemAt = (id: string) => document.querySelector<HTMLElement>(`.session-item[data-id='${id}']`)!;
     const picked = () => [...document.querySelectorAll(".session-item.picked")].map((n) => n.getAttribute("data-id"));

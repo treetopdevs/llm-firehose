@@ -70,8 +70,8 @@ const showDetail = (ev: FirehoseEvent) =>
 // selection in the panel that made it, and each change is written into the current history entry (MS-8).
 const inspectFor = (clear: () => void, shown: () => boolean = () => true) => (s: Inspected | null): void => {
   if (!s && !inspectorShowing(detailPane)) return;
-  // A refresh that was still in flight when its panel was left must not fill the pane over the view that replaced it.
-  if (s && !shown()) return;
+  // A refresh that was still in flight when its panel was left must neither fill nor clear the pane over the view that replaced it.
+  if (!shown()) return;
   const close = () => {
     // The Close button is about to leave the DOM: hand focus back to the row the pane described.
     const sel = content.querySelector<HTMLElement>(".selected, .picked");
