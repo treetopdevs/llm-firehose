@@ -85,12 +85,20 @@ const inspectFor = (clear: () => void) => (s: Inspected | null): void => {
 function rememberSelection(): void {
   const cur = places.current();
   if (!cur || cur.place.panel !== active) return;
-  const sel = selectedKeyHere();
-  const { sel: _gone, ...rest } = cur.state;
-  places.record(cur.place, sel ? { ...rest, sel } : rest);
+  const { sel: _gone, at: _at, ...rest } = cur.state;
+  places.record(cur.place, { ...rest, ...selectionState() });
 }
 /** The selected row of the panel being shown, if it has one. */
 const selectedKeyHere = (): string | undefined => (active === "fleet" ? fleetPanel.selectedKey() : active === "sessions" ? sessionsPanel.selectedKey() : undefined);
+/** The shown panel's selectable rows, when it has any. */
+const selectableHere = (): string[] => (active === "fleet" ? fleetPanel.selectableKeys() : active === "sessions" ? sessionsPanel.selectableKeys() : []);
+/** What a history entry keeps of the selection: its key and its place in the list. */
+function selectionState(): { sel?: string; at?: number } {
+  const sel = selectedKeyHere();
+  if (!sel) return {};
+  const at = selectableHere().indexOf(sel);
+  return at >= 0 ? { sel, at } : { sel };
+}
 
 const refOf = (id: string, source?: string): SessionRef => (source === undefined ? { id } : { id, source });
 
@@ -366,6 +374,8 @@ const content = el("main", { class: "content" });
 const compatBanner = el("div", { class: "compat-banner" });
 
 let active: PanelName = "fleet";
+/** The load the last show() started; a restore waits for it, because the rows on screen may be the previous visit's. */
+let activation: Promise<unknown> = Promise.resolve();
 /** The Worktree panel opened as the Needs you queue: the sidebar item, not a level, owns that view. */
 const needsView = (): boolean => active === "sessions" && sessionsPanel.needsOnly();
 /** Toolbar titles: the place the window is showing. Worktree and Session are reached by opening one, not from the sidebar. */
@@ -446,11 +456,13 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   content.append(panels[name].root);
   content.dataset.panel = name;
   hostViews();
-  if (name === "fleet") void fleetPanel.activate();
-  else if (name === "project") void projectPanel.activate(opts?.encoding ? { encoding: opts.encoding } : undefined);
-  else if (name === "sessions") void sessionsPanel.activate({ needsOnly: !!opts?.needsOnly });
+  activation = Promise.resolve();
+  if (name === "fleet") activation = fleetPanel.activate();
+  else if (name === "project") activation = projectPanel.activate(opts?.encoding ? { encoding: opts.encoding } : undefined);
+  else if (name === "sessions") activation = sessionsPanel.activate({ needsOnly: !!opts?.needsOnly });
   else if (name === "session") sessionPanel.activate(opts?.tab);
   else panels[name].refresh();
+  activation.catch(() => {});
   // After the panel has taken its mode (Needs you is the Worktree panel's own state).
   syncChrome();
   syncTransport();
@@ -460,7 +472,9 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
 // A place is the panel, its view and what is in scope. Every show(), view switch and scope change
 // asks for a record; they are coalesced so one user move is one entry. The range is not part of a
 // place, so changing it never adds an entry and going back never changes it.
-const places = createHistory<{ cell?: CellScope; sel?: string }>();
+// `sel` is the selected row's key and `at` its place in the list when it was recorded: a key that is gone
+// comes back as the row now at that place.
+const places = createHistory<{ cell?: CellScope; sel?: string; at?: number }>();
 let here: Place | undefined;
 let travelling = false;
 let recordQueued = false;
@@ -489,8 +503,7 @@ function recordPlace(): void {
     const first = here === undefined;
     const moved = !here || !samePlace(here, place);
     const cell = scope.get().cell;
-    const sel = selectedKeyHere();
-    places.record(place, { ...(cell ? { cell } : {}), ...(sel ? { sel } : {}) });
+    places.record(place, { ...(cell ? { cell } : {}), ...selectionState() });
     travelling = false;
     here = place;
     syncHistory();
@@ -500,6 +513,57 @@ function recordPlace(): void {
     cancelScrollRestore = marks ? restoreScroll(content, marks) : () => {};
     handFocus();
   });
+}
+/** A row of the shown panel by its key, and the node a keyboard user lands on in it. */
+function focusKey(key: string): void {
+  const node = [...content.querySelectorAll("[data-key]")].find((n) => n.getAttribute("data-key") === key);
+  const target = node?.matches("[tabindex]") ? node : node?.querySelector('[tabindex="0"]');
+  (target as HTMLElement | null | undefined)?.focus({ preventScroll: true });
+}
+let cancelSelectionRestore: () => void = () => {};
+/**
+ * The selection comes back by key once its row is drawn. A key that is gone falls to the row now at its old
+ * place, and focus goes to that row. Rows load after the panel is shown, so this retries for a short while;
+ * a click or a key press of the user's own ends it.
+ */
+function restoreSelection(name: PanelName, sel: string | undefined, at: number | undefined, frames = 90): void {
+  cancelSelectionRestore();
+  const panel = name === "fleet" ? fleetPanel : name === "sessions" ? sessionsPanel : undefined;
+  if (!panel || sel === undefined) return;
+  let cancelled = false;
+  let left = frames;
+  const end = (): void => {
+    cancelled = true;
+    content.removeEventListener("pointerdown", end, true);
+    content.removeEventListener("keydown", end, true);
+  };
+  /** True once a row is selected. */
+  const attempt = (): boolean => {
+    const keys = panel.selectableKeys();
+    const pick = keys.includes(sel) ? sel : keys.length > 0 ? keys[Math.min(Math.max(at ?? 0, 0), keys.length - 1)] : undefined;
+    if (pick === undefined) return false;
+    if (panel.selectedKey() !== pick) panel.selectKey(pick);
+    focusKey(pick);
+    return true;
+  };
+  const poll = (): void => {
+    if (cancelled) return;
+    if (active !== name) return end();
+    if (!attempt() && left-- > 0) requestAnimationFrame(poll);
+    else if (left < 0) end();
+  };
+  content.addEventListener("pointerdown", end, true);
+  content.addEventListener("keydown", end, true);
+  cancelSelectionRestore = end;
+  // Rows already on screen may be the last visit's: take them now, and again once this visit's load has settled.
+  const settled = activation;
+  poll();
+  const again = (): void => {
+    if (cancelled || active !== name) return;
+    if (!attempt()) poll();
+    else end();
+  };
+  settled.then(again, again);
 }
 /** Back or forward one place. False when there is nowhere to go. */
 function travel(dir: "back" | "forward"): boolean {
@@ -520,9 +584,7 @@ function travel(dir: "back" | "forward"): boolean {
           ? { needsOnly: p.view === "needs" }
           : undefined,
   );
-  // The selection comes back by key, once the rows are there.
-  if (name === "fleet") fleetPanel.selectKey(entry.state.sel);
-  else if (name === "sessions") sessionsPanel.selectKey(entry.state.sel);
+  restoreSelection(name, entry.state.sel, entry.state.at);
   syncHistory();
   return true;
 }

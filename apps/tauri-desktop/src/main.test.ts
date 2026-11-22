@@ -3359,6 +3359,70 @@ describe("select, open, back (inspector)", () => {
     expect(pane().querySelector(".inspector-id-value")!.textContent).toBe("r1");
   });
 
+  describe("restore by key: rows carry data-key, a gone key falls to the nearest row, focus lands on the row", () => {
+    const itemAt = (id: string) => document.querySelector<HTMLElement>(`.session-item[data-id='${id}']`)!;
+    const picked = () => [...document.querySelectorAll(".session-item.picked")].map((n) => n.getAttribute("data-id"));
+    const sessionsBoot = async (ids: string[]) => {
+      const opts = { sessions: ids.map((id) => sessionRow(id)) as unknown[] };
+      const b = await boot(opts);
+      b.nav("sessions").click();
+      await vi.waitFor(() => expect(document.querySelectorAll(".session-item").length).toBe(ids.length));
+      await settle();
+      return { b, opts };
+    };
+    const selectOpenLeave = async (b: Boot, id: string) => {
+      itemAt(id).click();
+      openIt(itemAt(id));
+      await settle();
+      b.nav("files").click();
+      await settle();
+    };
+
+    test("session rows and worktree rows carry data-key equal to their selection key", async () => {
+      await sessionsBoot(["r1"]);
+      expect(itemAt("r1").getAttribute("data-key")).toBe("codex\0r1");
+    });
+
+    test("Back restores the selected row and puts focus on it", async () => {
+      const { b } = await sessionsBoot(["r1", "r2"]);
+      await selectOpenLeave(b, "r2");
+      backBtn().click();
+      expect(b.active()).toBe("sessions");
+      await vi.waitFor(() => expect(picked()).toEqual(["r2"]));
+      await vi.waitFor(() => expect(document.activeElement).toBe(itemAt("r2")));
+    });
+
+    test("a selected row that is gone falls to the row now at its place, and the last row clamps", async () => {
+      const { b, opts } = await sessionsBoot(["r1", "r2", "r3"]);
+      await selectOpenLeave(b, "r2");
+      opts.sessions = [sessionRow("r1"), sessionRow("r3")];
+      backBtn().click();
+      await vi.waitFor(() => expect(picked()).toEqual(["r3"]));
+      await vi.waitFor(() => expect(document.activeElement).toBe(itemAt("r3")));
+    });
+
+    test("when the last row is the one that is gone, the new last row is selected", async () => {
+      const { b, opts } = await sessionsBoot(["r1", "r2", "r3"]);
+      await selectOpenLeave(b, "r3");
+      opts.sessions = [sessionRow("r1"), sessionRow("r2")];
+      backBtn().click();
+      await vi.waitFor(() => expect(picked()).toEqual(["r2"]));
+    });
+
+    test("with nothing selected, Back leaves focus on the view's heading, not the body", async () => {
+      const b = await boot({ worktrees: twoRepos() });
+      await ready(b);
+      openIt(headOf(0));
+      await settle();
+      expect(b.active()).toBe("project");
+      backBtn().click();
+      await settle();
+      expect(b.active()).toBe("fleet");
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.querySelector(".content")!.contains(document.activeElement)).toBe(true);
+    });
+  });
+
   test("opening a needs-you chip from the inspector lands on Score with the pane closed, not on a stale inspector", async () => {
     const b = await boot({ worktrees: twoRepos(), sessions: [sessionRow("s-n1")], attentionSessions: [needy("s-n1", "repoA", { worktree_id: "wt-open" })] });
     await ready(b);

@@ -41,6 +41,8 @@ export type SessionsPanel = {
   selectedKey(): string | undefined;
   /** Selects by key; held until the rows are drawn, and dropped if the row is not there. */
   selectKey(key: string | undefined): void;
+  /** The keys a selection can take, in the order the rows are drawn (the shell restores by key, else by place in this list). */
+  selectableKeys(): string[];
 };
 
 /** Rows drawn per page; the rest wait behind a "Show N more" button. */
@@ -85,7 +87,7 @@ type Status = {
   text?: string;
 };
 
-const sessionKey = (source: string, id: string): string => `${source}\0${id}`;
+const sessionKey = (source: string | undefined, id: string): string => `${source ?? ""}\0${id}`;
 const UNKNOWN_STATE_REASON = "not in the needs-you snapshot, so no state was captured for it";
 const NO_TIME_REASON = "no readable activity time was captured";
 
@@ -258,6 +260,7 @@ export function createSessions(
         role: "button",
         "aria-label": `open worktree ${w.name}, ${w.stateText}, ${w.sessionsText}, ${w.ageText === "no activity time" ? w.ageText : `last activity ${w.ageText}`}`,
         "data-wt": w.id,
+        "data-key": `wt\0${w.id}`,
         title: w.title,
         ...(selected ? { "aria-current": "true" } : {}),
       },
@@ -498,6 +501,7 @@ export function createSessions(
         role: "group",
         "aria-label": `open ${sessionName(s)}, ${status.label}`,
         "data-id": s.id,
+        "data-key": sessionKey(s.source, s.id),
         ...(s.source ? { "data-source": s.source } : {}),
       },
       row,
@@ -760,6 +764,7 @@ export function createSessions(
     root, refresh, openSession, setScope, setNeedsOnly, needsOnly: () => needs, activate, hasWorktreeList: () => listRows(store.get()) !== undefined,
     clearSelection: () => pick(undefined),
     selectedKey: () => picked,
+    selectableKeys: () => [...listBox.querySelectorAll(ITEMS)].map(itemKey),
     selectKey(key) {
       picked = key;
       markPicked();

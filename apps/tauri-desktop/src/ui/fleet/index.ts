@@ -88,6 +88,8 @@ export interface FleetPanel {
   selectedKey(): string | undefined;
   /** Selects by key once the rows are drawn; a key that is gone falls to the nearest surviving row. */
   selectKey(key: string | undefined): void;
+  /** The keys a selection can take, in drawn order (the shell restores by key, else by place in this list). */
+  selectableKeys(): string[];
   /** The stable fork order for a repository (Project seeds its lanes from it); undefined before the first load or for an unknown repo. */
   forkOrder(repo: string): readonly string[] | undefined;
 }
@@ -1150,6 +1152,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       recompute();
     },
     selectedKey: () => (selNeed !== undefined ? `need:${selNeed}` : selFork !== undefined ? `fork:${selFork}` : selRow !== undefined ? `row:${selRow}` : undefined),
+    selectableKeys: () => [...root.querySelectorAll('[data-key^="row:"], [data-key^="fork:"], [data-key^="need:"]')].map((n) => n.getAttribute("data-key")!),
     selectKey(k) {
       if (k === undefined) { this.clearSelection(); return; }
       const at = k.indexOf(":");

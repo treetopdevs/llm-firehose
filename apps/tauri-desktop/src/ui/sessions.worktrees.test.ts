@@ -88,6 +88,15 @@ describe("the list at the Worktree rung", () => {
     expect(first.getAttribute("title")).toBe("/w/new");
   });
 
+  test("worktree rows carry data-key equal to the selection key, and selectableKeys lists them in order", async () => {
+    const { panel } = panelOver(three);
+    await panel.refresh();
+    expect(items(panel.root).map((n) => n.getAttribute("data-key"))).toEqual(["wt\0new", "wt\0mid", "wt\0old"]);
+    expect(panel.selectableKeys()).toEqual(["wt\0new", "wt\0mid", "wt\0old"]);
+    items(panel.root)[1].click();
+    expect(panel.selectedKey()).toBe("wt\0mid");
+  });
+
   test("says how many worktrees it lists, uncapped", async () => {
     const many = Array.from({ length: 450 }, (_, i) => wt(`w${i}`));
     const { panel } = panelOver(many);
