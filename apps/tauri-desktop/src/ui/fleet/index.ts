@@ -28,7 +28,7 @@ import type { SessionDirectory } from "../../session-directory";
 import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
 import { FORK_GLYPH, IDLE_MARK, NEEDS_MARK, NO_DATA_MARK, NO_PROJECT_MARK } from "../../glyphs";
-import { ENCODINGS, KIND_WORD, NOREPO_KEY, isHostEncoding, buildFleet, describeRest, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, signature, stripOf, summarize } from "./model";
+import { ENCODINGS, KIND_WORD, NOREPO_KEY, isHostEncoding, buildFleet, childrenOf, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, restOf, signature, stripOf, summarize } from "./model";
 import type { Encoding, FleetFork, HostEncoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
 export type { Encoding, HostEncoding } from "./model";
@@ -90,6 +90,8 @@ export interface FleetPanel {
   selectKey(key: string | undefined): void;
   /** The keys a selection can take, in drawn order (the shell restores by key, else by place in this list). */
   selectableKeys(): string[];
+  /** Puts keyboard focus on the row a selection key names, when it is drawn. */
+  focusKey(key: string): void;
   /** The stable fork order for a repository (Project seeds its lanes from it); undefined before the first load or for an unknown repo. */
   forkOrder(repo: string): readonly string[] | undefined;
 }
@@ -145,7 +147,8 @@ function guard<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-interface RowRefs { head: HTMLElement; glyph: HTMLElement; label: HTMLElement; needs: HTMLElement; dwell: HTMLElement; counts: HTMLElement; spark: HTMLElement; forks: HTMLElement; queue: HTMLElement }
+interface RowRefs { head: HTMLElement; disclose: HTMLButtonElement | undefined; glyph: HTMLElement; label: HTMLElement; needs: HTMLElement; dwell: HTMLElement; counts: HTMLElement; spark: HTMLElement; last: HTMLElement; forks: HTMLElement; rest: HTMLElement; restText: HTMLElement; showAll: HTMLButtonElement; queue: HTMLElement }
+interface ForkRefs { mark: HTMLElement; state: HTMLElement; label: HTMLElement; doing: HTMLElement; age: HTMLElement }
 interface NeedRefs { label: HTMLElement; dwell: HTMLElement; summary: HTMLElement }
 
 type StatusKind = "" | "loading" | "error" | "connecting" | "unsupported" | "empty";
@@ -192,7 +195,15 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   let lastKey: string | undefined;
   let statusKind: StatusKind = "";
   let lastLabels = "{}";
-  const expanded = new Set<string>(); // rows whose fork strip is open; kept across refreshes
+  // Expansion (MS-10). The user's choice per project row wins; absent that, a row starts open only if a worktree needed
+  // you when it was first drawn with its data. That start is fixed then, so a refresh never opens or closes a row under
+  // the pointer. Show all is the same kind of choice.
+  const openChoice = new Map<string, boolean>();
+  const startedOpen = new Map<string, boolean>();
+  const showAll = new Set<string>();
+  const isOpen = (id: string): boolean => openChoice.get(id) ?? startedOpen.get(id) ?? false;
+  const expansionKey = (): string => JSON.stringify([[...openChoice], [...startedOpen], [...showAll]]);
+  let kidsSeq = 0;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Loading.
@@ -214,11 +225,11 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const nodes = new Map<string, Element>();
   const rowRefs = new WeakMap<Element, RowRefs>();
   const needRefs = new WeakMap<Element, NeedRefs>();
-  const forkRefs = new WeakMap<Element, { glyph: HTMLElement; label: HTMLElement; needs: HTMLElement }>();
+  const forkRefs = new WeakMap<Element, ForkRefs>();
   const dwellRefs = new WeakMap<Element, Record<"label" | "where" | "status" | "bar" | "age" | "text", HTMLElement>>();
   const prevStates = new Map<string, string>();
   const expiry = new Map<Element, ReturnType<typeof setTimeout>>();
-  let mapEntries: Array<{ row: FleetRow; refs: RowRefs; needs: Array<{ need: FleetNeed; refs: NeedRefs; node: Element }> }> = [];
+  let mapEntries: Array<{ row: FleetRow; refs: RowRefs; needs: Array<{ need: FleetNeed; refs: NeedRefs; node: Element }>; kids: Array<{ fork: FleetFork; refs: ForkRefs }> }> = [];
 
   // Header, built once.
   const encButtons = TAB_ENCODINGS.filter((enc) => !isHostEncoding(enc) || deps.hosts?.[enc] !== undefined).map((enc) => {
@@ -300,6 +311,19 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function selectNeed(k: string): void { selNeed = k; selRow = undefined; selFork = undefined; recompute(); }
   function selectFork(repo: string, wtId: string): void { selFork = forkSel(repo, wtId); selRow = undefined; selNeed = undefined; recompute(); }
   function dropSelection(): void { selRow = undefined; selNeed = undefined; selFork = undefined; }
+  /** Opens a project row, and Show all when the worktree is not among the first children, so a worktree can be selected by key. */
+  function reveal(repo: string, wtId: string): void {
+    const row = result.rows.find((r) => r.id === repo);
+    if (!row || !row.forks.some((f) => f.id === wtId)) return;
+    openChoice.set(repo, true);
+    if (!childrenOf(row.forks).some((f) => f.id === wtId)) showAll.add(repo);
+  }
+  function setOpen(row: FleetRow, open: boolean): void {
+    openChoice.set(row.id, open);
+    // A selection inside a row that closes goes to the row, as in any tree.
+    if (!open && selFork !== undefined && selFork.split(SEP)[0] === row.id) { selectRow(row.id); return; }
+    recompute(true);
+  }
 
   const statusOfFork = (f: FleetFork): Inspected["status"] => {
     const mark = f.kind === "needs" ? NEEDS_MARK : f.kind === "working" ? FORK_GLYPH.open : f.kind === "idle" ? IDLE_MARK : f.kind === "unknown" ? FORK_GLYPH.unknown : FORK_GLYPH[f.state];
@@ -408,7 +432,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     renderStatus();
     syncFlags();
     syncButtons();
-    const key = [encoding, scopeKey(store.get()), selRow ?? "", selNeed ?? "", selFork ?? "", signature(result), encodingKey(now)].join("\u0001");
+    const key = [encoding, scopeKey(store.get()), selRow ?? "", selNeed ?? "", selFork ?? "", signature(result), expansionKey(), encodingKey(now)].join("\u0001");
     if (force || key !== lastKey || encoding === "lanes" || encoding === "dwell") {
       lastKey = key;
       draw(now);
@@ -419,6 +443,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       for (const e of mapEntries) {
         e.row = rows.get(e.row.id) ?? e.row;
         updateTimes(e.row, e.refs, now);
+        for (const k of e.kids) {
+          const f = e.row.forks.find((x) => x.id === k.fork.id);
+          if (f) setText(k.refs.age, ageOfFork(f, now));
+        }
         for (const n of e.needs) {
           n.need = needs.get(n.need.key) ?? n.need;
           updateNeedTimes(n.need, n.refs, n.node);
@@ -516,6 +544,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function updateTimes(row: FleetRow, refs: RowRefs, now: number): void {
     setText(refs.dwell, row.needsCount > 0 ? formatAge(row.longestDwellMs) : "");
     setText(refs.spark, row.known ? sparkText(repoBuckets(row, now)) : "");
+    setText(refs.last, lastText(row, now));
+  }
+  const ageOfFork = (f: FleetFork, now: number): string => (f.lastMs > 0 ? formatAge(Math.max(0, now - f.lastMs)) : NO_DATA_MARK);
+  /** What a worktree row says it is doing or waiting on, as far as captured evidence goes. */
+  function doingOf(row: FleetRow, f: FleetFork): string {
+    if (f.kind === "needs") { const n = row.needs.find((x) => x.worktreeId === f.id); return n ? n.summary || n.label : ""; }
+    if (f.kind === "working") return f.working > 0 ? `${f.working} session${f.working === 1 ? "" : "s"} working` : "";
+    return f.reason ?? "";
   }
   function updateNeedTimes(n: FleetNeed, refs: NeedRefs, node: Element): void {
     const age = formatAge(n.dwellMs);
@@ -530,18 +566,27 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     let refs = rowRefs.get(node);
     if (fresh || !refs) {
       const head = el("div", { class: "fleet-row-head", tabindex: "0", role: "button" });
+      const kidsId = `fleet-kids-${++kidsSeq}`;
+      const showAllBtn = el("button", { class: "fleet-showall", type: "button", "aria-expanded": "false" }, "Show all");
+      const restText = el("span", { class: "fleet-rest-text" });
+      const disclose = el("button", { class: "fleet-disclose", type: "button", "aria-expanded": "false", "aria-controls": kidsId }) as HTMLButtonElement;
       refs = {
         head,
+        disclose,
         glyph: el("span", { class: "fleet-glyph", "aria-hidden": "true" }),
         label: el("span", { class: "fleet-row-label" }),
         needs: el("span", { class: "fleet-needs-count" }),
         dwell: el("span", { class: "fleet-dwell" }),
         counts: el("span", { class: "fleet-counts" }),
         spark: el("span", { class: "fleet-spark", "aria-hidden": "true", title: "sessions per 12 hours, last 7 days" }),
-        forks: el("div", { class: "fleet-forks" }),
+        last: el("span", { class: "fleet-last", title: "last activity" }),
+        forks: el("div", { class: "fleet-forks", id: kidsId }),
+        rest: el("div", { class: "fleet-rest" }, restText, showAllBtn),
+        restText,
+        showAll: showAllBtn,
         queue: el("div", { class: "fleet-queue" }),
       };
-      head.append(refs.glyph, refs.label, refs.needs, refs.dwell, refs.counts);
+      head.append(refs.glyph, refs.label, refs.needs, refs.dwell, refs.counts, refs.spark, refs.last);
       if (!row.noRepo) {
         head.setAttribute("data-unit", "repo");
         head.setAttribute("data-repo", row.id);
@@ -554,7 +599,31 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         },
         { siblings: () => mapEntries.map((e) => e.refs.head) },
       );
-      node.append(head);
+      // Tree keys (the usual disclosure pattern): Right opens, Right again enters the worktrees, Left closes.
+      const treeKey = (ev: KeyboardEvent): void => {
+        if (!LOCAL.rowTree.matches(ev)) return;
+        const cur = result.rows.find((x) => x.id === row.id);
+        if (!cur || cur.forks.length === 0) return;
+        const open = isOpen(row.id);
+        if (ev.key === "ArrowRight") {
+          ev.preventDefault();
+          if (!open) setOpen(cur, true);
+          else if (ev.target === head) refs!.forks.querySelector<HTMLElement>(".fleet-fork")?.focus();
+        } else if (open) {
+          ev.preventDefault();
+          setOpen(cur, false);
+        }
+      };
+      head.addEventListener("keydown", treeKey);
+      disclose.addEventListener("keydown", treeKey);
+      disclose.addEventListener("click", () => { const cur = result.rows.find((x) => x.id === row.id); if (cur) setOpen(cur, !isOpen(row.id)); });
+      showAllBtn.addEventListener("click", () => {
+        if (showAll.has(row.id)) showAll.delete(row.id);
+        else showAll.add(row.id);
+        recompute(true);
+      });
+      // The disclosure sits beside the head, never inside it: a button must not live inside a role=button.
+      node.append(disclose, head);
       // Same affordance as Project's header: one visible Actions button per
       // repository region, a sibling of the head (never nested in role=button).
       const ui = deps.actions;
@@ -563,7 +632,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         btn.addEventListener("click", () => ui.openMenu(repoActions(row.id), btn, { returnFocus: btn }));
         node.append(btn);
       }
-      node.append(refs.forks, refs.spark, refs.queue);
+      node.append(refs.forks, refs.queue);
       rowRefs.set(node, refs);
     }
     const navigable = row.known && !row.noRepo;
@@ -585,21 +654,39 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     updateTimes(row, refs, now);
     track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
 
-    const open = expanded.has(row.id);
-    const strip = stripOf(row.forks, open);
-    const forkNodes: Element[] = strip.shown.map((f) => {
+    // A start of "open" needs the attention snapshot: until it has answered (or failed), a needs you worktree cannot be known.
+    if (!startedOpen.has(row.id) && (att !== undefined || attFailed)) startedOpen.set(row.id, row.forks.some((f) => f.kind === "needs"));
+    const hasKids = row.forks.length > 0;
+    const open = hasKids && isOpen(row.id);
+    const all = open && showAll.has(row.id);
+    const rest = restOf(row.forks);
+    const disclose = refs.disclose!;
+    disclose.hidden = !hasKids;
+    setAttr(disclose, "aria-expanded", open ? "true" : "false");
+    setAttr(disclose, "aria-label", `${open ? "Collapse" : "Expand"} ${row.label}`);
+    setAttr(disclose, "title", open ? "Collapse worktrees" : "Show the worktrees that need you or are working");
+    setText(disclose, open ? "▾" : "▸");
+    setClass(node, "expanded", open);
+    const shown = open ? (all ? stripOf(row.forks, true).shown : childrenOf(row.forks)) : [];
+    const kidEntries: Array<{ fork: FleetFork; refs: ForkRefs }> = [];
+    const forkNodes: Element[] = shown.map((f) => {
       const k = keyed("fork:" + row.id + "|" + f.id, () => el("div", { class: "fleet-fork", tabindex: "0", role: "button" }), seen);
       let fr = forkRefs.get(k.node);
       if (k.fresh || !fr) {
-        fr = { glyph: el("span", { class: "fleet-fork-glyph", "aria-hidden": "true" }), label: el("span", { class: "fleet-fork-label" }), needs: el("span", { class: "fleet-fork-needs" }) };
-        k.node.append(fr.glyph, fr.label, fr.needs);
+        fr = { mark: el("span", { class: "fleet-fork-mark", "aria-hidden": "true" }), state: el("span", { class: "fleet-fork-state" }), label: el("span", { class: "fleet-fork-label" }), doing: el("span", { class: "fleet-fork-doing" }), age: el("span", { class: "fleet-fork-age" }) };
+        k.node.append(fr.mark, fr.state, fr.label, fr.doing, fr.age);
         forkRefs.set(k.node, fr);
-        // A fork narrows project and worktree and descends to Sessions.
+        // A worktree row selects like a project row; opening it narrows project and worktree and descends to Sessions.
         onSelectOpen(
           k.node,
           { select: () => selectFork(row.id, f.id), open: () => nav("sessions", { project: row.id, worktree: f.id, session: undefined, cell: undefined }) },
           { siblings: () => [...k.node.parentElement?.querySelectorAll(".fleet-fork") ?? []] },
         );
+        k.node.addEventListener("keydown", (ev) => {
+          if (!LOCAL.rowTree.matches(ev as KeyboardEvent) || (ev as KeyboardEvent).key !== "ArrowLeft") return;
+          ev.preventDefault();
+          rowRefs.get(nodes.get("row:" + row.id)!)?.head.focus();
+        });
       }
       setAttr(k.node, "data-unit", "fork");
       setAttr(k.node, "data-repo", row.id);
@@ -608,38 +695,35 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setClass(k.node, "current", sc.project === row.id && sc.worktree === f.id);
       setClass(k.node, "selected", selFork === forkSel(row.id, f.id));
       for (const st of ["open", "landed", "gone", "never_diverged", "unknown"]) setClass(k.node, `state-${st}`, f.state === st);
+      for (const kd of ["needs", "working", "idle", "unknown"]) setClass(k.node, `kind-${kd}`, f.kind === kd);
       setAttr(k.node, "title", f.tooltip);
       setAttr(k.node, "aria-label", forkAriaLabel(f));
-      setText(fr.glyph, f.glyph + (f.idle ? IDLE_MARK : ""));
-      setText(fr.label, f.state === "open" ? f.short : "");
-      setText(fr.needs, f.needs > 0 ? `${f.needs}?` : "");
+      setText(fr.mark, statusOfFork(f).mark);
+      setText(fr.state, KIND_WORD[f.kind]);
+      setText(fr.label, f.short);
+      setText(fr.doing, doingOf(row, f));
+      setText(fr.age, ageOfFork(f, now));
       track("fork:" + row.id + "|" + f.id, forkSig(f), k.node);
+      kidEntries.push({ fork: f, refs: fr });
       return k.node;
     });
-    // Signatures are kept for every fork, drawn or not, so revealing or hiding forks
-    // behind +N is never mistaken for a state change.
+    // Signatures are kept for every fork, drawn or not, so revealing or hiding worktrees
+    // is never mistaken for a state change.
     for (const f of row.forks) {
       const sk = "fork:" + row.id + "|" + f.id;
       sigSeen.add(sk);
       if (!seen.has(sk)) prevStates.set(sk, forkSig(f));
     }
-    if (strip.more > 0 || (open && stripOf(row.forks, false).more > 0)) {
-      const m = keyed("more:" + row.id, () => el("button", { class: "fleet-more", type: "button" }), seen);
-      if (m.fresh) {
-        m.node.addEventListener("click", () => {
-          if (expanded.has(row.id)) expanded.delete(row.id);
-          else expanded.add(row.id);
-          recompute(true);
-        });
-      }
-      setText(m.node, open ? "collapse" : `+${strip.more}`);
-      setAttr(m.node, "aria-expanded", open ? "true" : "false");
-      const rest = describeRest(strip.hidden);
-      setAttr(m.node, "aria-label", open ? "collapse worktrees" : `show all ${strip.more} more worktrees${rest ? `: ${rest}` : ""}`);
-      setAttr(m.node, "title", open ? "" : rest);
-      forkNodes.push(m.node);
+    const children: Element[] = [...forkNodes];
+    if (open && rest.forks.length > 0) {
+      setText(refs.restText, rest.text);
+      setAttr(refs.showAll, "aria-expanded", all ? "true" : "false");
+      setAttr(refs.showAll, "aria-label", all ? `Show fewer of the ${rest.forks.length} other worktrees` : `Show all ${rest.forks.length} other worktrees`);
+      setText(refs.showAll, all ? "Show fewer" : "Show all");
+      children.push(refs.rest);
     }
-    reconcile(refs.forks, forkNodes);
+    refs.forks.hidden = !open;
+    reconcile(refs.forks, children);
 
     const needEntries = row.needs.map((n) => {
       const k = keyed("need:" + n.key, () => el("div", { class: "fleet-need", tabindex: "0", role: "button" }), seen);
@@ -669,7 +753,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       return { need: n, refs: nr, node: k.node };
     });
     reconcile(refs.queue, needEntries.map((e) => e.node));
-    mapEntries.push({ row, refs, needs: needEntries });
+    mapEntries.push({ row, refs, needs: needEntries, kids: kidEntries });
     return node;
   }
 
@@ -1152,15 +1236,21 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       recompute();
     },
     selectedKey: () => (selNeed !== undefined ? `need:${selNeed}` : selFork !== undefined ? `fork:${selFork}` : selRow !== undefined ? `row:${selRow}` : undefined),
-    selectableKeys: () => [...root.querySelectorAll('[data-key^="row:"], [data-key^="fork:"], [data-key^="need:"]')].map((n) => n.getAttribute("data-key")!),
+    // Every row, then its worktrees (revealed on demand) and its needs, in the order they are drawn.
+    selectableKeys: () => result.rows.flatMap((r) => [`row:${r.id}`, ...stripOf(r.forks, true).shown.map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
     selectKey(k) {
       if (k === undefined) { this.clearSelection(); return; }
       const at = k.indexOf(":");
       const kind = k.slice(0, at);
       const id = k.slice(at + 1);
       if (kind === "need") selectNeed(id);
-      else if (kind === "fork") { const [repo, wtId] = id.split(SEP); selectFork(repo!, wtId!); }
+      else if (kind === "fork") { const [repo, wtId] = id.split(SEP); reveal(repo!, wtId!); selectFork(repo!, wtId!); }
       else selectRow(id);
+    },
+    focusKey(k) {
+      const at = k.indexOf(":");
+      const [kind, id] = [k.slice(0, at), k.slice(at + 1)];
+      focusKey(kind === "fork" ? `fork:${id.split(SEP).join("|")}` : k);
     },
     forkOrder: (repo: string): readonly string[] | undefined => order.forks[repo],
     effectiveLiveSpan: (): number => (encoding === "lanes" ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : DEFAULT_LIVE_SPAN_MS),

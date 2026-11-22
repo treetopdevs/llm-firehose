@@ -1387,8 +1387,6 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-spark:empty { display: none; }
 .fleet-forks { display: flex; flex-wrap: wrap; gap: 3px 6px; flex: 1 1 30rem; align-items: center; }
 .fleet-queue { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 0 100%; }
-.fleet-more { background: none; color: var(--text-dim); border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; min-height: 24px; margin: 0; font: inherit; font-size: var(--fs-sm); cursor: pointer; }
-.fleet-more:hover { background: var(--bg-hover); }
 .fleet-toast { color: var(--warn); font-size: var(--fs-sm); }
 .fleet-toast:empty { display: none; }
 .fleet-need.stale { border-style: dashed; color: var(--text-dim); }
@@ -1683,7 +1681,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-row > .unit-actions { order: 2; position: relative; margin: 0; min-height: 24px; padding: 0 8px; font-size: var(--fs-sm); color: var(--text-dim); opacity: 0; }
 .fleet-row:hover > .unit-actions, .fleet-row.selected > .unit-actions, .fleet-row > .unit-actions:focus-visible { opacity: 1; }
 .fleet-forks, .fleet-queue { order: 3; flex: 1 0 100%; position: relative; padding-left: calc(13rem + 26px); }
-.fleet-fork, .fleet-need, .fleet-more { position: relative; }
+.fleet-fork, .fleet-need, .fleet-rest, .fleet-disclose { position: relative; }
 
 .sessions-list { width: auto; max-width: none; flex: 1 1 auto; }
 .session-item, .worktree-item { border-width: 0 0 1px; border-color: color-mix(in srgb, var(--border) 35%, transparent); border-radius: 0; margin: 0; padding: 8px 12px; }
@@ -1716,3 +1714,25 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .toolbar-crumb .crumb { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar-range { margin-left: auto; }
 .toolbar-views { margin-right: 0; }
+
+/* ---- Project rows (MS-10): one line, a disclosure beside it, worktrees as rows under it, one rest line. ---- */
+.fleet-row { align-items: center; }
+.fleet-disclose { flex: 0 0 auto; z-index: 1; min-height: 24px; min-width: 24px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-dim); font: inherit; cursor: pointer; }
+.fleet-disclose:hover { background: var(--bg-hover); color: var(--text); }
+/* Nothing to expand: no control, but the head keeps its left edge. */
+.fleet-disclose[hidden] { display: inline-flex; visibility: hidden; }
+.fleet-row-head .fleet-spark { order: 0; margin-left: auto; }
+.fleet-last { flex: 0 0 4.5rem; text-align: right; color: var(--text-dim); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.fleet-forks { display: block; padding-left: 40px; padding-right: 0; }
+.fleet-fork { display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; border: 0; border-radius: 0; padding: 2px 8px; min-height: 24px; }
+.fleet-fork.idle { border-style: none; }
+.fleet-fork-mark { flex: 0 0 1.4em; text-align: center; }
+.fleet-fork-state { flex: 0 0 7.5rem; color: var(--text-dim); }
+.fleet-fork-label { flex: 0 0 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-fork-doing { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.fleet-fork-age { flex: 0 0 4.5rem; text-align: right; color: var(--text-dim); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.fleet-fork.kind-needs .fleet-fork-mark, .fleet-fork.kind-needs .fleet-fork-state { color: var(--warn); font-weight: 700; }
+.fleet-fork.kind-unknown .fleet-fork-state, .fleet-fork.kind-unknown .fleet-fork-doing { font-style: italic; }
+.fleet-rest { display: flex; align-items: center; gap: 10px; min-height: 24px; padding: 2px 8px; color: var(--text-dim); font-size: var(--fs-sm); }
+.fleet-showall { min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; color: var(--text-dim); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.fleet-showall:hover { background: var(--bg-hover); color: var(--text); }

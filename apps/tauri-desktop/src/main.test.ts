@@ -917,6 +917,11 @@ const needy = (id: string, repoId: string | undefined, over: Record<string, unkn
   };
 };
 const fleetRows = () => [...document.querySelectorAll(".fleet-row")];
+/** MS-10: project rows start as one line; opens every one and its Show all so a worktree row can be reached. */
+const openFleetRows = (): void => {
+  for (const d of document.querySelectorAll<HTMLButtonElement>(".fleet-disclose")) if (!d.hidden && d.getAttribute("aria-expanded") === "false") d.click();
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".fleet-showall")) if (b.getAttribute("aria-expanded") === "false") b.click();
+};
 
 test("landing: one repository lands on All projects and stays there", async () => {
   const b = await boot({ worktrees: [wtRow()] });
@@ -1031,6 +1036,8 @@ test("Fleet descents carry the window; row, fork and need open project, sessions
 test("Escape from Sessions reached by a Fleet fork widens to the worktree list, then Fleet (not stuck on Sessions)", async () => {
   const b = await boot({ worktrees: twoRepos() });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-disclose")).not.toBeNull());
+  openFleetRows();
   await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
   openIt(document.querySelector<HTMLElement>(".fleet-fork")!);
   expect(b.active()).toBe("sessions");
@@ -2809,6 +2816,8 @@ test("navigation cancels actions: an open menu, a pending confirmation, and a pr
 test("Fleet shares the one controller: its fork menu renders in the shell-owned host", async () => {
   const b = await boot({ worktrees: twoRepos(), repos: [] });
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
+  await vi.waitFor(() => expect(document.querySelector(".fleet-disclose")).not.toBeNull());
+  openFleetRows();
   await vi.waitFor(() => expect(document.querySelector(".fleet-fork")).not.toBeNull());
   document.querySelector(".fleet-fork")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
   expect(document.querySelectorAll(".actions-host")).toHaveLength(1);

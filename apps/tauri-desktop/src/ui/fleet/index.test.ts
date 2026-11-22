@@ -62,6 +62,11 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const byKey = (k: string) => q("[data-key]").find((n) => n.getAttribute("data-key") === k)!;
   return { store, api, data, go, panel, q, byKey };
 }
+/** MS-10: a project row starts as one line. Opens every project row and its Show all, so a test can reach any worktree. */
+const showEverything = (panel: FleetPanel): void => {
+  for (const d of panel.root.querySelectorAll<HTMLButtonElement>(".fleet-disclose")) if (!d.hidden && d.getAttribute("aria-expanded") === "false") d.click();
+  for (const b of panel.root.querySelectorAll<HTMLButtonElement>(".fleet-showall")) if (b.getAttribute("aria-expanded") === "false") b.click();
+};
 /** Picks a view as a user would: a tab, an item of the More menu, else (a retired view) by name. */
 const chooseEnc = (panel: FleetPanel, q: (s: string) => HTMLElement[], enc: string): void => {
   const b = q(`.fleet-enc[data-enc='${enc}'], .more-item[data-enc='${enc}']`)[0];
@@ -98,6 +103,9 @@ describe("render", () => {
     expect(q(".fleet-row").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoB"), key("row", "repoA"), key("row", "repoZ"), key("row", "__no_repo__")]);
     expect(q(".fleet-row.fog").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoZ")]);
     expect(q(".fleet-row.norepo")).toHaveLength(1);
+    // MS-10: only the project with a needs you worktree starts open, and it shows that worktree alone.
+    expect(q(".fleet-fork")).toHaveLength(1);
+    showEverything(panel);
     expect(q(".fleet-fork")).toHaveLength(7);
     expect(q(".fleet-need")).toHaveLength(2);
     expect(api.worktrees.mock.calls[0]![0]).toBeInstanceOf(AbortSignal);
@@ -212,6 +220,10 @@ describe("in-place rendering", () => {
     expect(byKey(key("row", "repoZ"))).toBe(fog);
     expect(ids().indexOf(key("row", "repoZ"))).toBe(idx);
     expect(fog.classList.contains("fog")).toBe(false);
+    // Now it has a worktree to show, behind the disclosure it did not have before.
+    expect(fog.querySelector<HTMLElement>(".fleet-disclose")!.hidden).toBe(false);
+    fog.querySelector<HTMLElement>(".fleet-disclose")!.click();
+    fog.querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(fog.querySelectorAll(".fleet-fork")).toHaveLength(1);
   });
 });
@@ -224,6 +236,7 @@ describe("navigation", () => {
   test("every go patch carries project, worktree, session, cell and window keys", async () => {
     const { panel, go, byKey } = setup({ scope: populated() });
     await panel.activate();
+    showEverything(panel);
     openIt(byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!);
     openIt(byKey(key("fork", "repoA", "wt-landed")));
     openIt(byKey(needKey("claude-code", "sa")));
@@ -256,6 +269,7 @@ describe("navigation", () => {
     if (name === "lane") panel.encoding = "lanes";
     await panel.activate();
     await flush();
+    showEverything(panel);
     const node = name === "lane" ? panel.root.querySelector<HTMLElement>(".fleet-lane-row")! : byKey(k());
     (sub ? node.querySelector<HTMLElement>(sub)! : node).dispatchEvent(new MouseEvent(name === "lane" ? "click" : "dblclick", { bubbles: true }));
     expect(store.get().window).toEqual(hist);
@@ -561,6 +575,181 @@ describe("Fleet encoding buttons", () => {
       panel.encoding = enc;
       expect(panel.encoding).toBe(enc);
     }
+  });
+});
+
+// MS-10: a project row is one line; a disclosure control expands it to its needs you and working worktrees, then one
+// rest line with Show all. These are the tests of that rule; the chip tests above were rewritten to it.
+describe("expandable project rows (MS-10)", () => {
+  const rowOf = (byKey: (k: string) => HTMLElement, id: string) => byKey(key("row", id));
+  const disclose = (r: HTMLElement) => r.querySelector<HTMLButtonElement>(".fleet-disclose")!;
+  const kids = (r: HTMLElement) => [...r.querySelectorAll<HTMLElement>(".fleet-fork")];
+  // The selection key of a worktree joins project and worktree with NUL; its data-key (the scroll anchor) uses "|".
+  const forkSelKey = (repo: string, wtId: string) => `fork:${repo}\u0000${wtId}`;
+  const pressKey = (n: Element, k: string) => n.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+
+  test("a project row is one line: name, the status summary in words, the spark, last activity; no chips under it", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoB");
+    expect(r.querySelector(".fleet-row-head .fleet-row-label")!.textContent).not.toBe("");
+    expect(r.querySelector(".fleet-row-head .fleet-counts")!.textContent).toBe("1 working");
+    expect(r.querySelector(".fleet-row-head .fleet-spark")).not.toBeNull();
+    expect(r.querySelector(".fleet-row-head .fleet-last")!.textContent).not.toBe("");
+    expect(r.querySelector(".fleet-more")).toBeNull();
+    expect(kids(r)).toHaveLength(0);
+  });
+
+  test("a project with a needs you worktree starts expanded; one with only working worktrees starts collapsed", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("true");
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("false");
+    expect(kids(rowOf(byKey, "repoA")).map((c) => c.getAttribute("data-key"))).toEqual([key("fork", "repoA", "wt-open")]);
+  });
+
+  test("the disclosure is a named button that controls the child list; the row head toggles nothing", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoB");
+    const d = disclose(r);
+    expect(d.tagName).toBe("BUTTON");
+    expect(d.getAttribute("aria-label")).toMatch(/^Expand /);
+    expect(r.querySelector(`#${d.getAttribute("aria-controls")}`)).not.toBeNull();
+    r.querySelector<HTMLElement>(".fleet-row-head")!.click();
+    expect(d.getAttribute("aria-expanded")).toBe("false");
+    d.click();
+    expect(d.getAttribute("aria-expanded")).toBe("true");
+    expect(d.getAttribute("aria-label")).toMatch(/^Collapse /);
+    expect(kids(r)).toHaveLength(1);
+    d.click();
+    expect(kids(r)).toHaveLength(0);
+  });
+
+  test("a child is one line: state mark and word, name, what it waits on, age; unknown keeps its mark and reason", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const child = byKey(key("fork", "repoA", "wt-open"));
+    expect(child.querySelector(".fleet-fork-mark")!.textContent).toBe("?");
+    expect(child.querySelector(".fleet-fork-state")!.textContent).toBe("needs you");
+    expect(child.querySelector(".fleet-fork-label")!.textContent).toBe("alpha-open");
+    expect(child.querySelector(".fleet-fork-doing")!.textContent).toBe("may I run this?");
+    expect(child.querySelector(".fleet-fork-age")!.textContent).toBe("30m");
+    rowOf(byKey, "repoA").querySelector<HTMLElement>(".fleet-showall")!.click();
+    const unk = byKey(key("fork", "repoA", "wt-unk"));
+    expect(unk.querySelector(".fleet-fork-mark")!.textContent).toBe("◌");
+    expect(unk.querySelector(".fleet-fork-state")!.textContent).toBe("unknown");
+    expect(unk.querySelector(".fleet-fork-doing")!.textContent).toBe("repository not registered");
+  });
+
+  test("one rest line counts what is left by status, and Show all reveals it", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoA");
+    const line = r.querySelector<HTMLElement>(".fleet-rest")!;
+    expect(line.querySelector(".fleet-rest-text")!.textContent).toMatch(/^5 more worktrees: /);
+    const all = r.querySelector<HTMLButtonElement>(".fleet-showall")!;
+    expect(all.textContent).toBe("Show all");
+    expect(all.getAttribute("aria-expanded")).toBe("false");
+    all.click();
+    expect(kids(r)).toHaveLength(6);
+    expect(all.getAttribute("aria-expanded")).toBe("true");
+    expect(all.textContent).toBe("Show fewer");
+    all.click();
+    expect(kids(r)).toHaveLength(1);
+  });
+
+  test("a row with only needs you and working worktrees has no rest line; a row with none has no disclosure", async () => {
+    const { panel, byKey, data } = setup();
+    data.wt = [row({ repo_id: "repoC", worktree_id: "wc", label: "/w/c" })];
+    data.sessions = [att({ id: "sc", repo_id: "repoC", worktree_id: "wc", waitMs: MIN }), att({ id: "sz", repo_id: "repoZ", repo: "zeta" })];
+    await panel.activate();
+    expect(rowOf(byKey, "repoC").querySelector(".fleet-rest")).toBeNull();
+    // Nothing to expand: the control is not offered (hidden keeps the head's left edge aligned in CSS).
+    expect(rowOf(byKey, "repoZ").querySelector<HTMLElement>(".fleet-disclose")!.hidden).toBe(true);
+  });
+
+  test("the choice survives a refresh: a refresh never expands a collapsed row, even one that now has a needs you worktree", async () => {
+    const { panel, byKey, data } = setup();
+    await panel.activate();
+    disclose(rowOf(byKey, "repoA")).click(); // collapse the project that started open
+    disclose(rowOf(byKey, "repoB")).click(); // expand the one that started closed
+    data.sessions = [...baseSessions(), att({ id: "sb2", repo_id: "repoB", worktree_id: "wt-b1", waitMs: MIN })];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("false");
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
+    // A row that only later gains a needs you worktree is not opened under the pointer.
+    data.sessions = baseSessions().filter((x) => x.id !== "sa");
+    await panel.refresh();
+    data.sessions = baseSessions();
+    await panel.refresh();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  test("a refresh that changes nothing keeps every row and child node, in the same order", async () => {
+    const { panel, byKey, q } = setup();
+    await panel.activate();
+    const before = q(".fleet-row, .fleet-fork");
+    const parentOf = byKey(key("fork", "repoA", "wt-open")).parentElement;
+    nowMs += 1000;
+    await panel.refresh();
+    expect(q(".fleet-row, .fleet-fork")).toEqual(before);
+    expect(byKey(key("fork", "repoA", "wt-open")).parentElement).toBe(parentOf);
+  });
+
+  test("a child selects on click and opens on double click exactly as the chips did, with the same key", async () => {
+    const { panel, byKey, go } = setup();
+    await panel.activate();
+    const c = byKey(key("fork", "repoA", "wt-open"));
+    c.click();
+    expect(c.classList.contains("selected")).toBe(true);
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+    expect(go).not.toHaveBeenCalled();
+    c.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(go).toHaveBeenCalledWith("sessions", expect.objectContaining({ project: "repoA", worktree: "wt-open" }));
+  });
+
+  test("arrow keys: Right expands, Right again enters the children, Down walks them, Left climbs back and then collapses", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoB");
+    const head = r.querySelector<HTMLElement>(".fleet-row-head")!;
+    head.focus();
+    pressKey(head, "ArrowRight");
+    expect(disclose(r).getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(head);
+    pressKey(head, "ArrowRight");
+    const child = byKey(key("fork", "repoB", "wt-b1"));
+    expect(document.activeElement).toBe(child);
+    pressKey(child, "ArrowLeft");
+    expect(document.activeElement).toBe(head);
+    pressKey(head, "ArrowLeft");
+    expect(disclose(r).getAttribute("aria-expanded")).toBe("false");
+    // The disclosure button itself answers the same keys.
+    pressKey(disclose(r), "ArrowRight");
+    expect(disclose(r).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("selecting a child that is hidden (collapsed row, or behind Show all) reveals it; collapsing moves a selection inside back to the row", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    expect(panel.selectableKeys()).toContain(forkSelKey("repoA", "wt-unk"));
+    panel.selectKey(forkSelKey("repoA", "wt-unk"));
+    expect(byKey(key("fork", "repoA", "wt-unk")).classList.contains("selected")).toBe(true);
+    panel.selectKey(forkSelKey("repoB", "wt-b1"));
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
+    disclose(rowOf(byKey, "repoB")).click();
+    expect(panel.selectedKey()).toBe(key("row", "repoB"));
+  });
+
+  test("selectableKeys lists each row, its worktrees and its needs, in drawn order", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    const keys = panel.selectableKeys();
+    const a = keys.indexOf(key("row", "repoA"));
+    expect(keys.slice(a, a + 3)).toEqual([key("row", "repoA"), forkSelKey("repoA", "wt-open"), expect.stringMatching(/^fork:repoA\u0000wt-/)]);
+    expect(keys.some((k) => k.startsWith("need:"))).toBe(true);
   });
 });
 
@@ -946,7 +1135,8 @@ describe("deadlines", () => {
     await p;
     expect(hungSignal!.aborted).toBe(true);
     expect(q(".fleet-stale")).toHaveLength(1);
-    expect(q(".fleet-fork")).toHaveLength(7);
+    // The new need in repoB does not open repoB under the user: only its row says so.
+    expect(q(".fleet-fork")).toHaveLength(1);
     // attention, a separate request in the same load, was not affected by the timeout
     expect(q(".fleet-need")).toHaveLength(3);
     const calls = api.worktrees.mock.calls.length;
@@ -1108,34 +1298,44 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     Array.from({ length: n }, (_, i) => row({ repo_id: "/Users/n/browser-life/.git", worktree_id: `/Users/n/browser-life/.claude/worktrees/w${String(i).padStart(3, "0")}`, label: `/Users/n/browser-life/.claude/worktrees/w${String(i).padStart(3, "0")}`, state: "open", last_time: iso(NOW - MIN), ...extra }));
   const repoKey = key("row", "/Users/n/browser-life/.git");
 
-  test("a row draws at most 12 glyphs, a +N overflow chip, and labels only for open forks", async () => {
+  test("a big project is one line until opened; opened, it names the rest in one line and Show all lists them without paths", async () => {
     const { panel, data, byKey } = setup();
     data.wt = [...big(40), row({ repo_id: "/Users/n/browser-life/.git", worktree_id: "wg", label: "/x/gone-one", state: "gone", last_time: iso(NOW - D) })];
     data.sessions = [];
     await panel.activate();
     const r = byKey(repoKey);
+    expect(r.querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(r.querySelector(".fleet-more")).toBeNull();
+    r.querySelector<HTMLElement>(".fleet-disclose")!.click();
+    // Nothing needs you or works here: no worktree rows, one line that counts them all.
+    expect(r.querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(r.querySelector(".fleet-rest-text")!.textContent).toBe("41 more worktrees: 40 idle · 1 gone");
+    r.querySelector<HTMLElement>(".fleet-showall")!.click();
     const forks = [...r.querySelectorAll<HTMLElement>(".fleet-fork")];
-    expect(forks).toHaveLength(12);
-    expect(r.querySelector(".fleet-more")!.textContent).toBe("+29");
-    // Open forks carry the last path segment; no absolute path text anywhere in the row.
+    expect(forks).toHaveLength(41);
+    // Every row carries the last path segment; no absolute path text anywhere, only in the tooltip and name.
     expect(forks[0]!.querySelector(".fleet-fork-label")!.textContent).toBe("w000");
     expect(r.textContent).not.toContain("/Users/");
     expect(forks[0]!.getAttribute("title")).toContain("/Users/n/browser-life/.claude/worktrees/w000");
     expect(forks[0]!.getAttribute("aria-label")).toContain("/Users/n/browser-life/.claude/worktrees/w000");
   });
 
-  test("non-open forks are glyph-only: no label text", async () => {
+  test("every child says its state in words beside its mark, gone and landed included", async () => {
     const { panel, byKey } = setup();
     await panel.activate();
+    showEverything(panel);
     const gone = byKey(key("fork", "repoA", "wt-gone"));
-    expect(gone.querySelector(".fleet-fork-label")?.textContent ?? "").toBe("");
-    expect(gone.textContent).toContain("×");
+    expect(gone.querySelector(".fleet-fork-mark")!.textContent).toBe("×");
+    expect(gone.querySelector(".fleet-fork-state")!.textContent).toBe("gone");
+    expect(gone.querySelector(".fleet-fork-label")!.textContent).toBe("alpha-gone");
+    expect(byKey(key("fork", "repoA", "wt-landed")).querySelector(".fleet-fork-state")!.textContent).toBe("landed");
     expect(byKey(key("fork", "repoA", "wt-open")).querySelector(".fleet-fork-label")!.textContent).toBe("alpha-open");
   });
 
   test("glyphs are ordered needs you and working first (MS-10), then open+idle, open, landed, never_diverged, unknown, gone", async () => {
     const { panel, byKey } = setup();
     await panel.activate();
+    showEverything(panel);
     const order = [...byKey(key("row", "repoA")).querySelectorAll(".fleet-fork")].map((f) => f.getAttribute("data-key"));
     // wt-open has a session waiting on you in the fixture, so it leads; the rest keep the old order.
     expect(order[0]).toBe(key("fork", "repoA", "wt-open"));
@@ -1143,35 +1343,39 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     expect(order.slice(2)).toEqual([key("fork", "repoA", "wt-landed"), key("fork", "repoA", "wt-never"), key("fork", "repoA", "wt-unk"), key("fork", "repoA", "wt-gone")]);
   });
 
-  test("gone forks older than seven days are behind the overflow; clicking it expands only that row and survives refresh", async () => {
+  test("a long-gone worktree is just part of the rest; Show all and the opening of a row are per row and survive a refresh", async () => {
     const { panel, data, byKey, q } = setup();
     data.wt = [...big(14), ...FIXTURE_ROWS.filter((w) => w.repo_id === "repoB"), row({ repo_id: "repoB", worktree_id: "old-gone", label: "/x/old-gone", state: "gone", last_time: iso(NOW - 9 * D), last_observed: iso(NOW - 9 * D) })];
     data.sessions = [];
     await panel.activate();
-    expect(byKey(key("row", "repoB")).querySelectorAll(".fleet-fork")).toHaveLength(1);
-    expect(byKey(key("row", "repoB")).querySelector(".fleet-more")!.textContent).toBe("+1");
-    const bigRow = byKey(repoKey);
-    expect(bigRow.querySelectorAll(".fleet-fork")).toHaveLength(12);
-    bigRow.querySelector<HTMLElement>(".fleet-more")!.click();
-    expect(bigRow.querySelectorAll(".fleet-fork")).toHaveLength(14);
-    expect(bigRow.querySelector(".fleet-more")!.textContent).toBe("collapse");
-    expect(byKey(key("row", "repoB")).querySelectorAll(".fleet-fork")).toHaveLength(1);
+    const repoB = (): HTMLElement => byKey(key("row", "repoB"));
+    const bigRow = (): HTMLElement => byKey(repoKey);
+    repoB().querySelector<HTMLElement>(".fleet-disclose")!.click();
+    bigRow().querySelector<HTMLElement>(".fleet-disclose")!.click();
+    bigRow().querySelector<HTMLElement>(".fleet-showall")!.click();
+    expect(repoB().querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(repoB().querySelector(".fleet-rest-text")!.textContent).toBe("2 more worktrees: 1 idle · 1 gone");
+    expect(bigRow().querySelectorAll(".fleet-fork")).toHaveLength(14);
     await panel.refresh();
     nowMs += 1000;
     await panel.refresh();
-    expect(byKey(repoKey).querySelectorAll(".fleet-fork")).toHaveLength(14);
+    expect(bigRow().querySelectorAll(".fleet-fork")).toHaveLength(14);
+    expect(repoB().querySelectorAll(".fleet-fork")).toHaveLength(0);
     expect(q(".fleet-row").length).toBe(2);
-    byKey(repoKey).querySelector<HTMLElement>(".fleet-more")!.click();
-    expect(byKey(repoKey).querySelectorAll(".fleet-fork")).toHaveLength(12);
+    bigRow().querySelector<HTMLElement>(".fleet-showall")!.click();
+    expect(bigRow().querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(bigRow().querySelector(".fleet-showall")!.textContent).toBe("Show all");
   });
 
-  test("the overflow chip does not navigate", async () => {
+  test("the disclosure and Show all do not navigate or select", async () => {
     const { panel, data, byKey, go } = setup();
     data.wt = big(20);
     data.sessions = [];
     await panel.activate();
-    byKey(repoKey).querySelector<HTMLElement>(".fleet-more")!.click();
+    byKey(repoKey).querySelector<HTMLElement>(".fleet-disclose")!.click();
+    byKey(repoKey).querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(go).not.toHaveBeenCalled();
+    expect(panel.selectedKey()).toBeUndefined();
   });
 
   test("the row summary counts worktrees by status in words, never 0 on a repo with open forks", async () => {
@@ -1361,19 +1565,20 @@ describe("adversarial review round 2", () => {
     expect(gone.getAttribute("title")).toContain("1 gone (age unknown)");
   });
 
-  test("expanding a static +N row adds no transition class and collapsing then expanding repeats nothing", async () => {
+  test("opening a row and showing all adds no transition class, and repeating it repeats nothing", async () => {
     const { panel, data, byKey } = setup();
     const id = "/Users/n/b/.git";
     data.wt = Array.from({ length: 20 }, (_, i) => row({ repo_id: id, worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${String(i).padStart(2, "0")}`, state: "open", last_time: iso(NOW - MIN) }));
     data.sessions = [];
     await panel.activate();
     const r = () => byKey(key("row", id));
-    expect(r().querySelectorAll(".fleet-fork")).toHaveLength(12);
-    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    expect(r().querySelectorAll(".fleet-fork")).toHaveLength(0);
+    r().querySelector<HTMLElement>(".fleet-disclose")!.click();
+    r().querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(r().querySelectorAll(".fleet-fork")).toHaveLength(20);
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
-    r().querySelector<HTMLElement>(".fleet-more")!.click();
-    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    r().querySelector<HTMLElement>(".fleet-showall")!.click();
+    r().querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
   });
 });
@@ -1487,6 +1692,7 @@ describe("fork aria labels", () => {
   test("idle and needs show in the fork's accessible name and follow changes", async () => {
     const { panel, data, byKey } = setup();
     await panel.activate();
+    showEverything(panel);
     expect(byKey(key("fork", "repoA", "wt-idle")).getAttribute("aria-label")).toContain("idle");
     expect(byKey(key("fork", "repoA", "wt-open")).getAttribute("aria-label")).toContain("1 needs you");
     data.sessions = [...baseSessions(), att({ id: "sx", repo_id: "repoA", worktree_id: "wt-open", waitMs: 5 * MIN })];
@@ -1565,6 +1771,7 @@ describe("actions", () => {
     r.data.wt = wts;
     r.data.sessions = o.sessions ?? [];
     await r.panel.activate();
+    showEverything(r.panel);
     return { ...r, ...a };
   }
 
@@ -1877,6 +2084,7 @@ describe("select and open (MS-8)", () => {
   test("selecting an unknown worktree shows unknown and why, never idle", async () => {
     const { panel, inspect, byKey } = withInspect();
     await panel.activate();
+    showEverything(panel);
     byKey(key("fork", "repoA", "wt-unk")).click();
     const last = subjects(inspect).at(-1)!;
     expect(last.kind).toBe("worktree");
@@ -1942,14 +2150,15 @@ describe("select and open (MS-8)", () => {
     expect(panel.root.querySelectorAll(".fleet-row").length).toBeGreaterThan(0);
   });
 
-  test("the overflow control names what it hides, by status", async () => {
+  test("the rest line names what it leaves out, by status, and says unknown only for what it is", async () => {
     const store: ScopeStore = createScope();
-    const wts = Array.from({ length: 20 }, (_, i) => row({ repo_id: "big", worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${i}`, state: i < 15 ? "open" : "unknown", last_time: iso(NOW - MIN) }));
+    const wts = Array.from({ length: 20 }, (_, i) => row({ repo_id: "big", worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${i}`, state: i < 15 ? "open" : "unknown", state_reason: "daemon could not tell", last_time: iso(NOW - MIN) }));
     const panel = createFleet({ store, go: vi.fn() as never, events: () => [], api: { worktrees: () => Promise.resolve(wts), attention: () => Promise.resolve({ sessions: [], warnings: [] }), sessions: () => Promise.resolve([]) }, now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT });
     document.body.append(panel.root);
     panels.push(panel);
     await panel.activate();
-    const more = panel.root.querySelector<HTMLElement>(".fleet-more")!;
-    expect(more.getAttribute("aria-label")).toBe("show all 8 more worktrees: 3 idle · 5 unknown");
+    showEverything(panel);
+    expect(panel.root.querySelector(".fleet-rest-text")!.textContent).toBe("20 more worktrees: 15 idle · 5 unknown");
+    expect(panel.root.querySelector(".fleet-showall")!.getAttribute("aria-label")).toBe("Show fewer of the 20 other worktrees");
   });
 });

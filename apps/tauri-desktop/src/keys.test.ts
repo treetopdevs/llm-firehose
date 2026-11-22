@@ -277,6 +277,7 @@ const NAMED: Record<keyof typeof LOCAL, string[]> = {
   actionDialog: ['Tab', 'Escape'],
   rowClear: ['Escape'],
   rowSelect: ['ArrowUp', 'ArrowDown'],
+  rowTree: ['ArrowLeft', 'ArrowRight'],
   moreMenu: ['ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape', 'Tab'],
   fleetClear: ['Escape'],
   laneClear: ['Escape'],
@@ -405,7 +406,7 @@ describe('local key descriptors', () => {
     'ui/events/view.ts': { keydown: 1, uses: ['feedRows'] },
     'ui/session/index.ts': { keydown: 1, uses: ['sessionTabs'] },
     'ui/project/index.ts': { keydown: 2, uses: ['projectViews', 'laneClear'] },
-    'ui/fleet/index.ts': { keydown: 2, uses: ['fleetClear', 'fleetViews'] },
+    'ui/fleet/index.ts': { keydown: 5, uses: ['fleetClear', 'fleetViews', 'rowTree'] },
     'ui/actions/index.ts': { keydown: 2, uses: ['actionMenu', 'actionDialog'] },
   };
   const count = (src: string): number => (src.match(/(addEventListener|\bon)\(\s*(\w+,\s*)?["']keydown["']|\.onkeydown\s*=/g) ?? []).length;

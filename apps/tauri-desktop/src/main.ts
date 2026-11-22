@@ -532,6 +532,8 @@ function recordPlace(): void {
 }
 /** A row of the shown panel by its key, and the node a keyboard user lands on in it. */
 function focusKey(key: string): void {
+  // Fleet draws a worktree under a different attribute than it selects by.
+  if (selectionPanelFor(active) === fleetPanel) return fleetPanel.focusKey(key);
   const node = [...content.querySelectorAll("[data-key]")].find((n) => n.getAttribute("data-key") === key);
   const target = node?.matches("[tabindex]") ? node : node?.querySelector('[tabindex="0"]');
   (target as HTMLElement | null | undefined)?.focus({ preventScroll: true });
@@ -540,7 +542,7 @@ let cancelSelectionRestore: () => void = () => {};
 /**
  * The selection comes back by key once its row is drawn. A key that is gone falls to the row now at its old
  * place, and focus goes to that row. Rows load after the panel is shown, so this retries for a short while;
- * a click or a key press of the user's own ends it.
+ * a click or another selection of the user's own ends it.
  */
 function restoreSelection(name: PanelName, sel: string | undefined, at: number | undefined, frames = 90): void {
   cancelSelectionRestore();
@@ -551,14 +553,19 @@ function restoreSelection(name: PanelName, sel: string | undefined, at: number |
   const end = (): void => {
     cancelled = true;
     content.removeEventListener("pointerdown", end, true);
-    content.removeEventListener("keydown", end, true);
   };
+  /** The key this restore last selected: a different selection afterwards is the user's own, and ends it. */
+  let ours: string | undefined;
   /** True once a row is selected. */
   const attempt = (): boolean => {
+    // A redraw that dropped our pick (its row is gone) leaves nothing selected; a different row is the user's own choice.
+    const cur = panel.selectedKey();
+    if (ours !== undefined && cur !== undefined && cur !== ours) { end(); return true; }
     const keys = panel.selectableKeys();
     const pick = keys.includes(sel) ? sel : keys.length > 0 ? keys[Math.min(Math.max(at ?? 0, 0), keys.length - 1)] : undefined;
     if (pick === undefined) return false;
     if (panel.selectedKey() !== pick) panel.selectKey(pick);
+    ours = panel.selectedKey();
     focusKey(pick);
     return true;
   };
@@ -569,7 +576,6 @@ function restoreSelection(name: PanelName, sel: string | undefined, at: number |
     else if (left < 0) end();
   };
   content.addEventListener("pointerdown", end, true);
-  content.addEventListener("keydown", end, true);
   cancelSelectionRestore = end;
   // Rows already on screen may be the last visit's: take them now, and again once this visit's load has settled.
   const settled = activation;

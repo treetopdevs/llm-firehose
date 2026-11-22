@@ -257,6 +257,27 @@ export function stripOf(forks: readonly FleetFork[], expanded: boolean, cap = GL
   return { shown, hidden, more: hidden.length };
 }
 
+/** What an expanded row shows first: the worktrees that need you or are working, needs first, each in the row's stable order (MS-10). */
+export function childrenOf(forks: readonly FleetFork[]): FleetFork[] {
+  const rank = (f: FleetFork): number => (f.kind === "needs" ? 0 : 1);
+  return forks.map((f, i) => ({ f, i })).filter((x) => x.f.kind === "needs" || x.f.kind === "working").sort((a, b) => rank(a.f) - rank(b.f) || a.i - b.i).map((x) => x.f);
+}
+
+/**
+ * The worktrees an expanded row leaves out, with the one line that counts them by status:
+ * "79 more worktrees: 20 idle · 59 unknown (no recent evidence)". The parenthesis is only said when every
+ * unknown one is unknown for lack of recent evidence; a state the daemon could not determine says just unknown.
+ */
+export function restOf(forks: readonly FleetFork[]): { forks: FleetFork[]; text: string } {
+  const kids = new Set(childrenOf(forks));
+  const rest = forks.filter((f) => !kids.has(f));
+  if (rest.length === 0) return { forks: [], text: "" };
+  const unknown = rest.filter((f) => f.kind === "unknown");
+  const lacksEvidence = unknown.length > 0 && unknown.every((f) => f.state === "open");
+  const parts = partsOf(rest).map((p) => (p.kind === "unknown" && lacksEvidence ? `${p.text} (no recent evidence)` : p.text));
+  return { forks: rest, text: `${rest.length} more worktree${rest.length === 1 ? "" : "s"}: ${parts.join(" · ")}` };
+}
+
 type Orderable = Pick<FleetRow, "id" | "known" | "lastMs"> & { noRepo?: boolean };
 
 /**

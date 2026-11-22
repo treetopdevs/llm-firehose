@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { AttentionSession, WorktreeLifetimeView } from "../../api";
 import { FIXTURE_ROWS, NOW, att, iso, row } from "./model.fixtures";
 import {
-  ENCODINGS, FORK_GLYPH, GLYPH_CAP, IDLE_MARK, NOREPO_KEY, buildFleet, describeRest, displayRepoLabel, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, signature, stripOf, summarize,
+  ENCODINGS, FORK_GLYPH, GLYPH_CAP, IDLE_MARK, NOREPO_KEY, buildFleet, childrenOf, describeRest, displayRepoLabel, forkOf, longestWaiting, nextNeed, orderIds, repoBuckets, restOf, signature, stripOf, summarize,
 } from "./model";
 import type { FleetInput, FleetNeed } from "./model";
 import { forkAriaLabel } from "./model";
@@ -575,5 +575,36 @@ describe("worktree status and the row summary (MS-10)", () => {
     const wts = [mk("a-idle", "open", { last_time: iso(NOW - 9 * 60 * MIN), ahead: 1 }), mk("b-work", "open"), mk("c-need", "open"), mk("d-unk", "unknown")];
     const r = rowOf(wts, [att({ id: "s1", repo_id: "r", worktree_id: "c-need", waitMs: MIN }), att({ id: "s2", repo_id: "r", worktree_id: "b-work" })]);
     expect(stripOf(r.forks, false).shown.map((f) => f.id)).toEqual(["c-need", "b-work", "a-idle", "d-unk"]);
+  });
+});
+
+describe("expanded row: children and the rest line (MS-10)", () => {
+  const rowWith = (wts: WorktreeLifetimeView[], sessions: AttentionSession[] = []) => buildFleet(input({ worktrees: wts, sessions })).rows[0]!;
+  const mk = (id: string, state: WorktreeLifetimeView["state"], over: Partial<WorktreeLifetimeView> = {}) => row({ repo_id: "r", worktree_id: id, label: `/w/${id}`, state, ...over });
+
+  test("children are the needs you and working worktrees, needs first, in the row's stable order", () => {
+    const r = rowWith(
+      [mk("a-idle", "open", { last_time: iso(NOW - 9 * 60 * MIN), ahead: 1 }), mk("b-work", "open"), mk("c-need", "open"), mk("d-unk", "unknown"), mk("e-work", "open")],
+      [att({ id: "s1", repo_id: "r", worktree_id: "c-need", waitMs: MIN }), att({ id: "s2", repo_id: "r", worktree_id: "b-work" }), att({ id: "s3", repo_id: "r", worktree_id: "e-work" })],
+    );
+    expect(childrenOf(r.forks).map((f) => f.id)).toEqual(["c-need", "b-work", "e-work"]);
+  });
+
+  test("the rest is everything else, counted by status in words; unknown says what it lacks", () => {
+    const wts = [mk("n", "open"), ...Array.from({ length: 4 }, (_, i) => mk(`i${i}`, "open", { last_time: iso(NOW - 9 * 60 * MIN) })), ...Array.from({ length: 3 }, (_, i) => mk(`u${i}`, "open", { last_time: undefined }))];
+    const r = rowWith(wts, [att({ id: "s", repo_id: "r", worktree_id: "n", waitMs: MIN })]);
+    const rest = restOf(r.forks);
+    expect(rest.forks.map((f) => f.id)).toEqual(["i0", "i1", "i2", "i3", "u0", "u1", "u2"]);
+    expect(rest.text).toBe("7 more worktrees: 4 idle · 3 unknown (no recent evidence)");
+  });
+
+  test("one worktree left reads in the singular; a state that could not be determined is not called 'no recent evidence'", () => {
+    const r = rowWith([mk("n", "open"), mk("u", "unknown", { state_reason: "daemon could not tell" })], [att({ id: "s", repo_id: "r", worktree_id: "n", waitMs: MIN })]);
+    expect(restOf(r.forks).text).toBe("1 more worktree: 1 unknown");
+  });
+
+  test("nothing in the rest means no line", () => {
+    const r = rowWith([mk("n", "open")], [att({ id: "s", repo_id: "r", worktree_id: "n", waitMs: MIN })]);
+    expect(restOf(r.forks)).toEqual({ forks: [], text: "" });
   });
 });
