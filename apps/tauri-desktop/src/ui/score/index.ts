@@ -172,6 +172,8 @@ export function createScore(
   let selection = 0;
   /** Whether the detail pane shows the score's current event (not dismissed, not taken by another view). */
   let shown = false;
+  /** The session whose event the shared detail pane was last given; kept through a reload of that session, dropped when the pane is closed or cleared. */
+  let paneOwner: SessionRef | null = null;
   /** The pane was closed; the frame loop's moves leave it closed until an explicit selection. */
   let dismissed = false;
   let currentSignature: ErrorSignature | undefined;
@@ -331,6 +333,7 @@ export function createScore(
   /** The pane's close button: nothing in flight, nor pausing, may reopen it. */
   const dismiss = () => {
     shown = false;
+    paneOwner = null;
     dismissed = true;
     cancelDetail();
   };
@@ -389,6 +392,7 @@ export function createScore(
   function render(ev: FirehoseEvent) {
     cancelDetail();
     shown = true;
+    paneOwner = loadedKey ?? paneOwner;
     dismissed = false;
     if (playing) {
       // Projected even when an older daemon sent full envelopes.
@@ -730,8 +734,9 @@ export function createScore(
     const v = ++version;
     const priorKey = loadedKey, priorAt = at;
     // The pane shows the previous session's event: a different session must not leave it there.
-    if (shown && !sameSession(priorKey ?? undefined, { id, ...(source !== undefined ? { source } : {}) } as SessionRef)) {
+    if (paneOwner && !sameSession(paneOwner, { id, ...(source !== undefined ? { source } : {}) } as SessionRef)) {
       shown = false;
+      paneOwner = null;
       try { clearDetail(); } catch { /* a pane sink must not break the load */ }
     }
     loadedKey = null;

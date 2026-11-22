@@ -178,6 +178,30 @@ describe("session score view", () => {
     expect(onClear).not.toHaveBeenCalled();
   });
 
+  test("a pane kept through a reload of its session is still cleared when another session opens", async () => {
+    const onClear = vi.fn();
+    const panel = createScore(() => {}, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    pick(panel);
+    await panel.open(SID, session[0].source); // reload in place: the pane stays, nothing is cleared
+    expect(onClear).not.toHaveBeenCalled();
+    await panel.open("another-session", session[0].source);
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  test("a pane the user closed is not cleared again when another session opens", async () => {
+    const onClear = vi.fn();
+    let dismiss: () => void = () => {};
+    const panel = createScore((_ev, _sib, _sig, d) => { dismiss = d; }, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    pick(panel);
+    dismiss();
+    await panel.open("another-session", session[0].source);
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
   test("a failed fetch is shown, not thrown", async () => {
     sessionEvents.mockRejectedValue(new Error("daemon away"));
     const panel = createScore(() => {});
