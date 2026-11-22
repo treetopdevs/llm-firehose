@@ -330,6 +330,11 @@ input, select {
 .toolbar-views button { min-height: 28px; margin: 0; }
 .toolbar-views button[aria-selected="true"], .toolbar-views button[aria-pressed="true"] { background: var(--bg-hover); color: var(--text); border-color: var(--border); font-weight: 600; }
 .toolbar-range { flex-shrink: 0; position: relative; }
+/* Overlay title bar (macOS build only, MS-4): the traffic lights float over the top-left corner.
+   The sidebar leaves room above its brand while it is visible; otherwise the toolbar does. */
+.shell[data-titlebar="overlay"] .sidebar { padding-top: 44px; }
+.shell[data-titlebar="overlay"][data-sidebar-visible="false"] .toolbar { padding-left: 80px; }
+.shell[data-titlebar="overlay"] .toolbar, .shell[data-titlebar="overlay"] .sidebar .brand { user-select: none; -webkit-user-select: none; }
 /* Narrow windows: the sidebar collapses behind the toolbar toggle and overlays the content. */
 @media (min-width: 900px) {
   .shell[data-sidebar="hidden"] .sidebar { display: none; }

@@ -1412,6 +1412,8 @@ mod tests {
         got.sort();
         let mut want: Vec<String> = [
             "core:default",
+            // Overlay title bar (macOS): data-tauri-drag-region needs start_dragging.
+            "core:window:allow-start-dragging",
             "notification:allow-is-permission-granted",
             "notification:allow-request-permission",
             "notification:allow-notify",

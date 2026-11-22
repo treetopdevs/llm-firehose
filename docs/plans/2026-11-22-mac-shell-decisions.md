@@ -312,7 +312,20 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
     the nearest-surviving-row fallback when a kept selection's row is gone is not built (the
     selection is simply dropped); Replay sound is still where it was; nothing was run in a real
     browser or WKWebView.
-- Slice 5 not started.
+- **Slice 5, done in code, not checked in `tauri dev`.** In: `src-tauri/tauri.macos.conf.json`
+  (merged on macOS only) sets `titleBarStyle: "Overlay"`, `hiddenTitle: true` and
+  `trafficLightPosition` (x 18, y 22; the keys are in the Tauri window config schema, the exact
+  position is a guess to tune by eye). Platform window arrays replace the base entry, so the file
+  repeats the base window fields; a test keeps them equal. Linux and Windows keep the standard
+  frame. `src/window.ts` turns the overlay behaviour on only inside the Tauri shell on macOS
+  (`__TAURI_INTERNALS__` plus a Macintosh user agent); a browser, Linux and Windows get no inset and
+  no drag regions. When on, the shell carries `data-titlebar="overlay"`: the sidebar gets 44px above
+  its brand while visible, the toolbar gets an 80px left inset only while the sidebar is hidden
+  (`data-sidebar-visible`), and the toolbar, its non-interactive containers and the sidebar brand
+  carry `data-tauri-drag-region`. Buttons and the range pop-up never do. The capability adds
+  `core:window:allow-start-dragging`; double-click maximise is covered by `core:window:default`
+  inside `core:default`. Known caveat from Tauri: an unfocused overlay window cannot be dragged.
+  Not verified: WKWebView rendering, real drag, traffic-light placement and the inset widths.
 
 ## Answered on 2026-11-22
 

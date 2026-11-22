@@ -47,6 +47,7 @@ import { ascentTarget, createEscapeHandler } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
 import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
+import { applyWindowChrome, macOverlayActive } from "./window";
 import { createSidebar, createToolbar, type ProjectRow, type SidebarCurrent, type SidebarTarget } from "./chrome";
 import { projectName } from "./format";
 import { createSessionDirectory } from "./session-directory";
@@ -649,6 +650,7 @@ const narrowQuery = typeof window.matchMedia === "function" ? window.matchMedia(
 const sidebarShown = (): boolean => sidebarMode === "shown" || (sidebarMode === "auto" && !narrowQuery?.matches);
 function applySidebar(): void {
   shell.dataset.sidebar = sidebarMode;
+  shell.dataset.sidebarVisible = String(sidebarShown());
   toolbar.setSidebarShown(sidebarShown());
 }
 function toggleSidebar(): void {
@@ -678,6 +680,7 @@ const stage = el("div", { class: "stage" }, toolbar.root, shellNote, el("div", {
 const shell = el("div", { class: "shell", "data-sidebar": "auto" }, sidebar.root, stage);
 narrowQuery?.addEventListener?.("change", applySidebar);
 applySidebar();
+applyWindowChrome(shell, toolbar.root, sidebar.root, macOverlayActive(window, navigator.userAgent));
 app.append(compatBanner, shell, actions.root);
 
 function syncHistory(): void {
