@@ -8,8 +8,10 @@ const click = (label:string) => {
   const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === label);
   expect(button, label).toBeTruthy(); button!.click();
 };
-let goFn: (name: "ecosystem") => void = () => {};
-const nav = (panel:string) => document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${panel}]`)!.click();
+let goFn: (name: "ecosystem" | "session") => void = () => {};
+// Session has no sidebar entry (MS-2): it is opened with go(), the way an opened session does.
+const nav = (panel:string) => panel === "session" ? goFn("session") : document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${panel}]`)!.click();
+const active = () => document.querySelector<HTMLElement>(".content")?.dataset.panel;
 const tab = (name:string) => document.querySelector<HTMLElement>(`#session-tab-${name}`)!.click();
 const input = (label:string, value:string) => {
   const field = document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
@@ -39,9 +41,9 @@ test("all prototypes coexist and close a shared receipt on entry",async()=>{
     if (tab) {nav("session");document.querySelector<HTMLElement>(`#session-tab-${name}`)!.click();}
     else if (name==="ecosystem") goFn("ecosystem");
     else nav(name);
-    expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe(tab?"session":name==="ecosystem"?"fleet":name);
+    expect(active()).toBe(tab?"session":name==="ecosystem"?"fleet":name);
     expect(document.querySelector("aside.detail")?.textContent).not.toContain(event.id);
-    expect(document.querySelector(".attention-strip")).not.toBeNull();
+    expect(document.querySelector(".nav-btn[data-panel=needs]")).not.toBeNull();
   }
 });
 test("leaving Court cancels its pending receipt and preserves unsaved text across other prototypes",async()=>{
@@ -70,5 +72,5 @@ test("Escape neither aborts a pending Court receipt nor leaves the tab; it is no
   expect(onTab.defaultPrevented).toBe(false);
   expect(signal()!.aborted).toBe(false);
   expect(document.querySelector("#session-tab-court")?.getAttribute("aria-selected")).toBe("true");
-  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
+  expect(active()).toBe("session");
 });

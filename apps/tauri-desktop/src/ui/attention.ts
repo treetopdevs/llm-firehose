@@ -511,6 +511,20 @@ export function createAttention(options: AttentionOptions) {
     refresh,
     /** The strip's count (pending, not snoozed). */
     count: () => needing,
+    /** Per project: sessions that need you (pending, not snoozed) and sessions working now, from the last snapshot. */
+    byProject(): Map<string, { needs: number; active: number }> {
+      const out = new Map<string, { needs: number; active: number }>();
+      for (const s of snapshot.sessions) {
+        if (!s.repo_id) continue;
+        const row = out.get(s.repo_id) ?? { needs: 0, active: 0 };
+        if (s.pending) { if (!prefs.snoozed(episodeKey(s))) row.needs++; }
+        else if (s.state === "working" && Date.now() - eventTime(s.last) < 30 * 60_000) row.active++;
+        out.set(s.repo_id, row);
+      }
+      return out;
+    },
+    /** Capture warnings in the last snapshot: the Doctor badge. */
+    warnings: () => snapshot.warnings.length,
     /** Calls fn whenever the strip is redrawn (so a snooze or refresh reaches other displays at once). */
     onCount(fn: () => void) { countListeners.add(fn); },
     setConnected,

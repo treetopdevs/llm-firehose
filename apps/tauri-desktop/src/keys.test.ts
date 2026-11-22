@@ -391,7 +391,7 @@ describe('local key descriptors', () => {
     'dom.ts': { keydown: 1, uses: ['activate'] },
     'ui/score/index.ts': { keydown: 2, uses: ['scoreTrack', 'scoreStep', 'scorePlay'] },
     'ui/activity/index.ts': { keydown: 3, uses: ['mapDir', 'mapStrip', 'mapStripReset'] },
-    'transport.ts': { keydown: 2, uses: ['transportShift', 'transportLive', 'transportCancel'] },
+    'transport.ts': { keydown: 3, uses: ['transportShift', 'transportLive', 'transportCancel'] },
     'ui/graph/canvas.ts': { keydown: 1, uses: ['canvasPan', 'canvasZoom', 'canvasFit', 'canvasOpen', 'canvasClear'] },
     'ui/graph/index.ts': { keydown: 1, uses: ['canvasClear'] },
     'ui/graph/toolbar.ts': { keydown: 3, uses: ['graphSearch', 'graphMenu'] },

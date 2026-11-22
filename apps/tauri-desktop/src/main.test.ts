@@ -46,22 +46,23 @@ test("All projects (Fleet) is the landing view; live and the attention strip rem
   );
   await import("./main");
   expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("fleet");
+  expect(document.querySelector(".nav-btn.active")?.textContent).toBe("All projects");
   expect(document.querySelector(".content .fleet")).not.toBeNull();
-  expect(document.querySelector(".attention-strip")).not.toBeNull();
+  // The strip is folded into the sidebar: Needs you is an item, not a bar above the window.
+  expect(document.querySelector(".attention-strip")).toBeNull();
   const btn = (n: string) =>
     document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${n}]`)!;
-  await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
-  document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!.click();
+  btn("needs").click();
   expect(document.querySelector(".sessions-needs[aria-pressed=true]")).not.toBeNull();
   expect(document.querySelector(".attention-inbox")).not.toBeNull();
-  expect(document.querySelector(".attention-strip")).not.toBeNull();
+  expect(btn("needs").getAttribute("aria-current")).toBe("page");
   btn("fleet").click();
   expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("fleet");
   expect(document.querySelector(".content .project")).toBeNull();
   expect(document.querySelector(".content")?.children.length).toBeGreaterThan(0);
 });
 
-test("the score view is reachable from the sidebar and starts empty", async () => {
+test("the score view has no sidebar entry; shown with nothing in scope it starts empty", async () => {
   document.body.innerHTML = '<div id="app"></div>';
   vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
@@ -89,11 +90,12 @@ test("the score view is reachable from the sidebar and starts empty", async () =
         ),
     ),
   );
-  await import("./main");
-  const btn = document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=session]")!;
+  const { go } = await import("./main");
+  expect(document.querySelector(".nav-btn[data-panel=session]")).toBeNull();
+  const btn = navTo("session", go);
   btn.click();
   document.querySelector<HTMLElement>("#session-tab-score")!.click();
-  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
+  expect(active()).toBe("session");
   expect(document.querySelector(".score")).not.toBeNull();
   expect(document.querySelector(".score")?.textContent).toContain("open a session");
   const close=vi.fn().mockResolvedValue(undefined);
@@ -109,7 +111,7 @@ test("the score view is reachable from the sidebar and starts empty", async () =
   expect(document.querySelector('[aria-label="Enable replay sound"]')).not.toBeNull();
 });
 
-test("the loops view is reachable from the sidebar and starts empty", async () => {
+test("the loops view has no sidebar entry; shown with nothing in scope it starts empty", async () => {
   document.body.innerHTML = '<div id="app"></div>';
   vi.stubGlobal("localStorage", { getItem: () => "true", setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
@@ -137,11 +139,12 @@ test("the loops view is reachable from the sidebar and starts empty", async () =
         ),
     ),
   );
-  await import("./main");
-  const btn = document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=session]")!;
+  const { go } = await import("./main");
+  expect(document.querySelector(".nav-btn[data-panel=session]")).toBeNull();
+  const btn = navTo("session", go);
   btn.click();
   document.querySelector<HTMLElement>("#session-tab-loops")!.click();
-  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
+  expect(active()).toBe("session");
   expect(document.querySelector(".loops")).not.toBeNull();
   expect(document.querySelector(".loops")?.textContent).toContain("Choose a session");
 });
@@ -155,19 +158,19 @@ test("entering Loom closes and empties the open shared detail pane", async () =>
     url.endsWith("/health") ? { status: "ok", version: "test", schema_version: 1 }
       : url.endsWith("/attention") ? { sessions: [], warnings: [] } : [],
   ))));
-  await import("./main");
+  const { go } = await import("./main");
   const { renderDetail } = await import("./ui/detail");
   const fixture = (await import("./ui/score/fixture.errsig.json")).default;
   const pane = document.querySelector<HTMLElement>(".detail")!;
   renderDetail(pane, fixture[0], () => {});
   expect(pane.classList.contains("open")).toBe(true);
   expect(pane.childElementCount).toBeGreaterThan(0);
-  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=session]")!.click();
+  navTo("session", go).click();
   document.querySelector<HTMLElement>("#session-tab-loom")!.click();
   expect(pane.classList.contains("open")).toBe(false);
   expect(pane.childElementCount).toBe(0);
   expect(document.querySelector(".loom")).not.toBeNull();
-  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("session");
+  expect(active()).toBe("session");
   expect(document.querySelector("#session-tab-loom")?.getAttribute("aria-selected")).toBe("true");
 });
 
@@ -251,6 +254,19 @@ const snapshotOf = (repo: string, workspaces: string[]) => ({
 });
 
 const activityFixture = (repo: string): ActivityResponse => ({ ...structuredClone(activityJson as ActivityResponse), repo_id: repo });
+// The sidebar lists things, not levels (MS-2): Worktree and Session have no sidebar entry and Project has one
+// row per project. Tests reach those panels the way the app does, by opening them (go()); sidebar items are
+// clicked for real. The shell marks the displayed panel on <main data-panel>.
+const SIDEBAR_PANELS = new Set(["fleet", "files", "doctor", "settings"]);
+const navTo = (name: string, go: (n: never) => void): HTMLButtonElement => {
+  if (SIDEBAR_PANELS.has(name)) return document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${name}]`)!;
+  if (name !== "project" && name !== "sessions" && name !== "session") return null as never;
+  const stand = document.createElement("button");
+  stand.click = () => go(name as never);
+  return stand;
+};
+const active = (): string | undefined => document.querySelector<HTMLElement>(".content")?.dataset.panel;
+
 type Boot = {
   scope: typeof import("./scope").scope;
   urls: string[];
@@ -345,9 +361,8 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
   const { go } = await import("./main");
   const { scope } = await import("./scope");
   expect(scope.get()).toEqual({ window: "live" });
-  const nav = (name: string) =>
-    document.querySelector<HTMLButtonElement>(`.nav-btn[data-panel=${name}]`)!;
-  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, go, active: () => document.querySelector(".nav-btn.active")?.getAttribute("data-panel") };
+  const nav = (name: string) => navTo(name, go);
+  return { scope, urls, worktreeSignals, sources, keydownListeners: tracked, nav, go, active };
 }
 
 // Launch lands on Fleet (MS-8); these tests exercise Project, so they open it first.
@@ -623,13 +638,13 @@ test("Escape yields to inputs, open menus, overlays, claimed and prevented event
   expect(b.scope.get().project).toBeUndefined();
 });
 
-test("footer crumb sits between the status text and the event count and never asks for /worktrees", async () => {
+test("the crumb is the toolbar title, the daemon state and event count sit in the sidebar footer, and the crumb never asks for /worktrees", async () => {
   const b = await boot();
-  const bar = document.querySelector(".status-bar")!;
-  const kids = [...bar.children];
-  const crumb = bar.querySelector(".scope-crumb")!;
-  expect(kids.indexOf(crumb)).toBe(kids.indexOf(bar.querySelector(".status-text")!) + 1);
-  expect(kids.indexOf(crumb)).toBe(kids.indexOf(bar.querySelector(".event-count")!) - 1);
+  expect(document.querySelector(".status-bar")).toBeNull();
+  const crumb = document.querySelector(".toolbar .toolbar-title .scope-crumb")!;
+  expect(crumb).not.toBeNull();
+  expect(document.querySelector(".sidebar-foot .status-text")).not.toBeNull();
+  expect(document.querySelector(".sidebar-foot .event-count")).not.toBeNull();
   expect(crumb.textContent).toBe("");
   b.scope.narrow({ project: "repo-abcdef123456", worktree: "wt-0123456789ab" });
   // The Project panel's fallback resolver marks a project the lifetimes do not know as "(unknown)";
@@ -707,18 +722,13 @@ const wtRow = (over: Record<string, unknown> = {}) => ({
 });
 const laneOrEmpty = () => document.querySelector(".project-lane, .project-empty");
 
-test("sidebar groups altitudes, lenses and housekeeping; the folded panels are gone", async () => {
+test("the folded panels have no sidebar entry; launch lands on All projects", async () => {
   const b = await boot();
-  const names = [...document.querySelectorAll(".nav-btn")].map((x) => x.textContent);
-  expect(names).toEqual(["Fleet", "Project", "Worktree", "Session", "Files", "Doctor", "Settings"]);
-  const heads = [...document.querySelectorAll(".sidebar .nav-heading")];
-  expect(heads.map((h) => h.textContent)).toEqual(["Altitudes", "Housekeeping"]);
   expect(b.nav("strata")).toBeNull();
   expect(b.nav("ecosystem")).toBeNull();
-  const first = ["fleet", "files"];
-  heads.forEach((h, i) => expect(h.nextElementSibling).toBe(b.nav(first[i]!)));
   expect(b.nav("workspace")).toBeNull();
-  for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone)).toBeNull();
+  for (const gone of ["dwell", "matrix", "lanes", "airspace", "score", "loops", "loom", "replay", "handoffs", "court"]) expect(b.nav(gone), gone).toBeNull();
+  expect(document.querySelectorAll(".sidebar .nav-heading")).toHaveLength(1);
   expect(b.active()).toBe("fleet");
 });
 
@@ -1303,15 +1313,17 @@ const stubTrack = () => {
 const tpEvent = (id: string, ago: number) => ({ ...scoreFixture[0], id, session_id: S1, source: scoreFixture[0].source, time: iso(NOW - ago) });
 const tickLabels = () => [...document.querySelectorAll(".lane-axis text, .lanes-axis text, .fleet-lanes text")].map((t) => t.textContent ?? "");
 
-test("transport: mounted once between strip and layout, same node across navigation, no boot writes", async () => {
+test("transport: mounted once in the toolbar, same node across navigation, no boot writes", async () => {
   const b = await boot({ worktrees: [wtRow()] });
   const seen = vi.fn();
   b.scope.subscribe(seen);
   expect(tpAll()).toHaveLength(1);
   const node = tp();
-  expect(node.parentElement?.id).toBe("app");
-  expect(node.previousElementSibling?.classList.contains("attention-strip")).toBe(true);
-  expect(node.nextElementSibling?.classList.contains("layout")).toBe(true);
+  expect(node.parentElement?.classList.contains("toolbar-range")).toBe(true);
+  expect(node.closest(".toolbar")).not.toBeNull();
+  // One control: the trigger reads the range and the presets, Hold and the scrubber sit in its pop-up.
+  expect(node.querySelector(".transport-trigger .transport-range")).not.toBeNull();
+  expect(node.querySelector<HTMLElement>(".transport-pop")!.hidden).toBe(true);
   for (const n of ["settings", "fleet", "session", "project"]) b.nav(n).click();
   expect(tpAll()).toHaveLength(1);
   expect(tp()).toBe(node);
@@ -1992,7 +2004,8 @@ const expectOneCurrent = (where: string) => {
   const cur = sidebarCurrent();
   expect(cur, where).toHaveLength(1);
   expect(cur[0]!.getAttribute("aria-current"), where).toBe("page");
-  expect(cur[0]!.getAttribute("data-panel"), where).toBe(document.querySelector(".nav-btn.active")?.getAttribute("data-panel"));
+  // The current item is the one drawn selected, and a selected item is never colour alone.
+  expect(cur[0], where).toBe(document.querySelector(".nav-btn.active"));
 };
 
 test("exactly one sidebar button carries aria-current=page after every show() path", async () => {
@@ -2002,23 +2015,23 @@ test("exactly one sidebar button carries aria-current=page after every show() pa
     attentionSessions: [attn(S1)],
   });
   expectOneCurrent("boot");
-  // Boot landing redirect to Fleet (two repositories).
+  // Launch lands on All projects and stays there.
   await vi.waitFor(() => expect(b.active()).toBe("fleet"));
-  expectOneCurrent("landing redirect");
+  expectOneCurrent("landing");
   for (const name of ["files", "settings", "fleet", "session", "sessions", "project", "doctor"]) {
     b.nav(name).click();
     expectOneCurrent(`click ${name}`);
     expect(b.active()).toBe(name);
   }
-  // Attention strip actions.
+  // The Needs you item and the Doctor item (the strip is folded into the sidebar).
   b.go("live");
-  await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
-  document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!.click();
+  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=needs]")!.click();
   expect(b.active()).toBe("sessions");
-  expectOneCurrent("onOpenInbox");
-  document.querySelector<HTMLButtonElement>(".attention-strip [data-key=doctor]")!.click();
+  expectOneCurrent("Needs you");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("needs");
+  document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=doctor]")!.click();
   expect(b.active()).toBe("doctor");
-  expectOneCurrent("onDoctor");
+  expectOneCurrent("Doctor");
   // Escape ascent session -> sessions.
   b.scope.set({ project: "r1", worktree: "w1", window: "live" });
   b.nav("sessions").click();
@@ -2035,14 +2048,16 @@ test("exactly one sidebar button carries aria-current=page after every show() pa
   expectOneCurrent("loops tab");
 });
 
-test("every panel opens with a visible h2 equal to its nav label", async () => {
+test("every panel opens with a visible h2 equal to its toolbar title", async () => {
   const b = await boot();
-  const panels = ["fleet", "project", "sessions", "session", "files", "doctor", "settings"];
+  const { PANEL_TITLES } = await import("./main");
+  const panels = ["fleet", "project", "sessions", "session", "files", "doctor", "settings"] as const;
   for (const name of panels) {
     b.nav(name).click();
     const h2 = document.querySelector(".content h2");
     expect(h2, name).not.toBeNull();
-    expect(h2!.textContent, name).toBe(b.nav(name).textContent);
+    expect(h2!.textContent, name).toBe(PANEL_TITLES[name]);
+    expect(document.querySelector(".toolbar-place")?.textContent, name).toBe(PANEL_TITLES[name]);
     expect(h2!.hasAttribute("hidden"), name).toBe(false);
   }
   b.nav("files").click();
@@ -2211,7 +2226,7 @@ test("? opens the legend with Project lane keys, then Fleet keys after navigatin
 
 test("the footer Keys and symbols button opens the legend and Escape returns focus to it", async () => {
   await boot();
-  const btn = q(".status-bar .legend-btn") as HTMLButtonElement;
+  const btn = q(".sidebar .legend-btn") as HTMLButtonElement;
   expect(btn.textContent).toBe("Keys and symbols");
   expect(btn.getAttribute("aria-haspopup")).toBe("dialog");
   btn.focus();
@@ -2581,49 +2596,63 @@ test("Space pauses the feed on Fleet Events only: not on the Project Events chip
 
 // ---- slice 14: the ladder ---------------------------------------------------------------------
 
-test("nav is the ladder", async () => {
-  const b = await boot();
-  expect([...document.querySelectorAll(".nav-heading")].map((h) => h.textContent)).toEqual(["Altitudes", "Housekeeping"]);
-  expect([...document.querySelectorAll(".nav-btn")].map((x) => x.textContent)).toEqual(["Fleet", "Project", "Worktree", "Session", "Files", "Doctor", "Settings"]);
+test("nav is the source list: Needs you, All projects, one row per project, then Files and Doctor", async () => {
+  const b = await boot({ repos: [repoOf("r1"), repoOf("r2")] });
+  await vi.waitFor(() => expect(document.querySelectorAll(".nav-project")).toHaveLength(2));
+  const labels = [...document.querySelectorAll(".sidebar .nav-btn > .nav-label")].map((x) => x.textContent);
+  expect(labels.slice(0, 2)).toEqual(["Needs you", "All projects"]);
+  expect(labels.filter((l) => ["Files", "Doctor", "Settings"].includes(l!))).toEqual(["Files", "Doctor", "Settings"]);
+  // Levels are not sidebar entries: Fleet, Worktree and Session are gone.
+  for (const level of ["Fleet", "Worktree", "Session"]) expect(labels).not.toContain(level);
   for (const gone of ["live", "attention", "strata", "ecosystem", "workspace"]) expect(b.nav(gone), gone).toBeNull();
-  for (const name of ["fleet", "project", "sessions", "session", "files", "doctor", "settings"]) {
+  // Each project row opens that project and is the current item while it is shown.
+  const row = document.querySelector<HTMLButtonElement>(".nav-project")!;
+  row.click();
+  expect(b.active()).toBe("project");
+  expect(b.scope.get().project).toBe(row.getAttribute("data-project"));
+  expect(row.getAttribute("aria-current")).toBe("page");
+  for (const name of ["fleet", "files", "doctor", "settings"]) {
     b.nav(name).click();
     expect(b.nav(name).getAttribute("aria-current")).toBe("page");
     expect(document.querySelectorAll(".sidebar [aria-current]")).toHaveLength(1);
   }
 });
 
-test("strip click opens Needs you on the Worktree rung without touching scope", async () => {
+test("the Needs you item opens the queue on the Worktree rung without touching scope", async () => {
   const b = await boot({ sessions: [sessionRow(S1)], attentionSessions: [attn(S1)], worktrees: [wtRow()] });
-  const strip = () => document.querySelector<HTMLButtonElement>(".attention-strip [data-key=inbox]")!;
-  await vi.waitFor(() => expect(document.querySelector(".attention-strip [data-key=inbox]")).not.toBeNull());
+  const item = () => document.querySelector<HTMLButtonElement>(".nav-btn[data-panel=needs]")!;
+  // The strip is gone: its count is the item's badge.
+  expect(document.querySelector(".attention-strip")).toBeNull();
+  expect(item().querySelector<HTMLElement>(".nav-count")!.hidden).toBe(true);
   b.scope.set({ project: "r1", window: "live" });
   b.scope.narrow({ session: { id: S1, source: "codex" } });
   b.nav("session").click();
   const before = b.scope.get();
-  strip().click();
+  item().click();
   expect(b.active()).toBe("sessions");
-  expect(b.nav("sessions").getAttribute("aria-current")).toBe("page");
+  expect(item().getAttribute("aria-current")).toBe("page");
+  expect(document.querySelector(".toolbar-place")?.textContent).toBe("Needs you");
   expect(document.querySelector(".sessions-needs[aria-pressed=true]")).not.toBeNull();
   expect(document.querySelector<HTMLElement>(".sessions-inbox")!.hidden).toBe(false);
   expect(b.scope.get()).toBe(before);
-  // The toggle count is the strip count.
-  expect(document.querySelector(".sessions-needs-count")?.textContent).toBe(` (${strip().textContent?.match(/\d+/)?.[0]})`);
-  // Only the strip turns the mode on: a nav click and Escape land on the scoped session list.
+  // The toggle count is the badge count.
+  expect(document.querySelector(".sessions-needs-count")?.textContent).toBe(` (${item().querySelector(".nav-count")?.textContent})`);
+  // Only the item turns the mode on: opening the Worktree list and Escape land on the scoped session list.
   b.nav("sessions").click();
   expect(document.querySelector(".sessions-needs[aria-pressed=false]")).not.toBeNull();
   expect(document.querySelector<HTMLElement>(".sessions-inbox")!.hidden).toBe(true);
-  strip().click();
+  expect(item().getAttribute("aria-current")).toBeNull();
+  item().click();
   b.scope.narrow({ worktree: "w1" });
   b.nav("session").click();
   esc();
   expect(b.scope.get().session).toBeUndefined();
   expect(document.querySelector(".sessions-needs[aria-pressed=false]")).not.toBeNull();
   expect(document.querySelector<HTMLElement>(".sessions-list")!.hidden).toBe(false);
-  // The strip is present on every rung.
+  // The item is present on every rung.
   for (const n of ["fleet", "project", "session"]) {
     b.nav(n).click();
-    expect(document.querySelector(".attention-strip")).not.toBeNull();
+    expect(item()).not.toBeNull();
   }
 });
 
@@ -3167,4 +3196,109 @@ describe("history: back, forward, scroll and focus", () => {
     await settle();
     expect(document.querySelector<HTMLElement>(".content .fleet")!.scrollTop).toBe(300);
   });
+});
+
+test("sidebar counts: Needs you, Doctor and each project row come from the attention poll, always as words with counts", async () => {
+  await boot({
+    repos: [repoOf("r1", "alpha"), repoOf("r2", "beta")],
+    sessions: [sessionRow("s-n1")],
+    attentionSessions: [needy("s-n1", "r1"), { ...attn("s-w1"), repo_id: "r1" }, { ...attn("s-w2"), repo_id: "r2" }],
+  });
+  const needs = () => document.querySelector<HTMLElement>(".nav-btn[data-panel=needs]")!;
+  await vi.waitFor(() => expect(needs().querySelector<HTMLElement>(".nav-count")!.hidden).toBe(false));
+  expect(needs().querySelector(".nav-count")!.textContent).toBe("1");
+  expect(needs().getAttribute("aria-label")).toBe("Needs you, 1 session");
+  const row = (id: string) => document.querySelector<HTMLElement>(`.nav-project[data-project=${id}]`)!;
+  await vi.waitFor(() => expect(row("r1")).not.toBeNull());
+  expect(row("r1").querySelector(".nav-label")!.textContent).toBe("alpha");
+  expect(row("r1").querySelector(".nav-sub")!.textContent).toBe("1 needs you · 1 active");
+  expect(row("r2").querySelector(".nav-sub")!.textContent).toBe("1 active");
+  expect(document.querySelector<HTMLElement>(".nav-btn[data-panel=doctor] .nav-count")!.hidden).toBe(true);
+});
+
+// ---- the toolbar (MS-1, MS-7, MS-8) -------------------------------------------------------------------------------
+
+const toolbarBtn = (cls: string) => document.querySelector<HTMLButtonElement>(`.toolbar .${cls}`)!;
+const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+test("toolbar: Back and Forward chevrons have names, follow the history and move through it", async () => {
+  const b = await boot();
+  await flush();
+  const back = toolbarBtn("toolbar-back");
+  const forward = toolbarBtn("toolbar-forward");
+  expect(back.getAttribute("aria-label")).toBe("Back");
+  expect(forward.getAttribute("aria-label")).toBe("Forward");
+  expect(back.disabled).toBe(true);
+  expect(forward.disabled).toBe(true);
+  b.nav("files").click();
+  await flush();
+  expect(back.disabled).toBe(false);
+  expect(forward.disabled).toBe(true);
+  back.click();
+  await flush();
+  expect(b.active()).toBe("fleet");
+  expect(back.disabled).toBe(true);
+  expect(forward.disabled).toBe(false);
+  forward.click();
+  await flush();
+  expect(b.active()).toBe("files");
+  expect(document.querySelector(".nav-btn.active")?.getAttribute("data-panel")).toBe("files");
+});
+
+test("toolbar: the view switcher of the shown panel is hosted in the toolbar and handed back when the panel is left", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  const slot = () => document.querySelector(".toolbar-views")!;
+  await vi.waitFor(() => expect(slot().querySelector(".fleet-encs")).not.toBeNull());
+  expect(document.querySelector(".content .fleet-encs")).toBeNull();
+  expect(slot().querySelector(".fleet-encs [data-enc]")).not.toBeNull();
+  b.nav("session").click();
+  expect(slot().querySelector(".fleet-encs")).toBeNull();
+  expect(slot().querySelector(".session-tabs")).not.toBeNull();
+  b.nav("fleet").click();
+  expect(slot().querySelector(".session-tabs")).toBeNull();
+  expect(slot().querySelector(".fleet-encs")).not.toBeNull();
+  b.nav("files").click();
+  expect(slot().children).toHaveLength(0);
+});
+
+test("toolbar: the range is one pop-up control; Escape closes it and returns focus without leaving the place", async () => {
+  const b = await boot({ worktrees: twoRepos() });
+  const trigger = document.querySelector<HTMLButtonElement>(".transport-trigger")!;
+  const pop = document.querySelector<HTMLElement>(".transport-pop")!;
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  expect(pop.hidden).toBe(true);
+  trigger.click();
+  expect(pop.hidden).toBe(false);
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  expect(pop.contains(document.activeElement)).toBe(true);
+  const e = esc(document.activeElement!);
+  expect(pop.hidden).toBe(true);
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(trigger);
+  expect(e.defaultPrevented).toBe(false);
+  expect(b.active()).toBe("fleet");
+});
+
+test("toolbar: the sidebar toggle and its key show and hide the sidebar; the toolbar works without a title bar", async () => {
+  await boot();
+  const shell = document.querySelector<HTMLElement>(".shell")!;
+  const toggle = toolbarBtn("toolbar-sidebar");
+  expect(toggle.getAttribute("aria-controls")).toBe("sidebar");
+  expect(document.getElementById("sidebar")).not.toBeNull();
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  toggle.click();
+  expect(shell.dataset.sidebar).toBe("hidden");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+  expect(shell.dataset.sidebar).toBe("shown");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  // No overlay title bar is assumed: nothing in the shell is a drag region or reserves traffic-light room.
+  expect(document.querySelector("[data-tauri-drag-region]")).toBeNull();
+});
+
+test("toolbar: Cmd comma opens Settings", async () => {
+  const b = await boot();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true, cancelable: true }));
+  expect(b.active()).toBe("settings");
+  expect(document.querySelector(".toolbar-place")?.textContent).toBe("Settings");
 });

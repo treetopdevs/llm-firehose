@@ -264,15 +264,27 @@ Acceptance for slice 2 is the walk table above, rerun: nothing lost on any move.
   would have been a white haze in light). `DESIGN.md` and `PRODUCT.md` updated for these;
   the Components section of `DESIGN.md` and `.impeccable/design.json` still describe the old
   chrome and are rewritten with slice 3.
-- **Slice 2, done except toolbar chevrons.** In: the kept range (`scope.ts`), history with Back
+- **Slice 2, done** (the toolbar chevrons arrived with slice 3). In: the kept range (`scope.ts`), history with Back
   and Forward on ⌘[ and ⌘] (`history.ts`), scroll memory per place restored by row key, focus
   handed to the new view's heading, launch on All projects (the shell loads the resolver rows at
   boot and again on connect if that read failed, so nothing depends on Project being shown
-  first), and no unasked detail pane (opening Score only marks the first event). Not in: toolbar
-  chevrons for Back and Forward (they arrive with the toolbar in slice 3). Launch now issues two
+  first), and no unasked detail pane (opening Score only marks the first event). Launch now issues two
   `/worktrees` requests (the shell's read for the resolver, and Fleet's own list) where it used
   to issue one.
-- Slices 3 to 5 not started.
+- **Slice 3, done except the native menus.** In: the source-list sidebar (Needs you, All
+  projects, a row per project with "N needs you" and "N active" from the attention poll, Files,
+  Doctor with a capture-warning count, and Settings and Keys and symbols in the footer with the
+  daemon state, version and event count); one toolbar (sidebar toggle on ⌃⌘S, Back and Forward
+  chevrons wired to the history with disabled state, the place title and breadcrumb, the panel's
+  view switcher hosted in the toolbar, and the range as one pop-up control); the scope strip and
+  the status bar are removed; the sidebar collapses under 900px and the inspector overlays under
+  1100px; chrome targets are 28px; ⌘, opens Settings. `DESIGN.md` Components and
+  `.impeccable/design.json` describe the new chrome. The toolbar assumes a standard title bar.
+  Not in: the native app menu and Help menu (Settings stays a footer link and Keys and symbols
+  a footer button as well as `?`, until the Tauri menu exists), a toolbar search (the doc keeps
+  none), and the Fleet More menu and merged list (slice 4). The attention module still builds its
+  strip element for its own tests; the shell no longer mounts it.
+- Slices 4 and 5 not started.
 
 ## Answered on 2026-11-22
 

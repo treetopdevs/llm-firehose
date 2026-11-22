@@ -228,7 +228,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const root = el(
     "section",
     { class: "fleet", "aria-label": "Fleet" },
-    el("header", { class: "fleet-header" }, el("h2", {}, "Fleet"), el("div", { class: "fleet-encs", role: "tablist", "aria-label": "Encoding" }, ...encButtons), flags),
+    el("header", { class: "fleet-header" }, el("h2", {}, "All projects"), el("div", { class: "fleet-encs", role: "tablist", "aria-label": "Encoding" }, ...encButtons), flags),
     statusBox,
     toast,
     body,

@@ -173,7 +173,7 @@ export const LOCAL = {
   mapStripReset: local('activity strip', 'Esc', 'reset the range or cancel a brush', 'Escape'),
   transportShift: local('time window', '← / →', 'shift the window (Shift: larger step)', 'ArrowLeft', 'ArrowRight'),
   transportLive: local('time window', 'Home', 'return to live', 'Home'),
-  transportCancel: local('time window', 'Esc', 'cancel a drag', 'Escape'),
+  transportCancel: local('time window', 'Esc', 'cancel a drag, or close the range pop-up', 'Escape'),
   canvasPan: local('graph canvas', '← ↑ → ↓', 'pan the canvas, or move between nodes', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'),
   canvasZoom: local('graph canvas', '+ / -', 'zoom in / out', '+', '=', '-', '_'),
   canvasFit: local('graph canvas', '0', 'fit the graph', '0'),

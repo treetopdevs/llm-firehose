@@ -110,8 +110,8 @@ components:
     textColor: "{colors.text}"
     padding: "{spacing.row}"
   nav-item-active:
-    backgroundColor: "{colors.bg-panel}"
-    textColor: "{colors.accent}"
+    backgroundColor: "{colors.bg-hover}"
+    textColor: "{colors.text}"
   segment-group:
     backgroundColor: "{colors.bg}"
     textColor: "{colors.text-dim}"
@@ -144,11 +144,12 @@ components:
     backgroundColor: "{colors.bg-panel}"
     textColor: "{colors.text}"
     rounded: "{rounded.control}"
-    padding: "3px 8px"
+    padding: "0 8px"
+    height: "28px"
   transport-track:
     backgroundColor: "{colors.bg-panel}"
-    rounded: "7px"
-    height: "14px"
+    rounded: "{rounded.field}"
+    height: "24px"
   onboarding-sheet:
     backgroundColor: "{colors.bg-panel}"
     textColor: "{colors.text}"
@@ -270,7 +271,7 @@ Hex only in light, as in dark: `--attention` #9a6400, `--working` #0f7a4d, `--ob
 The per-session identity hue is data (`--hue`, set per row). Its saturation and lightness are theme tokens, `--hue-s` and `--hue-l` (55% and 55% dark, 60% and 40% light), so the stripe reads on both surfaces.
 
 ### Roles
-- **Accent** (`--accent`): the active nav item, pressed toggles (lanes, score, attention filters, fleet encodings, transport presets and Live), the primary button's border and text, the current checkout's border on fleet rows and forks, the selected fleet row's outline, the current tick on the score. It means "you are here", "this is on" or "this is the action". It is no longer on the brand word or the onboarding heading, and no button is filled with it.
+- **Accent** (`--accent`): pressed toggles (lanes, score, attention filters, fleet encodings), the primary button's border and text, the current checkout's border on fleet rows and forks, the selected fleet row's outline, the current tick on the score. It means "you are here", "this is on" or "this is the action". It is no longer on the brand word or the onboarding heading, and no button is filled with it.
 - **Needs** (`--needs`): the "needs you" badge (`--bg` text on `--needs`), bold state words and lane labels for sessions waiting on the operator, needs ticks on lanes and the score, the dwell bar of a needing row.
 - **Selected** (`--selected`): selection inside the workspace graph (nodes, edges, labels, tabs, map presets, the event table row) and the session lens tabs' wash. Inside `.workspace-graph` it is also the focus ring.
 - **Focus** (`--focus`): the 2px keyboard ring everywhere in the shell outside the graph.
@@ -375,7 +376,7 @@ The shell is a tool people keep open all day, so motion is rare (the graph's poi
 - **Hover / Focus:** hover shifts the fill to `--bg-hover`; focus-visible draws a 2px `--focus` outline with 1px to 3px offset (per panel today; the shell should own it).
 - **Primary:** same shape with an `--accent` border and `--accent` text; no filled accent buttons exist.
 - **Pressed / toggled** (`aria-pressed="true"`, `.active`): `--accent` border and text in the shell; inside the graph, `--selected` text on a `--selected` wash.
-- **Nav item:** borderless, backgroundless, left-aligned; active is `--accent` text on `--bg-panel`.
+- **Nav item:** borderless, backgroundless, left-aligned, at least 28px tall; the current item is a neutral `--bg-hover` fill (see Chrome).
 
 ### Segmented groups (tabs, graph Fit/All, session lenses)
 - **Style:** an 8px-radius `--border` frame with `overflow: hidden`; children are square buttons with `7px 16px` padding separated by 1px hairlines.
@@ -402,17 +403,32 @@ The shell is a tool people keep open all day, so motion is rare (the graph's poi
 - **Focus:** 2px `--focus` outline, 3px offset in the panels; graph fields use a `--selected` border on the search frame and a `--selected` outline.
 - **Search:** a native `type="search"` that stretches to fill its bar.
 
-### Navigation
-- **Sidebar:** 130px wide, `--bg`, right `--border`, `0.8rem 0.5rem` padding, vertical stack with 0.3rem gaps. The brand word is `--text`, 700 weight, 0.08em tracking; it is not accent coloured.
-- **Groups:** headings at `--fs-xs` uppercase, 0.08em tracking, `--text-dim`; current groups are Altitudes, Lenses and Housekeeping.
-- **Items:** borderless buttons, left-aligned; active is `--accent` text on `--bg-panel`. Items should carry `aria-current` and sentence-case names (today they are lowercase codenames without `aria-current`).
-- **Footer breadcrumb:** Fleet › Project › Worktree › Session in body text, unresolved ids in monospace `--text-dim`.
+### Chrome: sidebar and toolbar
+The window is a source list beside a stage. The sidebar answers "where", the toolbar carries history, the title, the view and "when", and the content below is "what" (MS-1). Nothing sits above the toolbar except the compatibility banner when the daemon is too old or new, and there is no status bar and no attention strip. Both parts work under a standard OS title bar: neither assumes the overlay title bar or reserves traffic-light room. Linux and Windows keep their native frame.
+
+**Sidebar** (`src/chrome.ts`, `createSidebar`)
+- **Frame:** 200px wide, `--bg-panel`, right `--border`, `0.8rem 0.5rem` padding, a 2px gap between items, scrolls on its own. The brand is the words "Agent Firehose" in `--text` at 700 weight, not accent coloured.
+- **Items, in order:** Needs you, All projects, a Projects heading with one row per registered project (alphabetical, so rows never jump as state changes), then Files and Doctor. Worktree and Session are levels, not things, and have no entry: they are reached by opening one. Fleet is named All projects in visible copy; the code name stays `fleet`.
+- **Item:** a borderless, backgroundless, left-aligned button, at least 28px tall, `0.35rem 0.8rem` padding, 6px radius. Hover is `--bg-hover`.
+- **Selected:** the current item carries `aria-current="page"` and is drawn with a `--bg-hover` fill, `--text` and 600 weight. Selection is neutral; it is never accent coloured (MS-6), so the fill and the weight carry it, not hue alone.
+- **Counts are words:** the Needs you item has a count badge (`--needs`, tabular numerals, an `aria-label` such as "Needs you, 2 sessions"); the Doctor item has a count of capture warnings in `--text-dim`. A project row has a second line of `--fs-xs` text, "1 needs you · 3 active", where "needs you" is `--needs` and "active" is `--text-dim`. A bare dot never carries state. Counts come from the attention poll that already runs every 3 s and add no request.
+- **Footer:** the daemon dot and its status line (state, version, schema), the event count in monospace `--text-dim`, then Settings and Keys and symbols as two borderless 28px buttons. Settings also opens on ⌘, and Keys and symbols on `?`.
+- **Collapse:** at 900px and under the sidebar leaves the layout and the toolbar toggle (⌃⌘S, `aria-expanded`, `aria-controls="sidebar"`) overlays it on the content with a `--shadow`. Above 900px the toggle hides it for good.
+
+**Toolbar** (`createToolbar`)
+- **Frame:** one row, `44px` minimum, `0.25rem 0.8rem` padding, bottom `--border`, wrapping when narrow. Controls are 28px tall.
+- **Order:** sidebar toggle, Back and Forward chevrons, the title, the view switcher, the range.
+- **History:** two borderless 28px chevron buttons named "Back" and "Forward", disabled (45% opacity) when the history has nowhere to go. They are the same moves as ⌘[ and ⌘].
+- **Title:** the place name in 600 weight `--fs-md` (All projects, Needs you, Files, Doctor, Settings; Project, Worktree and Session for opened levels), then the breadcrumb (project › worktree › session) in `--text-dim`, unresolved ids in monospace.
+- **View switcher:** the shown panel's own segmented group (Fleet encodings, Project chips, Session tabs) is hosted in the toolbar and handed back to its panel when another panel is shown, so there is one control for "what" and it keeps its keys and roles.
+- **Range:** the one time control, see below.
+- **Inspector:** at 1100px and under it overlays the content instead of pushing it.
 
 ### History
-Every move is a place: a panel, its view and what is in scope. ⌘[ goes back and ⌘] forward (`src/history.ts`, wired in `main.ts`). The time range is not part of a place: Back never changes it, and the range set before a session is opened comes back when the session is left. Each place remembers its scroll position by the key of its first visible row, and a move that removes the focused element hands focus to the new view's heading, never `<body>`.
+Every move is a place: a panel, its view and what is in scope. ⌘[ goes back and ⌘] forward, and so do the toolbar chevrons (`src/history.ts`, wired in `main.ts`). The time range is not part of a place: Back never changes it, and the range set before a session is opened comes back when the session is left. Each place remembers its scroll position by the key of its first visible row, and a move that removes the focused element hands focus to the new view's heading, never `<body>`.
 
-### Transport (signature component)
-The shell-owned time control under the header, bound to the shared `scope.window`. A `--fs-sm` row with 8px gaps and a bottom hairline: four presets (2h, 8h, 24h, 7d), Live, Hold, a tabular-numeric range readout in `--text-dim`, and a 14px-high slider track with a 7px radius, `--bg-panel` fill and a `--border`. The thumb is `--text-dim` at 70% opacity and slides with a 120ms ease (disabled under reduced motion). Controls are 4px-radius `--bg-panel` buttons with `3px 8px` padding; pressed state is `--accent` border and text; focus-visible is a 2px `--focus` outline; disabled state is 45% opacity with a not-allowed cursor. The track is a `role="slider"` with Arrow and Home keys; Escape during a drag restores the window.
+### Range (signature component, `transport.ts`)
+The shell-owned time control, bound to the shared `scope.window`, mounted once in the toolbar. At rest it is one 28px button reading the range ("Live · last 8h", a tabular-numeric readout) with a caret, `aria-expanded` and `aria-haspopup`. Opening it shows a `--bg-panel` pop-up (10px radius, `--border`, `--shadow`, 340px wide) holding four presets (2h, 8h, 24h, 7d), Live, Hold or Return to live, a hint, and a 24px-high slider track with a 6px radius and a `--text-dim` thumb at 70% opacity that slides with a 120ms ease (disabled under reduced motion). Buttons in the pop-up are 28px, 4px radius; a pressed preset is a `--bg-hover` fill with 600 weight, not an accent. Focus moves into the pop-up on open; Escape, or a click outside, closes it and returns focus to the trigger without leaving the place; focus-visible is a 2px `--focus` outline. At the Session altitude presets, Hold and the track are inert (45% opacity, not-allowed cursor). On panels that do not read the range the control keeps its place but is hidden (`visibility: hidden`) so the toolbar does not jump. The track is a `role="slider"` with Arrow and Home keys; Escape during a drag restores the window.
 
 ### Lanes (signature component)
 SVG rows of time: an axis in `--fs-xs` `--text-dim` with 1-on-3 dashed `--border` gridlines, a soft `--border` baseline, closed spans in `--text-dim` at 45% opacity and open spans in `--text` at 85% (the open span is not accent coloured; tested), ticks in `--text` (`--err` for errors, `--needs` for needs), and a transparent hit rectangle that fills `--bg-hover` on hover or keyboard focus (`:focus-visible`, so a click leaves no hover-like fill behind) and takes a 2px `--focus` stroke on focus-visible. Lane labels are `--fs-sm` `--text`, state words `--fs-xs` `--text-dim`, and a lane that needs the operator goes bold `--needs`. Arrow keys and 1 to 9 pick a lane, Enter opens it.
@@ -460,7 +476,7 @@ One of three modals, with the keys legend (`--bg` at 72%) and the prune confirma
 - **Don't** identify a thing by its hash when a human name exists; a UUID is never a label, a heading or a breadcrumb crumb.
 - **Don't** add new `border-left` or `border-right` stripes wider than 1px on rows, bands or warnings; use a full border, a background tint or a leading badge. Existing 3px stripes (the identity hue on band rows, the five airspace band markers, the capture warning, the loops disclosure, and the court, airspace and loom notices) are recorded debt, not a precedent.
 - **Don't** write `outline: none` on anything focusable without a replacement focus treatment for `:focus-visible`.
-- **Don't** add a second time control, repository picker or event list to a view; the transport, the scope store and the shared lists already exist.
+- **Don't** add a second time control, repository picker or event list to a view; the range control in the toolbar, the scope store and the shared lists already exist.
 - **Don't** introduce colour literals (hex, `rgb()`, `hsl()`, `oklch()` and the rest) outside `:root`, in CSS or TypeScript; the test fails.
 - **Don't** dim text with `opacity`; use `--text-dim`.
 - **Don't** nest containers or wrap rows in cards; a unit row is already the container.

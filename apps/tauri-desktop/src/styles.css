@@ -173,10 +173,24 @@ body {
   height: 100vh;
 }
 
+/* The shell: a source-list sidebar beside the stage (toolbar over content and inspector). */
+.shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 .layout {
   display: flex;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .dim { color: var(--text-dim); }
@@ -221,28 +235,110 @@ input, select {
   font: inherit;
 }
 
-/* sidebar */
+/* sidebar: a source list. Selection is a neutral fill; colour is for needs you. */
 .sidebar {
   overflow-y: auto;
   min-height: 0;
-  width: 130px;
+  width: 200px;
   border-right: 1px solid var(--border);
   padding: 0.8rem 0.5rem;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 2px;
   flex-shrink: 0;
+  background: var(--bg-panel);
 }
 .brand {
   color: var(--text);
   font-weight: 700;
-  letter-spacing: 0.08em;
-  margin-bottom: 1rem;
-  line-height: 1.3;
+  margin: 0 0.5rem 0.8rem;
 }
-.nav-btn { text-align: left; border: none; background: none; white-space: normal; }
-.nav-btn.active { color: var(--accent); background: var(--bg-panel); }
-.nav-heading { margin: 10px 0 2px; padding: 0 10px; font-size: var(--fs-xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-library { margin-top: 0.8rem; }
+.nav-projects { display: flex; flex-direction: column; gap: 2px; }
+.nav-btn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 0.5rem;
+  min-height: 28px;
+  margin: 0;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  white-space: normal;
+}
+.nav-btn:hover { background: var(--bg-hover); }
+.nav-btn.active { color: var(--text); background: var(--bg-hover); font-weight: 600; }
+.nav-label { min-width: 0; overflow-wrap: anywhere; }
+.nav-count { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.nav-count.needs { color: var(--needs); font-weight: 600; }
+.nav-sub { flex-basis: 100%; font-size: var(--fs-xs); font-weight: 400; }
+.nav-sub.needs { color: var(--needs); }
+.nav-heading { margin: 0.8rem 0 2px; padding: 0 0.5rem; font-size: var(--fs-xs); color: var(--text-dim); }
+.nav-empty { margin: 0 0.5rem; font-size: var(--fs-sm); }
+.nav-btn:focus-visible, .legend-btn:focus-visible, .toolbar-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* sidebar footer: daemon state, event count, Settings and the key legend */
+.sidebar-foot {
+  margin-top: auto;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: var(--fs-sm);
+}
+.sidebar-status { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0 0.5rem; }
+.sidebar-status .status-dot { margin-top: 0.3rem; }
+.sidebar-foot .event-count { padding: 0 0.5rem; margin: 0; }
+.sidebar-links { display: flex; flex-direction: column; gap: 2px; }
+
+/* toolbar: history, title, view switcher, range. Works under a standard OS title bar. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  flex-wrap: wrap;
+  padding: 0.25rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.toolbar-btn {
+  min-width: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 0.4rem;
+  border: none;
+  background: none;
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+.toolbar-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.toolbar-btn:disabled { color: var(--text-dim); opacity: 0.45; cursor: default; }
+.toolbar-history { display: flex; gap: 2px; }
+.toolbar-title { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; }
+.toolbar-place { font-weight: 600; font-size: var(--fs-md); }
+.toolbar-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.toolbar-views { display: flex; align-items: center; min-width: 0; flex-shrink: 0; }
+.toolbar-views > * { margin: 0; }
+.toolbar-range { flex-shrink: 0; position: relative; }
+/* Narrow windows: the sidebar collapses behind the toolbar toggle and overlays the content. */
+@media (min-width: 900px) {
+  .shell[data-sidebar="hidden"] .sidebar { display: none; }
+}
+@media (max-width: 899px) {
+  .shell:not([data-sidebar="shown"]) .sidebar { display: none; }
+  .shell[data-sidebar="shown"] .stage { position: relative; }
+  .shell[data-sidebar="shown"] .sidebar { position: absolute; z-index: 20; top: 0; bottom: 0; left: 0; box-shadow: 0 0 24px var(--shadow); }
+}
+/* Under 1100px the inspector overlays the content instead of pushing it. */
+@media (max-width: 1099px) {
+  .detail.open { position: absolute; z-index: 10; top: 0; right: 0; bottom: 0; background: var(--bg); box-shadow: 0 0 24px var(--shadow); max-width: 100%; }
+}
 
 /* content */
 .content {
@@ -503,15 +599,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .settings-info dt { color: var(--text-dim); }
 .settings-info dd { margin: 0; }
 
-/* status bar */
-.status-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  border-top: 1px solid var(--border);
-  padding: 0.35rem 0.8rem;
-  flex-shrink: 0;
-}
+/* status dot (sidebar footer) */
 .status-dot {
   width: 9px;
   height: 9px;
@@ -522,8 +610,8 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .status-dot.ok { background: var(--ok); }
 .status-dot.warn { background: var(--warn); }
 .status-dot.err { background: var(--err); }
-.event-count { margin-left: auto; }
-.legend-btn { padding: 0.1rem 0.5rem; font-size: var(--fs-xs); }
+.legend-btn { min-height: 28px; margin: 0; width: 100%; text-align: left; border: none; background: none; }
+.legend-btn:hover { background: var(--bg-hover); }
 
 /* Keys and symbols dialog (ui/legend.ts). */
 .legend-backdrop {
@@ -597,17 +685,6 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 }
 .onboarding-card h2 { margin-top: 0; color: var(--text); font-family: var(--font-sans); }
 
-/* Attention stays visible across the existing activity views. */
-.attention-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .6rem;
-  padding: .5rem .8rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-}
-.attention-strip > span { flex: 1; min-width: 16rem; }
 .attention-inbox { max-width: 1100px; width: 100%; margin: 0 auto; }
 .attention-filters { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
 .attention-filters input { flex:1; min-width:14rem; }
@@ -618,7 +695,7 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .attention-row h3 { margin:0 0 .5rem; font-size: var(--fs-base); }
 .attention-row p, .capture-warning p { margin:.35rem 0; line-height:1.5; }
 .capture-warning { border-left:3px solid var(--warn); }
-.attention-inbox button:focus-visible, .attention-strip button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.attention-inbox button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 .attention-kind { color:var(--text-dim); font-weight:600; }
 
 /* workspace graph */
@@ -1355,17 +1432,37 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .session-lens-head button { border: 1px solid var(--border); border-radius: 999px; background: transparent; color: inherit; padding: 1px 10px; cursor: pointer; font-size: var(--fs-xs); }
 .session-lens-head button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-/* Shell transport: one time control bound to scope.window */
-.transport {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-sm);
-}
-/* Reserves the row: the shell below must not jump under the pointer between panels. */
+/* Shell transport: one range pop-up bound to scope.window. The trigger reads the range. */
+.transport { position: relative; display: flex; font-size: var(--fs-sm); }
+/* Reserves the control: the toolbar must not jump under the pointer between panels. */
 .transport[hidden] { display: flex; visibility: hidden; }
+.transport-trigger {
+  min-height: 28px;
+  margin: 0;
+  padding: 0 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.transport-trigger::after { content: "▾"; color: var(--text-dim); }
+.transport-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 340px;
+  max-width: calc(100vw - 2rem);
+  padding: 0.6rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.transport-pop[hidden] { display: none; }
 .transport-presets {
   display: flex;
   gap: 4px;
@@ -1377,21 +1474,23 @@ span.agent-dot.big { width: 14px; height: 14px; }
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 3px 8px;
+  min-height: 28px;
+  padding: 0 8px;
+  margin: 0;
   font: inherit;
   cursor: pointer;
 }
 .transport-preset[aria-pressed="true"],
 .transport-live[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--bg-hover);
+  font-weight: 600;
 }
 .transport [aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .transport-range {
-  color: var(--text-dim);
+  color: var(--text);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1400,9 +1499,9 @@ span.agent-dot.big { width: 14px; height: 14px; }
 }
 .transport-track {
   position: relative;
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 80px;
-  height: 14px;
+  height: 24px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1422,6 +1521,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
   border-radius: var(--radius-md);
   transition: left 0.12s ease, width 0.12s ease;
 }
+.transport-trigger:focus-visible,
 .transport-preset:focus-visible,
 .transport-live:focus-visible,
 .transport-hold:focus-visible,

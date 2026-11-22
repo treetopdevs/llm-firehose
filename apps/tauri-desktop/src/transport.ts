@@ -72,16 +72,12 @@ export function createTransport(deps: TransportDeps): Transport {
     },
     thumb,
   );
-  const root = el(
-    'div',
-    { class: 'transport', role: 'group', 'aria-label': 'Time window' },
-    presets,
-    liveBtn,
-    holdBtn,
-    range,
-    hint,
-    track,
-  );
+  // MS-7: one pop-up control. The trigger reads the range ("Live · last 8h"); the presets, Hold
+  // and the scrubber live inside the pop-up.
+  const trigger = el('button', { type: 'button', class: 'transport-trigger', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': 'transport-pop' }, range);
+  const pop = el('div', { class: 'transport-pop', id: 'transport-pop', role: 'group', 'aria-label': 'Range options' }, presets, liveBtn, holdBtn, hint, track);
+  pop.hidden = true;
+  const root = el('div', { class: 'transport', role: 'group', 'aria-label': 'Time window' }, trigger, pop);
 
   const horizonOf = (w: ScopeWindow): number => Math.max(30 * DAY, 2 * spanOf(w, now(), span()));
 
@@ -129,6 +125,8 @@ export function createTransport(deps: TransportDeps): Transport {
     const f = readout(s);
     range.textContent = f.text;
     range.title = f.title;
+    trigger.title = f.title;
+    trigger.setAttribute('aria-label', `Time range: ${f.text}`);
     hint.textContent = session ? 'Zoom with the Score' : '';
     thumb.style.left = `${g.left}%`;
     thumb.style.width = `${g.width}%`;
@@ -311,13 +309,48 @@ export function createTransport(deps: TransportDeps): Transport {
     e.preventDefault();
   });
 
+  // ---- pop-up ----
+  const isOpen = (): boolean => !pop.hidden;
+  function closePop(restoreFocus: boolean): void {
+    if (!isOpen()) return;
+    pop.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onPopKey, true);
+    if (restoreFocus) trigger.focus();
+  }
+  function openPop(): void {
+    if (isOpen()) return;
+    pop.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onOutside, true);
+    document.addEventListener('keydown', onPopKey, true);
+    (pop.querySelector<HTMLElement>('[aria-pressed="true"]') ?? pop.querySelector<HTMLElement>('button'))?.focus();
+  }
+  function onOutside(e: Event): void {
+    if (!root.contains(e.target as Node)) closePop(false);
+  }
+  function onPopKey(e: KeyboardEvent): void {
+    if (!LOCAL.transportCancel.matches(e) || e.defaultPrevented || drag || yieldsToModal(e, trigger)) return;
+    claimEscape(e);
+    closePop(true);
+  }
+  on(trigger, 'click', () => (isOpen() ? closePop(true) : openPop()));
+  on(root, 'focusout', (e) => {
+    const next = (e as FocusEvent).relatedTarget as Node | null;
+    if (next && !root.contains(next)) closePop(false);
+  });
+
   paint();
 
   return {
     root,
     paintCount: () => paints,
     setVisible(v) {
-      if (!v) abortDrag();
+      if (!v) {
+        abortDrag();
+        closePop(false);
+      }
       root.hidden = !v;
     },
     setPanel(id) {
@@ -333,6 +366,7 @@ export function createTransport(deps: TransportDeps): Transport {
     },
     refresh: paint,
     destroy() {
+      closePop(false);
       unsub();
       endDrag();
       ac.abort();

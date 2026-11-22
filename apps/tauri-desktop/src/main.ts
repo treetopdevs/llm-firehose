@@ -45,6 +45,8 @@ import { ascentTarget, createEscapeHandler } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
 import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
+import { createSidebar, createToolbar, type ProjectRow, type SidebarCurrent, type SidebarTarget } from "./chrome";
+import { projectName } from "./format";
 import { createSessionDirectory } from "./session-directory";
 import { inspectorBelongsTo, isAlias, resolveAlias } from "./nav";
 import { createHistory, markOf, restoreScroll, samePlace, type Place } from "./history";
@@ -331,19 +333,14 @@ async function handlePrivacyChange(before: IdentitySet = snapshotBeforeSave()): 
 }
 
 const content = el("main", { class: "content" });
-const statusDot = el("span", { class: "status-dot" });
-const statusText = el("span", { class: "status-text dim" }, "connecting…");
 const compatBanner = el("div", { class: "compat-banner" });
-const eventCount = el("span", { class: "event-count dim" }, "");
 
 let active: PanelName = "fleet";
-const NAV_GROUPS: ReadonlyArray<readonly [string, readonly PanelName[]]> = [
-  ["Altitudes", ["fleet", "project", "sessions", "session"]],
-  ["Housekeeping", ["files", "doctor", "settings"]],
-];
-/** Sidebar labels and each panel's visible h2: one name per panel, sentence case. */
-export const NAV_LABELS: Record<PanelName, string> = {
-  fleet: "Fleet",
+/** The Worktree panel opened as the Needs you queue: the sidebar item, not a level, owns that view. */
+let needsView = false;
+/** Toolbar titles: the place the window is showing. Worktree and Session are reached by opening one, not from the sidebar. */
+export const PANEL_TITLES: Record<PanelName, string> = {
+  fleet: "All projects",
   project: "Project",
   sessions: "Worktree",
   session: "Session",
@@ -351,7 +348,6 @@ export const NAV_LABELS: Record<PanelName, string> = {
   doctor: "Doctor",
   settings: "Settings",
 };
-const navButtons = new Map<PanelName, HTMLButtonElement>();
 
 /** Panels that read scope.window; the shell transport is shown only over these. */
 export const TRANSPORT_PANELS: ReadonlySet<string> = new Set(["project", "fleet", "session"]);
@@ -404,14 +400,13 @@ function show(name: PanelName, opts?: { tab?: SessionTab; encoding?: ProjectEnco
   if (active === "session" && name !== "session") sessionPanel.deactivate();
   if (active === "files" && name !== "files") panels.files.deactivate();
   active = name;
+  needsView = name === "sessions" && !!opts?.needsOnly;
   transport.setPanel(name);
-  for (const [n, btn] of navButtons) {
-    btn.classList.toggle("active", n === name);
-    if (n === name) btn.setAttribute("aria-current", "page");
-    else btn.removeAttribute("aria-current");
-  }
   clear(content);
   content.append(panels[name].root);
+  content.dataset.panel = name;
+  hostViews();
+  syncChrome();
   if (name === "fleet") void fleetPanel.activate();
   else if (name === "project") void projectPanel.activate(opts?.encoding ? { encoding: opts.encoding } : undefined);
   else if (name === "sessions") void sessionsPanel.activate({ needsOnly: !!opts?.needsOnly });
@@ -456,6 +451,7 @@ function recordPlace(): void {
     places.record(place, cell ? { cell } : {});
     travelling = false;
     here = place;
+    syncHistory();
     if (!moved || first) return;
     cancelScrollRestore();
     const marks = places.recall(place);
@@ -473,6 +469,7 @@ function travel(dir: "back" | "forward"): boolean {
   if (p.panel === "fleet" && p.view) fleetPanel.encoding = p.view as typeof fleetPanel.encoding;
   const name = p.panel as PanelName;
   show(name, name === "session" && p.view ? { tab: p.view as SessionTab } : name === "project" && p.view ? { encoding: p.view as ProjectEncoding } : undefined);
+  syncHistory();
   return true;
 }
 scope.subscribe(() => recordPlace());
@@ -538,6 +535,32 @@ registerKeys([
   },
   {
     scope: "global",
+    keys: ["s", "S"],
+    display: "⌃⌘S",
+    label: "show or hide the sidebar",
+    enabled: () => app.isConnected,
+    modifiers: "any",
+    handler: (e) => {
+      if (!e.metaKey || !e.ctrlKey) return false;
+      e.preventDefault();
+      toggleSidebar();
+    },
+  },
+  {
+    scope: "global",
+    keys: [","],
+    display: "⌘,",
+    label: "open Settings",
+    enabled: () => app.isConnected,
+    modifiers: "any",
+    handler: (e) => {
+      if (!e.metaKey) return false;
+      e.preventDefault();
+      show("settings");
+    },
+  },
+  {
+    scope: "global",
     ...QUEUE_KEYS.escape,
     label: "go up one level (clear a selection, then leave the view)",
     modifiers: "any",
@@ -551,31 +574,123 @@ registerKeys([
     label: "show keys and symbols",
     enabled: () => app.isConnected,
     handler: () => {
-      toggleLegend({ opener: document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : undefined, fallbackFocus: legendBtn, context: legendContext });
+      toggleLegend({ opener: document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : undefined, fallbackFocus: legendOpener(), context: legendContext });
     },
   },
 ]);
 
-const nav = el("nav", { class: "sidebar" }, el("div", { class: "brand" }, "AGENT", el("br"), "FIREHOSE"));
-for (const [heading, names] of NAV_GROUPS) {
-  nav.append(el("div", { class: "nav-heading" }, heading));
-  for (const name of names) {
-    const btn = el("button", { class: "nav-btn", "data-panel": name }, NAV_LABELS[name]);
-    btn.addEventListener("click", () => {
-      show(name);
-    });
-    navButtons.set(name, btn);
-    nav.append(btn);
+// --- chrome: sidebar (where), toolbar (history, title, view, range) ------------------------------------------
+const crumb = createBreadcrumb(scope, { directory: sessionDirectory });
+
+function selectSidebar(t: SidebarTarget): void {
+  switch (t.kind) {
+    case "needs": go("attention"); break;
+    case "fleet": show("fleet"); break;
+    case "project": go("project", { project: t.id }, true); break;
+    case "files": show("files"); break;
+    case "doctor": show("doctor"); break;
+    case "settings": show("settings"); break;
   }
 }
-
-const crumb = createBreadcrumb(scope, { directory: sessionDirectory });
-const legendBtn = el("button", { type: "button", class: "legend-btn", "aria-haspopup": "dialog" }, "Keys and symbols");
-legendBtn.addEventListener("click", () => {
-  openLegend({ opener: legendBtn, fallbackFocus: legendBtn, context: legendContext });
+const legendOpener = (): HTMLElement | undefined => document.querySelector<HTMLElement>(".legend-btn") ?? undefined;
+const sidebar = createSidebar({
+  onSelect: selectSidebar,
+  onLegend: () => {
+    const opener = legendOpener();
+    openLegend({ opener, fallbackFocus: opener, context: legendContext });
+  },
 });
-const statusBar = el("footer", { class: "status-bar" }, statusDot, statusText, el("span", { class: "scope-crumb dim" }, crumb.root), eventCount, legendBtn);
-app.append(compatBanner, attentionPanel.strip, transport.root, el("div", { class: "layout" }, nav, content, detailPane), shellNote, statusBar, actions.root);
+
+// Sidebar visibility: automatic by window width (under 900px it collapses behind the toolbar toggle),
+// overridden by the toggle.
+type SidebarMode = "auto" | "shown" | "hidden";
+let sidebarMode: SidebarMode = "auto";
+const narrowQuery = typeof window.matchMedia === "function" ? window.matchMedia("(max-width: 899px)") : undefined;
+const sidebarShown = (): boolean => sidebarMode === "shown" || (sidebarMode === "auto" && !narrowQuery?.matches);
+function applySidebar(): void {
+  shell.dataset.sidebar = sidebarMode;
+  toolbar.setSidebarShown(sidebarShown());
+}
+function toggleSidebar(): void {
+  sidebarMode = sidebarShown() ? "hidden" : "shown";
+  applySidebar();
+}
+const toolbar = createToolbar({
+  onBack: () => {
+    travel("back");
+  },
+  onForward: () => {
+    travel("forward");
+  },
+  onToggleSidebar: toggleSidebar,
+});
+toolbar.crumbSlot.append(el("span", { class: "scope-crumb dim" }, crumb.root));
+toolbar.rangeSlot.append(transport.root);
+const stage = el("div", { class: "stage" }, toolbar.root, shellNote, el("div", { class: "layout" }, content, detailPane));
+const shell = el("div", { class: "shell", "data-sidebar": "auto" }, sidebar.root, stage);
+narrowQuery?.addEventListener?.("change", applySidebar);
+applySidebar();
+app.append(compatBanner, shell, actions.root);
+
+function syncHistory(): void {
+  toolbar.setHistory(places.canBack(), places.canForward());
+}
+
+// The panel's own view switcher (Fleet encodings, Project chips, Session tabs) is hosted in the toolbar:
+// one control for "what", moved back into its panel when another panel is shown.
+let hosted: { node: HTMLElement; parent: Node; next: Node | null } | undefined;
+function hostViews(): void {
+  if (hosted) {
+    const { node, parent, next } = hosted;
+    parent.insertBefore(node, next && next.parentNode === parent ? next : null);
+    hosted = undefined;
+  }
+  const node = panels[active].root.querySelector<HTMLElement>(".fleet-encs, .project-chips, .session-tabs");
+  if (!node?.parentNode) return;
+  hosted = { node, parent: node.parentNode, next: node.nextSibling };
+  toolbar.viewSlot.append(node);
+}
+
+// Sidebar rows: projects from the roots store, per-project counts from the attention poll that already runs.
+let projectKey = "";
+let projectIds = new Set<string>();
+function syncSidebar(): void {
+  const counts = attentionPanel.byProject();
+  const rows: ProjectRow[] = roots
+    .list()
+    .filter((r) => !roots.view?.(r.id))
+    .map((r) => {
+      const resolved = scope.resolver()?.labels({ ...scope.get(), project: r.id, worktree: undefined }).project;
+      const c = counts.get(r.id);
+      return { id: r.id, label: projectName(r.id, resolved || roots.rawLabel(r.id)).label, needs: c?.needs ?? 0, active: c?.active ?? 0 };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+  projectIds = new Set(rows.map((r) => r.id));
+  const key = JSON.stringify(rows);
+  if (key !== projectKey) {
+    projectKey = key;
+    sidebar.setProjects(rows);
+  }
+  sidebar.setNeeds(attentionPanel.count());
+  sidebar.setWarnings(attentionPanel.warnings());
+  syncChrome();
+}
+function currentItem(): SidebarCurrent {
+  if (active === "files" || active === "doctor" || active === "settings") return active;
+  if (needsView) return "needs";
+  const project = scope.get().project;
+  if (active !== "fleet" && project !== undefined && projectIds.has(project)) return { project };
+  return "fleet";
+}
+function syncChrome(): void {
+  sidebar.setCurrent(currentItem());
+  toolbar.setPlace(needsView ? "Needs you" : PANEL_TITLES[active]);
+}
+roots.subscribe(syncSidebar);
+scope.onResolver(syncSidebar);
+scope.subscribe(() => syncChrome());
+attentionPanel.onCount(syncSidebar);
+syncSidebar();
 
 // --- live data -------------------------------------------------------------
 
@@ -585,7 +700,7 @@ let renderQueued = false;
 function onEvent(ev: FirehoseEvent) {
   feedState.push(ev);
   received++;
-  eventCount.textContent = `${received.toLocaleString()} events`;
+  sidebar.setEventCount(`${received.toLocaleString()} events`);
   projectPanel.onEvent(ev);
   if (active === "fleet") fleetPanel.onEvent(ev);
   // The feed is only drawn on Fleet Events; every other encoding and rung skips it.
@@ -616,8 +731,7 @@ const connector = createConnector({
     } else {
       compatBanner.classList.remove("visible");
     }
-    statusDot.className = `status-dot ${kind}`;
-    statusText.textContent = text;
+    sidebar.setStatus(kind, text);
   },
   onStreamOpen: () => {
     void roots.refresh();
