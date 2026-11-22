@@ -161,10 +161,12 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
   // ('live' is the whole session), so the user's range is put back when the session is left.
   let outerWindow: ScopeWindow | undefined;
 
-  const commit = (next: Scope) => {
+  const commit = (next: Scope, explicit = false) => {
     if (sameScope(current, next)) return;
     const prev = current;
-    if (!prev.session && next.session) outerWindow = prev.window;
+    // An explicit state has no history: no outer range is captured, and none is left over, before subscribers hear of it.
+    if (explicit) outerWindow = undefined;
+    else if (!prev.session && next.session) outerWindow = prev.window;
     else if (!next.session) outerWindow = undefined;
     current = next;
     queue.push([next, prev]);
@@ -217,8 +219,17 @@ export function createScope(initial?: Partial<Scope>): ScopeStore {
     },
     // An explicit state has no history: a session entered this way has no outer range to restore.
     set: (next) => {
-      commit(freezeScope(next));
-      outerWindow = undefined;
+      const frozen = freezeScope(next);
+      if (sameScope(current, frozen)) {
+        // The scope does not change, but a range that was held no longer is: consumers read held() and must hear of it.
+        if (outerWindow !== undefined) {
+          outerWindow = undefined;
+          queue.push([current, current]);
+          deliver();
+        }
+        return;
+      }
+      commit(frozen, true);
     },
     narrow: (patch) => commit(compute(current, patch)),
     replaceContext(patch) {

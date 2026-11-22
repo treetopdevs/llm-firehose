@@ -83,6 +83,37 @@ test('held() names the range kept while a session is in scope', () => {
   expect(w.held()).toBeUndefined(); // installed whole: nothing to restore
 });
 
+describe('set() publishes the final held state', () => {
+  test('a subscriber told of a session installed whole already sees no held range', () => {
+    const s = createScope();
+    s.narrow({ window: { from: 100, to: 900 } });
+    const seen: Array<ReturnType<typeof s.held>> = [];
+    s.subscribe(() => seen.push(s.held()));
+    s.set({ session: { id: 's' }, window: 'live' });
+    expect(seen).toEqual([undefined]);
+    expect(s.held()).toBeUndefined();
+  });
+  test('a same-scope set() that clears a held range tells subscribers', () => {
+    const s = createScope();
+    s.narrow({ window: { from: 100, to: 900 } });
+    s.narrow({ session: { id: 's' } });
+    expect(s.held()).toEqual({ from: 100, to: 900 });
+    const fn = vi.fn(() => expect(s.held()).toBeUndefined());
+    s.subscribe(fn);
+    s.set(s.get());
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(s.held()).toBeUndefined();
+  });
+  test('a same-scope set() with nothing held stays silent', () => {
+    const s = createScope();
+    s.set({ session: { id: 's' }, window: 'live' });
+    const fn = vi.fn();
+    s.subscribe(fn);
+    s.set(s.get());
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
 describe('the range set before a session comes back when the session is left', () => {
   const R = { from: 100, to: 900 };
   const ZOOM = { from: 300, to: 400 };
