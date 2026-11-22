@@ -30,6 +30,14 @@ export function createDoctor(deps: DoctorDeps = {}): { root: HTMLElement; refres
 
   /** Capture warnings and gaps: never part of the Needs you queue or its count, always here and on the sidebar badge. */
   function paintWarnings(): void {
+    // Repainting removes the focused inspection button; focus returns to the same diagnostic (or to Doctor when it is gone),
+    // and only when it was inside this box, so another panel's focus is never taken.
+    const focused = warningsBox.contains(document.activeElement) ? (document.activeElement as HTMLElement).getAttribute("data-key") : null;
+    paintWarningsBody();
+    if (focused === null || warningsBox.contains(document.activeElement)) return;
+    ([...warningsBox.querySelectorAll<HTMLElement>("[data-key]")].find((b) => b.getAttribute("data-key") === focused) ?? root).focus();
+  }
+  function paintWarningsBody(): void {
     const { gaps, warnings } = deps.issues?.() ?? { gaps: [], warnings: [] };
     warningsBox.replaceChildren(el("h3", {}, "capture warnings"), inspectStatus);
     if (gaps.length + warnings.length === 0) {

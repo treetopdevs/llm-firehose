@@ -115,3 +115,39 @@ test("an older warning failure after a newer warning succeeded does not show the
   await settle();
   expect(statusOf(p).hidden).toBe(true);
 });
+
+test("a repaint of the warnings keeps focus on the inspection button that had it, and leaves other focus alone", async () => {
+  let resolve!: (v: { name: string; ok: boolean; detail: string }[]) => void;
+  api.doctor.mockReset().mockReturnValue(new Promise((r) => (resolve = r)));
+  const p = createDoctor({ issues: () => issues, onInspectWarning: () => {}, onInspectGap: () => {} });
+  document.body.append(p.root);
+  const pending = p.refresh();
+  warnBtn(p).focus();
+  expect(document.activeElement).toBe(warnBtn(p));
+  resolve([{ name: "spool", ok: true, detail: "writable" }]);
+  await pending;
+  await settle();
+  expect(document.activeElement).toBe(warnBtn(p));
+  expect(document.activeElement!.getAttribute("data-key")).toBe("warning:w1");
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  outside.focus();
+  p.redraw();
+  expect(document.activeElement).toBe(outside);
+  p.root.remove();
+  outside.remove();
+});
+
+test("when the focused warning is gone after a repaint, focus lands on Doctor rather than the document", async () => {
+  api.doctor.mockReset().mockResolvedValue([]);
+  let now = issues;
+  const p = createDoctor({ issues: () => now, onInspectWarning: () => {}, onInspectGap: () => {} });
+  document.body.append(p.root);
+  await p.refresh();
+  await settle();
+  warnBtn(p).focus();
+  now = { gaps: issues.gaps, warnings: [] };
+  p.redraw();
+  expect(document.activeElement).toBe(p.root);
+  p.root.remove();
+});
