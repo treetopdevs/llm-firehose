@@ -1,6 +1,7 @@
 package projection
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -106,10 +107,12 @@ func TestProjectionActivityRecordsTracksFileAndErrorObservations(t *testing.T) {
 	})
 
 	var got []ActivityRecord
-	ix.ActivityRecords([]string{"repo-a", "jj:repo-a"}, base, base.Add(time.Hour), func(rec ActivityRecord) bool {
+	if err := ix.ActivityRecords(context.Background(), []string{"repo-a", "jj:repo-a"}, base, base.Add(time.Hour), func(rec ActivityRecord) bool {
 		got = append(got, rec)
 		return true
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(got) != 3 {
 		t.Fatalf("got %d records, want 3: %+v", len(got), got)
@@ -126,11 +129,23 @@ func TestProjectionActivityRecordsTracksFileAndErrorObservations(t *testing.T) {
 
 	// Early stop when yield returns false.
 	stopped := 0
-	ix.ActivityRecords([]string{"repo-a"}, base, base.Add(time.Hour), func(ActivityRecord) bool {
+	if err := ix.ActivityRecords(context.Background(), []string{"repo-a"}, base, base.Add(time.Hour), func(ActivityRecord) bool {
 		stopped++
 		return false
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if stopped != 1 {
 		t.Fatalf("expected early stop after 1 record, got %d", stopped)
+	}
+
+	// Pre-cancelled context returns immediately with context.Canceled.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ix.ActivityRecords(ctx, []string{"repo-a"}, base, base.Add(time.Hour), func(ActivityRecord) bool {
+		t.Fatal("yield called on cancelled context")
+		return true
+	}); err != context.Canceled {
+		t.Fatalf("got err %v, want context.Canceled", err)
 	}
 }

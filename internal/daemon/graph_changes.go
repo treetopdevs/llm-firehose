@@ -20,19 +20,22 @@ func (s *Server) runGraphChanges(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	type observed struct {
-		signature string
-		pending   bool
-		root      string
-		common    string
-		jjRepo    string
-		resolved  bool
+		signature  string
+		pending    bool
+		root       string
+		common     string
+		jjRepo     string
+		resolved   bool
+		retryAfter time.Time
 	}
+	const metadataRetryInterval = 30 * time.Second
 	state := map[string]observed{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			now := time.Now()
 			for _, repo := range s.graph.service.Repositories() {
 				root, _, err := s.graph.service.Root(repo.ID)
 				if err != nil {
@@ -40,24 +43,36 @@ func (s *Server) runGraphChanges(ctx context.Context) {
 				}
 				previous, exists := state[repo.ID]
 				common, jjRepo := previous.common, previous.jjRepo
-				if !previous.resolved || previous.root != root || (common != "" && !pathExists(common)) {
+				retryAfter := previous.retryAfter
+				needsDiscover := !previous.resolved ||
+					previous.root != root ||
+					(common != "" && !pathExists(common)) ||
+					(common == "" && jjRepo == "" && !now.Before(retryAfter))
+				if needsDiscover {
 					common, _ = workspace.Observe(root)
 					jjRepo, _ = workspace.ObserveJJ(root)
+					if common == "" && jjRepo == "" {
+						retryAfter = now.Add(metadataRetryInterval)
+					} else {
+						retryAfter = time.Time{}
+					}
 				}
 				signature := graphMetadataFingerprintWithRoots(root, common, jjRepo)
 				if !exists {
-					state[repo.ID] = observed{signature: signature, root: root, common: common, jjRepo: jjRepo, resolved: true}
+					state[repo.ID] = observed{signature: signature, root: root, common: common, jjRepo: jjRepo, resolved: true, retryAfter: retryAfter}
 					continue
 				}
 				if signature != previous.signature {
-					state[repo.ID] = observed{signature: signature, pending: true, root: root, common: common, jjRepo: jjRepo, resolved: true}
+					state[repo.ID] = observed{signature: signature, pending: true, root: root, common: common, jjRepo: jjRepo, resolved: true, retryAfter: retryAfter}
 					continue
 				}
 				if previous.pending {
-					state[repo.ID] = observed{signature: signature, pending: false, root: root, common: common, jjRepo: jjRepo, resolved: true}
+					state[repo.ID] = observed{signature: signature, pending: false, root: root, common: common, jjRepo: jjRepo, resolved: true, retryAfter: retryAfter}
 					scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 					_, _ = s.graph.service.Snapshot(scanCtx, repo.ID, "", true)
 					cancel()
+				} else if needsDiscover {
+					state[repo.ID] = observed{signature: signature, pending: false, root: root, common: common, jjRepo: jjRepo, resolved: true, retryAfter: retryAfter}
 				}
 			}
 		}

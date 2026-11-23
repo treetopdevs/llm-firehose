@@ -1,6 +1,8 @@
 package projection
 
 import (
+	"context"
+	"strings"
 	"time"
 
 	"agentfirehose/internal/event"
@@ -29,8 +31,9 @@ func (ix *Projection) intern(s string) string {
 	if v, ok := ix.strings[s]; ok {
 		return v
 	}
-	ix.strings[s] = s
-	return s
+	owned := strings.Clone(s)
+	ix.strings[owned] = owned
+	return owned
 }
 
 // foldActivity indexes one file or error observation under its repository
@@ -68,6 +71,15 @@ func (ix *Projection) foldActivity(ev event.Event, day, canonical string) {
 	if !isFile && len(paths) == 0 {
 		return
 	}
+	var owned []string
+	if len(paths) > 0 {
+		owned = make([]string, len(paths))
+		for i, p := range paths {
+			// Clone substrings (e.g. from ApplyPatchPaths) so the full patch or
+			// output payload is not pinned in memory for the projection lifetime.
+			owned[i] = strings.Clone(p)
+		}
+	}
 
 	idx := len(ix.activity)
 	ix.activity = append(ix.activity, ActivityRecord{
@@ -79,7 +91,7 @@ func (ix *Projection) foldActivity(ev event.Event, day, canonical string) {
 		RootAlias:     ix.intern(ev.RootAlias),
 		IsFile:        isFile,
 		ErrorSig:      ix.intern(signature),
-		Paths:         paths,
+		Paths:         owned,
 	})
 	if ev.RepoID != "" {
 		k := ix.intern(ev.RepoID)
@@ -91,11 +103,19 @@ func (ix *Projection) foldActivity(ev event.Event, day, canonical string) {
 	}
 }
 
+// activityCheckInterval bounds how many out-of-window records ActivityRecords
+// inspects between context cancellation checks while holding the read lock.
+const activityCheckInterval = 128
+
 // ActivityRecords streams every projected file or error observation matching
 // any of repoIDs with timestamp in [from, to) to yield in ingestion order.
 // Records carrying multiple matching repo aliases (e.g. colocated Git + JJ)
-// are yielded once. Iteration stops immediately when yield returns false.
-func (ix *Projection) ActivityRecords(repoIDs []string, from, to time.Time, yield func(ActivityRecord) bool) {
+// are yielded once. Iteration stops promptly on ctx cancellation or when yield
+// returns false.
+func (ix *Projection) ActivityRecords(ctx context.Context, repoIDs []string, from, to time.Time, yield func(ActivityRecord) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 
@@ -119,24 +139,34 @@ func (ix *Projection) ActivityRecords(repoIDs []string, from, to time.Time, yiel
 		}
 	}
 	if len(lists) == 0 {
-		return
+		return nil
 	}
 	if len(lists) == 1 {
-		for _, idx := range lists[0] {
+		for n, idx := range lists[0] {
+			if n%activityCheckInterval == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			rec := ix.activity[idx]
 			if rec.Time.Before(from) || !rec.Time.Before(to) {
 				continue
 			}
 			if !yield(rec) {
-				return
+				return ctx.Err()
 			}
 		}
-		return
+		return ctx.Err()
 	}
 
 	pos := make([]int, len(lists))
 	lastIdx := -1
-	for {
+	for n := 0; ; n++ {
+		if n%activityCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		minIdx := -1
 		minList := -1
 		for i, l := range lists {
@@ -149,7 +179,7 @@ func (ix *Projection) ActivityRecords(repoIDs []string, from, to time.Time, yiel
 			}
 		}
 		if minList < 0 {
-			return
+			return ctx.Err()
 		}
 		pos[minList]++
 		if minIdx == lastIdx {
@@ -161,7 +191,7 @@ func (ix *Projection) ActivityRecords(repoIDs []string, from, to time.Time, yiel
 			continue
 		}
 		if !yield(rec) {
-			return
+			return ctx.Err()
 		}
 	}
 }

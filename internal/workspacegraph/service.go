@@ -25,13 +25,19 @@ var ErrCursor = errors.New("expired or invalid graph cursor")
 // coalescing and concurrency without running git/jj subprocesses.
 var scanFunc = scan
 
+// onInflightJoin is a test seam invoked after a caller joins an in-flight scan.
+var onInflightJoin func()
+
 type inflightScan struct {
-	done     chan struct{}
-	epoch    uint64
-	sequence uint64
-	limit    int
-	snap     Snapshot
-	err      error
+	done      chan struct{}
+	cancel    context.CancelFunc
+	epoch     uint64
+	sequence  uint64
+	limit     int
+	waiters   int
+	abandoned bool
+	snap      Snapshot
+	err       error
 }
 
 type registration struct {
@@ -295,74 +301,113 @@ func (s *Service) Snapshot(ctx context.Context, id, cursor string, refresh bool)
 		s.mu.Unlock()
 		return out, nil
 	}
-	if in := r.inflight; in != nil && in.epoch == epoch && in.sequence == r.sequence && in.limit >= limit {
-		s.mu.Unlock()
-		select {
-		case <-in.done:
-			if in.err != nil {
-				return Snapshot{}, in.err
+	if err := ctx.Err(); err != nil {
+		if r.inflight == nil {
+			r.failed = true
+			if r.snapshot != nil {
+				v := clone(*r.snapshot)
+				v.Stale = true
+				v.Repository.Status = "stale"
+				v.Warnings = append(v.Warnings, "scan failed; last successful snapshot retained")
+				r.snapshot = &v
+				out := clone(v)
+				s.mu.Unlock()
+				return out, nil
 			}
-			return clone(in.snap), nil
-		case <-ctx.Done():
-			return Snapshot{}, ctx.Err()
 		}
+		s.mu.Unlock()
+		return Snapshot{}, err
+	}
+	if in := r.inflight; in != nil && !in.abandoned && in.epoch == epoch && in.sequence == r.sequence && in.limit >= limit {
+		in.waiters++
+		joinHook := onInflightJoin
+		s.mu.Unlock()
+		if joinHook != nil {
+			joinHook()
+		}
+		return s.waitForScan(ctx, r, in)
 	}
 	r.sequence++
 	sequence := r.sequence
-	in := &inflightScan{done: make(chan struct{}), epoch: epoch, sequence: sequence, limit: limit}
+	scanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	in := &inflightScan{done: make(chan struct{}), cancel: cancel, epoch: epoch, sequence: sequence, limit: limit, waiters: 1}
 	r.inflight = in
 	s.mu.Unlock()
-	scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	v, e := scanFunc(scanCtx, copyReg, limit, mode)
-	s.mu.Lock()
-	var out Snapshot
-	var outErr error
-	switch {
-	case epoch != s.epoch:
-		outErr = errors.New("privacy changed; retry scan")
-	case sequence != r.sequence:
-		if r.snapshot != nil {
-			out = clone(*r.snapshot)
-		} else {
-			outErr = errors.New("scan superseded; retry")
-		}
-	case e != nil:
-		r.failed = true
-		if r.snapshot != nil {
-			v = clone(*r.snapshot)
-			v.Stale = true
-			v.Repository.Status = "stale"
-			v.Warnings = append(v.Warnings, "scan failed; last successful snapshot retained")
-			r.snapshot = &v
-			out = clone(v)
-		} else {
-			outErr = e
-		}
-	default:
-		r.failed = false
-		v.Generation = strconv.FormatInt(time.Now().UnixNano(), 36)
-		for _, boundary := range v.Boundaries {
-			if boundary.Reason == "history not loaded" {
-				v.NextCursor = v.Generation + ":" + strconv.Itoa(limit)
-				break
+	go func() {
+		defer cancel()
+		v, e := scanFunc(scanCtx, copyReg, limit, mode)
+		s.mu.Lock()
+		var out Snapshot
+		var outErr error
+		switch {
+		case epoch != s.epoch:
+			outErr = errors.New("privacy changed; retry scan")
+		case sequence != r.sequence:
+			if r.snapshot != nil {
+				out = clone(*r.snapshot)
+			} else {
+				outErr = errors.New("scan superseded; retry")
 			}
+		case e != nil:
+			if in.abandoned {
+				outErr = e
+			} else {
+				r.failed = true
+				if r.snapshot != nil {
+					v = clone(*r.snapshot)
+					v.Stale = true
+					v.Repository.Status = "stale"
+					v.Warnings = append(v.Warnings, "scan failed; last successful snapshot retained")
+					r.snapshot = &v
+					out = clone(v)
+				} else {
+					outErr = e
+				}
+			}
+		default:
+			r.failed = false
+			v.Generation = strconv.FormatInt(time.Now().UnixNano(), 36)
+			for _, boundary := range v.Boundaries {
+				if boundary.Reason == "history not loaded" {
+					v.NextCursor = v.Generation + ":" + strconv.Itoa(limit)
+					break
+				}
+			}
+			r.snapshot = &v
+			r.limit = limit
+			out = clone(v)
 		}
-		r.snapshot = &v
-		r.limit = limit
-		out = clone(v)
+		in.snap = out
+		in.err = outErr
+		if r.inflight == in {
+			r.inflight = nil
+		}
+		close(in.done)
+		s.mu.Unlock()
+	}()
+	return s.waitForScan(ctx, r, in)
+}
+
+func (s *Service) waitForScan(ctx context.Context, r *registration, in *inflightScan) (Snapshot, error) {
+	select {
+	case <-in.done:
+		if in.err != nil {
+			return Snapshot{}, in.err
+		}
+		return clone(in.snap), nil
+	case <-ctx.Done():
+		s.mu.Lock()
+		in.waiters--
+		if in.waiters == 0 {
+			in.abandoned = true
+			if r.inflight == in {
+				r.inflight = nil
+			}
+			in.cancel()
+		}
+		s.mu.Unlock()
+		return Snapshot{}, ctx.Err()
 	}
-	in.snap = out
-	in.err = outErr
-	if r.inflight == in {
-		r.inflight = nil
-	}
-	close(in.done)
-	s.mu.Unlock()
-	if outErr != nil {
-		return Snapshot{}, outErr
-	}
-	return clone(out), nil
 }
 func clone(v Snapshot) Snapshot {
 	v.Nodes = append([]Revision{}, v.Nodes...)

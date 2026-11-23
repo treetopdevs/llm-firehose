@@ -362,9 +362,9 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	attachments := map[string]association{}
 	aliases := map[string]string{}
 	if _, wsAliases, ok := s.graph.service.WorkspaceAliases(snapshot.Repository.ID); ok {
-		for wsID, ids := range wsAliases {
-			for _, id := range ids {
-				aliases[id] = wsID
+		for _, ws := range snapshot.Workspaces {
+			for _, id := range wsAliases[ws.ID] {
+				aliases[id] = ws.ID
 			}
 		}
 	} else {

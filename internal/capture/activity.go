@@ -88,7 +88,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 	heat := map[key]map[int]int{}
 	errorCounts := map[activityPathKey]map[string]map[int]int{}
 	var canceledErr error
-	e.projection.ActivityRecords(repo, from, out.To, func(rec projection.ActivityRecord) bool {
+	err := e.projection.ActivityRecords(ctx, repo, from, out.To, func(rec projection.ActivityRecord) bool {
 		if err := ctx.Err(); err != nil {
 			canceledErr = err
 			return false
@@ -146,7 +146,7 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 	if canceledErr != nil {
 		return out, canceledErr
 	}
-	if err := ctx.Err(); err != nil {
+	if err != nil {
 		return out, err
 	}
 	if e.projection.ReadGap() {

@@ -700,13 +700,19 @@ func TestSnapshotCoalescesConcurrentRefreshes(t *testing.T) {
 	orig := scanFunc
 	gate := make(chan struct{})
 	started := make(chan struct{}, 4)
+	joined := make(chan struct{}, 4)
 	scanFunc = func(ctx context.Context, r registration, limit int, m privacy.Mode) (Snapshot, error) {
 		atomic.AddInt64(&scans, 1)
 		started <- struct{}{}
 		<-gate
 		return orig(ctx, r, limit, m)
 	}
-	t.Cleanup(func() { scanFunc = orig })
+	origJoin := onInflightJoin
+	onInflightJoin = func() { joined <- struct{}{} }
+	t.Cleanup(func() {
+		scanFunc = orig
+		onInflightJoin = origJoin
+	})
 
 	type res struct {
 		snap Snapshot
@@ -722,8 +728,7 @@ func TestSnapshotCoalescesConcurrentRefreshes(t *testing.T) {
 		v, e := s.Snapshot(ctx, repo.ID, "", true)
 		ch <- res{v, e}
 	}()
-	// Give the second caller a moment to join the in-flight scan.
-	time.Sleep(25 * time.Millisecond)
+	<-joined
 	close(gate)
 	r1, r2 := <-ch, <-ch
 	if r1.err != nil || r2.err != nil {
@@ -734,6 +739,63 @@ func TestSnapshotCoalescesConcurrentRefreshes(t *testing.T) {
 	}
 	if r1.snap.Generation != r2.snap.Generation {
 		t.Fatalf("expected shared generation, got %q vs %q", r1.snap.Generation, r2.snap.Generation)
+	}
+}
+
+func TestSnapshotInitiatorCancelDoesNotFailLiveWaiter(t *testing.T) {
+	root := fixture(t)
+	s := New(privacy.ModeFull)
+	repo, err := s.Register(context.Background(), root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := scanFunc
+	origJoin := onInflightJoin
+	gate := make(chan struct{})
+	started := make(chan struct{}, 2)
+	joined := make(chan struct{}, 2)
+	scanFunc = func(ctx context.Context, r registration, limit int, m privacy.Mode) (Snapshot, error) {
+		started <- struct{}{}
+		select {
+		case <-gate:
+			return orig(ctx, r, limit, m)
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		}
+	}
+	onInflightJoin = func() { joined <- struct{}{} }
+	t.Cleanup(func() {
+		scanFunc = orig
+		onInflightJoin = origJoin
+	})
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	err1 := make(chan error, 1)
+	go func() {
+		_, e := s.Snapshot(ctx1, repo.ID, "", true)
+		err1 <- e
+	}()
+	<-started
+
+	type res struct {
+		snap Snapshot
+		err  error
+	}
+	res2 := make(chan res, 1)
+	go func() {
+		v, e := s.Snapshot(context.Background(), repo.ID, "", true)
+		res2 <- res{v, e}
+	}()
+	<-joined
+
+	cancel1()
+	if got := <-err1; got != context.Canceled {
+		t.Fatalf("initiator err = %v, want context.Canceled", got)
+	}
+	close(gate)
+	r2 := <-res2
+	if r2.err != nil || r2.snap.Stale {
+		t.Fatalf("live waiter failed or became stale: err=%v stale=%v", r2.err, r2.snap.Stale)
 	}
 }
 
