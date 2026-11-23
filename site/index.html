@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Firehose: which agent needs you?</title>
+<meta name="description" content="A local-first, live timeline of what Claude Code, Codex and OpenCode are doing on your machine. No backend, no accounts, no telemetry.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1613" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="Agent Firehose: which agent needs you?">
+<meta property="og:description" content="A local-first, live timeline of what your AI coding agents are doing. Everything stays on your machine.">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/MartianGrotesk-VF.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/MartianMono-VF.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.className = "js";</script>
+<script src="demo.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="roll">
+  <div class="strip" aria-hidden="true">
+    <svg class="trace" focusable="false"><path d=""/></svg>
+  </div>
+
+  <header class="top">
+    <a class="wordmark" href="./" aria-label="Agent Firehose, home">Agent Firehose</a>
+    <nav aria-label="Sections">
+      <a href="#sources">Sources</a>
+      <a href="#local">Privacy</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/treetopdevs/llm-firehose">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+
+    <section class="hero" aria-labelledby="hero-h">
+      <p class="eyebrow" data-pulse="0.5"><span class="stamp">10:04:12</span><i class="g">◆</i> live agent timeline</p>
+      <h1 id="hero-h">Which agent needs&nbsp;you<span class="q">?</span></h1>
+      <p class="lede">Agent Firehose is a live, structured timeline of what Claude Code, Codex and OpenCode are doing on your machine. Run more agents in parallel than you could track by hand, and still see the one that is blocked.</p>
+
+      <div class="cta">
+        <div class="cmd">
+          <code id="brew-cmd"><span class="prompt" aria-hidden="true">$</span>brew install treetopdevs/tap/firehose</code>
+          <button type="button" class="copy" data-copy="brew install treetopdevs/tap/firehose" data-target="brew-cmd">Copy</button>
+        </div>
+        <p class="cta-note">macOS and Linux. Open source, MIT. <a href="#desktop">Desktop app for macOS</a></p>
+      </div>
+
+      <figure class="term term-hero" id="demo">
+        <div class="tui" role="group" aria-label="Recreation of the Agent Firehose terminal view">
+          <p class="tui-head" data-head><b>AGENT FIREHOSE</b> <span class="live">● LIVE</span> <span class="dim">1,204 events</span> <span class="needs">NEEDS YOU · 1 · approve Run: rm -rf build</span></p>
+          <ul class="band" data-band>
+            <li><span class="sbar s-o">│</span><span class="agent">opencode</span><span class="spark"><i style="--h:4"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i></span><span class="dwell" style="--p:0.458"></span><span class="age">4m</span><span class="state needs">NEEDS YOU</span><span class="did">approve Run: rm -rf build</span></li>
+            <li><span class="sbar s-x">│</span><span class="agent">codex</span><span class="spark"><i style="--h:4"></i><i style="--h:8"></i><i style="--h:0"></i><i style="--h:4"></i><i style="--h:8"></i><i style="--h:4"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i></span><span class="dwell" style="--p:0.222"></span><span class="age">2m</span><span class="state">idle</span><span class="did">turn complete: rate limit added, tests pass</span></li>
+            <li><span class="sbar s-c">│</span><span class="agent">claude</span><span class="spark"><i style="--h:8"></i><i style="--h:0"></i><i style="--h:8"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:4"></i><i style="--h:4"></i><i style="--h:8"></i><i style="--h:8"></i><i style="--h:8"></i></span><span class="dwell" style="--p:0.033"></span><span class="age">20s</span><span class="state">working</span><span class="did">ran tool Read</span></li>
+          </ul>
+          <ol class="feed" data-feed>
+            <li><span class="clk">10:01:56</span><span class="sbar s-x">│</span><span class="agent">codex</span><span class="ev"><i class="g">≡</i>turn complete: rate limit added, tests pass</span><span class="ws">…/dev/app</span></li>
+            <li><span class="clk">:58</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">■</i>ran Edit on health.go</span><span class="ws">…/dev/api</span></li>
+            <li><span class="clk">10:02:39</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">$</i>ran shell tool</span><span class="ws"></span></li>
+            <li><span class="clk">:45</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">●</i>ran tool Grep</span><span class="ws"></span></li>
+            <li><span class="clk">:57</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">■</i>ran Edit on health_test.go</span><span class="ws"></span></li>
+            <li><span class="clk">10:03:14</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">$</i>ran shell tool</span><span class="ws"></span></li>
+            <li><span class="clk">:35</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">◆</i>agent finished responding</span><span class="ws"></span></li>
+            <li><span class="clk">:49</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">▸</i>user prompt submitted</span><span class="ws"></span></li>
+            <li><span class="clk">10:04:09</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">●</i>ran tool Read</span><span class="ws"></span></li>
+          </ol>
+          <p class="tui-foot">? help · esc workspace · l lanes</p>
+        </div>
+        <figcaption>
+          <span>A recreation of the terminal view, playing invented events in your browser.</span>
+          <button type="button" class="ghost" data-toggle hidden>Pause</button>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="needs-band" id="needs" aria-labelledby="needs-h">
+      <p class="eyebrow" data-pulse="1" data-pulse-len="520"><span class="stamp">:20</span><i class="g">?</i> needs you</p>
+      <div class="split">
+        <div>
+          <h2 id="needs-h">The session you forgot.</h2>
+          <p>Every live session gets one line: the agent, a sparkline of its events over the last five minutes, and a dwell bar for how long it has been in its current state.</p>
+          <p>The bar has a hairline at five minutes and is full at ten. A session waiting past the line is the one you forgot. Sessions that need you sort first, longest wait first.</p>
+        </div>
+        <div class="dwell-fig" role="img" aria-label="Three sessions, sorted by wait. opencode has needed you for 7 minutes, past the five minute hairline. codex has needed you for 2 minutes. claude has been working for 4 seconds.">
+          <div class="dwell-row is-late">
+            <span class="who">opencode</span>
+            <span class="track"><span class="fill" style="--p:.7"></span></span>
+            <span class="age">7m</span>
+            <span class="note"><b>NEEDS YOU</b> approve Run: rm -rf build</span>
+          </div>
+          <div class="dwell-row">
+            <span class="who">codex</span>
+            <span class="track"><span class="fill" style="--p:.2"></span></span>
+            <span class="age">2m</span>
+            <span class="note"><b>NEEDS YOU</b> approve Run: git push origin fix/login</span>
+          </div>
+          <div class="dwell-row is-quiet">
+            <span class="who">claude</span>
+            <span class="track"><span class="fill" style="--p:.012"></span></span>
+            <span class="age">4s</span>
+            <span class="note"><b>working</b> ran Edit on auth.go</span>
+          </div>
+          <div class="dwell-axis" aria-hidden="true">
+            <span>0</span><span>5m<span class="x"> hairline</span></span><span>10m<span class="x"> full</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="altitudes" id="altitudes" aria-labelledby="alt-h">
+      <p class="eyebrow" data-pulse="0.45"><span class="stamp">10:05:02</span><i class="g">≡</i> the viewer</p>
+      <h2 id="alt-h">Three altitudes, one glyph grammar.</h2>
+      <p class="section-lede">Start high, descend into what matters. Scope stays in the header as a breadcrumb, so you always know where you are.</p>
+
+      <div class="viewer" data-viewer hidden>
+        <div class="viewer-side">
+          <div class="alt-tabs" role="tablist" aria-label="Altitude" aria-orientation="vertical">
+            <button type="button" role="tab" id="alt-tab-0" aria-controls="alt-panel" aria-selected="true">Workspace</button>
+            <button type="button" role="tab" id="alt-tab-1" aria-controls="alt-panel" aria-selected="false" tabindex="-1">Session</button>
+            <button type="button" role="tab" id="alt-tab-2" aria-controls="alt-panel" aria-selected="false" tabindex="-1">Call</button>
+          </div>
+          <div class="alt-note" data-note></div>
+        </div>
+        <figure class="term term-alt">
+          <div class="tui" id="alt-panel" role="tabpanel" tabindex="0" aria-labelledby="alt-tab-0" data-screen></div>
+          <figcaption>
+            <span>Pick a cell or a row to open it. Enter descends, esc ascends.</span>
+            <span class="alt-btns">
+              <button class="ghost" type="button" data-up>esc &uarr;</button>
+              <button class="ghost" type="button" data-down>enter &darr;</button>
+            </span>
+          </figcaption>
+        </figure>
+        <p class="sr-only" aria-live="polite" data-status></p>
+      </div>
+
+      <ol class="ladder">
+        <li class="rung">
+          <div class="rung-text">
+            <h3>Workspace</h3>
+            <p>One row per workspace, one column per agent. Each cell is a sparkline, a state glyph and a session count.</p>
+            <p class="keys"><kbd>enter</kbd> on a cell descends</p>
+          </div>
+          <figure class="term frag" aria-label="Workspace view">
+            <div class="tui">
+              <div class="matrix">
+                <span></span><span class="dim">claude</span><span class="dim">codex</span><span class="dim">opencode</span>
+                <span>…/dev/app</span>
+                <span></span>
+                <span class="cell"><span class="spark"><i style="--h:2"></i><i style="--h:4"></i><i style="--h:6"></i><i style="--h:8"></i><i style="--h:4"></i><i style="--h:2"></i><i style="--h:0"></i><i style="--h:2"></i><i style="--h:4"></i><i style="--h:0"></i></span><i class="g">●</i></span>
+                <span></span>
+                <span>…/dev/api</span>
+                <span class="cell is-sel"><span class="spark"><i style="--h:0"></i><i style="--h:2"></i><i style="--h:2"></i><i style="--h:4"></i><i style="--h:2"></i><i style="--h:2"></i><i style="--h:0"></i><i style="--h:4"></i><i style="--h:6"></i><i style="--h:2"></i></span><i class="g">●</i><span class="n">2</span></span>
+                <span></span><span></span>
+                <span>…/dev/web</span>
+                <span></span><span></span>
+                <span class="cell"><span class="spark"><i style="--h:2"></i><i style="--h:2"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:4"></i><i style="--h:2"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:0"></i><i style="--h:8"></i></span><i class="g needs">?</i></span>
+              </div>
+            </div>
+          </figure>
+        </li>
+        <li class="rung">
+          <div class="rung-text">
+            <h3>Session</h3>
+            <p>The live feed, scoped to the cell you picked. Rows print the clock and workspace only when they change, and repeats coalesce into one row with a ×N counter.</p>
+            <p class="keys"><kbd>enter</kbd> on a row descends, <kbd>esc</kbd> ascends</p>
+          </div>
+          <figure class="term frag" aria-label="Session view">
+            <div class="tui">
+              <p class="tui-head"><b>AGENT FIREHOSE</b> <span class="live">● LIVE</span> <span class="dim">▸</span> …/dev/api · claude</p>
+              <ol class="feed">
+                <li><span class="clk">10:04:19</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">■</i>ran Edit on router.go</span><span class="ws">…/dev/api</span></li>
+                <li class="is-sel"><span class="clk">:27</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">$</i>ran shell tool: git commit</span><span class="ws"></span></li>
+                <li><span class="clk">:36</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">●</i>ran tool Grep</span><span class="ws"></span></li>
+                <li><span class="clk">:48</span><span class="sbar s-c">│</span><span class="agent">claude</span><span class="ev"><i class="g">■</i>ran Edit on router_test.go <span class="dim">×2</span></span><span class="ws"></span></li>
+              </ol>
+            </div>
+          </figure>
+        </li>
+        <li class="rung">
+          <div class="rung-text">
+            <h3>Call</h3>
+            <p>A designed table, not a payload dump. When a source reports both ends of a call, start and end are paired by call id with the duration, then the request and the response as keys and values.</p>
+            <p class="keys"><kbd>esc</kbd> ascends</p>
+          </div>
+          <figure class="term frag" aria-label="Call view">
+            <div class="tui">
+              <p class="call-title"><span class="dim">10:04:27.218</span> <i class="g">$</i> shell  Bash</p>
+              <p class="call-sum">ran shell tool: git commit</p>
+              <dl class="kv">
+                <dt>started</dt><dd>10:04:27.218</dd>
+                <dt>ended</dt><dd>10:04:31.902 <span class="dim">4.68s</span></dd>
+                <dt>ids</dt><dd>session fixture-api · call call-0042</dd>
+              </dl>
+              <p class="kv-title">request</p>
+              <dl class="kv">
+                <dt>status</dt><dd>started</dd>
+              </dl>
+              <p class="kv-title">response</p>
+              <dl class="kv">
+                <dt>status</dt><dd>success</dd>
+              </dl>
+            </div>
+          </figure>
+        </li>
+      </ol>
+    </section>
+
+    <section class="sources" id="sources" aria-labelledby="src-h">
+      <p class="eyebrow" data-pulse="0.4"><span class="stamp">:41</span><i class="g">●</i> sources</p>
+      <h2 id="src-h">It reads the agents you already run.</h2>
+      <p class="section-lede">Every source is mapped into one normalized event before it is shown, stored or exported. Capture paths fail silently: a broken hook becomes a warning in the timeline, never an interruption in your session.</p>
+
+      <table class="src-table">
+        <thead>
+          <tr><th scope="col">Source</th><th scope="col">Depth</th><th scope="col">How it is captured</th><th scope="col">Wire it up</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Claude Code</th>
+            <td data-label="Depth"><span class="depth deep">deep</span></td>
+            <td data-label="How">Asynchronous, metadata-only hooks forward through a fail-silent local command.</td>
+            <td data-label="Wire it up"><code>firehose install claude-code</code></td>
+          </tr>
+          <tr>
+            <th scope="row">Claude Code OTel</th>
+            <td data-label="Depth"><span class="depth">supplemental</span></td>
+            <td data-label="How">Opt-in loopback request and usage metadata. Identity and content are discarded.</td>
+            <td data-label="Wire it up"><code>firehose install claude-otel</code></td>
+          </tr>
+          <tr>
+            <th scope="row">Codex</th>
+            <td data-label="Depth"><span class="depth deep">deep</span></td>
+            <td data-label="How">A crash-safe, durable tail of <code>~/.codex/sessions</code>, plus optional lifecycle and tool hooks.</td>
+            <td data-label="Wire it up"><code>firehose install codex</code></td>
+          </tr>
+          <tr>
+            <th scope="row">OpenCode</th>
+            <td data-label="Depth"><span class="depth deep">deep</span></td>
+            <td data-label="How">A plugin forwards high-signal bus events and bounded drift warnings.</td>
+            <td data-label="Wire it up"><code>firehose install opencode</code></td>
+          </tr>
+          <tr>
+            <th scope="row">Antigravity</th>
+            <td data-label="Depth"><span class="depth deep">deep</span></td>
+            <td data-label="How">Three post-only hooks. Firehose never sits in a permission decision.</td>
+            <td data-label="Wire it up"><code>firehose install antigravity</code></td>
+          </tr>
+          <tr>
+            <th scope="row">Any process</th>
+            <td data-label="Depth"><span class="depth">shallow</span></td>
+            <td data-label="How">A process watcher emits start and stop for known agent binaries.</td>
+            <td data-label="Wire it up"><span class="soft">nothing to install</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Anything else</th>
+            <td data-label="Depth"><span class="depth">generic</span></td>
+            <td data-label="How">Pipe NDJSON in, or emit a single event from a script.</td>
+            <td data-label="Wire it up"><code>firehose ingest</code> <span class="soft">or</span> <code>firehose emit</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="local" id="local" aria-labelledby="local-h">
+      <p class="eyebrow" data-pulse="0.4"><span class="stamp">10:06:17</span><i class="g">■</i> on your machine</p>
+      <h2 id="local-h">Nothing leaves the machine.</h2>
+      <p class="section-lede">No backend, no accounts, no sync, no telemetry. The capture engine, the history and the viewer all run on-device.</p>
+
+      <dl class="facts">
+        <div>
+          <dt>Where history lives</dt>
+          <dd>Append-only daily files in <code>~/.agentfirehose/spool/</code>. Delete the directory to delete your history.</dd>
+        </div>
+        <div>
+          <dt>What listens</dt>
+          <dd>An optional daemon on <code>127.0.0.1:4517</code>, loopback only. Capture never depends on it being up.</dd>
+        </div>
+        <div>
+          <dt>What gets stored</dt>
+          <dd>Only what the privacy mode allows. Redaction runs before anything is written, so the spool never holds more.</dd>
+        </div>
+      </dl>
+
+      <div class="modes">
+        <h3>One event, three privacy modes</h3>
+        <p>Modes govern captured history: the spool, the live stream and exports. Payload values and paths are reduced; the one-line summary is kept in every mode. Switch with <code>firehose privacy minimal</code>, and it applies live.</p>
+        <table class="mode-table">
+          <thead>
+            <tr><th scope="col">Field</th><th scope="col">minimal</th><th scope="col">balanced <span class="soft">default</span></th><th scope="col">full</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">summary</th>
+              <td data-label="minimal">deploy finished</td>
+              <td data-label="balanced">deploy finished</td>
+              <td data-label="full">deploy finished</td>
+            </tr>
+            <tr>
+              <th scope="row">payload.target</th>
+              <td data-label="minimal"><span class="redact">{sha256: 262182e6…, len: 10}</span></td>
+              <td data-label="balanced"><span>staging-eu <span class="soft">strings are cut at 240 characters</span></span></td>
+              <td data-label="full">staging-eu</td>
+            </tr>
+            <tr>
+              <th scope="row">cwd</th>
+              <td data-label="minimal"><span class="redact">ac21ee98…</span></td>
+              <td data-label="balanced"><span class="redact">ac21ee98…</span></td>
+              <td data-label="full">/Users/you/dev/app</td>
+            </tr>
+            <tr>
+              <th scope="row">raw</th>
+              <td data-label="minimal"><span class="redact">dropped</span></td>
+              <td data-label="balanced"><span class="redact">dropped</span></td>
+              <td data-label="full">the source payload, as received</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="fine">Local views are not redacted: on your own machine the workspace graph shows readable names and paths in every mode. <a href="https://github.com/treetopdevs/llm-firehose/blob/main/docs/contracts.md">Read the privacy contract</a></p>
+      </div>
+    </section>
+
+    <section class="install" id="install" aria-labelledby="install-h">
+      <p class="eyebrow" data-pulse="0.7"><span class="stamp">:58</span><i class="g">$</i> install</p>
+      <h2 id="install-h">Three commands to a live view.</h2>
+
+      <ol class="steps">
+        <li>
+          <h3>Install</h3>
+          <div class="cmd on-dark">
+            <code id="s1"><span class="prompt" aria-hidden="true">$</span>brew install treetopdevs/tap/firehose</code>
+            <button type="button" class="copy" data-copy="brew install treetopdevs/tap/firehose" data-target="s1">Copy</button>
+          </div>
+          <p>Installs <code>firehose</code> and the <code>firehosed</code> daemon on macOS or Linux. To keep the daemon running at login, add <code>brew services start firehose</code>.</p>
+        </li>
+        <li>
+          <h3>Wire up an agent</h3>
+          <div class="cmd on-dark">
+            <code id="s2"><span class="prompt" aria-hidden="true">$</span>firehose install claude-code</code>
+            <button type="button" class="copy" data-copy="firehose install claude-code" data-target="s2">Copy</button>
+          </div>
+          <p>Merges hooks into <code>~/.claude/settings.json</code> and backs the file up first. Repeat with <code>codex</code>, <code>opencode</code> or <code>antigravity</code>, then run <code>firehose doctor</code> to check the wiring.</p>
+        </li>
+        <li>
+          <h3>Watch</h3>
+          <div class="cmd on-dark">
+            <code id="s3"><span class="prompt" aria-hidden="true">$</span>firehose</code>
+            <button type="button" class="copy" data-copy="firehose" data-target="s3">Copy</button>
+          </div>
+          <p>Opens the live view. Press <kbd>?</kbd> for the legend, <kbd>space</kbd> to pause, <kbd>e</kbd> to export exactly what you are looking at.</p>
+        </li>
+      </ol>
+
+      <div class="also">
+        <div id="desktop">
+          <h3>Prefer a window?</h3>
+          <p>The desktop app for macOS wraps the same engine: an attention inbox, session lanes on a wall-clock axis, a workspace graph, and a doctor with one-click adapter install. It starts its own daemon only when you are not already running one.</p>
+          <div class="cmd on-dark">
+            <code id="s4"><span class="prompt" aria-hidden="true">$</span>brew install --cask treetopdevs/tap/agent-firehose</code>
+            <button type="button" class="copy" data-copy="brew install --cask treetopdevs/tap/agent-firehose" data-target="s4">Copy</button>
+          </div>
+        </div>
+        <div>
+          <h3>From source</h3>
+          <p>Go, Bubble Tea and the standard library. Clone the repository, run <code>go build ./cmd/firehose</code>, and put the binary on your <code>PATH</code>.</p>
+          <p><a href="https://github.com/treetopdevs/llm-firehose">Source on GitHub</a> · <a href="https://github.com/treetopdevs/llm-firehose/releases/tag/v0.6.0">Release 0.6.0</a></p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <p class="wordmark">Agent Firehose</p>
+    <ul>
+      <li><a href="https://github.com/treetopdevs/llm-firehose">GitHub</a></li>
+      <li><a href="https://github.com/treetopdevs/llm-firehose/blob/main/docs/adapters.md">Adapter guide</a></li>
+      <li><a href="https://github.com/treetopdevs/llm-firehose/blob/main/docs/contracts.md">Platform contract</a></li>
+      <li><a href="https://github.com/treetopdevs/llm-firehose/blob/main/docs/event.schema.json">Event schema</a></li>
+      <li><a href="https://github.com/treetopdevs/llm-firehose/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/treetopdevs/llm-firehose/blob/main/LICENSE">MIT licence</a></li>
+    </ul>
+    <p class="fine">This page loads no third-party scripts, fonts or trackers. Set in Martian Grotesk and Martian Mono.</p>
+  </footer>
+</div>
+</body>
+</html>
