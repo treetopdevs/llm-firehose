@@ -69,11 +69,29 @@ func (g *gitSession) dirtyState(ctx context.Context, root string, stats bool) (s
 			detail = all
 		}
 	}
-	numstat, e := runEnv(ctx, root, "git", env, "-c", "diff.autoRefreshIndex=false", "diff", "--numstat", "-z", "-M", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD", "--")
-	if e != nil {
-		numstat = ""
+	if hasTrackedChanges(status) {
+		if out, e := runEnv(ctx, root, "git", env, "-c", "diff.autoRefreshIndex=false", "diff", "--numstat", "-z", "-M", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD", "--"); e == nil {
+			numstat = out
+		}
 	}
 	return status, detail, numstat, nil
+}
+
+// hasTrackedChanges reports whether a `status --porcelain=v1 -z` listing
+// contains any tracked (non-untracked, non-ignored) entry. Worktrees with only
+// untracked files have an empty `git diff HEAD`, so skipping numstat avoids
+// spawning an extra git process per untracked-only worktree.
+func hasTrackedChanges(status string) bool {
+	for _, f := range strings.Split(status, "\x00") {
+		if len(f) < 3 {
+			continue
+		}
+		if (f[0] == '?' && f[1] == '?') || (f[0] == '!' && f[1] == '!') {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // hasUntrackedDirectory reports whether a `status -z` listing folds an

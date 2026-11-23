@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,10 +76,19 @@ func gitMissingCommits(ctx context.Context, g *gitSession, ids []string) map[str
 	return missing
 }
 
-// dirtyWorkers bounds how many checkouts are inspected at once: enough that a
-// repository with dozens of worktrees scans in a few seconds, few enough that a
-// scan never saturates the machine.
-const dirtyWorkers = 4
+// dirtyWorkerCount bounds how many checkouts are inspected at once: enough that
+// a repository with dozens of worktrees scans promptly on multi-core hosts, few
+// enough that a scan never saturates the machine.
+func dirtyWorkerCount() int {
+	n := runtime.GOMAXPROCS(0)
+	if n < 4 {
+		return 4
+	}
+	if n > 8 {
+		return 8
+	}
+	return n
+}
 
 func scanGit(ctx context.Context, g *gitSession, limit int, m privacy.Mode, v *Snapshot) error {
 	b, e := g.run(ctx, "worktree", "list", "--porcelain", "-z")
@@ -135,7 +145,11 @@ func scanGit(ctx context.Context, g *gitSession, limit int, m privacy.Mode, v *S
 	}
 	jobs := make(chan int)
 	var wg sync.WaitGroup
-	for n := 0; n < dirtyWorkers; n++ {
+	workers := dirtyWorkerCount()
+	if len(roots) < workers {
+		workers = len(roots)
+	}
+	for n := 0; n < workers; n++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

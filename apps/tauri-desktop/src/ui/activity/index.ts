@@ -122,6 +122,8 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
   let worktree = "";
   let resp: ActivityResponse | undefined;
   let tree: TreeNode | undefined;
+  let cachedHistResp: ActivityResponse | undefined;
+  let cachedHist: number[] = [];
   let error = "";
   let loading = false;
   /** Brushed instants, or undefined for the whole window. */
@@ -139,6 +141,45 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
   let lastKey = "";
   /** The brush in flight: where it started and how to tear it down. */
   let drag: { gen: number; key: string; stop(): void } | undefined;
+
+  type MapDirRec = {
+    key: string;
+    node: TreeNode;
+    g: SVGGElement;
+    title: SVGTitleElement;
+    text?: SVGTextElement;
+  };
+  type MapTileRec = {
+    key: string;
+    node: TreeNode;
+    g: SVGGElement;
+    rect: SVGRectElement;
+    title: SVGTitleElement;
+    errKey: string;
+  };
+  let mapView:
+    | {
+        tree: TreeNode;
+        zoom: string;
+        width: number;
+        svg: SVGSVGElement;
+        dirs: MapDirRec[];
+        tiles: MapTileRec[];
+        dirByKey: Map<string, MapDirRec>;
+      }
+    | undefined;
+  let scrubView:
+    | {
+        resp: ActivityResponse;
+        width: number;
+        bw: number;
+        strip: SVGSVGElement;
+        bars: { index: number; rect: SVGRectElement }[];
+        brushRect: SVGRectElement;
+        footText: HTMLSpanElement;
+        wholeBtn?: HTMLButtonElement;
+      }
+    | undefined;
 
   for (const p of PRESETS) {
     const b = el("button", { type: "button", "data-preset": p.id, "aria-pressed": "false" }, p.label);
@@ -268,7 +309,30 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
     a = Math.max(0, Math.min(a, r.buckets - 1));
     b = Math.max(a + 1, Math.min(b, r.buckets));
     brush = a === 0 && b === r.buckets ? undefined : { from: from + a * ms, to: from + b * ms };
-    render();
+    renderRange();
+  }
+
+  function renderRange() {
+    if (!resp || !tree || !mapView || !scrubView || mapView.tree !== tree || scrubView.resp !== resp || !chart.contains(mapView.svg) || !scrub.contains(scrubView.strip)) {
+      render();
+      return;
+    }
+    const focusedErrorControl = root.querySelector(".map-errors")?.contains(document.activeElement);
+    const restore = focusedErrorControl ? keepFocus(root) : undefined;
+    const r = resp;
+    const [a, b] = range(r);
+    paintMapRange(a, b);
+    paintScrubRange(r, a, b);
+    clear(list);
+    renderList(r, a, b);
+    root.querySelector(".map-errors")?.remove();
+    if (r.error_paths) {
+      list.after(renderErrorPaths(errorRange(r.error_paths, a, b), groupNames(), errorPage));
+    }
+    restore?.();
+    if (focusedErrorControl && (!root.contains(document.activeElement) || (document.activeElement instanceof HTMLButtonElement && document.activeElement.disabled))) {
+      root.querySelector<HTMLElement>('[data-key="error-path-heading"]')?.focus();
+    }
   }
 
   // ---- render -----------------------------------------------------------------
@@ -308,13 +372,15 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
     renderHead();
     clear(notices);
     clear(crumbs);
-    clear(chart);
-    clear(scrub);
     root.querySelector(".map-errors")?.remove();
     clear(list);
     summary.textContent = "";
     bodyEl.hidden = false;
     if (minimal()) {
+      clear(chart);
+      clear(scrub);
+      mapView = undefined;
+      scrubView = undefined;
       notice(MINIMAL_NOTICE, "unavailable");
       bodyEl.hidden = true;
       restore();
@@ -330,6 +396,10 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
       }
     }
     if (!resp || !tree) {
+      clear(chart);
+      clear(scrub);
+      mapView = undefined;
+      scrubView = undefined;
       chart.append(el("p", { class: "dim map-empty" }, loading ? "Loading activity…" : repo ? "" : "Select a project."));
       restore();
       return;
@@ -393,50 +463,40 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
     });
   }
 
-  function renderMap(a: number, b: number) {
-    const view = (zoom && findNode(tree!, zoom)) || tree!;
+  function ensureMapSvg() {
+    const t = tree!;
     const width = Math.max(320, chart.clientWidth || FALLBACK_W);
-    const rects = layout(view, width, MAP_H);
-    const inRange = rangeTotals(tree!, a, b);
-    const errors = new Map(errorRange(resp?.error_paths ?? [],a,b).map(p=>[errorPathKey(p.group,p.path),p]));
-    let max = 0;
-    for (const x of rects) if (!x.node.children) max = Math.max(max, inRange.get(x.key) ?? 0);
+    if (mapView && mapView.tree === t && mapView.zoom === zoom && mapView.width === width && chart.contains(mapView.svg)) {
+      return;
+    }
+    const viewNode = (zoom && findNode(t, zoom)) || t;
+    const rects = layout(viewNode, width, MAP_H);
     const map = svg("svg", { class: "map-svg", viewBox: `0 0 ${width} ${MAP_H}`, width, height: MAP_H, role: "group", "aria-label": "Activity Map" });
+    const dirs: MapDirRec[] = [];
+    const tiles: MapTileRec[] = [];
+    const dirByKey = new Map<string, MapDirRec>();
     for (const [i, x] of rects.entries()) {
-      const heat = inRange.get(x.key) ?? 0;
-      const title = svg("title", {}, `${pathLabel(x.node)}\nHeat in range: ${heat.toLocaleString()}\nWindow total: ${x.node.total.toLocaleString()}`);
+      const title = svg("title", {});
       if (x.node.children) {
         const g = svg("g", { class: "map-dir", "data-key": x.key, tabindex: 0, role: "button" }, title);
         g.append(svg("rect", { x: x.x, y: x.y, width: x.w, height: x.h, rx: 2 }));
+        let text: SVGTextElement | undefined;
         if (x.label) {
           const clip = `map-clip-${i}`;
+          text = svg("text", { x: x.x + PAD + 2, y: x.y + PAD + LABEL_H - 4, "clip-path": `url(#${clip})` });
           g.append(
             svg("clipPath", { id: clip }, svg("rect", { x: x.x, y: x.y, width: Math.max(0, x.w - PAD * 2), height: LABEL_H + PAD })),
-            svg("text", { x: x.x + PAD + 2, y: x.y + PAD + LABEL_H - 4, "clip-path": `url(#${clip})` }, `${stripControl(x.node.name)} · ${heat.toLocaleString()}`),
+            text,
           );
         }
-        // Daemon group ids are the event's own worktree/JJ id and rows expose no alias,
-        // so only a group equal to a workspace id (worktree_id) can narrow the worktree;
-        // any other identity zooms as before.
-        const pick = hosted && x.node.group !== "" && x.node.path === "" && workspaces.some((w) => w.id === x.node.group);
-        const zoomIn = () => {
-          if (pick) return host!.onPickWorktree(x.node.group);
-          zoom = x.key;
-          render();
-        };
-        g.addEventListener("click", zoomIn);
-        g.addEventListener("keydown", (e) => {
-          if (LOCAL.mapDir.matches(e)) {
-            e.preventDefault();
-            zoomIn();
-          }
-        });
+        const rec: MapDirRec = { key: x.key, node: x.node, g, title, text };
+        dirs.push(rec);
+        dirByKey.set(x.key, rec);
         map.append(g);
       } else {
-        const repeated = errors.get(errorPathKey(x.node.group,x.node.path))?.repeated ?? 0;
-        if (repeated) title.textContent += `\n${repeated} repeated Error Signatures in range (retained observations)`;
-        const g = svg("g", { class: (heat > 0 ? "map-tile" : "map-tile cold") + (repeated ? " map-storm" : ""), "data-key": x.key }, title);
-        g.append(svg("rect", { x: x.x, y: x.y, width: Math.max(0, x.w - 1), height: Math.max(0, x.h - 1), fill: colour(heat, max) }));
+        const g = svg("g", { class: "map-tile", "data-key": x.key }, title);
+        const rect = svg("rect", { x: x.x, y: x.y, width: Math.max(0, x.w - 1), height: Math.max(0, x.h - 1), fill: "var(--map-zero)" });
+        g.append(rect);
         if (x.w >= FILE_LABEL_W && x.h >= FILE_LABEL_H) {
           const clip = `map-clip-${i}`;
           g.append(
@@ -444,15 +504,81 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
             svg("text", { x: x.x + 3, y: x.y + 12, "clip-path": `url(#${clip})` }, stripControl(x.node.name)),
           );
         }
+        tiles.push({ key: x.key, node: x.node, g, rect, title, errKey: errorPathKey(x.node.group, x.node.path) });
         map.append(g);
       }
     }
+    const activateDir = (target: EventTarget | null) => {
+      const dirEl = (target as Element | null)?.closest?.(".map-dir");
+      const key = dirEl?.getAttribute("data-key");
+      if (!key) return;
+      const rec = dirByKey.get(key);
+      if (!rec) return;
+      // Daemon group ids are the event's own worktree/JJ id and rows expose no alias,
+      // so only a group equal to a workspace id (worktree_id) can narrow the worktree;
+      // any other identity zooms as before.
+      const pick = hosted && rec.node.group !== "" && rec.node.path === "" && workspaces.some((w) => w.id === rec.node.group);
+      if (pick) return host!.onPickWorktree(rec.node.group);
+      zoom = rec.key;
+      render();
+    };
+    map.addEventListener("click", (e) => activateDir(e.target));
+    map.addEventListener("keydown", (e) => {
+      if (LOCAL.mapDir.matches(e)) {
+        e.preventDefault();
+        activateDir(e.target);
+      }
+    });
+    clear(chart);
     chart.append(map);
+    mapView = { tree: t, zoom, width, svg: map, dirs, tiles, dirByKey };
   }
 
-  function renderScrub(r: ActivityResponse, a: number, b: number) {
-    const counts = histogram(r);
+  function paintMapRange(a: number, b: number) {
+    if (!mapView || !tree) return;
+    const inRange = rangeTotals(tree, a, b);
+    const errors = new Map(errorRange(resp?.error_paths ?? [], a, b).map((p) => [errorPathKey(p.group, p.path), p]));
+    let max = 0;
+    for (const tile of mapView.tiles) {
+      const h = inRange.get(tile.key) ?? 0;
+      if (h > max) max = h;
+    }
+    for (const dir of mapView.dirs) {
+      const heat = inRange.get(dir.key) ?? 0;
+      dir.title.textContent = `${pathLabel(dir.node)}\nHeat in range: ${heat.toLocaleString()}\nWindow total: ${dir.node.total.toLocaleString()}`;
+      if (dir.text) {
+        const label = `${stripControl(dir.node.name)} · ${heat.toLocaleString()}`;
+        if (dir.text.textContent !== label) dir.text.textContent = label;
+      }
+    }
+    for (const tile of mapView.tiles) {
+      const heat = inRange.get(tile.key) ?? 0;
+      const repeated = errors.get(tile.errKey)?.repeated ?? 0;
+      const baseTitle = `${pathLabel(tile.node)}\nHeat in range: ${heat.toLocaleString()}\nWindow total: ${tile.node.total.toLocaleString()}`;
+      const nextTitle = repeated ? `${baseTitle}\n${repeated} repeated Error Signatures in range (retained observations)` : baseTitle;
+      if (tile.title.textContent !== nextTitle) tile.title.textContent = nextTitle;
+      const cls = (heat > 0 ? "map-tile" : "map-tile cold") + (repeated ? " map-storm" : "");
+      if (tile.g.getAttribute("class") !== cls) tile.g.setAttribute("class", cls);
+      const fill = colour(heat, max);
+      if (tile.rect.getAttribute("fill") !== fill) tile.rect.setAttribute("fill", fill);
+    }
+  }
+
+  function renderMap(a: number, b: number) {
+    ensureMapSvg();
+    paintMapRange(a, b);
+  }
+
+  function ensureScrubSvg(r: ActivityResponse) {
     const width = Math.max(320, scrub.clientWidth || chart.clientWidth || FALLBACK_W);
+    if (scrubView && scrubView.resp === r && scrubView.width === width && scrub.contains(scrubView.strip)) {
+      return;
+    }
+    if (cachedHistResp !== r) {
+      cachedHistResp = r;
+      cachedHist = histogram(r);
+    }
+    const counts = cachedHist;
     const peak = Math.max(1, ...counts);
     const bw = width / Math.max(1, r.buckets);
     const strip = svg("svg", {
@@ -465,16 +591,20 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
       "aria-label": "Brushed time range",
       "aria-valuemin": 0,
       "aria-valuemax": r.buckets,
-      "aria-valuenow": a,
-      "aria-valuetext": rangeText(r, a, b),
+      "aria-valuenow": 0,
+      "aria-valuetext": "",
       "data-key": "map-strip",
     });
+    const bars: { index: number; rect: SVGRectElement }[] = [];
     counts.forEach((n, i) => {
       if (n <= 0) return;
       const h = Math.max(1, (n / peak) * (STRIP_H - 4));
-      strip.append(svg("rect", { class: i >= a && i < b && (!hosted || brush) ? "map-bar in" : "map-bar", x: i * bw, y: STRIP_H - h, width: Math.max(0.5, bw - 0.5), height: h }));
+      const rect = svg("rect", { class: "map-bar", x: i * bw, y: STRIP_H - h, width: Math.max(0.5, bw - 0.5), height: h });
+      bars.push({ index: i, rect });
+      strip.append(rect);
     });
-    strip.append(svg("rect", { class: "map-brush", x: a * bw, y: 0, width: (b - a) * bw, height: STRIP_H }));
+    const brushRect = svg("rect", { class: "map-brush", x: 0, y: 0, width: width, height: STRIP_H });
+    strip.append(brushRect);
     const from = Date.parse(r.from);
     const end = from + r.buckets * r.bucket_seconds * 1000;
     const axis = svg("g", { class: "map-axis" });
@@ -492,7 +622,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
           claim(e);
           cancelDrag();
           brush = undefined;
-          render();
+          renderRange();
           return;
         }
         if (!e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
@@ -522,8 +652,6 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
     });
     strip.addEventListener("pointerdown", (e) => {
       if (hosted && !active) return;
-      // Every brush change redraws the strip, so the drag lives on the window
-      // and reads the current strip each time.
       const r0 = r;
       const bucketAt = (ev: PointerEvent) => {
         const box = (scrub.querySelector(".map-strip") ?? strip).getBoundingClientRect();
@@ -552,7 +680,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
         stop();
         if (hosted && brush) {
           brush = undefined;
-          render();
+          renderRange();
         }
       };
       const up = () => {
@@ -561,7 +689,7 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
         const picked = brush;
         brush = undefined;
         const ok = picked && !live0();
-        render();
+        renderRange();
         if (!ok) return;
         const b = bounds(r0);
         const v = clampView(picked, b);
@@ -586,14 +714,38 @@ export function createActivityMap(host?: ActivityHost): ActivityMap {
       if (!hosted) setRange(r, 0, r.buckets);
     });
 
+    const footText = el("span", {});
+    let wholeBtn: HTMLButtonElement | undefined;
+    clear(scrub);
     if (hosted) {
-      scrub.append(strip, el("div", { class: "map-scrub-foot dim" }, el("span", {}, rangeText(r, a, b))));
-      return;
+      scrub.append(strip, el("div", { class: "map-scrub-foot dim" }, footText));
+    } else {
+      wholeBtn = el("button", { type: "button", class: "map-whole", "data-key": "map-whole" }, "Whole window");
+      wholeBtn.onclick = () => setRange(r, 0, r.buckets);
+      scrub.append(strip, el("div", { class: "map-scrub-foot dim" }, footText, wholeBtn));
     }
-    const whole = el("button", { type: "button", class: "map-whole", "data-key": "map-whole" }, "Whole window");
-    whole.disabled = !brush;
-    whole.onclick = () => setRange(r, 0, r.buckets);
-    scrub.append(strip, el("div", { class: "map-scrub-foot dim" }, el("span", {}, rangeText(r, a, b)), whole));
+    scrubView = { resp: r, width, bw, strip, bars, brushRect, footText, wholeBtn };
+  }
+
+  function paintScrubRange(r: ActivityResponse, a: number, b: number) {
+    if (!scrubView) return;
+    const text = rangeText(r, a, b);
+    scrubView.strip.setAttribute("aria-valuenow", String(a));
+    scrubView.strip.setAttribute("aria-valuetext", text);
+    const activeBrush = !hosted || !!brush;
+    for (const bar of scrubView.bars) {
+      const cls = bar.index >= a && bar.index < b && activeBrush ? "map-bar in" : "map-bar";
+      if (bar.rect.getAttribute("class") !== cls) bar.rect.setAttribute("class", cls);
+    }
+    scrubView.brushRect.setAttribute("x", String(a * scrubView.bw));
+    scrubView.brushRect.setAttribute("width", String((b - a) * scrubView.bw));
+    if (scrubView.footText.textContent !== text) scrubView.footText.textContent = text;
+    if (scrubView.wholeBtn) scrubView.wholeBtn.disabled = !brush;
+  }
+
+  function renderScrub(r: ActivityResponse, a: number, b: number) {
+    ensureScrubSvg(r);
+    paintScrubRange(r, a, b);
   }
 
   function claim(e: Event) {

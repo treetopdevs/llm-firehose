@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -684,5 +685,158 @@ func TestGitStatusShadowHandlesSHA256Repos(t *testing.T) {
 	out, err := gitStatus(context.Background(), root)
 	if err != nil || !strings.Contains(out, "f.txt") {
 		t.Fatalf("status %q %v", out, err)
+	}
+}
+
+func TestSnapshotCoalescesConcurrentRefreshes(t *testing.T) {
+	root := fixture(t)
+	s := New(privacy.ModeFull)
+	ctx := context.Background()
+	repo, err := s.Register(ctx, root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scans int64
+	orig := scanFunc
+	gate := make(chan struct{})
+	started := make(chan struct{}, 4)
+	joined := make(chan struct{}, 4)
+	scanFunc = func(ctx context.Context, r registration, limit int, m privacy.Mode) (Snapshot, error) {
+		atomic.AddInt64(&scans, 1)
+		started <- struct{}{}
+		<-gate
+		return orig(ctx, r, limit, m)
+	}
+	origJoin := onInflightJoin
+	onInflightJoin = func() { joined <- struct{}{} }
+	t.Cleanup(func() {
+		scanFunc = orig
+		onInflightJoin = origJoin
+	})
+
+	type res struct {
+		snap Snapshot
+		err  error
+	}
+	ch := make(chan res, 2)
+	go func() {
+		v, e := s.Snapshot(ctx, repo.ID, "", true)
+		ch <- res{v, e}
+	}()
+	<-started
+	go func() {
+		v, e := s.Snapshot(ctx, repo.ID, "", true)
+		ch <- res{v, e}
+	}()
+	<-joined
+	close(gate)
+	r1, r2 := <-ch, <-ch
+	if r1.err != nil || r2.err != nil {
+		t.Fatalf("errs: %v %v", r1.err, r2.err)
+	}
+	if atomic.LoadInt64(&scans) != 1 {
+		t.Fatalf("expected 1 coalesced scan, got %d", scans)
+	}
+	if r1.snap.Generation != r2.snap.Generation {
+		t.Fatalf("expected shared generation, got %q vs %q", r1.snap.Generation, r2.snap.Generation)
+	}
+}
+
+func TestSnapshotInitiatorCancelDoesNotFailLiveWaiter(t *testing.T) {
+	root := fixture(t)
+	s := New(privacy.ModeFull)
+	repo, err := s.Register(context.Background(), root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := scanFunc
+	origJoin := onInflightJoin
+	gate := make(chan struct{})
+	started := make(chan struct{}, 2)
+	joined := make(chan struct{}, 2)
+	scanFunc = func(ctx context.Context, r registration, limit int, m privacy.Mode) (Snapshot, error) {
+		started <- struct{}{}
+		select {
+		case <-gate:
+			return orig(ctx, r, limit, m)
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		}
+	}
+	onInflightJoin = func() { joined <- struct{}{} }
+	t.Cleanup(func() {
+		scanFunc = orig
+		onInflightJoin = origJoin
+	})
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	err1 := make(chan error, 1)
+	go func() {
+		_, e := s.Snapshot(ctx1, repo.ID, "", true)
+		err1 <- e
+	}()
+	<-started
+
+	type res struct {
+		snap Snapshot
+		err  error
+	}
+	res2 := make(chan res, 1)
+	go func() {
+		v, e := s.Snapshot(context.Background(), repo.ID, "", true)
+		res2 <- res{v, e}
+	}()
+	<-joined
+
+	cancel1()
+	if got := <-err1; got != context.Canceled {
+		t.Fatalf("initiator err = %v, want context.Canceled", got)
+	}
+	close(gate)
+	r2 := <-res2
+	if r2.err != nil || r2.snap.Stale {
+		t.Fatalf("live waiter failed or became stale: err=%v stale=%v", r2.err, r2.snap.Stale)
+	}
+}
+
+func TestWorkspaceAliasesReturnsCachedScopesWithoutNodeClone(t *testing.T) {
+	root := fixture(t)
+	s := New(privacy.ModeBalanced)
+	ctx := context.Background()
+	repo, err := s.Register(ctx, root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.WorkspaceAliases(repo.ID); ok {
+		t.Fatal("expected ok=false before first snapshot")
+	}
+	snap, err := s.Snapshot(ctx, repo.ID, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoAliases, wsAliases, ok := s.WorkspaceAliases(repo.ID)
+	if !ok || len(repoAliases) == 0 || len(wsAliases) != len(snap.Workspaces) {
+		t.Fatalf("ok=%v repo=%v ws=%v", ok, repoAliases, wsAliases)
+	}
+	for _, ws := range snap.Workspaces {
+		got := wsAliases[ws.ID]
+		if len(got) != 2 || got[0] == "" || got[1] == "" {
+			t.Fatalf("aliases for %s = %v", ws.ID, got)
+		}
+	}
+}
+
+func TestHasTrackedChanges(t *testing.T) {
+	if hasTrackedChanges("") {
+		t.Fatal("empty status has no tracked changes")
+	}
+	if hasTrackedChanges("?? a.txt\x00?? dir/\x00") {
+		t.Fatal("untracked-only status has no tracked changes")
+	}
+	if !hasTrackedChanges("?? a.txt\x00 M b.go\x00") {
+		t.Fatal("modified tracked file must be detected")
+	}
+	if !hasTrackedChanges("A  new.go\x00") {
+		t.Fatal("staged file must be detected")
 	}
 }

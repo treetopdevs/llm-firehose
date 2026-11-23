@@ -93,7 +93,7 @@ func (s *Server) writeGraphRoots(roots []graphRoot) error {
 func (s *Server) runGraphDiscovery(ctx context.Context) {
 	workspacegraph.SweepStaleShadows()
 	s.reconcileGraphRoots(ctx)
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
@@ -361,10 +361,18 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	attachments := map[string]association{}
 	aliases := map[string]string{}
-	for _, ws := range snapshot.Workspaces {
-		_, ids, _ := s.graph.service.EventScope(snapshot.Repository.ID, ws.ID)
-		for _, id := range ids {
-			aliases[id] = ws.ID
+	if _, wsAliases, ok := s.graph.service.WorkspaceAliases(snapshot.Repository.ID); ok {
+		for _, ws := range snapshot.Workspaces {
+			for _, id := range wsAliases[ws.ID] {
+				aliases[id] = ws.ID
+			}
+		}
+	} else {
+		for _, ws := range snapshot.Workspaces {
+			_, ids, _ := s.graph.service.EventScope(snapshot.Repository.ID, ws.ID)
+			for _, id := range ids {
+				aliases[id] = ws.ID
+			}
 		}
 	}
 	for _, session := range s.engine.Attention().Sessions {
@@ -404,12 +412,18 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	var snapshot workspacegraph.Snapshot
-	var scanErr error
+	var wsAliases map[string][]string
+	var haveAliases bool
 	if q.Get("repo_id") != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-		snapshot, scanErr = s.graph.service.Snapshot(ctx, q.Get("repo_id"), "", false)
-		cancel()
+		_, wsAliases, haveAliases = s.graph.service.WorkspaceAliases(q.Get("repo_id"))
+		if !haveAliases {
+			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+			_, scanErr := s.graph.service.Snapshot(ctx, q.Get("repo_id"), "", false)
+			cancel()
+			if scanErr == nil {
+				_, wsAliases, haveAliases = s.graph.service.WorkspaceAliases(q.Get("repo_id"))
+			}
+		}
 	}
 	repoAliases, workspaceAliases, _ := s.graph.service.EventScope(q.Get("repo_id"), q.Get("workspace_id"))
 	page, err := s.engine.Timeline(r.Context(), capture.TimelineQuery{RepoAliases: repoAliases, WorkspaceAliases: workspaceAliases, RepoID: q.Get("repo_id"), WorkspaceID: q.Get("workspace_id"), Source: q.Get("source"), SessionID: q.Get("session_id"), Category: q.Get("category"), Search: q.Get("search"), Cursor: q.Get("cursor"), Limit: limit})
@@ -429,11 +443,10 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 	if q.Get("repo_id") != "" {
 		// Resolve only registered exact identity aliases. Captured envelopes remain immutable.
 		workspaceIDs := map[string]string{}
-		if scanErr == nil {
-			for _, ws := range snapshot.Workspaces {
-				_, aliases, _ := s.graph.service.EventScope(q.Get("repo_id"), ws.ID)
+		if haveAliases {
+			for wsID, aliases := range wsAliases {
 				for _, alias := range aliases {
-					workspaceIDs[alias] = ws.ID
+					workspaceIDs[alias] = wsID
 				}
 			}
 		}
@@ -568,14 +581,21 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	snapshot, scanErr := s.graph.service.Snapshot(ctx, repoID, "", false)
-	cancel()
 	roots := activityRoots{}
-	if scanErr == nil && len(repoAliases) > 0 {
-		for _, ws := range snapshot.Workspaces {
-			_, aliases, _ := s.graph.service.EventScope(repoID, ws.ID)
-			roots.add(repoAliases[0], aliases)
+	if len(repoAliases) > 0 {
+		_, wsAliases, ok := s.graph.service.WorkspaceAliases(repoID)
+		if !ok {
+			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+			_, scanErr := s.graph.service.Snapshot(ctx, repoID, "", false)
+			cancel()
+			if scanErr == nil {
+				_, wsAliases, ok = s.graph.service.WorkspaceAliases(repoID)
+			}
+		}
+		if ok {
+			for _, aliases := range wsAliases {
+				roots.add(repoAliases[0], aliases)
+			}
 		}
 	}
 	result, err := s.engine.Activity(r.Context(), capture.ActivityQuery{RepoID: repoID, WorkspaceID: workspaceID, RepoAliases: repoAliases, WorkspaceAliases: workspaceAliases, From: from, To: to, Bucket: time.Duration(bucket) * time.Second, Resolve: roots.resolve})

@@ -1537,7 +1537,9 @@ export function createWorkspaceGraph(
     if (root.isConnected && !busy && !hidden()) void refresh(true);
   });
   setInterval(() => {
-    if (root.isConnected && !busy && !hidden()) void refresh(true);
+    // Routine polling reads the daemon's cached snapshot (kept current by the
+    // daemon's metadata watcher); explicit Refresh and window focus force a rescan.
+    if (root.isConnected && !busy && !hidden()) void refresh(false);
   }, 15000);
   let activityTimer: ReturnType<typeof setTimeout> | undefined;
   return {

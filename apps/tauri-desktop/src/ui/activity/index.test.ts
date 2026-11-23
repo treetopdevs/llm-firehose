@@ -271,3 +271,35 @@ test("error pagination survives redraw with focus and resets on scope change",as
  expect(map.root.querySelector('.map-errors')?.textContent).toContain('21–40');
  map.update('repo-2',WORKSPACES,'balanced');await flush();expect(map.root.querySelector('.map-errors')?.textContent).toContain('1–20');
 });
+
+test("brushing updates colours, strip, and hottest in place without rebuilding the SVG", async () => {
+  const map = await open();
+  const svgBefore = map.root.querySelector(".map-svg");
+  const stripBefore = strip(map.root);
+  const tilesBefore = [...map.root.querySelectorAll(".map-tile")];
+  const dirsBefore = [...map.root.querySelectorAll(".map-dir")];
+  expect(svgBefore).toBeTruthy();
+  expect(tilesBefore.length).toBeGreaterThan(0);
+
+  stripBefore.focus();
+  stripBefore.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true }));
+  stripBefore.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true }));
+
+  expect(map.root.querySelector(".map-svg")).toBe(svgBefore);
+  expect(strip(map.root)).toBe(stripBefore);
+  const tilesAfter = [...map.root.querySelectorAll(".map-tile")];
+  const dirsAfter = [...map.root.querySelectorAll(".map-dir")];
+  expect(tilesAfter.length).toBe(tilesBefore.length);
+  tilesAfter.forEach((node, i) => expect(node).toBe(tilesBefore[i]));
+  dirsAfter.forEach((node, i) => expect(node).toBe(dirsBefore[i]));
+  expect(button(map.root, "Whole window").disabled).toBe(false);
+
+  // Pointer brush reuses the exact same DOM elements too.
+  stripBefore.getBoundingClientRect = () => new DOMRect(0, 0, 200, 60);
+  stripBefore.dispatchEvent(new PointerEvent("pointerdown", { clientX: 10, bubbles: true }));
+  window.dispatchEvent(new PointerEvent("pointermove", { clientX: 60, bubbles: true }));
+  window.dispatchEvent(new PointerEvent("pointerup", { clientX: 60, bubbles: true }));
+  expect(map.root.querySelector(".map-svg")).toBe(svgBefore);
+  expect(strip(map.root)).toBe(stripBefore);
+  expect(Number(stripBefore.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(0);
+});

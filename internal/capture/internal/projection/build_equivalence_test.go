@@ -91,6 +91,8 @@ func assertBuildEquivalent(t *testing.T, dir string) {
 		{"identityDays", got.identityDays, want.identityDays},
 		{"allDays", got.allDays, want.allDays},
 		{"readGap", got.readGap, want.readGap},
+		{"activity", got.activity, want.activity},
+		{"activityByRepo", got.activityByRepo, want.activityByRepo},
 	}
 	for _, s := range state {
 		if !reflect.DeepEqual(s.got, s.want) {
