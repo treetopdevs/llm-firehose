@@ -729,6 +729,22 @@ describe("the session list follows the time range", () => {
     expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]);
   });
 
+  test("a live span is measured when the answer arrives, so a session captured during a slow read stays", async () => {
+    const rows = [wt("w", { sessions: [], sessions_total: 0 })];
+    const { panel, store } = panelOver(rows);
+    store.narrow({ project: undefined, liveSpanMs: 2 * H });
+    let clock = now;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    sessions.mockImplementation(async () => {
+      clock += 10_000;
+      const at = new Date(clock - 1_000).toISOString();
+      return [summary("fresh", { first_time: at, last_time: at })];
+    });
+    await panel.refresh();
+    spy.mockRestore();
+    expect(sessionIds(panel.root)).toEqual(["fresh"]);
+  });
+
   test("a session that overlaps the range stays, and one with unreadable times is never hidden", async () => {
     const rows = [wt("w", { sessions: [{ ...refAt("span", 60_000), first_time: ago(9 * H) }, { ...refAt("odd", 60_000), first_time: "", last_time: "" }], sessions_total: 2 })];
     sessions.mockResolvedValue([summary("span", { first_time: ago(9 * H), last_time: ago(60_000) }), summary("odd", { first_time: "", last_time: "" })]);

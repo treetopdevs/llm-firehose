@@ -676,12 +676,13 @@ export function createSessions(
       listBox.append(el("p", { class: "dim" }, "loading sessions…"));
     }
     try {
-      const now = Date.now();
       const scoped = !!(store.get().worktree || store.get().project);
       const signal = AbortSignal.timeout(REQUEST_DEADLINE_MS);
       const [list, inbox] = await Promise.allSettled([sessions(signal), attention(signal), scoped ? bounded(store.resolver()?.refresh?.(signal), signal) : undefined]);
       // A newer refresh started while these requests were in flight: it owns the DOM and the maps.
       if (gen !== refreshGen) return;
+      // Read after the requests: ages, freshness and a live span are all judged as of this answer.
+      const now = Date.now();
       const attended = new Map<string, AttentionSession>();
       if (inbox.status === "fulfilled") {
         for (const a of inbox.value.sessions) attended.set(sessionKey(a.source, a.id), a);
