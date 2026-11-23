@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { isEscapeClaimed } from './escape';
 import { PRESETS, createScope, formatRange, liveSpanOf, presetWindow, type ScopeStore } from './scope';
@@ -550,4 +552,9 @@ describe('review fixes', () => {
     store.narrow({ window: { from: NOW - H, to: NOW - 1000 } });
     expect(q(t, '.transport-hold').textContent).toBe('Return to live');
   });
+});
+
+test("a hidden transport keeps its row, so the shell below does not move between panels", () => {
+  const css = readFileSync(join(process.cwd(), "src/styles.css"), "utf8");
+  expect(css).toMatch(/\.transport\[hidden\]\s*\{[^}]*display:\s*flex[^}]*visibility:\s*hidden/);
 });

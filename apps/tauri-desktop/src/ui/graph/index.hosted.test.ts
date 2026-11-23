@@ -608,6 +608,18 @@ test("setWorktreeOrder orders search results and the Events workspace select; un
   expect(options()).toEqual(["Whole project", "w1", "w2"]);
 });
 
+test("registeredRepos lists a repository that cannot be scanned under its project id, once", async () => {
+  const { graph } = make({ project: "r" });
+  vi.mocked(graphAPI.repos).mockResolvedValue([
+    ...REPOS,
+    { id: "synthetic", vcs: "git", label: "/w/dead", status: "unavailable", observed_at: "", project_id: "dead-git", project_label: "/w/dead" },
+    { id: "legacy", vcs: "git", label: "/w/old", status: "unavailable", observed_at: "" },
+  ]);
+  graph.show("graph");
+  await flush();
+  expect(graph.registeredRepos()).toEqual([...REPOS.map((r) => r.id), "dead-git", "legacy"]);
+});
+
 test("registeredRepos is empty before the first load and never fetched by a hidden graph", async () => {
   const { graph } = make();
   expect(graph.registeredRepos()).toEqual([]);

@@ -3,6 +3,8 @@
 package workspace
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,7 +69,7 @@ func Observe(cwd string) (repoID, worktreeID string) {
 		if info, statErr := os.Stat(dotGit); statErr == nil {
 			gitDir := dotGit
 			if !info.IsDir() {
-				data, readErr := os.ReadFile(dotGit)
+				data, readErr := ReadMetadata(dotGit)
 				if readErr != nil {
 					return "", ""
 				}
@@ -85,7 +87,7 @@ func Observe(cwd string) (repoID, worktreeID string) {
 				return "", ""
 			}
 			commonDir := gitDir
-			if data, readErr := os.ReadFile(filepath.Join(gitDir, "commondir")); readErr == nil {
+			if data, readErr := ReadMetadata(filepath.Join(gitDir, "commondir")); readErr == nil {
 				value := strings.TrimSpace(string(data))
 				if value != "" {
 					if filepath.IsAbs(value) {
@@ -118,52 +120,34 @@ func canonical(path string) string {
 	return path
 }
 
-// rootAlias returns root as spelled through cwd, or "" when that spelling is
-// the canonical root or cannot be derived. A symlink below the root leaves no
-// spelling of the root in cwd, and matching text alone can name another
-// directory, so the candidate must itself resolve to root.
-func rootAlias(cwd, root string) string {
-	if root == "" {
-		return ""
-	}
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return ""
-	}
-	rel, err := filepath.Rel(root, canonical(abs))
-	if err != nil {
-		return ""
-	}
-	fold := runtime.GOOS == "windows"
-	alias := abs
-	if rel != "." {
-		var ok bool
-		if alias, ok = trimPathSuffix(abs, string(filepath.Separator)+rel, fold); !ok {
-			return ""
-		}
-	}
-	if samePath(alias, root, fold) || !samePath(canonical(alias), root, fold) {
-		return ""
-	}
-	return alias
-}
+// maxMetadata bounds every VCS pointer file read (.git, commondir, HEAD,
+// .jj/repo, git_target): real ones are a path or a ref, far below this.
+const maxMetadata = 32768
 
-// trimPathSuffix removes suffix from path. Fold matches Windows, where
-// EvalSymlinks normalises letter case.
-func trimPathSuffix(path, suffix string, fold bool) (string, bool) {
-	if len(suffix) > len(path) {
-		return "", false
+// ReadMetadata reads a small VCS metadata file. Repositories are discovered
+// from agent activity and may be hostile, so the target must be a regular file
+// (a symlink to a device or pipe is refused before it is opened) and the read
+// is bounded, whatever size the file claims.
+func ReadMetadata(path string) ([]byte, error) {
+	if info, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
 	}
-	cut := len(path) - len(suffix)
-	if !samePath(path[cut:], suffix, fold) {
-		return "", false
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
-	return path[:cut], true
-}
-
-func samePath(a, b string, fold bool) bool {
-	if fold {
-		return strings.EqualFold(a, b)
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
 	}
-	return a == b
+	data, err := io.ReadAll(io.LimitReader(f, maxMetadata+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxMetadata {
+		return nil, errors.New("metadata file too large")
+	}
+	return data, nil
 }

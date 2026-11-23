@@ -788,7 +788,7 @@ export function createWorkspaceGraph(
       if (hidden()) return out;
       if (sc.project) {
         const r = repos.find((x) => x.id === sc.project);
-        if (r) out.project = projectName(sc.project, r.label).label;
+        if (r) out.project = projectName(sc.project, r.project_label ?? r.label).label;
       }
       if (sc.worktree) {
         const w = snapshot?.workspaces.find((x) => x.id === sc.worktree);
@@ -905,12 +905,14 @@ export function createWorkspaceGraph(
       .join(" · ");
   }
   function updateToolbar() {
-    const names = repoNames(repos, privacyMode);
+    // Named after the project's main checkout; `label` may be a linked worktree.
+    const named = repos.map((r) => ({ label: r.project_label ?? r.label, vcs: r.vcs }));
+    const names = repoNames(named, privacyMode);
     toolbar.update({
       repos: repos.map((r, i) => ({
         id: r.id,
         name: names[i],
-        title: fullPath(r.label),
+        title: fullPath(named[i].label),
       })),
       repo,
       count: snapshot
@@ -1588,7 +1590,12 @@ export function createWorkspaceGraph(
       viewListener = fn;
     },
     currentRepo: () => repo,
-    registeredRepos: () => repos.map((r) => r.id),
+    // One id per project the host can open: a repository that cannot be scanned is
+    // listed under its project id (the one its sessions and worktrees carry), never
+    // as a second, dead entry.
+    registeredRepos: () => [
+      ...new Set(repos.map((r) => (r.status === "unavailable" && r.project_id ? r.project_id : r.id))),
+    ],
     onEvent: (e: FirehoseEvent) => {
       if (hidden()) {
         missedWhileHidden++;

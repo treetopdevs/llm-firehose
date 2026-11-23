@@ -10,6 +10,7 @@ import type { SoundState } from "./sound";
 import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
 import { clear, el, keepFocus } from "../../dom";
+import { failureMessage } from "../../errors";
 import { formatClockMs, formatDuration } from "../../format";
 import { createScope, sameSession } from "../../scope";
 import type { ScopeStore, ScopeWindow, SessionRef } from "../../scope";
@@ -799,7 +800,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     } catch (err) {
       if (v !== version) return;
       clear(chart);
-      chart.append(el("p", { class: "error" }, String(err)));
+      chart.append(el("p", { class: "error" }, failureMessage("load this session's score", err)));
     }
   }
 

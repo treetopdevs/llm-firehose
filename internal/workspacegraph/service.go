@@ -22,11 +22,23 @@ var ErrNotFound = errors.New("repository unavailable")
 var ErrCursor = errors.New("expired or invalid graph cursor")
 
 type registration struct {
+	// root is where commands run and what the project is named after: the main
+	// checkout or main workspace (the git dir of a bare repository).
 	root, identity, vcs string
-	snapshot            *Snapshot
-	limit               int
-	sequence            uint64
-	failed              bool
+	// label is the checkout or workspace that first registered the repository,
+	// the meaning Repository.label has always had.
+	label string
+	// projectRoot names the project: root, or for JJ backed by a Git repository
+	// that repository's main checkout, so both views report one project_label.
+	projectRoot string
+	// project is the raw identity shared by every registration of one project
+	// (the Git common dir for Git and for JJ colocated with it).
+	project  string
+	git      gitLayout
+	snapshot *Snapshot
+	limit    int
+	sequence uint64
+	failed   bool
 }
 type Service struct {
 	mu       sync.Mutex
@@ -58,67 +70,125 @@ func identity(p string, m privacy.Mode) string {
 	}
 	return digest(p)
 }
+
+// Register makes a repository known by any directory inside it. The repository
+// is located by reading files only and anchored on its main checkout (Git) or
+// main workspace (JJ), so every worktree of one repository is one registration
+// that outlives the checkout which led to it. With vcs empty or "auto" both
+// sides of a colocated project are registered, whichever led here: the Git
+// repository carries the identity Capture stamps on every event there (so
+// sessions, worktree states and the graph agree on one project), and the JJ
+// repository is the same project seen through its workspaces. Naming a vcs is
+// an explicit choice for that root and replaces its other registration.
 func (s *Service) Register(ctx context.Context, root, vcs string) (Repository, error) {
 	root, e := canonical(root)
 	if e != nil {
 		return Repository{}, errors.New("root inaccessible")
 	}
-	if vcs == "" || vcs == "auto" {
-		vcs = "git"
-		if _, e := os.Stat(filepath.Join(root, ".jj")); e == nil {
-			vcs = "jj"
-		}
+	auto := vcs == "" || vcs == "auto"
+	if auto {
+		vcs = nearestVCS(root)
 	}
-	var id string
+	var reg *registration
 	switch vcs {
 	case "git":
-		if e := guardGitConfig(ctx, root); e != nil {
-			return Repository{}, e
-		}
-		if top, err := run(ctx, root, "git", "rev-parse", "--show-toplevel"); err == nil {
-			if c, err := canonical(strings.TrimSpace(top)); err == nil {
-				root = c
+		reg, e = s.registerGit(ctx, root)
+		if e == nil && auto && reg.git.main != "" {
+			if l, err := locateJJ(reg.git.main); err == nil && l.git == reg.git.common && l.anchor == reg.git.main {
+				_, _ = s.registerJJ(ctx, reg.git.main)
 			}
-		}
-		b, e := run(ctx, root, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-		if e != nil {
-			return Repository{}, e
-		}
-		id, e = canonical(strings.TrimSpace(b))
-		if e != nil {
-			return Repository{}, errors.New("repository inaccessible")
 		}
 	case "jj":
-		b, e := run(ctx, root, "jj", "root")
-		if e != nil {
-			return Repository{}, e
-		}
-		root = strings.TrimSpace(b)
-		id = "jj:" + root // Resolve shared store for linked JJ workspaces.
-		p := filepath.Join(root, ".jj", "repo")
-		if b, e := os.ReadFile(p); e == nil {
-			p = strings.TrimSpace(string(b))
-			if !filepath.IsAbs(p) {
-				p = filepath.Join(root, ".jj", p)
-			}
-		}
-		if c, e := canonical(p); e == nil {
-			id = "jj:" + c
+		reg, e = s.registerJJ(ctx, root)
+		if e == nil && auto && reg.project != reg.identity {
+			_, _ = s.registerGit(ctx, reg.project)
 		}
 	default:
 		return Repository{}, errors.New("unsupported VCS")
 	}
+	if e != nil {
+		return Repository{}, e
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for key, existing := range s.repos {
-		if existing.root == root && existing.vcs != vcs {
-			delete(s.repos, key)
+	if !auto {
+		for key, existing := range s.repos {
+			if existing.root == reg.root && existing.vcs != vcs {
+				delete(s.repos, key)
+			}
 		}
 	}
-	if existing := s.repos[id]; existing == nil {
-		s.repos[id] = &registration{root: root, identity: id, vcs: vcs}
+	return s.repository(reg), nil
+}
+
+// known returns the existing registration of an identity, so re-registering a
+// repository (every reconciliation does, once per observed checkout) costs no
+// VCS command.
+func (s *Service) known(id string) *registration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.repos[id]
+}
+
+func (s *Service) adopt(reg *registration) *registration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing := s.repos[reg.identity]; existing != nil {
+		return existing
 	}
-	return s.repository(s.repos[id]), nil
+	s.repos[reg.identity] = reg
+	return reg
+}
+
+func (s *Service) registerGit(ctx context.Context, root string) (*registration, error) {
+	layout, e := locateGit(root)
+	if e != nil {
+		return nil, e
+	}
+	if existing := s.known(layout.common); existing != nil {
+		// A repository first reached through a linked worktree of a separate git
+		// dir has no known main checkout until that checkout leads here.
+		s.mu.Lock()
+		if existing.git.main == "" && layout.main != "" {
+			existing.git.main, existing.git.anchor = layout.main, layout.anchor
+			existing.root, existing.projectRoot, existing.snapshot = layout.anchor, layout.anchor, nil
+			// A scan already running copied the old layout: supersede it, so its
+			// result is discarded instead of cached.
+			existing.sequence++
+		}
+		s.mu.Unlock()
+		return existing, nil
+	}
+	// Prove the repository can be read before it is listed.
+	session, e := openGitSession(ctx, layout)
+	if e != nil {
+		return nil, e
+	}
+	session.cleanup()
+	label := layout.top
+	if label == "" {
+		label = layout.anchor
+	}
+	return s.adopt(&registration{root: layout.anchor, projectRoot: layout.anchor, label: label, identity: layout.common, vcs: "git", project: layout.common, git: layout}), nil
+}
+
+func (s *Service) registerJJ(ctx context.Context, root string) (*registration, error) {
+	layout, e := locateJJ(root)
+	if e != nil {
+		return nil, e
+	}
+	id := "jj:" + layout.repo
+	if existing := s.known(id); existing != nil {
+		return existing, nil
+	}
+	if _, e := run(ctx, layout.anchor, "jj", "root"); e != nil {
+		return nil, e
+	}
+	project, projectRoot := id, layout.anchor
+	if layout.git != "" {
+		project, projectRoot = layout.git, layout.gitAnchor
+	}
+	return s.adopt(&registration{root: layout.anchor, projectRoot: projectRoot, label: layout.top, identity: id, vcs: "jj", project: project}), nil
 }
 func (s *Service) repository(r *registration) Repository {
 	status := "pending"
@@ -133,8 +203,29 @@ func (s *Service) repository(r *registration) Repository {
 			status = "stale"
 		}
 	}
-	return Repository{identity(r.identity, s.mode), r.vcs, r.root, at, status}
+	return describeRepository(*r, s.mode, at, status)
 }
+
+func describeRepository(r registration, m privacy.Mode, at time.Time, status string) Repository {
+	return Repository{ID: identity(r.identity, m), VCS: r.vcs, Label: r.label, ObservedAt: at, Status: status, ProjectID: identity(r.project, m), ProjectLabel: r.projectRoot}
+}
+
+// Forget drops every registration anchored on root, for a repository whose
+// root is confirmed gone. It reports whether any was dropped.
+func (s *Service) Forget(root string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := false
+	for key, r := range s.repos {
+		if r.root == root || r.label == root {
+			delete(s.repos, key)
+			dropped = true
+		}
+	}
+	return dropped
+}
+
+// Repositories lists registrations by id.
 func (s *Service) Repositories() []Repository {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,6 +353,9 @@ func run(ctx context.Context, root, bin string, args ...string) (string, error) 
 	return runEnv(ctx, root, bin, nil, args...)
 }
 func runEnv(ctx context.Context, root, bin string, env []string, args ...string) (string, error) {
+	return runInput(ctx, root, bin, env, "", args...)
+}
+func runInput(ctx context.Context, root, bin string, env []string, stdin string, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if bin == "jj" {
@@ -282,8 +376,11 @@ func runEnv(ctx context.Context, root, bin string, env []string, args ...string)
 	}
 	c := exec.CommandContext(cctx, resolveTool(bin), args...)
 	c.Dir = root
-	c.Env = append(append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"), env...)
+	c.Env = append(append(scanEnv(os.Environ()), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C"), env...)
 	var out, stderr boundedBuffer
+	if stdin != "" {
+		c.Stdin = strings.NewReader(stdin)
+	}
 	c.Stdout = &out
 	c.Stderr = &stderr
 	c.WaitDelay = time.Second
@@ -294,6 +391,24 @@ func runEnv(ctx context.Context, root, bin string, env []string, args ...string)
 		return "", &commandError{bin: bin, cause: e}
 	}
 	return out.String(), nil
+}
+
+// scanEnv is the daemon's environment without any GIT_* variable. An inherited
+// GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG*, GIT_EXEC_PATH or object-directory
+// override (a daemon started from a hook or a wrapper has them) would point a
+// scan back at the live repository config or at other code, so every VCS
+// command starts from none and gets only the ones the scanner sets. Names are
+// matched without regard to case, as Windows resolves them.
+func scanEnv(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(strings.ToUpper(name), "GIT_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // CachedSnapshot returns the retained snapshot of a repository without ever

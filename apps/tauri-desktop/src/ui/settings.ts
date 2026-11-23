@@ -1,7 +1,8 @@
 import { DAEMON_URL, exportNDJSON, getConfig, setConfig } from "../api";
 import { el } from "../dom";
+import { failureMessage } from "../errors";
 
-const MODES: Array<{ mode: string; blurb: string }> = [
+export const PRIVACY_MODES: Array<{ mode: string; blurb: string }> = [
   { mode: "minimal", blurb: "payload values stored as {sha256, len} digests only" },
   { mode: "balanced", blurb: "payload strings truncated to 240 chars, raw payloads dropped" },
   { mode: "full", blurb: "everything, including raw source payloads" },
@@ -35,7 +36,7 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
           ? `saved; restart daemon for: ${res.restart_required.join(", ")}`
           : `saved — privacy mode is now ${mode}`;
     } catch (err) {
-      status.textContent = String(err);
+      status.textContent = failureMessage("save the privacy mode", err);
       status.classList.add("error");
       return;
     }
@@ -60,7 +61,7 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
       URL.revokeObjectURL(url);
       status.textContent = "export downloaded";
     } catch (err) {
-      status.textContent = String(err);
+      status.textContent = failureMessage("export events", err);
       status.classList.add("error");
     }
   }
@@ -73,7 +74,7 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
 
       const status = el("p", { class: "dim" }, "");
       const modes = el("div", { class: "settings-modes" });
-      for (const { mode, blurb } of MODES) {
+      for (const { mode, blurb } of PRIVACY_MODES) {
         const input = el("input", {
           type: "radio",
           name: "privacy",
@@ -121,7 +122,7 @@ export function createSettings(opts: SettingsOptions = {}): { root: HTMLElement;
       exportBtn.addEventListener("click", () => downloadExport(exportStatus));
       root.append(el("h3", {}, "export"), exportBtn, exportStatus);
     } catch (err) {
-      root.replaceChildren(heading, el("p", { class: "error" }, String(err)));
+      root.replaceChildren(heading, el("p", { class: "error" }, failureMessage("load settings", err)));
     }
   }
 

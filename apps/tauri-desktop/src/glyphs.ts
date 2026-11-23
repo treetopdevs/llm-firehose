@@ -6,7 +6,7 @@
 import type { WorktreeState } from "./api";
 
 /** One glyph per worktree state; Project and Fleet share the vocabulary. */
-export const FORK_GLYPH: Record<WorktreeState, string> = { open: "●", landed: "✓", gone: "×", never_diverged: "·", unknown: "?" };
+export const FORK_GLYPH: Record<WorktreeState, string> = { open: "●", landed: "✓", gone: "×", never_diverged: "·", unknown: "◌" };
 /** Appended to an open branch of work that has gone quiet (Fleet). */
 export const IDLE_MARK = "…";
 /** Project's idle flag at the end of a lane. */

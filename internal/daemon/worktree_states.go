@@ -437,7 +437,7 @@ func (s *Server) cachedWorktreeCompare(ctx context.Context, repoID, head, target
 func (s *Server) applyWorktreeSnapshot(ctx context.Context, repoID, raw, target, targetRef string, workspaces []workspacegraph.Workspace, now time.Time) {
 	w := &s.worktrees
 	present := map[string]bool{}
-	for i, ws := range workspaces {
+	for _, ws := range workspaces {
 		if ws.Availability == "pruned" || ws.Availability == "inaccessible" && checkoutMissing(ws.Label) {
 			continue // confirmed missing from disk: counted absent
 		}
@@ -465,7 +465,7 @@ func (s *Server) applyWorktreeSnapshot(ctx context.Context, repoID, raw, target,
 		rec.LastSeen = now
 		rec.Present, rec.GoneOutcome, rec.GoneReason = true, "", ""
 		rec.Unavailable, rec.Compared = ws.Availability == "inaccessible", false
-		rec.Primary = i == 0
+		rec.Primary = ws.Primary
 		rec.Dirty = ws.Dirty
 		rec.Head, rec.Target, rec.TargetRef = ws.Revision, target, targetRef
 		rec.Reason = ""

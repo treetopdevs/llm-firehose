@@ -406,11 +406,13 @@ button.pause.paused { border-color: var(--warn); color: var(--warn); }
 .doctor-check.ok .mark { color: var(--ok); }
 .doctor-check.bad .mark { color: var(--err); }
 .doctor-check .name { min-width: 18ch; }
+.doctor-check .doctor-detail { min-width: 0; overflow-wrap: anywhere; }
 
 /* settings */
 .settings-modes { display: flex; flex-direction: column; gap: 0.3rem; }
 .mode-option { cursor: pointer; }
 .mode-option input { margin-right: 0.5rem; }
+.onboarding-card .mode-option { display: block; margin: 0.35rem 0; }
 .settings-info { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.7rem; }
 .settings-info dt { color: var(--text-dim); }
 .settings-info dd { margin: 0; }
@@ -1276,9 +1278,8 @@ span.agent-dot.big { width: 14px; height: 14px; }
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
-.transport[hidden] {
-  display: none;
-}
+/* Reserves the row: the shell below must not jump under the pointer between panels. */
+.transport[hidden] { display: flex; visibility: hidden; }
 .transport-presets {
   display: flex;
   gap: 4px;

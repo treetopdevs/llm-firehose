@@ -264,6 +264,8 @@ type Boot = {
 let tracked: Boot["keydownListeners"] = [];
 
 type BootOpts = {
+  // Leaves the first-run onboarding overlay up.
+  firstRun?: boolean;
   sessions?: unknown[]; repos?: unknown[] | (() => unknown[] | Promise<unknown[]>); snapshots?: Record<string, unknown>; attentionSessions?: unknown[];
   events?: unknown[]; sessionEvents?: unknown[];
   worktrees?: unknown[]; worktreesStatus?: number; worktreesFailFirst?: boolean; healthGate?: Promise<void>; worktreesGate?: Promise<void>;
@@ -284,7 +286,7 @@ async function boot(opts: BootOpts = {}): Promise<Boot> {
   document.body.innerHTML = '<div id="app"></div>';
   vi.useFakeTimers({ toFake: opts.fakeTimeout ? ["Date", "setTimeout"] : ["Date"], now: NOW });
   vi.setSystemTime(NOW);
-  vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => {} });
+  vi.stubGlobal("localStorage", { getItem: () => (opts.firstRun ? null : "1"), setItem: () => {} });
   vi.stubGlobal("setInterval", () => 0);
   const sources: Boot["sources"] = [];
   vi.stubGlobal("EventSource", class { onopen: (() => void) | null = null; onerror = null; onmessage: ((m: { data: string }) => void) | null = null; constructor() { sources.push(this); } close() {} });
@@ -3015,4 +3017,21 @@ describe("attention worktree names resolve against the session's own repo (slice
     b.go("attention");
     await vi.waitFor(() => expect(cardText()).toContain("alpha-open"));
   });
+});
+
+test("finishing onboarding hands focus to the Doctor panel it lands on", async () => {
+  await boot({ firstRun: true });
+  const press = async (text: string) => {
+    [...document.querySelectorAll<HTMLButtonElement>(".onboarding-card button")].find((b) => b.textContent === text)!.click();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+  };
+  await vi.waitFor(() => expect(document.querySelector(".onboarding-card")).toBeTruthy());
+  await press("Continue");
+  await vi.waitFor(() => expect(document.querySelector(".onboarding-card")!.textContent).toContain("2 / 3"));
+  await press("next");
+  await vi.waitFor(() => expect(document.querySelector(".onboarding-card")!.textContent).toContain("start watching"));
+  await press("start watching");
+  const doctor = document.querySelector<HTMLElement>("section.doctor")!;
+  expect(document.activeElement).toBe(doctor);
+  expect(doctor.getAttribute("aria-label")).toBe("Doctor");
 });

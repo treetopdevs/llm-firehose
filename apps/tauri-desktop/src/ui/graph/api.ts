@@ -6,6 +6,14 @@ export interface Repository {
   label: string;
   status: string;
   observed_at: string;
+  /**
+   * Shared by every registration of one project: a Git repository and the JJ
+   * repository colocated with it carry the same value, the Git repository
+   * identity events are stamped with (`repo_id`). Absent from older daemons.
+   */
+  project_id?: string;
+  /** The project's main checkout, readable in every privacy mode. */
+  project_label?: string;
 }
 /**
  * One uncommitted (or committed, in a Comparison) file change. `path` follows the
