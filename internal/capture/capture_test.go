@@ -137,6 +137,43 @@ func TestAdmissionEnrichesWorkspaceBeforeCapturePolicy(t *testing.T) {
 	}
 }
 
+func TestAdmissionRootAliasFollowsPolicy(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	for mode, want := range map[privacy.Mode]string{
+		privacy.ModeFull:     link,
+		privacy.ModeBalanced: link,
+		privacy.ModeMinimal:  "",
+	} {
+		engine, err := capture.New(capture.Options{SpoolDir: filepath.Join(root, "spool-"+string(mode)), Policy: mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev := observation()
+		ev.CWD = link
+		got, err := engine.Admit(context.Background(), ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.RootAlias != want {
+			t.Fatalf("%s: root alias %q, want %q", mode, got.RootAlias, want)
+		}
+		if mode != privacy.ModeFull && (got.CWD == link || got.WorktreeID == repo) {
+			t.Fatalf("%s: path identity must stay a digest: %+v", mode, got)
+		}
+	}
+}
+
 func TestOneShotAdmissionSharesCaptureSemantics(t *testing.T) {
 	dir := t.TempDir()
 	got, err := capture.AdmitOnce(context.Background(), capture.OneShotOptions{

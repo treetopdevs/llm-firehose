@@ -549,3 +549,101 @@ func TestActivityIncludesUnresolvedErrorOnlyGroups(t *testing.T) {
 		t.Fatalf("unknown group not exercised: %s", w.Body)
 	}
 }
+
+// symlinkedWorktrees returns a real repo with a linked worktree, and a symlink
+// to the repo.
+func symlinkedWorktrees(t *testing.T) (real, other, link string) {
+	t.Helper()
+	real = gitRepo(t)
+	graphGit(t, real, "commit", "-q", "--allow-empty", "-m", "init")
+	other = filepath.Join(real, ".claude", "worktrees", "feature")
+	graphGit(t, real, "worktree", "add", "-q", "-b", "feature", other)
+	link = filepath.Join(t.TempDir(), "l")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	return real, other, link
+}
+
+// The default mode is the case this fix exists for: cwd is only a digest on disk.
+func TestActivitySymlinkedPathsResolveToWorktree(t *testing.T) {
+	for _, mode := range []string{"balanced", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			_, _, link := symlinkedWorktrees(t)
+			linkedOther := filepath.Join(link, ".claude", "worktrees", "feature")
+			s, engine := activityServer(t, mode)
+			claudeEdit(t, engine, "main", link, filepath.Join(link, "a.go"), activityBase.Add(time.Minute))
+			claudeEdit(t, engine, "wt", linkedOther, filepath.Join(linkedOther, "b.go"), activityBase.Add(2*time.Minute))
+			// Never existed on disk, like a file deleted since the capture.
+			claudeEdit(t, engine, "gone", link, filepath.Join(link, "new", "deep", "c.go"), activityBase.Add(3*time.Minute))
+			// Named from the main checkout, but inside the linked worktree.
+			claudeEdit(t, engine, "across", link, filepath.Join(linkedOther, "d.go"), activityBase.Add(4*time.Minute))
+			repoID := onlyRepo(t, s)
+			code, body, w := getActivity(t, s, window(repoID))
+			if code != 200 {
+				t.Fatalf("status %d %s", code, w.Body)
+			}
+			want := map[string]int{"|a.go": 1, "|b.go": 1, "|new/deep/c.go": 1, "|d.go": 1}
+			if got := heatByPath(body); !reflect.DeepEqual(got, want) {
+				t.Fatalf("symlinked paths resolve to their worktree: %v", got)
+			}
+			if len(body.Groups) != 1 || !body.Groups[0].Resolved {
+				t.Fatalf("no outside group: %+v", body.Groups)
+			}
+		})
+	}
+}
+
+// Captured paths are untrusted and may no longer exist, so resolution is purely
+// lexical. None of these paths exist anywhere, and they still resolve.
+func TestActivityRootAliasIsLexical(t *testing.T) {
+	root := gitRepo(t)
+	roots := activityRoots{}
+	roots.add(root, []string{root})
+	for name, tc := range map[string]struct {
+		alias, path, group, rel string
+	}{
+		"under alias":      {"/no/such/link", "/no/such/link/pkg/a.go", "", "pkg/a.go"},
+		"dot-dot inside":   {"/no/such/link", "/no/such/link/pkg/../a.go", "", "a.go"},
+		"dot-dot escapes":  {"/no/such/link", "/no/such/link/../secret", root, "/no/such/link/../secret"},
+		"sibling prefix":   {"/no/such/link", "/no/such/linked/a.go", root, "/no/such/linked/a.go"},
+		"the alias itself": {"/no/such/link", "/no/such/link", root, "/no/such/link"},
+		"no alias":         {"", "/no/such/link/a.go", root, "/no/such/link/a.go"},
+		"relative alias":   {"no/such/link", "/no/such/link/a.go", root, "/no/such/link/a.go"},
+		"canonical path":   {"/no/such/link", filepath.Join(root, "a.go"), "", "a.go"},
+	} {
+		ev := event.Event{WorktreeID: root, RootAlias: tc.alias}
+		group, rel := roots.resolve(ev, tc.path)
+		if group != tc.group || rel != tc.rel {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", name, group, rel, tc.group, tc.rel)
+		}
+	}
+}
+
+// Without a known root for the event there is nothing to map onto, so another
+// repository's alias cannot attribute files here.
+func TestActivityRootAliasNeedsOwnRoot(t *testing.T) {
+	root := gitRepo(t)
+	roots := activityRoots{}
+	roots.add(root, []string{root})
+	ev := event.Event{WorktreeID: "/some/other/worktree", RootAlias: "/no/such/link"}
+	if group, rel := roots.resolve(ev, "/no/such/link/a.go"); group != "/some/other/worktree" || rel != "/no/such/link/a.go" {
+		t.Fatalf("got (%q, %q)", group, rel)
+	}
+}
+
+// The alias spells the event's Git worktree. If only its JJ workspace is known
+// here, mapping onto that root would build a path that does not exist.
+func TestActivityRootAliasNotMappedOntoJJRootOfGitEvent(t *testing.T) {
+	root := gitRepo(t)
+	roots := activityRoots{}
+	roots.add(root, []string{"jj:" + root})
+	ev := event.Event{WorktreeID: "/some/git/worktree", JJWorkspaceID: "jj:" + root, RootAlias: "/no/such/link"}
+	if group, rel := roots.resolve(ev, "/no/such/link/a.go"); group != "/some/git/worktree" || rel != "/no/such/link/a.go" {
+		t.Fatalf("got (%q, %q)", group, rel)
+	}
+	ev = event.Event{JJWorkspaceID: "jj:" + root, RootAlias: "/no/such/link"}
+	if group, rel := roots.resolve(ev, "/no/such/link/a.go"); group != "" || rel != "a.go" {
+		t.Fatalf("JJ-only event: got (%q, %q)", group, rel)
+	}
+}

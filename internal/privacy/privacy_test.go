@@ -159,3 +159,36 @@ func TestRedactDigestsPathIdentityOutsideFullMode(t *testing.T) {
 		t.Fatalf("full mode altered path identity: %+v", full)
 	}
 }
+
+func TestRedactRootAliasFollowsMode(t *testing.T) {
+	ev := sample()
+	ev.RootAlias = "/tmp/project"
+
+	if got := Redact(ev, ModeFull); got.RootAlias != ev.RootAlias {
+		t.Fatalf("full altered alias: %q", got.RootAlias)
+	}
+	if got := Redact(ev, ModeBalanced); got.RootAlias != ev.RootAlias {
+		t.Fatalf("balanced must keep the alias readable: %q", got.RootAlias)
+	}
+	if got := Redact(ev, ModeMinimal); got.RootAlias != "" {
+		t.Fatalf("minimal persisted alias: %q", got.RootAlias)
+	}
+}
+
+// A truncated prefix would match the wrong paths, so an alias over the balanced
+// string limit is dropped, not cut.
+func TestRedactBalancedDropsOverlongRootAlias(t *testing.T) {
+	ev := sample()
+	ev.RootAlias = "/" + strings.Repeat("a", balancedMaxRunes)
+	if got := Redact(ev, ModeBalanced); got.RootAlias != "" {
+		t.Fatalf("overlong alias kept: %d runes", len(got.RootAlias))
+	}
+	ev.RootAlias = "/" + strings.Repeat("a", balancedMaxRunes-1)
+	if got := Redact(ev, ModeBalanced); got.RootAlias != ev.RootAlias {
+		t.Fatalf("alias at the limit dropped: %q", got.RootAlias)
+	}
+	ev.RootAlias = "/" + strings.Repeat("a", balancedMaxRunes)
+	if got := Redact(ev, ModeFull); got.RootAlias != ev.RootAlias {
+		t.Fatalf("full mode has no limit: %d runes", len(got.RootAlias))
+	}
+}
