@@ -54,6 +54,36 @@ export function remapScope(sc: Scope, before: IdentitySet, after: IdentitySet): 
 }
 
 /**
+ * Old repository id -> current id, extended across one verified mode change. Captured sessions keep the id they were
+ * captured under, so this is what lets them reach their project. Uses remapScope's rule: label plus vcs, unique on
+ * both sides. Held for the running app only: it links a path to its digest, so it is not written to disk.
+ */
+export function mergeRepoAliases(prev: ReadonlyMap<string, string>, before: IdentitySet, after: IdentitySet): Map<string, string> {
+  const key = (r: { label: string; vcs: string }) => `${r.vcs}\u0000${r.label}`;
+  const unique = (s: IdentitySet) => {
+    const seen = new Map<string, string | null>();
+    for (const r of s.repos) seen.set(key(r), seen.has(key(r)) ? null : r.id);
+    return seen;
+  };
+  const was = unique(before);
+  const now = unique(after);
+  const step = new Map<string, string>();
+  for (const [k, id] of was) {
+    const next = now.get(k);
+    if (id && next && next !== id) step.set(id, next);
+  }
+  const out = new Map<string, string>();
+  for (const [from, to] of prev) {
+    const next = step.get(to) ?? to;
+    if (next !== from) out.set(from, next);
+  }
+  for (const [from, to] of step) if (!out.has(from) && !prev.has(from)) out.set(from, to);
+  // An id that names a root now is that root, whatever an earlier mode called it.
+  for (const r of after.repos) out.delete(r.id);
+  return out;
+}
+
+/**
  * A history place after a privacy change, the way remapScope treats the scope: a project that still exists is
  * kept, one that can be matched takes its new id (worktree and session are not remappable and are dropped), and
  * anything else, or identities that could not be verified (`after` undefined), loses its identity.
@@ -62,14 +92,20 @@ type Identity = { project?: string; worktree?: string; session?: { id: string; s
 /** The place with its three identity fields typed as optional, whatever the caller's type promised. */
 export type Remapped<P extends Identity> = Omit<P, keyof Identity> & Identity;
 
-export function remapPlace<P extends Identity>(place: P, before: IdentitySet, after: IdentitySet | undefined): Remapped<P> {
+export function remapPlace<P extends Identity>(place: P, before: IdentitySet, after: IdentitySet | undefined, fleetView = "map"): Remapped<P> {
   const has = place.project !== undefined || place.worktree !== undefined || place.session !== undefined;
   if (!has) return place as Remapped<P>;
-  const cleared = { ...place, project: undefined, worktree: undefined, session: undefined };
+  // A Session place without a session is an empty Score: it lands on what is left of its scope instead.
+  const landed = <T extends Identity & { panel?: string; view?: string }>(p: T): T => {
+    if (p.panel !== "session") return p;
+    // The view is explicit: activating the panel records it, and a stop that differs from it would cut Forward.
+    return (p.project !== undefined ? { ...p, panel: "project", view: "lanes" } : { ...p, panel: "fleet", view: fleetView }) as T;
+  };
+  const cleared = landed({ ...place, project: undefined, worktree: undefined, session: undefined });
   if (!after) return cleared;
   const sc: Scope = { window: "live", ...(place.project !== undefined ? { project: place.project } : {}), ...(place.worktree !== undefined ? { worktree: place.worktree } : {}), ...(place.session !== undefined ? { session: place.session } : {}) };
   const r = remapScope(sc, before, after);
   if (r.kind === "unchanged") return place as Remapped<P>;
   if (r.kind === "cleared") return cleared;
-  return { ...place, project: r.patch.project, worktree: undefined, session: undefined };
+  return landed({ ...place, project: r.patch.project, worktree: undefined, session: undefined });
 }

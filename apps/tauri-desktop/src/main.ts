@@ -40,10 +40,10 @@ import { createTransport } from "./transport";
 import { graphAPI } from "./ui/graph/api";
 import { createActions } from "./ui/actions";
 import { createRoots } from "./ui/actions/roots";
-import { remapPlace, remapScope } from "./privacy-remap";
+import { mergeRepoAliases, remapPlace, remapScope } from "./privacy-remap";
 import type { IdentitySet } from "./privacy-remap";
 import type { ScopePatch, SessionRef } from "./scope";
-import { ascentTarget, createEscapeHandler, isEscapeEligible } from "./escape";
+import { ascentTarget, createEscapeHandler, isEscapeEligible, setEscapeOverlay } from "./escape";
 import { QUEUE_KEYS, registerKeys } from "./keys";
 import { toggleLegend, openLegend, type PanelContext } from "./ui/legend";
 import { createBreadcrumb } from "./breadcrumb";
@@ -74,7 +74,7 @@ const inspectFor = (clear: () => void, shown: () => boolean = () => true) => (s:
   if (!shown()) return;
   const close = () => {
     // The Close button is about to leave the DOM: hand focus back to the row the pane described.
-    const sel = content.querySelector<HTMLElement>(".selected, .picked");
+    const sel = content.querySelector<HTMLElement>(".picked") ?? content.querySelector<HTMLElement>(".selected");
     const target = sel?.matches("[tabindex]") ? sel : sel?.querySelector<HTMLElement>('[tabindex="0"]');
     const held = detailPane.contains(document.activeElement);
     clear();
@@ -334,6 +334,8 @@ scope.subscribe(() => {
 const REMAP_ATTEMPTS = 4;
 const REMAP_RETRY_MS = 150;
 let privacyGeneration = 0;
+/** Captured repository ids from earlier privacy modes -> the id their project has now. */
+let repoAliases: ReadonlyMap<string, string> = new Map();
 const identitySet = (repos: { id: string; label: string; vcs?: string }[]): IdentitySet => ({
   repos: repos.map((r) => ({ id: r.id, label: r.label, vcs: r.vcs ?? "" })),
 });
@@ -368,6 +370,10 @@ async function handlePrivacyChange(before: IdentitySet = snapshotBeforeSave()): 
     after = await verifiedRoots();
   }
   if (mine !== privacyGeneration) return;
+  if (after) {
+    repoAliases = mergeRepoAliases(repoAliases, before, after);
+    syncSidebar();
+  }
   const current = scope.get();
   const result = after
     ? remapScope(current, before, after)
@@ -378,7 +384,7 @@ async function handlePrivacyChange(before: IdentitySet = snapshotBeforeSave()): 
   else if (result.kind === "cleared") scope.narrow({ project: undefined, worktree: undefined, session: undefined, window: current.window });
   if (result.kind !== "unchanged") showShellNote(result.note);
   // Back and Forward must not return to a place that names an identity the new mode no longer has.
-  places.rewrite((p) => remapPlace(p, before, after));
+  places.rewrite((p) => remapPlace(p, before, after, fleetPanel.encoding));
   here = places.current()?.place ?? here;
   // Panels re-read only after the scope is settled.
   void projectPanel.refresh();
@@ -620,7 +626,7 @@ function travel(dir: "back" | "forward"): boolean {
   );
   // The Worktree panel shows a session's history only once it has been told to open it; a place that has a session
   // in scope there (Back into an opened session) brings that history back, as the list's own Open does.
-  if (name === "sessions" && p.session) void sessionsPanel.openSession(p.session.id, p.worktree ? p.session.source : undefined);
+  if ((name === "sessions" || (name === "project" && p.view === "sessions")) && p.session) void sessionsPanel.openSession(p.session.id, p.worktree ? p.session.source : undefined);
   restoreSelection(name, entry.state.sel, entry.state.at);
   syncHistory();
   return true;
@@ -723,7 +729,7 @@ registerKeys([
     modifiers: "any",
     handler: (e) => {
       // The narrow-window sidebar overlay is the topmost thing: Escape dismisses it before anything else.
-      if (overlayOpen() && isEscapeEligible(e)) {
+      if (overlayOpen() && isEscapeEligible(e, true)) {
         e.preventDefault();
         closeOverlay();
         return;
@@ -812,6 +818,8 @@ const stage = el("div", { class: "stage" }, toolbar.root, shellNote, el("div", {
 // Under 900px the open sidebar covers its own toggle: a click outside it closes it.
 const sidebarScrim = el("div", { class: "sidebar-scrim", "aria-hidden": "true" });
 sidebarScrim.addEventListener("click", closeOverlay);
+// Panels take Escape in the capture phase; while the overlay is up they yield, so a selection under it survives.
+setEscapeOverlay(() => app.isConnected && overlayOpen());
 const shell = el("div", { class: "shell", "data-sidebar": "auto" }, sidebar.root, sidebarScrim, stage);
 narrowQuery?.addEventListener?.("change", applySidebar);
 applySidebar();
@@ -841,7 +849,7 @@ function hostViews(): void {
 let projectKey = "";
 let projectIds = new Set<string>();
 function syncSidebar(): void {
-  const counts = attentionPanel.byProject();
+  const counts = attentionPanel.byProject((id) => repoAliases.get(id) ?? id);
   const rows: ProjectRow[] = roots
     .list()
     .filter((r) => !roots.view?.(r.id))

@@ -685,3 +685,73 @@ describe("the session list never truncates silently", () => {
     expect(panel.root.querySelector(".sessions-count")?.textContent).toBe("1 session");
   });
 });
+
+describe("the session list follows the time range", () => {
+  const H = 3_600_000;
+  const refAt = (session_id: string, lastAgo: number) => ({ source: "codex", session_id, first_time: ago(lastAgo + 60_000), last_time: ago(lastAgo), events: 2 });
+  const rig = async () => {
+    const rows = [wt("w", { sessions: [refAt("recent", 60_000), refAt("old", 8 * H)], sessions_total: 2 })];
+    sessions.mockResolvedValue([summary("recent", { first_time: ago(120_000), last_time: ago(60_000) }), summary("old", { first_time: ago(8 * H + 60_000), last_time: ago(8 * H) })]);
+    const { panel, store } = panelOver(rows);
+    store.narrow({ worktree: "w" });
+    await panel.refresh();
+    return { panel, store };
+  };
+  const count = (root: HTMLElement) => root.querySelector(".sessions-count")?.textContent;
+
+  test("a range hides sessions outside it, states the count, and redraws when it changes", async () => {
+    const { panel, store } = await rig();
+    expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]);
+    store.narrow({ window: { from: now - H, to: now } });
+    await vi.waitFor(() => expect(sessionIds(panel.root)).toEqual(["recent"]));
+    expect(count(panel.root)).toBe("1 of 2 sessions in range");
+    store.narrow({ window: "live" });
+    await vi.waitFor(() => expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]));
+    expect(count(panel.root)).toBe("2 sessions");
+  });
+
+  test("a live span limits the list to its last stretch and redraws when it changes", async () => {
+    const { panel, store } = await rig();
+    store.narrow({ liveSpanMs: 2 * H });
+    await vi.waitFor(() => expect(sessionIds(panel.root)).toEqual(["recent"]));
+    store.narrow({ liveSpanMs: 24 * H });
+    await vi.waitFor(() => expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]));
+  });
+
+  test("outside a worktree, a row stays in range when another source of its id is waiting; inside one it does not", async () => {
+    const waiting = { id: "old", source: "claude-code", events: 1, state: "needs_input", last: { event_id: "l", kind: "activity", source: "claude-code", summary: "s", time: ago(1000), observed_at: ago(1000) }, pending: { event_id: "p", kind: "request", source: "claude-code", summary: "s", time: ago(1000), observed_at: ago(1000) } } as AttentionSession;
+    attention.mockResolvedValue({ gaps: [], warnings: [], sessions: [waiting] });
+    const { panel, store } = await rig();
+    store.narrow({ window: { from: now - H, to: now } });
+    await vi.waitFor(() => expect(sessionIds(panel.root)).toEqual(["recent"]));
+    store.narrow({ project: undefined, worktree: undefined });
+    await panel.refresh();
+    expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]);
+  });
+
+  test("a live span is measured when the answer arrives, so a session captured during a slow read stays", async () => {
+    const rows = [wt("w", { sessions: [], sessions_total: 0 })];
+    const { panel, store } = panelOver(rows);
+    store.narrow({ project: undefined, liveSpanMs: 2 * H });
+    let clock = now;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    sessions.mockImplementation(async () => {
+      clock += 10_000;
+      const at = new Date(clock - 1_000).toISOString();
+      return [summary("fresh", { first_time: at, last_time: at })];
+    });
+    await panel.refresh();
+    spy.mockRestore();
+    expect(sessionIds(panel.root)).toEqual(["fresh"]);
+  });
+
+  test("a session that overlaps the range stays, and one with unreadable times is never hidden", async () => {
+    const rows = [wt("w", { sessions: [{ ...refAt("span", 60_000), first_time: ago(9 * H) }, { ...refAt("odd", 60_000), first_time: "", last_time: "" }], sessions_total: 2 })];
+    sessions.mockResolvedValue([summary("span", { first_time: ago(9 * H), last_time: ago(60_000) }), summary("odd", { first_time: "", last_time: "" })]);
+    attention.mockResolvedValue({ gaps: [], warnings: [], sessions: [] });
+    const { panel, store } = panelOver(rows);
+    store.narrow({ worktree: "w", window: { from: now - 5 * H, to: now - 4 * H } });
+    await panel.refresh();
+    expect(sessionIds(panel.root).sort()).toEqual(["odd", "span"]);
+  });
+});

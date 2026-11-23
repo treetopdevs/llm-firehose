@@ -127,6 +127,9 @@ const shortLabel = (s: string): string => (s.length > MAX_LABEL_CHARS ? `…${s.
 
 let activeProjectKeys: (() => void) | undefined;
 
+/** A hung hidden read must not hold off every later retry. */
+const ROWS_RETRY_DEADLINE_MS = 15_000;
+
 export function createProject(deps: ProjectDeps): ProjectPanel {
   const { store, go } = deps;
   const api: ProjectApi = deps.api ?? {
@@ -142,6 +145,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   let rowsKnown = false;
   // The last hidden read failed (daemon down at boot): the next connection retries it.
   let rowsFailed = false;
+  // The heartbeat's retry in flight: a slower daemon must finish one read rather than have each superseded by the next.
+  let rowsRetry: Promise<void> | undefined;
   let connected = true;
   let failedOffline = false;
   const orders = new Map<string, string[]>();
@@ -150,6 +155,9 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   let listCtl: AbortController | undefined;
   let detailCtl: AbortController | undefined;
   let loadToken = 0;
+  // The newest rows request whose answer stands. A hidden answer applies if it started after this, so a slow daemon's
+  // answers land as they arrive even with a newer request out, and an older one still never overwrites a newer one.
+  let rowsFloor = 0;
   let inflight = false;
   let active = false;
   let unregisterOwnKeys: (() => void) | undefined;
@@ -744,7 +752,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     const token = ++loadToken;
     try {
       const data = await api.worktrees(signal);
-      if (token === loadToken && !active && !signal?.aborted) {
+      if (token > rowsFloor && !active && !signal?.aborted) {
+        rowsFloor = token;
         const changed = labelSignature(data) !== labelSignature(rows);
         rows = data;
         rowsKnown = true;
@@ -753,7 +762,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
         if (changed) store.touchResolver();
       }
     } catch {
-      if (token === loadToken && !active) rowsFailed = true;
+      if (token > rowsFloor && !active) rowsFailed = true;
       // keep the last known membership
     }
   }
@@ -764,6 +773,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     const ctl = new AbortController();
     listCtl = ctl;
     const token = ++loadToken;
+    rowsFloor = token; // the panel owns the rows now: no hidden read started before this may apply
     inflight = true;
     if (rows.length === 0 && status !== "error" && status !== "unsupported" && status !== "connecting") status = "loading";
     try {
@@ -1032,14 +1042,19 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       timer = undefined;
       listCtl?.abort();
       detailCtl?.abort();
-      loadToken++;
+      rowsFloor = ++loadToken;
       inflight = false;
     },
     setConnected(c) {
       connected = c;
       if (c && failedOffline && active) void load();
       // The shell's boot read failed while the daemon was down: take the rows now, hidden or not.
-      else if (c && !active && rowsFailed) void refreshRows();
+      else if (c && !active && rowsFailed && !rowsRetry) {
+        const retry = refreshRows(AbortSignal.timeout(ROWS_RETRY_DEADLINE_MS)).finally(() => {
+          if (rowsRetry === retry) rowsRetry = undefined;
+        });
+        rowsRetry = retry;
+      }
     },
   };
 }

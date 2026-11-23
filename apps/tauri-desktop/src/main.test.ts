@@ -3421,6 +3421,29 @@ describe("select, open, back (inspector)", () => {
     expect(document.activeElement).toBe(headOf(1));
   });
 
+  const sessionsListed = async () => {
+    await vi.waitFor(() => expect(document.querySelectorAll(".worktree-item").length).toBeGreaterThan(1));
+    await settle();
+  };
+
+  test("closing the inspector focuses the selected worktree, not the one last opened", async () => {
+    const lane = (id: string) => wtRow({ worktree_id: id, label: `/w/${id}`, sessions: [] });
+    const b = await boot({ worktrees: [lane("wt-w"), lane("wt-z"), wtRow({ repo_id: "repoB", worktree_id: "wt-b", label: "/w/beta", sessions: [], sessions_total: 0 })] });
+    await ready(b);
+    b.scope.narrow({ project: "repoA", worktree: "wt-w" });
+    b.nav("sessions").click();
+    await vi.waitFor(() => expect(document.querySelector(".sessions-back")).not.toBeNull());
+    document.querySelector<HTMLElement>(".sessions-back")!.click();
+    await sessionsListed();
+    const row = (id: string) => document.querySelector<HTMLElement>(`.worktree-item[data-wt='${id}']`)!;
+    expect(row("wt-w").classList.contains("selected")).toBe(true);
+    row("wt-z").click();
+    const close = pane().querySelector<HTMLElement>(".detail-close")!;
+    close.focus();
+    close.click();
+    expect(document.activeElement).toBe(row("wt-z"));
+  });
+
   test("an arrow key moves the selection and the inspector follows it", async () => {
     const b = await boot({ worktrees: twoRepos() });
     await ready(b);
@@ -3560,6 +3583,28 @@ describe("select, open, back (inspector)", () => {
       backBtn().click();
       expect(b.active()).toBe("sessions");
       expect(b.scope.get().session).toEqual({ id: "r1", source: "codex" });
+      await vi.waitFor(() => expect(events().querySelector(".session-events-list")).not.toBeNull());
+    });
+
+    test("Back into a session's history inside Project's Sessions view brings the history back", async () => {
+      const ref = { source: "codex", session_id: "r1", first_time: iso(NOW - 3_600_000), last_time: iso(NOW - 60_000), events: 2 };
+      const b = await boot({ worktrees: [wtRow({ worktree_id: "wt-w", label: "/w/w", sessions: [ref], sessions_total: 1 }), wtRow({ repo_id: "repoB", worktree_id: "wt-b", label: "/w/beta", sessions: [], sessions_total: 0 })], sessions: [sessionRow("r1")] });
+      await ready(b);
+      b.go("project", { project: "repoA", worktree: "wt-w" } as never);
+      await settle();
+      chip("sessions").click();
+      await vi.waitFor(() => expect(itemAt("r1")).not.toBeNull());
+      await settle();
+      itemAt("r1").click();
+      openIt(itemAt("r1"));
+      const events = () => document.querySelector(".sessions-events")!;
+      await vi.waitFor(() => expect(events().querySelector(".session-events-list")).not.toBeNull());
+      await settle();
+      b.nav("fleet").click();
+      await settle();
+      backBtn().click();
+      expect(b.active()).toBe("project");
+      expect(b.scope.get().session?.id).toBe("r1");
       await vi.waitFor(() => expect(events().querySelector(".session-events-list")).not.toBeNull());
     });
 
@@ -3959,6 +4004,22 @@ test("narrow window: the sidebar overlay closes on a scrim click and on Escape",
   expect(e.defaultPrevented).toBe(true);
   expect(shell.dataset.sidebar).toBe("auto");
   expect(toolbarBtn("toolbar-sidebar").getAttribute("aria-expanded")).toBe("false");
+});
+
+test("narrow window: Escape closes the sidebar overlay and leaves the selection under it alone", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+  await boot({ worktrees: twoRepos() });
+  await vi.waitFor(() => expect(document.querySelectorAll(".fleet-row").length).toBe(2));
+  await flush();
+  const head = document.querySelector<HTMLElement>(".fleet-row .fleet-row-head") ?? document.querySelector<HTMLElement>(".fleet-row")!;
+  head.click();
+  expect(document.querySelectorAll(".fleet-row.selected")).toHaveLength(1);
+  toolbarBtn("toolbar-sidebar").click();
+  const shell = document.querySelector<HTMLElement>(".shell")!;
+  expect(shell.dataset.sidebar).toBe("shown");
+  esc();
+  expect(shell.dataset.sidebar).toBe("auto");
+  expect(document.querySelectorAll(".fleet-row.selected")).toHaveLength(1);
 });
 
 test("history: Needs you is a place; Back and Forward restore it, not a bare Worktree list", async () => {
