@@ -22,6 +22,8 @@ export const NO_DATA_MARK = "–";
 export const NO_PROJECT_MARK = NO_DATA_MARK;
 /** Project lane text beside a landed rejoin whose merge time is unknown. */
 export const LANDED_UNKNOWN = "landed ?";
+/** The toolbar's Back and Forward chevrons. */
+export const NAV_CHEVRON = { back: "‹", forward: "›" } as const;
 /** Project lane edges that run past the visible window. */
 export const CLIP = { left: "‹", right: "›" } as const;
 

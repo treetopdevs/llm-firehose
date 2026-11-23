@@ -104,6 +104,8 @@ export type SessionLike = {
   /** Additive: the source's own session title, else a first-prompt excerpt. Absent on older daemons. */
   title?: string;
   first_time?: string;
+  /** Additive: the last event time, so the shell can tell whether a range covers the session. */
+  last_time?: string;
 };
 
 const DIGEST64 = /^[0-9a-f]{64}$/;

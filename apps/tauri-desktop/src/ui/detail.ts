@@ -48,9 +48,15 @@ function kvTable(title: string, payload: Record<string, unknown> | undefined, om
 /** What a pane subscribed to the directory with; a pane shows one event, so one subscription. */
 const paneOff = new WeakMap<HTMLElement, () => void>();
 
-export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature, offerEvidence?: (id: string) => void, directory?: SessionDirectory): void {
+/** Drops what the pane subscribed to for its last content; the next content subscribes afresh. */
+export function releasePane(pane: HTMLElement): void {
   paneOff.get(pane)?.();
   paneOff.delete(pane);
+}
+
+export function renderDetail(pane: HTMLElement, ev: FirehoseEvent | null, onClose: () => void, siblings: Siblings = () => [], signature?: ErrorSignature, offerEvidence?: (id: string) => void, directory?: SessionDirectory): void {
+  releasePane(pane);
+  pane.removeAttribute("data-inspector");
   clear(pane);
   if (!ev) {
     pane.classList.remove("open");

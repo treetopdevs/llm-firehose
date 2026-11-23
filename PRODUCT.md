@@ -33,6 +33,6 @@ Calm, dense, exact. The tone of a good flight-operations board or a well-kept la
 
 ## Accessibility & Inclusion
 
-Keyboard operable throughout (tab order, Enter/Space on rows, ⌘K search). Color never carries state alone: state has a word next to the dot. Respect prefers-reduced-motion; motion only conveys state changes. Contrast at WCAG AA on the dark surface.
+Keyboard operable throughout (tab order, Enter/Space on rows, ⌘K search). Color never carries state alone: state has a word next to the dot. Respect prefers-reduced-motion; motion only conveys state changes. Contrast at WCAG AA in both the light and the dark appearance, which follow the system setting.
 
 See [DESIGN.md](DESIGN.md) for the visual system and design tokens.

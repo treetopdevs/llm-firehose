@@ -16,10 +16,17 @@ import { CLIP, COMMIT_TICK, DASH, GONE_MARK, HATCH, IDLE_BANG, LANDED_UNKNOWN, l
 import { createActivityMap } from "../activity";
 import type { ActivityMap, MapWorkspace } from "../activity";
 
-/** The four encodings of one repository at Project altitude; Lanes is the default. */
-export type ProjectEncoding = "lanes" | "graph" | "map" | "events";
-export const ENCODING_LABELS: Readonly<Record<ProjectEncoding, string>> = { lanes: "Lanes", graph: "Graph", map: "Map", events: "Events" };
-const ENCODINGS: readonly ProjectEncoding[] = ["lanes", "graph", "map", "events"];
+/** The encodings of one repository at Project altitude; Lanes is the default. Sessions is the old Worktree rung (MS-9). */
+export type ProjectEncoding = "lanes" | "graph" | "map" | "events" | "sessions";
+export const ENCODING_LABELS: Readonly<Record<ProjectEncoding, string>> = { lanes: "Lanes", graph: "Graph", map: "Map", events: "Events", sessions: "Sessions" };
+const ENCODINGS: readonly ProjectEncoding[] = ["lanes", "graph", "map", "events", "sessions"];
+
+/** The shell's sessions list (the old Worktree rung), shown under the Sessions chip. Project owns its lifetime while it is shown. */
+export interface ProjectSessionsHost {
+  root: HTMLElement;
+  activate(): unknown;
+  deactivate(): unknown;
+}
 
 /** The workspace graph as Project hosts it: no picker, no project of its own (scope.project is the identity). */
 export interface ProjectGraphHost {
@@ -65,6 +72,8 @@ export interface ProjectDeps {
   refreshMs?: number;
   /** The workspace graph, hosted under the Graph and Events chips. Without it Project has no chips. */
   graph?: ProjectGraphHost;
+  /** The sessions list hosted under the Sessions chip. Without it Project has no such chip. */
+  sessions?: ProjectSessionsHost;
   /** The shared fork order for a repository (Fleet's); undefined falls back to Project's own memory. */
   worktreeOrder?(repo: string): readonly string[] | undefined;
   /** The daemon privacy mode, passed to the Activity Map. */
@@ -129,6 +138,10 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
 
   let rows: WorktreeLifetimeView[] = [];
   let status: Status = "idle";
+  // Rows came from a successful /worktrees read, by the panel or by the shell while it was hidden.
+  let rowsKnown = false;
+  // The last hidden read failed (daemon down at boot): the next connection retries it.
+  let rowsFailed = false;
   let connected = true;
   let failedOffline = false;
   const orders = new Map<string, string[]>();
@@ -149,6 +162,15 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   let drag: { startX: number; curX: number; range: TimeRange } | undefined;
   let brushRect: SVGElement | undefined;
   const graph = deps.graph;
+  const sessionsHost = deps.sessions;
+  const encodings = ENCODINGS.filter((e) => e !== "sessions" || sessionsHost !== undefined);
+  let sessionsOn = false;
+  /** Releases the hosted sessions list when any other encoding (or leaving Project) takes the body. */
+  const releaseSessions = (): void => {
+    if (!sessionsOn) return;
+    sessionsOn = false;
+    sessionsHost?.deactivate();
+  };
   let encoding: ProjectEncoding = "lanes";
   const byRepo = new Map<string, ProjectEncoding>();
   let lastRepo: string | undefined;
@@ -240,7 +262,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       // The roots-backed folder name (D126f) answers ahead of any placeholder, so Worktree, Fleet and the crumb read one name.
       const rooted = rootsName(sc.project);
       if (rooted !== undefined) out.project = rooted;
-      else if (graph && sc.project !== undefined && status === "ready" && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
+      else if (graph && sc.project !== undefined && (status === "ready" || rowsKnown) && !rows.some((r) => r.repo_id === sc.project)) out.project = `${shortId(sc.project)} (unknown)`;
       return out;
     },
   });
@@ -568,6 +590,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     lanesBody.hidden = encoding !== "lanes";
     encodingBody.hidden = encoding === "lanes";
     if (encoding !== "lanes") endDrag(); // leaving Lanes mid-brush: drop the document listeners
+    if (encoding !== "sessions") releaseSessions();
     if (encoding === "lanes") {
       graph.hide();
       map.cancel();
@@ -579,6 +602,20 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     }
     const repo = repoNow();
     const repoRows = repo === undefined ? [] : rows.filter((r) => r.repo_id === repo);
+    if (encoding === "sessions") {
+      graph.hide();
+      map.cancel();
+      map.setActive(false);
+      if (sessionsHost) {
+        if (sessionsHost.root.parentNode !== encodingBody) encodingBody.replaceChildren(sessionsHost.root);
+        if (!sessionsOn) {
+          sessionsOn = true;
+          void sessionsHost.activate();
+        }
+      }
+      renderStatus(0, repoRows.length);
+      return;
+    }
     if (encoding === "map") {
       graph.hide();
       map.setActive(true);
@@ -628,16 +665,16 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     mountEncoding();
   }
 
-  for (const e of ENCODINGS) {
+  for (const e of encodings) {
     const b = el("button", { type: "button", role: "tab", class: "project-chip", "data-encoding": e, "aria-selected": String(e === encoding), tabindex: e === encoding ? "0" : "-1" }, ENCODING_LABELS[e]);
     b.addEventListener("click", () => setEncodingTo(e));
     b.addEventListener("keydown", (ev) => {
-      const i = ENCODINGS.indexOf(e);
+      const i = encodings.indexOf(e);
       if (!LOCAL.projectViews.matches(ev)) return;
-      const j = ev.key === "ArrowRight" ? (i + 1) % ENCODINGS.length : ev.key === "ArrowLeft" ? (i + ENCODINGS.length - 1) % ENCODINGS.length : ev.key === "Home" ? 0 : ENCODINGS.length - 1;
+      const j = ev.key === "ArrowRight" ? (i + 1) % encodings.length : ev.key === "ArrowLeft" ? (i + encodings.length - 1) % encodings.length : ev.key === "Home" ? 0 : encodings.length - 1;
       ev.preventDefault();
-      setEncodingTo(ENCODINGS[j]!);
-      chipBtns.get(ENCODINGS[j]!)?.focus();
+      setEncodingTo(encodings[j]!);
+      chipBtns.get(encodings[j]!)?.focus();
     });
     chipBtns.set(e, b);
     chips.append(b);
@@ -665,7 +702,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     if (encoding !== "lanes") {
       renderStatus(0, repoRows.length);
       if (encoding === "map") updateMap(repo, repoRows);
-      else if (repo !== undefined) passOrder(repo, repoRows);
+      else if (encoding !== "sessions" && repo !== undefined) passOrder(repo, repoRows);
       return;
     }
     if (repo !== undefined) {
@@ -710,10 +747,13 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       if (token === loadToken && !active && !signal?.aborted) {
         const changed = labelSignature(data) !== labelSignature(rows);
         rows = data;
+        rowsKnown = true;
+        rowsFailed = false;
         // Views drawn from the old names (Worktree header, Fleet, crumb) must redraw.
         if (changed) store.touchResolver();
       }
     } catch {
+      if (token === loadToken && !active) rowsFailed = true;
       // keep the last known membership
     }
   }
@@ -730,6 +770,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       const data = await api.worktrees(ctl.signal);
       if (token !== loadToken || ctl.signal.aborted || !active) return;
       rows = data;
+      rowsKnown = true;
       status = "ready";
       failedOffline = false;
       render();
@@ -970,6 +1011,7 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
       return load();
     },
     deactivate() {
+      releaseSessions();
       if (graph && map) {
         graph.hide();
         map.cancel();
@@ -996,6 +1038,8 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     setConnected(c) {
       connected = c;
       if (c && failedOffline && active) void load();
+      // The shell's boot read failed while the daemon was down: take the rows now, hidden or not.
+      else if (c && !active && rowsFailed) void refreshRows();
     },
   };
 }

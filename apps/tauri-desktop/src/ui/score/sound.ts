@@ -2,7 +2,8 @@
 export type SoundState = "off" | "enabling" | "on" | "unavailable";
 export const REPLAY_PITCHES: Record<string, number> = {error:220,permission:660,file:440,tool:330,shell:392,prompt:523,message:587,session:262,meta:196};
 export function createReplaySound(changed: (state: SoundState) => void) {
-  let context: AudioContext | undefined, enabled = false, version = 0, last = -Infinity;
+  let context: AudioContext | undefined, enabled = false, version = 0, last = -Infinity, shown: SoundState = "off";
+  const report = (state: SoundState) => { shown = state; changed(state); };
   let voice: {oscillator: OscillatorNode; gain: GainNode} | undefined;
   function stop() {
     if (!voice) return;
@@ -10,13 +11,14 @@ export function createReplaySound(changed: (state: SoundState) => void) {
     try { current.oscillator.stop(); } catch { /* already stopped */ }
     current.oscillator.disconnect(); current.gain.disconnect();
   }
-  function disable(state: SoundState = "off") {
+  /** Stops and closes audio. A plain "off" keeps a failure the device reported unless `clearFailure` (the choice itself was turned off). */
+  function disable(state: SoundState = "off", clearFailure = false) {
     version++; enabled = false; stop();
     document.removeEventListener("visibilitychange", visibility);
     window.removeEventListener("pagehide", pagehide);
     const old = context; context = undefined;
     if (old) { old.onstatechange = null; void old.close().catch(() => {}); }
-    changed(state);
+    report(state === "off" && shown === "unavailable" && !clearFailure ? "unavailable" : state);
   }
   function visibility() { if (document.hidden) disable(); }
   function pagehide() { disable(); }
@@ -24,7 +26,7 @@ export function createReplaySound(changed: (state: SoundState) => void) {
     disable();
     if (document.hidden) return;
     const token = version;
-    changed("enabling");
+    report("enabling");
     try {
       const next = new AudioContext(); context = next;
       document.addEventListener("visibilitychange", visibility);
@@ -34,7 +36,7 @@ export function createReplaySound(changed: (state: SoundState) => void) {
       if (next.state !== "running") { disable("unavailable"); return; }
       enabled = true; last = -Infinity;
       next.onstatechange = () => { if (context === next && enabled && next.state !== "running") disable("unavailable"); };
-      changed("on");
+      report("on");
     } catch { if (version === token) disable("unavailable"); }
   }
   function cue(category: string) {
@@ -55,5 +57,5 @@ export function createReplaySound(changed: (state: SoundState) => void) {
       oscillator.start(now); oscillator.stop(now + .08);
     } catch { disable("unavailable"); }
   }
-  return {enable, disable: () => disable(), stop, cue};
+  return {enable, disable: (clearFailure = false) => disable("off", clearFailure), stop, cue};
 }

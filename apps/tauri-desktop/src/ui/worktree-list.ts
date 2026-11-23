@@ -11,6 +11,10 @@ export interface WorktreeRow {
   /** The worktree's path where the label is one, else its id; only the folder name is drawn. */
   title: string;
   stateText: string;
+  /** The API's own classification, so a caller can tell unknown from idle. */
+  state: WorktreeLifetimeView["state"];
+  /** Why the state is unknown, when the API said. */
+  reason?: string;
   badge: string;
   ageText: string;
   sessionsText: string;
@@ -37,6 +41,8 @@ export function describeWorktree(r: WorktreeLifetimeView, now: number): Worktree
     name: worktreeName(r.worktree_id, r.label).label,
     title: (r.label || r.worktree_id).replace(/\/\.git\/?$/, ""),
     stateText: worktreeStateText(r),
+    state: r.state,
+    ...(r.state_reason ? { reason: r.state_reason } : {}),
     badge: badgeOf(r),
     ageText: Number.isNaN(last) ? "no activity time" : formatAge(now - last),
     sessionsText: `${r.sessions_total} session${r.sessions_total === 1 ? "" : "s"} captured`,

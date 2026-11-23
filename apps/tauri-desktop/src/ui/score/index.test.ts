@@ -84,6 +84,14 @@ beforeEach(() => {
   capturedEvent.mockRejectedValue(new Error("GET /attention/event: 404"));
 });
 
+// Opening a score marks the event under the playhead but leaves the detail pane closed (MS-8).
+// These tests exercise the pane, so they select the marked event first, as a click would.
+const pick = (panel: { root: HTMLElement }) => {
+  const tick = panel.root.querySelector<SVGElement>(".score-chart .score-tick.current");
+  if (!tick) throw new Error("no current tick to select");
+  tick.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+};
+
 // A score is attached while it is the shown view, as main.ts does; detached tests remove it.
 afterEach(() => document.body.replaceChildren());
 
@@ -127,6 +135,93 @@ describe("session score view", () => {
     expect(overview.querySelector(".score-view")).not.toBeNull();
   });
 
+  test("opening a session marks the first event but leaves the detail pane closed until the user selects", async () => {
+    const onSelect = vi.fn();
+    const panel = createScore(onSelect);
+    document.body.append(panel.root);
+    await panel.open(SID);
+    expect(panel.root.querySelector(".score-tick.current")).not.toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    // Playing before any selection also stays out of the pane.
+    button(panel.root, "play").click();
+    panel.tick(5000);
+    expect(onSelect).not.toHaveBeenCalled();
+    button(panel.root, "play").click();
+    expect(onSelect).not.toHaveBeenCalled();
+    // Selecting something opens it.
+    pick(panel);
+    expect(onSelect).toHaveBeenCalled();
+  });
+
+  test("opening a different session clears the detail pane that showed the previous session's event", async () => {
+    const onSelect = vi.fn();
+    const onClear = vi.fn();
+    const panel = createScore(onSelect, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    expect(onClear).not.toHaveBeenCalled(); // nothing of any session was on the pane yet
+    pick(panel);
+    expect(onSelect).toHaveBeenCalled();
+    await panel.open("another-session", session[0].source);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    await panel.open(SID, session[0].source); // the pane is already clear
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  test("reloading the same session in place leaves the detail pane alone", async () => {
+    const onClear = vi.fn();
+    const panel = createScore(() => {}, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    pick(panel);
+    await panel.open(SID, session[0].source);
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
+  test("a pane kept through a reload of its session is still cleared when another session opens", async () => {
+    const onClear = vi.fn();
+    const panel = createScore(() => {}, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    pick(panel);
+    await panel.open(SID, session[0].source); // reload in place: the pane stays, nothing is cleared
+    expect(onClear).not.toHaveBeenCalled();
+    await panel.open("another-session", session[0].source);
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  test("selecting an event while another session loads does nothing, so no pane is left without an owner", async () => {
+    const onSelect = vi.fn();
+    const onClear = vi.fn();
+    const panel = createScore(onSelect, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    let finish!: (v: FirehoseEvent[]) => void;
+    sessionEvents.mockImplementationOnce(() => new Promise<FirehoseEvent[]>((r) => (finish = r)));
+    const opening = panel.open("another-session", session[0].source);
+    onSelect.mockClear();
+    panel.root.querySelector<HTMLElement>('button[aria-label="jump to next event"]')!.click();
+    expect(onSelect).not.toHaveBeenCalled();
+    finish(session);
+    await opening;
+    pick(panel);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    await panel.open(SID, session[0].source);
+    expect(onClear).toHaveBeenCalled(); // the owner is recorded, so a later session change clears it
+  });
+
+  test("a pane the user closed is not cleared again when another session opens", async () => {
+    const onClear = vi.fn();
+    let dismiss: () => void = () => {};
+    const panel = createScore((_ev, _sib, _sig, d) => { dismiss = d; }, createScope(), onClear);
+    document.body.append(panel.root);
+    await panel.open(SID, session[0].source);
+    pick(panel);
+    dismiss();
+    await panel.open("another-session", session[0].source);
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
   test("a failed fetch is shown, not thrown", async () => {
     sessionEvents.mockRejectedValue(new Error("daemon away"));
     const panel = createScore(() => {});
@@ -143,6 +238,7 @@ describe("session score view", () => {
     });
     document.body.append(panel.root); // the shown view renders the detail pane
     await panel.open(SID);
+    pick(panel);
     expect(panel.playhead()).toBe(START);
     expect(selected.map((e) => e.id)).toEqual([session[0].id]);
 
@@ -168,6 +264,7 @@ describe("session score view", () => {
     const panel = createScore(onSelect);
     document.body.append(panel.root); // the shown view renders the detail pane
     await panel.open(SID);
+    pick(panel);
     const play = button(panel.root, "play");
     expect(play.getAttribute("aria-pressed")).toBe("false");
     play.click();
@@ -300,6 +397,7 @@ describe("session score view", () => {
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     document.body.append(panel.root); // only the shown score re-renders the pane
     await panel.open(MIX_SESSION);
+    pick(panel);
     expect(errorSignatures).toHaveBeenCalledWith(MIX_SESSION, expect.any(AbortSignal));
 
     // Both ticks of the repeating signature share the motif marker, and the
@@ -326,6 +424,7 @@ describe("session score view", () => {
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     document.body.append(panel.root); // only the shown score re-renders the pane
     await panel.open(MIX_SESSION);
+    pick(panel);
     expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
     expect(sigs).toEqual([daemonSig]);
     expect(panel.root.querySelectorAll(".score-chart .score-tick.kin")).toHaveLength(2);
@@ -338,6 +437,7 @@ describe("session score view", () => {
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     document.body.append(panel.root); // only the shown score re-renders the pane
     await panel.open(MIX_SESSION);
+    pick(panel);
     expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
     expect(panel.root.querySelector("p.error")).toBeNull();
     expect(sigs).toEqual([undefined]);
@@ -358,6 +458,7 @@ describe("session score view", () => {
       const opening = panel.open(MIX_SESSION);
       await vi.advanceTimersByTimeAsync(SIGNATURES_TIMEOUT_MS + 1);
       await opening;
+      pick(panel);
       expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
       expect(panel.root.querySelector("p.error")).toBeNull();
       expect(sigs).toEqual([undefined]);
@@ -374,6 +475,7 @@ describe("session score view", () => {
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     document.body.append(panel.root); // only the shown score re-renders the pane
     await panel.open(MIX_SESSION);
+    pick(panel);
 
     // The score is fully drawn and the first event selected while /errors is still pending.
     expect(panel.root.querySelectorAll(".score-chart .score-tick.error.motif")).toHaveLength(2);
@@ -397,6 +499,7 @@ describe("session score view", () => {
     });
     document.body.append(panel.root);
     await panel.open(MIX_SESSION);
+    pick(panel);
     expect(sigs).toEqual([undefined]); // the current event is an error
     dismiss(); // the pane's close button
     finish([MIX_SIG]);
@@ -412,6 +515,7 @@ describe("session score view", () => {
     const panel = createScore((_ev, _sib, signature) => sigs.push(signature));
     document.body.append(panel.root); // only the shown score re-renders the pane
     await panel.open(MIX_SESSION);
+    pick(panel);
     // The mirror grouped the pair as a motif while /errors was pending.
     expect(panel.root.querySelectorAll(".score-tick.error.motif")).toHaveLength(2);
 
@@ -454,6 +558,7 @@ describe("session score view", () => {
     document.body.append(panel.root); // the shown view renders the detail pane
     const t0 = performance.now();
     await panel.open("big");
+    pick(panel);
     const openMs = performance.now() - t0;
     const chart = panel.root.querySelector<SVGSVGElement>(".score-chart svg")!;
     const laneW = Number(chart.getAttribute("viewBox")!.split(" ")[2]) - 110 - 8;
@@ -648,6 +753,7 @@ describe("session score timeline view", () => {
     sessionEvents.mockResolvedValue(projected);
     const { panel, calls, last, cur } = recorder();
     await panel.open(SID);
+    pick(panel);
     await flush();
     capturedEvent.mockClear();
     button(panel.root, "play").click();
@@ -686,6 +792,7 @@ describe("session score timeline view", () => {
     sessionEvents.mockResolvedValue(projected);
     const { panel, cur } = recorder();
     await panel.open(SID);
+    pick(panel);
     await flush();
     let pending: AbortSignal | undefined;
     capturedEvent.mockImplementation((_id: string, signal?: AbortSignal) => {
@@ -755,11 +862,13 @@ describe("session score timeline view", () => {
     sessionEvents.mockResolvedValue(projected);
     const { panel, cur } = recorder();
     await panel.open(SID);
+    pick(panel);
     await flush();
     goTo(panel, pair.id, cur);
     await flush();
     capturedEvent.mockClear();
     await panel.open(SID);
+    pick(panel); // the reopened score marks its first event; selecting it puts the cursor back there
     await flush();
     goTo(panel, pair.id, cur);
     await flush();
@@ -903,6 +1012,7 @@ describe("session score timeline view", () => {
     sessionEvents.mockResolvedValue(projected);
     const { panel, calls, last, cur } = recorder();
     await panel.open(SID);
+    pick(panel);
     await flush();
     button(panel.root, "play").click();
     last()[3](); // close the pane
@@ -935,6 +1045,7 @@ describe("session score timeline view", () => {
     sessionEvents.mockResolvedValue(projected);
     const { panel, calls, last } = recorder();
     await panel.open(SID);
+    pick(panel);
     await flush();
     let land!: (evs: FirehoseEvent[]) => void;
     sessionEvents.mockImplementation(() => new Promise<FirehoseEvent[]>((r) => (land = r)));

@@ -5,7 +5,8 @@
 // full event list that highlights the event under it and drives the detail
 // pane. Gaps are real time at every speed.
 
-import { createReplaySound, REPLAY_PITCHES } from "./sound";
+import { createReplaySound } from "./sound";
+import { replaySoundSetting } from "./sound-setting";
 import type { SoundState } from "./sound";
 import { capturedEvent, errorSignatures, sessionEvents } from "../../api";
 import type { ErrorSignature, FirehoseEvent } from "../../api";
@@ -108,27 +109,27 @@ function spanTitle(byId: Map<string, FirehoseEvent>, from: number, to: number, o
 const sameWindowValue = (a: ScopeWindow, b: ScopeWindow): boolean =>
   a === "live" || b === "live" ? a === b : a.from === b.from && a.to === b.to;
 
-export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void, store: ScopeStore = createScope()): ScorePanel {
+export function createScore(
+  onSelect: (ev: FirehoseEvent, siblings: Siblings, signature: ErrorSignature | undefined, dismiss: () => void) => void,
+  store: ScopeStore = createScope(),
+  /** Empties the detail pane when the Score moves to another session, so the pane never shows the previous session's event. */
+  clearDetail: () => void = () => {},
+): ScorePanel {
   const head = el("div", { class: "score-head dim" });
   const clock = el("span", { class: "score-clock" });
   const bar = el("div", { class: "score-bar" });
   const overview = el("div", { class: "score-overview" });
   const chart = el("div", { class: "score-chart" });
-  const soundButton = el("button", {"aria-label": "Enable replay sound", "aria-pressed": "false"}, "Enable replay sound");
-  const soundStatus = el("span", {role: "status"}, "Replay sound off");
+  // Replay sound is chosen in Settings (MS-9). The Score plays tones only while that choice is on, and opens
+  // audio when playback starts (a user action); the device's state is reported for Settings to show.
   let soundState: SoundState = "off";
   const sound = createReplaySound(state => {
     soundState = state;
-    const label = state === "on" || state === "enabling" ? "Disable replay sound" : "Enable replay sound";
-    soundButton.textContent = label; soundButton.setAttribute("aria-label", label);
-    soundButton.setAttribute("aria-pressed", String(state === "on" || state === "enabling"));
-    soundStatus.textContent = state === "unavailable" ? "Replay sound unavailable. Playback still works; you can retry." : `Replay sound ${state}`;
+    replaySoundSetting.report(state);
   });
-  soundButton.addEventListener("click", () => { if (soundState === "on" || soundState === "enabling") sound.disable(); else void sound.enable(); });
-  const soundControls = el("details", {}, el("summary", {}, "Optional replay sound"), soundButton, soundStatus,
-    el("p", {}, `Quiet local tones during playback only; off by default. ${Object.entries(REPLAY_PITCHES).map(([category, hz]) => `${category} ${hz} Hz`).join(", ")}; other 196 Hz. At most one latest crossed observation every 150 ms; dense events and first/final observations may be silent. This is not an error detector. Tones describe captured categories, not success. Leaving Score, hiding the page, or opening another session switches sound off.`));
+  replaySoundSetting.subscribe(() => { if (!replaySoundSetting.get()) sound.disable(true); });
   const windowNote = el("p", { class: "dim score-window-note", hidden: "" });
-  const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, soundControls, overview, chart);
+  const root = el("section", { class: "score", tabindex: "0" }, head, windowNote, bar, overview, chart);
   const clipId = `score-clip-${++clipSeq}`;
 
   let sessionId = "";
@@ -171,6 +172,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   let selection = 0;
   /** Whether the detail pane shows the score's current event (not dismissed, not taken by another view). */
   let shown = false;
+  /** The session whose event the shared detail pane was last given; kept through a reload of that session, dropped when the pane is closed or cleared. */
+  let paneOwner: SessionRef | null = null;
   /** The pane was closed; the frame loop's moves leave it closed until an explicit selection. */
   let dismissed = false;
   let currentSignature: ErrorSignature | undefined;
@@ -203,6 +206,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     if (!playing) sound.stop();
     playBtn.setAttribute("aria-pressed", String(playing));
     playBtn.textContent = playing ? "❚❚" : "▶";
+    if (playing && !wasPlaying && replaySoundSetting.get() && soundState !== "on" && soundState !== "enabling") void sound.enable();
     if (playing) {
       // Starting playback: no detail fetch may be in flight while the cursor
       // moves, and a pane showing full fields drops back to projected ones.
@@ -279,6 +283,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
    * Playback's moves only mark the event when the pane was closed.
    */
   function setPlayhead(next: number, fromPlayback = false) {
+    if (!loadedKey) return;
     if (!fromPlayback) sound.stop();
     at = next;
     // Follow the cursor when it leaves the window; this redraws once per window width.
@@ -297,6 +302,8 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
 
   /** Puts the cursor on one specific event, even when several share its instant. */
   function select(target: ScoreEvent) {
+    // While a session loads, the score still holds the previous one: selecting from it would open a pane no session owns.
+    if (!loadedKey) return;
     sound.stop();
     at = target.at;
     if (at < view.from || at > view.to) setView(panView(view, at, bounds()));
@@ -329,6 +336,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   /** The pane's close button: nothing in flight, nor pausing, may reopen it. */
   const dismiss = () => {
     shown = false;
+    paneOwner = null;
     dismissed = true;
     cancelDetail();
   };
@@ -387,6 +395,7 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
   function render(ev: FirehoseEvent) {
     cancelDetail();
     shown = true;
+    paneOwner = loadedKey ?? paneOwner;
     dismissed = false;
     if (playing) {
       // Projected even when an older daemon sent full envelopes.
@@ -727,6 +736,12 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     sound.disable();
     const v = ++version;
     const priorKey = loadedKey, priorAt = at;
+    // The pane shows the previous session's event: a different session must not leave it there.
+    if (paneOwner && !sameSession(paneOwner, { id, ...(source !== undefined ? { source } : {}) } as SessionRef)) {
+      shown = false;
+      paneOwner = null;
+      try { clearDetail(); } catch { /* a pane sink must not break the load */ }
+    }
     loadedKey = null;
     // Drop the previous session's detail state before pausing, so stopping
     // playback cannot fetch that session's current event into the new cache.
@@ -734,8 +749,6 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
     fullById = new Map();
     currentId = undefined;
     setPlaying(false);
-    // Closing the pane, or another selection, while this loads keeps the load from rendering.
-    const sel = selection;
     sessionId = id;
     clear(head);
     clear(overview);
@@ -792,10 +805,13 @@ export function createScore(onSelect: (ev: FirehoseEvent, siblings: Siblings, si
       draw();
       // A load that lands after the user left the Score, or closed the pane,
       // draws but leaves the shared detail pane alone.
+      // Opening a score only marks the event under the playhead: the detail pane opens when the
+      // user selects something (MS-8), so playback before that also stays out of it.
       const under = eventAt(score, at);
       if (under) {
         mark(under);
-        if (root.isConnected && sel === selection) render(under.event);
+        shown = false;
+        dismissed = true;
       }
     } catch (err) {
       if (v !== version) return;

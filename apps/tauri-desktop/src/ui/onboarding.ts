@@ -2,7 +2,6 @@ import { doctor, setConfig } from "../api";
 import { clear, el } from "../dom";
 import { failureMessage } from "../errors";
 import { claimEscape } from "../escape";
-import { runAdapterInstall } from "./install";
 import { PRIVACY_MODES } from "./settings";
 
 const ONBOARDED_KEY = "firehose-onboarded";
@@ -94,18 +93,13 @@ export function createOnboarding(onDone: () => void): HTMLElement {
     card.append(
       el("h3", {}, "2 / 3 — wire up your agents"),
       el("p", { class: "dim" }, "Codex messages stream from local rollouts; hooks add lifecycle and tool activity. Codex will ask you to review hook trust in /hooks."),
+      el("p", {}, "The install buttons for each agent live in Doctor. When this setup ends, Doctor opens so you can wire up the agents you use."),
     );
-    const status = el("p", { class: "dim" }, "");
-    for (const adapter of ["claude-code", "claude-otel", "codex", "opencode", "antigravity"]) {
-      const btn = el("button", {}, `install ${adapter}`);
-      btn.addEventListener("click", () => runAdapterInstall(adapter, status));
-      card.append(btn);
-    }
     const back = el("button", {}, "back");
     back.addEventListener("click", stepPrivacy);
     const next = el("button", { class: "primary" }, "next");
     next.addEventListener("click", stepVerify);
-    card.append(status, back, next);
+    card.append(back, next);
     focusStep();
   }
 

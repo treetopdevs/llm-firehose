@@ -52,6 +52,8 @@ function panelOver(rows: readonly WorktreeLifetimeView[], opts: { over?: Partial
   return { panel, store, resolver };
 }
 
+/** Open is a double click (MS-8); a single click only selects. */
+const openIt = (n: Element): void => { n.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); };
 const items = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(".worktree-item")];
 const sessionIds = (root: HTMLElement) => [...root.querySelectorAll(".session-item")].map((n) => n.getAttribute("data-id"));
 const sessionKeys = (root: HTMLElement) => [...root.querySelectorAll(".session-item")].map((n) => `${n.getAttribute("data-source")}/${n.getAttribute("data-id")}`);
@@ -86,6 +88,42 @@ describe("the list at the Worktree rung", () => {
     expect(first.getAttribute("title")).toBe("/w/new");
   });
 
+  test("worktree rows carry data-key equal to the selection key, and selectableKeys lists them in order", async () => {
+    const { panel } = panelOver(three);
+    await panel.refresh();
+    expect(items(panel.root).map((n) => n.getAttribute("data-key"))).toEqual(["wt\0new", "wt\0mid", "wt\0old"]);
+    expect(panel.selectableKeys()).toEqual(["wt\0new", "wt\0mid", "wt\0old"]);
+    items(panel.root)[1].click();
+    expect(panel.selectedKey()).toBe("wt\0mid");
+  });
+
+  test("selecting another worktree leaves aria-current on that row alone, and clearing the selection removes it", async () => {
+    const { panel } = panelOver(three);
+    await panel.refresh();
+    const current = () => items(panel.root).filter((n) => n.hasAttribute("aria-current")).map((n) => n.getAttribute("data-wt"));
+    items(panel.root)[0].click();
+    expect(current()).toEqual(["new"]);
+    items(panel.root)[1].click();
+    expect(current()).toEqual(["mid"]);
+    panel.clearSelection();
+    expect(current()).toEqual([]);
+  });
+
+  test("the worktree Back returned from keeps its own aria-current while another is selected, and after clearing", async () => {
+    const { panel, store } = panelOver(three);
+    store.narrow({ project: "repoA", worktree: "mid" });
+    store.narrow({ worktree: undefined });
+    await panel.refresh();
+    const current = () => items(panel.root).filter((n) => n.hasAttribute("aria-current")).map((n) => n.getAttribute("data-wt"));
+    expect(current()).toEqual(["mid"]);
+    items(panel.root)[0].click();
+    expect(current()).toEqual(["new", "mid"]);
+    items(panel.root)[2].click();
+    expect(current()).toEqual(["mid", "old"]);
+    panel.clearSelection();
+    expect(current()).toEqual(["mid"]);
+  });
+
   test("says how many worktrees it lists, uncapped", async () => {
     const many = Array.from({ length: 450 }, (_, i) => wt(`w${i}`));
     const { panel } = panelOver(many);
@@ -105,7 +143,7 @@ describe("the list at the Worktree rung", () => {
   });
 
   test.each([
-    ["click", (n: HTMLElement) => n.click()],
+    ["double click", (n: HTMLElement) => openIt(n)],
     ["Enter", (n: HTMLElement) => n.dispatchEvent(key("Enter"))],
     ["Space", (n: HTMLElement) => n.dispatchEvent(key(" "))],
   ])("%s on a row narrows to that worktree and clears the cell", async (_name, act) => {
@@ -122,7 +160,7 @@ describe("the list at the Worktree rung", () => {
   test("activating a row shows only that worktree's sessions, with a way back", async () => {
     const { panel } = panelOver([wt("w1", { sessions: [ref("s1")], sessions_total: 1 }), wt("w2", { sessions: [ref("s2")], sessions_total: 1 })]);
     await panel.refresh();
-    items(panel.root).find((n) => n.getAttribute("data-wt") === "w1")!.click();
+    openIt(items(panel.root).find((n) => n.getAttribute("data-wt") === "w1")!);
     await vi.waitFor(() => expect(sessionIds(panel.root)).toEqual(["s1"]));
     expect(items(panel.root)).toHaveLength(0);
     expect(panel.root.querySelector("button.sessions-back")?.textContent).toBe("All worktrees");
@@ -520,7 +558,7 @@ describe("source identity in a selected worktree", () => {
     const { panel, store } = panelOver(twoAgents);
     store.narrow({ worktree: "w1" });
     await panel.refresh();
-    panel.root.querySelector<HTMLElement>(".session-item")!.click();
+    openIt(panel.root.querySelector<HTMLElement>(".session-item")!);
     await vi.waitFor(() => expect(panel.root.querySelector(".session-heading")).not.toBeNull());
     expect(panel.root.querySelector(".session-heading")?.textContent).toContain("1 events");
     expect(panel.root.querySelector(".sessions-events")?.textContent).toContain("from codex");
@@ -535,7 +573,7 @@ describe("source identity in a selected worktree", () => {
     store.narrow({ project: "repoA", worktree: "w1" });
     const panel = createSessions(() => {}, () => [], undefined, undefined, store, undefined, (r) => store.narrow({ session: r }));
     await panel.refresh();
-    panel.root.querySelector<HTMLElement>(".session-item")!.click();
+    openIt(panel.root.querySelector<HTMLElement>(".session-item")!);
     const history = () => panel.root.querySelector(".sessions-events")?.textContent;
     await vi.waitFor(() => expect(history()).toContain("from codex"));
     store.narrow({ project: "p2", session: { id: "same", source: "codex" } });
@@ -558,7 +596,7 @@ describe("source identity in a selected worktree", () => {
       const panel = createSessions(() => {}, () => [], undefined, undefined, store, directory);
       await panel.refresh();
       expect(panel.root.querySelector(".session-facts")?.textContent).toContain("ours");
-      panel.root.querySelector<HTMLElement>(".session-item")!.click();
+      openIt(panel.root.querySelector<HTMLElement>(".session-item")!);
       return panel;
     };
     const heading = (panel: Awaited<ReturnType<typeof opened>>) => panel.root.querySelector(".session-heading")?.textContent ?? "";
@@ -614,7 +652,7 @@ describe("source identity in a selected worktree", () => {
     sessionEvents.mockResolvedValue([{ id: "a", time: ago(1000), source: "codex", category: "tool", session_id: "bare" }, { id: "b", time: ago(1000), source: "opencode", category: "tool", session_id: "bare" }]);
     const panel = createSessions(() => {}, () => []);
     await panel.refresh();
-    panel.root.querySelector<HTMLElement>(".session-item")!.click();
+    openIt(panel.root.querySelector<HTMLElement>(".session-item")!);
     await vi.waitFor(() => expect(panel.root.querySelector(".session-heading")?.textContent).toContain("2 events"));
   });
 });

@@ -23,6 +23,8 @@ export interface TransportDeps {
   store: ScopeStore;
   now?: () => number;
   effectiveLiveSpan?: () => number;
+  /** The time span (ms) of the session in scope, as far as it is known; used to tell when the held range does not cover it. */
+  sessionSpan?: (ref: NonNullable<Scope['session']>) => { from?: number; to?: number } | undefined;
 }
 
 export interface Transport {
@@ -30,6 +32,8 @@ export interface Transport {
   destroy(): void;
   paintCount(): number;
   setVisible(v: boolean): void;
+  /** Whether the shown panel reads the range. The control is always present (MS-7); where it does not apply it is inert. */
+  setApplies(applies: boolean): void;
   setPanel(id: string): void;
   /** Repaint after the displayed panel's effective live span may have changed. */
   refresh(): void;
@@ -44,6 +48,7 @@ export function createTransport(deps: TransportDeps): Transport {
   const span = (): number => deps.effectiveLiveSpan?.() ?? liveSpanOf(store.get());
 
   let session = false;
+  let applies = true;
   let paints = 0;
   let lastKey = '';
 
@@ -72,16 +77,12 @@ export function createTransport(deps: TransportDeps): Transport {
     },
     thumb,
   );
-  const root = el(
-    'div',
-    { class: 'transport', role: 'group', 'aria-label': 'Time window' },
-    presets,
-    liveBtn,
-    holdBtn,
-    range,
-    hint,
-    track,
-  );
+  // MS-7: one pop-up control. The trigger reads the range ("Live · last 8h"); the presets, Hold
+  // and the scrubber live inside the pop-up.
+  const trigger = el('button', { type: 'button', class: 'transport-trigger', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': 'transport-pop' }, range);
+  const pop = el('div', { class: 'transport-pop', id: 'transport-pop', role: 'group', 'aria-label': 'Range options' }, presets, liveBtn, holdBtn, hint, track);
+  pop.hidden = true;
+  const root = el('div', { class: 'transport', role: 'group', 'aria-label': 'Time window' }, trigger, pop);
 
   const horizonOf = (w: ScopeWindow): number => Math.max(30 * DAY, 2 * spanOf(w, now(), span()));
 
@@ -97,21 +98,60 @@ export function createTransport(deps: TransportDeps): Transport {
 
   // Readout and tooltip use the span the panel actually draws (the effective span that
   // Hold and scrubbing also use), so a preference the panel ignores is never claimed.
+  /** MS-7: while a session is shown, whether the range held from before it leaves the session partly or wholly out. */
+  function outside(s: Scope): boolean {
+    const held = store.held();
+    const ext = s.session ? deps.sessionSpan?.(s.session) : undefined;
+    if (!held || !ext || (ext.from === undefined && ext.to === undefined)) return false;
+    const r = resolveRange(held, now(), held === 'live' ? span() : undefined);
+    return (ext.from !== undefined && ext.from < r.from) || (ext.to !== undefined && ext.to > r.to) || (ext.from !== undefined && ext.from > r.to) || (ext.to !== undefined && ext.to < r.from);
+  }
   function readout(s: Scope): { text: string; title: string } {
-    if (session) return formatRange(s.window, now(), s.liveSpanMs, { wholeSession: true });
+    if (session) return formatRange(s.window, now(), s.liveSpanMs, { wholeSession: true, outside: outside(s) });
     const drawn = formatRange(s.window, now(), span());
     if (s.window !== 'live') return drawn;
     const text = s.liveSpanMs !== undefined ? `Live · last ${formatSpan(span())}` : 'Live';
     return { text, title: drawn.title };
   }
   const retitle = (): void => {
-    range.title = readout(store.get()).title;
+    const { title } = readout(store.get());
+    range.title = title;
+    if (applies) trigger.title = title;
   };
 
+  // While a session is shown and a live range is held over it, coverage depends on the clock: the
+  // range start slides past the session start (or end) with no store change. One timeout, aimed at
+  // the next such boundary, repaints then. It exists only while the range applies and is visible.
+  let clock: ReturnType<typeof setTimeout> | null = null;
+  function syncClock(): void {
+    if (clock !== null) clearTimeout(clock);
+    clock = null;
+    if (destroyed || !session || !applies || root.hidden || store.held() !== 'live' || !store.get().session) return;
+    const ext = deps.sessionSpan?.(store.get().session!);
+    if (!ext) return;
+    const n = now();
+    const sp = span();
+    // Coverage changes when the clock reaches an endpoint (one ahead of this clock comes into range)
+    // and when the range start passes one (endpoint + span). An instant equal to now still counts:
+    // the state it stands for ends a millisecond later.
+    const times = [ext.from, ext.to].flatMap((v) => (v === undefined ? [] : [v, v + sp])).filter((t) => t >= n);
+    if (times.length === 0) return;
+    const wait = Math.min(Math.min(...times) - n + 1, 2 ** 31 - 1);
+    clock = setTimeout(() => {
+      clock = null;
+      paint();
+    }, wait);
+  }
+  let destroyed = false;
+
   function paint(): void {
+    render();
+    syncClock();
+  }
+  function render(): void {
     const s = store.get();
     const g = geometry(s);
-    const key = JSON.stringify([s.window, s.liveSpanMs ?? null, span(), session, g.left.toFixed(3), g.width.toFixed(3), g.pct]);
+    const key = JSON.stringify([s.window, s.liveSpanMs ?? null, span(), session, session && outside(s), g.left.toFixed(3), g.width.toFixed(3), g.pct]);
     if (key === lastKey) return;
     lastKey = key;
     const live = s.window === 'live';
@@ -129,6 +169,8 @@ export function createTransport(deps: TransportDeps): Transport {
     const f = readout(s);
     range.textContent = f.text;
     range.title = f.title;
+    if (applies) trigger.title = f.title;
+    trigger.setAttribute('aria-label', `Time range: ${f.text}`);
     hint.textContent = session ? 'Zoom with the Score' : '';
     thumb.style.left = `${g.left}%`;
     thumb.style.width = `${g.width}%`;
@@ -260,6 +302,8 @@ export function createTransport(deps: TransportDeps): Transport {
   // Live timestamps move with the clock, so refresh the tooltip when it is about to be read.
   on(range, 'pointerenter', retitle);
   on(range, 'mouseenter', retitle);
+  on(trigger, 'pointerenter', retitle);
+  on(trigger, 'mouseenter', retitle);
 
   const unsub = store.subscribe((next, prev) => {
     if (drag && !writing) abortDrag();
@@ -311,14 +355,64 @@ export function createTransport(deps: TransportDeps): Transport {
     e.preventDefault();
   });
 
+  // ---- pop-up ----
+  const isOpen = (): boolean => !pop.hidden;
+  function closePop(restoreFocus: boolean): void {
+    if (!isOpen()) return;
+    pop.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onPopKey, true);
+    if (restoreFocus) trigger.focus();
+  }
+  function openPop(): void {
+    if (isOpen()) return;
+    pop.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onOutside, true);
+    document.addEventListener('keydown', onPopKey, true);
+    (pop.querySelector<HTMLElement>('[aria-pressed="true"]') ?? pop.querySelector<HTMLElement>('button'))?.focus();
+  }
+  function onOutside(e: Event): void {
+    if (!root.contains(e.target as Node)) closePop(false);
+  }
+  function onPopKey(e: KeyboardEvent): void {
+    if (!LOCAL.transportCancel.matches(e) || e.defaultPrevented || drag || yieldsToModal(e, trigger)) return;
+    claimEscape(e);
+    closePop(true);
+  }
+  on(trigger, 'click', () => {
+    if (!applies) return;
+    if (isOpen()) closePop(true);
+    else openPop();
+  });
+  on(root, 'focusout', (e) => {
+    const next = (e as FocusEvent).relatedTarget as Node | null;
+    if (next && !root.contains(next)) closePop(false);
+  });
+
   paint();
 
   return {
     root,
     paintCount: () => paints,
     setVisible(v) {
-      if (!v) abortDrag();
+      if (!v) {
+        abortDrag();
+        closePop(false);
+      }
       root.hidden = !v;
+      syncClock();
+    },
+    setApplies(a) {
+      applies = a;
+      trigger.setAttribute('aria-disabled', String(!a));
+      trigger.title = a ? '' : 'The range does not apply to this view';
+      if (!a) {
+        abortDrag();
+        closePop(false);
+      } else retitle();
+      syncClock();
     },
     setPanel(id) {
       const next = id === 'session';
@@ -333,6 +427,9 @@ export function createTransport(deps: TransportDeps): Transport {
     },
     refresh: paint,
     destroy() {
+      destroyed = true;
+      syncClock();
+      closePop(false);
       unsub();
       endDrag();
       ac.abort();

@@ -1,3 +1,4 @@
+import { READ_DEADLINE_MS } from "../deadlines";
 import { attention, capturedEvent } from "../api";
 import type {
   AttentionEvidence,
@@ -153,15 +154,18 @@ export function createAttention(options: AttentionOptions) {
   let needing = 0;
   const countListeners = new Set<() => void>();
   let inspection = 0;
-  async function inspect(id: string) {
+  /** True when the evidence was handed to the inspector; false when it could not be read; null when a newer selection superseded it (not a failure). */
+  async function inspect(id: string): Promise<boolean | null> {
     const version = ++inspection;
     try {
       const ev = await capturedEvent(id);
-      if (!disposed && version === inspection) options.onSelect(ev);
+      if (disposed || version !== inspection) return null;
+      options.onSelect(ev);
+      return true;
     } catch {
-      if (!disposed && version === inspection)
-        status.textContent =
-          "Captured evidence is unavailable. Try again after reconnecting.";
+      if (disposed || version !== inspection) return null;
+      status.textContent = "Captured evidence is unavailable. Try again after reconnecting.";
+      return false;
     }
   }
   const keyOf = (s: AttentionSession) => `${s.source}\0${s.id}`;
@@ -278,7 +282,7 @@ export function createAttention(options: AttentionOptions) {
       el(
         "span",
         { class: "dim" },
-        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}${snapshot.warnings.length} capture warning(s) · ${snapshot.gaps?.length ?? 0} capture gap(s) · Coverage depends on captured observations`,
+        `${!connected ? "Offline · " : !fresh ? "Snapshot unavailable · " : ""}Coverage depends on captured observations`,
       ),
       doctor,
     );
@@ -343,62 +347,6 @@ export function createAttention(options: AttentionOptions) {
           a.id.localeCompare(b.id),
       );
     for (const s of all) rows.append(row(s));
-    for (const gap of snapshot.gaps ?? []) {
-      const inspectGap = el(
-        "button",
-        { "data-key": `gap:${gap.source}` },
-        "Inspect capture gap",
-      );
-      inspectGap.addEventListener("click", () =>
-        options.onSelect({
-          id: "",
-          source: gap.source,
-          time: gap.time,
-          category: "meta",
-          name: "capture.gap",
-          severity: "warn",
-          summary: "Capture warning — not recorded in history",
-          payload: { message: gap.summary },
-        }),
-      );
-      rows.append(
-        el(
-          "article",
-          { class: "capture-warning" },
-          el("p", {}, gap.summary),
-          el(
-            "p",
-            { class: "dim" },
-            "Unreadable history · this diagnostic is not a captured event.",
-          ),
-          inspectGap,
-        ),
-      );
-    }
-    for (const warning of snapshot.warnings.slice(0, 20)) {
-      const inspectWarning = el(
-        "button",
-        { "data-key": `warning:${warning.event_id}` },
-        "Inspect warning",
-      );
-      inspectWarning.addEventListener(
-        "click",
-        () => void inspect(warning.event_id),
-      );
-      rows.append(
-        el(
-          "article",
-          { class: "capture-warning" },
-          el("p", {}, `${warning.source}: ${warning.summary}`),
-          el(
-            "p",
-            { class: "dim" },
-            `Recorded ${formatAge(Math.max(0, Date.now() - Date.parse(warning.time)))} ago · recovery unknown`,
-          ),
-          inspectWarning,
-        ),
-      );
-    }
     if (prefs.warning)
       rows.prepend(el("p", { class: "error", role: "status" }, prefs.warning));
     if (!all.length)
@@ -453,7 +401,7 @@ export function createAttention(options: AttentionOptions) {
   async function load(version: number) {
     const controller = new AbortController();
     abort = controller;
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), READ_DEADLINE_MS);
     try {
       const result = await attention(controller.signal);
       if (disposed || !connected || version !== epoch) return;
@@ -511,6 +459,40 @@ export function createAttention(options: AttentionOptions) {
     refresh,
     /** The strip's count (pending, not snoozed). */
     count: () => needing,
+    /** Per project: sessions that need you (pending, not snoozed) and sessions working now, from the last snapshot. */
+    byProject(): Map<string, { needs: number; active: number }> {
+      const out = new Map<string, { needs: number; active: number }>();
+      for (const s of snapshot.sessions) {
+        if (!s.repo_id) continue;
+        const row = out.get(s.repo_id) ?? { needs: 0, active: 0 };
+        if (s.pending) { if (!prefs.snoozed(episodeKey(s))) row.needs++; }
+        else if (s.state === "working" && Date.now() - eventTime(s.last) < 30 * 60_000) row.active++;
+        out.set(s.repo_id, row);
+      }
+      return out;
+    },
+    /** Capture warnings and gaps in the last snapshot: the Doctor badge. They are Doctor's, not the queue's (MS-9). */
+    warnings: () => snapshot.warnings.length + (snapshot.gaps?.length ?? 0),
+    captureIssues: (): { gaps: readonly NonNullable<AttentionSnapshot["gaps"]>[number][]; warnings: readonly AttentionEvidence[] } => ({
+      gaps: snapshot.gaps ?? [],
+      warnings: snapshot.warnings.slice(0, 20),
+    }),
+    /** Fills the inspector with a captured warning's event. */
+    inspectWarning: (id: string) => inspect(id),
+    /** Fills the inspector with a gap (a diagnostic, not a captured event). */
+    inspectGap(gap: { source: string; time: string; summary: string }): void {
+      inspection++; // a warning still loading must not replace this selection
+      options.onSelect({
+        id: "",
+        source: gap.source,
+        time: gap.time,
+        category: "meta",
+        name: "capture.gap",
+        severity: "warn",
+        summary: "Capture warning: not recorded in history",
+        payload: { message: gap.summary },
+      });
+    },
     /** Calls fn whenever the strip is redrawn (so a snooze or refresh reaches other displays at once). */
     onCount(fn: () => void) { countListeners.add(fn); },
     setConnected,

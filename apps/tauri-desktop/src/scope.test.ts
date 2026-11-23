@@ -66,6 +66,121 @@ test('session id or source change resets window unless patch carries window', ()
   expect(s.get().window).toEqual({ from: 2, to: 3 });
 });
 
+// MS-7: the range is the user's; a session's zoom is local to the session.
+test('held() names the range kept while a session is in scope', () => {
+  const s = createScope();
+  expect(s.held()).toBeUndefined();
+  s.narrow({ window: { from: 100, to: 900 } });
+  expect(s.held()).toBeUndefined();
+  s.narrow({ session: { id: 'a' } });
+  expect(s.held()).toEqual({ from: 100, to: 900 });
+  s.narrow({ session: { id: 'b' } });
+  expect(s.held()).toEqual({ from: 100, to: 900 });
+  s.narrow({ session: undefined });
+  expect(s.held()).toBeUndefined();
+  const w = createScope();
+  w.set({ session: { id: 'a' }, window: 'live' });
+  expect(w.held()).toBeUndefined(); // installed whole: nothing to restore
+});
+
+describe('set() publishes the final held state', () => {
+  test('a subscriber told of a session installed whole already sees no held range', () => {
+    const s = createScope();
+    s.narrow({ window: { from: 100, to: 900 } });
+    const seen: Array<ReturnType<typeof s.held>> = [];
+    s.subscribe(() => seen.push(s.held()));
+    s.set({ session: { id: 's' }, window: 'live' });
+    expect(seen).toEqual([undefined]);
+    expect(s.held()).toBeUndefined();
+  });
+  test('a same-scope set() that clears a held range tells subscribers', () => {
+    const s = createScope();
+    s.narrow({ window: { from: 100, to: 900 } });
+    s.narrow({ session: { id: 's' } });
+    expect(s.held()).toEqual({ from: 100, to: 900 });
+    const fn = vi.fn(() => expect(s.held()).toBeUndefined());
+    s.subscribe(fn);
+    s.set(s.get());
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(s.held()).toBeUndefined();
+  });
+  test('a same-scope set() with nothing held stays silent', () => {
+    const s = createScope();
+    s.set({ session: { id: 's' }, window: 'live' });
+    const fn = vi.fn();
+    s.subscribe(fn);
+    s.set(s.get());
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe('the range set before a session comes back when the session is left', () => {
+  const R = { from: 100, to: 900 };
+  const ZOOM = { from: 300, to: 400 };
+
+  test('ascend restores it, not live', () => {
+    const s = createScope();
+    s.narrow({ project: 'p', window: R });
+    s.narrow({ session: { id: 'a' } });
+    expect(s.get().window).toBe('live'); // the whole session
+    s.narrow({ window: ZOOM });
+    expect(s.ascend()).toBe('project');
+    expect(s.get().window).toEqual(R);
+  });
+
+  test('clearing the session by narrow or replaceContext restores it', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ window: ZOOM });
+    s.narrow({ session: undefined });
+    expect(s.get().window).toEqual(R);
+    s.narrow({ session: { id: 'a' } });
+    s.replaceContext({ project: 'q' });
+    expect(s.get()).toEqual({ project: 'q', window: R });
+  });
+
+  test('moving from one session to another keeps the outer range for the way out', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ window: ZOOM });
+    s.narrow({ session: { id: 'b' } });
+    expect(s.get().window).toBe('live');
+    s.ascend();
+    expect(s.get().window).toEqual(R);
+  });
+
+  test('a window named in the same patch that leaves the session wins', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ session: undefined, window: ZOOM });
+    expect(s.get().window).toEqual(ZOOM);
+  });
+
+  test('a live range comes back as live, and a session entered by set() has nothing to restore', () => {
+    const s = createScope();
+    s.narrow({ session: { id: 'a' } });
+    s.narrow({ window: ZOOM });
+    s.ascend();
+    expect(s.get().window).toBe('live');
+    const t = createScope({ session: { id: 'a' }, window: ZOOM });
+    t.ascend();
+    expect(t.get().window).toBe('live');
+  });
+
+  test('reset forgets it', () => {
+    const s = createScope();
+    s.narrow({ window: R });
+    s.narrow({ session: { id: 'a' } });
+    s.reset();
+    s.narrow({ session: { id: 'b' } });
+    s.ascend();
+    expect(s.get().window).toBe('live');
+  });
+});
+
 test('altitude is deepest rung', () => {
   const s = createScope();
   s.narrow({ project: 'p' });
@@ -375,6 +490,8 @@ describe('window helpers', () => {
     expect(formatRange('live', now).text).toBe('Live');
     expect(formatRange('live', now, 7_200_000).text).toBe('Live · last 2 h');
     expect(formatRange('live', now, undefined, { wholeSession: true }).text).toBe('Live · whole session');
+    // MS-7: a session the held range does not cover reads "Session · whole".
+    expect(formatRange('live', now, undefined, { wholeSession: true, outside: true }).text).toBe('Session · whole');
     const w = { from: new Date(2026, 9, 31, 9, 0).getTime(), to: new Date(2026, 9, 31, 17, 0).getTime() };
     const r = formatRange(w, now);
     expect(r.text).toBe('Oct 31, 09:00 › Oct 31, 17:00 · 8 h');

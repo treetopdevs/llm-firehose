@@ -50,17 +50,31 @@ export function declarations(body: string): Record<string, string> {
   return out;
 }
 
-export type Tokens = { base: Record<string, string>; oklch: Record<string, string> };
+/** A rule that applies only in the light appearance. */
+export function isLightContext(r: Rule): boolean {
+  return r.context.some((c) => /^@media/.test(c) && /prefers-color-scheme:\s*light/.test(c));
+}
 
-/** Custom properties declared on :root: base (hex fallback) and the @supports oklch override. */
+export type Tokens = {
+  base: Record<string, string>;
+  oklch: Record<string, string>;
+  light: Record<string, string>;
+  lightOklch: Record<string, string>;
+};
+
+/**
+ * Custom properties declared on :root. `base` is the dark hex fallback and `oklch` its @supports
+ * override; `light` and `lightOklch` are the same pair under `@media (prefers-color-scheme: light)`.
+ */
 export function parseTokens(css: string): Tokens {
-  const base: Record<string, string> = {};
-  const oklch: Record<string, string> = {};
+  const out: Tokens = { base: {}, oklch: {}, light: {}, lightOklch: {} };
   for (const r of parseRules(css)) {
     if (r.selector !== ":root") continue;
-    Object.assign(isOklchContext(r) ? oklch : base, declarations(r.body));
+    const light = isLightContext(r);
+    const ok = isOklchContext(r);
+    Object.assign(light ? (ok ? out.lightOklch : out.light) : ok ? out.oklch : out.base, declarations(r.body));
   }
-  return { base, oklch };
+  return out;
 }
 
 // ---- colour maths -------------------------------------------------------------------------

@@ -32,9 +32,9 @@ export function localScopesFor(ctx: PanelContext): ReadonlySet<string> {
   switch (ctx.panel) {
     case "fleet":
       // Hosted lens encodings (Strata, Patches) draw none of the Fleet row scopes.
-      if (ctx.encoding === "events") return new Set(["events", LOCAL.feedRows.scope]);
-      if (ctx.encoding === "strata" || ctx.encoding === "ecosystem") return new Set();
-      return new Set(["fleet", "time window", "rows and cards"]);
+      if (ctx.encoding === "events") return new Set(["events", LOCAL.feedRows.scope, LOCAL.moreMenu.scope]);
+      if (ctx.encoding === "strata" || ctx.encoding === "ecosystem") return new Set([LOCAL.moreMenu.scope]);
+      return new Set(["fleet", "time window", "rows and cards", LOCAL.moreMenu.scope]);
     case "project":
       switch (ctx.encoding) {
         case "lanes":
@@ -50,7 +50,7 @@ export function localScopesFor(ctx: PanelContext): ReadonlySet<string> {
       return new Set(["rows and cards"]);
     case "session":
       // The score's step and play keys act only on the Score tab; the other tabs own just the tab strip.
-      return new Set(ctx.tab === undefined || ctx.tab === "score" ? ["session tabs", "score", "score track", "time window"] : ["session tabs", "time window"]);
+      return new Set(ctx.tab === undefined || ctx.tab === "score" ? ["session tabs", "score", "score track", "time window", LOCAL.moreMenu.scope] : ["session tabs", "time window", LOCAL.moreMenu.scope]);
     default:
       return new Set();
   }

@@ -52,3 +52,11 @@ test("unsupported audio is retryable and closing rejection is contained",async()
  vi.stubGlobal("AudioContext",undefined);const status=vi.fn(),s=createReplaySound(status);await s.enable();expect(status).toHaveBeenLastCalledWith("unavailable");
  const h=host();h.context.close.mockRejectedValue(Error("close failed"));await s.enable();expect(status).toHaveBeenLastCalledWith("on");s.disable();await Promise.resolve();expect(status).toHaveBeenLastCalledWith("off");
 });
+
+test("a disable that only stops playback keeps a reported failure; turning the choice off clears it",async()=>{
+ const h=host(),status=vi.fn(),s=createReplaySound(status);
+ h.context.resume.mockRejectedValueOnce(Error("denied"));await s.enable();expect(status).toHaveBeenLastCalledWith("unavailable");
+ s.disable();expect(status).toHaveBeenLastCalledWith("unavailable");
+ s.disable(true);expect(status).toHaveBeenLastCalledWith("off");
+ s.disable();expect(status).toHaveBeenLastCalledWith("off");
+});

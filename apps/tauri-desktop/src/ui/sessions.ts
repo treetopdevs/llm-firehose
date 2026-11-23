@@ -1,11 +1,16 @@
 import { attention, sessionEvents, sessions } from "../api";
 import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView, WorktreeSessionRef } from "../api";
-import { clear, el, onActivate } from "../dom";
+import { clear, el } from "../dom";
+import { onSelectOpen } from "../select-open";
+import { claimEscape, isEscapeEligible } from "../escape";
+import { LOCAL } from "../keys";
+import type { Inspected } from "./inspector";
+import { actionsForSession } from "./actions/model";
 import { failureMessage } from "../errors";
 import { formatClock, projectName, sessionName, sessionRefLabel, sessionWhere, shortId, workspaceKey, worktreeName } from "../format";
 import type { SessionLike } from "../format";
 import type { SessionDirectory } from "../session-directory";
-import { ERROR_MARK } from "../glyphs";
+import { ERROR_MARK, FORK_GLYPH, NEEDS_MARK, SESSION_STATE_MARKS } from "../glyphs";
 import { idChip } from "./session-id";
 import { evidenceTime, needsLabel, pendingNow, stateWord } from "../needs";
 import { bucketCountsByKey, formatAge, sessionHue, sparkline } from "../spark";
@@ -30,6 +35,16 @@ export type SessionsPanel = {
   activate(opts?: { needsOnly?: boolean }): Promise<void>;
   /** Whether the current scope draws the worktree list; the one predicate Escape and the draw share. */
   hasWorktreeList(): boolean;
+  /** Drops the selection (and the inspector it filled). */
+  clearSelection(): void;
+  /** The key of the selected row, for the history entry. */
+  selectedKey(): string | undefined;
+  /** Selects by key; held until the rows are drawn, and dropped if the row is not there. */
+  selectKey(key: string | undefined): void;
+  /** The keys a selection can take, in the order the rows are drawn (the shell restores by key, else by place in this list). */
+  selectableKeys(): string[];
+  /** The keys of the rows drawn now; the same list here, since every row is drawn. */
+  visibleKeys(): string[];
 };
 
 /** Rows drawn per page; the rest wait behind a "Show N more" button. */
@@ -38,6 +53,8 @@ export const SESSION_PAGE = 200;
 export interface WorktreeOptions {
   /** The Needs you inbox (the strip's source), shown in place of the list while the toggle is on. */
   inbox?: { root: HTMLElement; refresh(): unknown; count?(): number; onCount?(fn: () => void): void };
+  /** A selection fills the inspector (null clears it). Selecting never navigates. */
+  inspect?: (s: Inspected | null) => void;
 }
 
 const REFRESH_MS = 5000;
@@ -64,13 +81,17 @@ function bounded<T>(p: Promise<T> | undefined, signal: AbortSignal): Promise<T |
 
 type Status = {
   label: string;
+  /** No evidence of its state was captured: drawn as unknown, with a reason (MS-10). */
+  unknown?: boolean;
   needs: boolean;
   /** When the oldest live pending episode was captured. */
   since: number;
   text?: string;
 };
 
-const sessionKey = (source: string, id: string): string => `${source}\0${id}`;
+const sessionKey = (source: string | undefined, id: string): string => `${source ?? ""}\0${id}`;
+const UNKNOWN_STATE_REASON = "not in the needs-you snapshot, so no state was captured for it";
+const NO_TIME_REASON = "no readable activity time was captured";
 
 /**
  * A row joins only its own source's /attention entry. /sessions keys rows by native id
@@ -80,7 +101,7 @@ const sessionKey = (source: string, id: string): string => `${source}\0${id}`;
  * or /attention down) is "unknown", never "needs you".
  */
 function statusOf(entry: AttentionSession | undefined, nowMs: number): Status {
-  if (!entry) return { label: "unknown", needs: false, since: NaN };
+  if (!entry) return { label: "unknown", unknown: true, needs: false, since: NaN };
   if (pendingNow(entry, nowMs)) return { label: needsLabel(entry, nowMs), needs: true, since: evidenceTime(entry.pending), text: entry.pending?.summary };
   return { label: stateWord(entry.state), needs: false, since: NaN };
 }
@@ -111,6 +132,10 @@ export function createSessions(
   const root = el("section", { class: "sessions" }, el("h2", {}, "Worktree"), head, body);
   let needs = false;
   let refreshGen = 0;
+  /** The selected row (itemKey), the inspector content each drawn row would give, and what it was last given. */
+  let picked: string | undefined;
+  let pickables = new Map<string, () => Inspected>();
+  let inspectedSig: string | undefined;
   /** Requests in flight; the periodic poll skips while one is pending so a slow response is never starved. */
   let pendingRequests = 0;
   let cap = SESSION_PAGE;
@@ -237,6 +262,7 @@ export function createSessions(
         role: "button",
         "aria-label": `open worktree ${w.name}, ${w.stateText}, ${w.sessionsText}, ${w.ageText === "no activity time" ? w.ageText : `last activity ${w.ageText}`}`,
         "data-wt": w.id,
+        "data-key": `wt\0${w.id}`,
         title: w.title,
         ...(selected ? { "aria-current": "true" } : {}),
       },
@@ -249,12 +275,30 @@ export function createSessions(
       ),
       el("div", { class: "session-sub" }, el("span", { class: "session-facts" }, [w.sessionsText, w.badge].filter(Boolean).join(" · "))),
     );
-    onActivate(node, () => {
+    const key = `wt\0${w.id}`;
+    const widen = (): void => {
       // The list on screen can outlive its project while the next refresh is pending; a worktree id means nothing under another.
       if (store.get().project !== project) return;
       store.narrow({ worktree: w.id, cell: undefined });
       void refresh();
-    });
+    };
+    onSelectOpen(node, { select: () => pick(key), open: widen }, { siblings: () => [...listBox.querySelectorAll(ITEMS)] });
+    pickables.set(key, () => ({
+      kind: "worktree", key, title: w.name,
+      status: { word: w.stateText, mark: FORK_GLYPH[w.state], ...(w.state === "unknown" ? { reason: w.reason || "state could not be determined" } : {}) },
+      facts: [
+        { label: "sessions", value: w.sessionsText },
+        { label: "last activity", value: w.ageText === "no activity time" ? undefined : w.ageText },
+        { label: "ahead, behind", value: w.badge || undefined },
+        { label: "path", value: w.title, mono: true },
+      ],
+      open: { label: "Open worktree", run: widen },
+    }));
+    if (w.state === "unknown") {
+      const st = node.querySelector<HTMLElement>(".cell.state");
+      st?.setAttribute("data-mark", FORK_GLYPH.unknown);
+      st?.classList.add("unknown");
+    }
     return node;
   }
 
@@ -262,8 +306,11 @@ export function createSessions(
   function drawWorktreeList(rows: readonly WorktreeLifetimeView[], project: string, now: number, willClear: (restore: () => void) => void) {
     willClear(captureFocus());
     clear(listBox);
+    pickables = new Map();
     listBox.append(el("p", { class: "dim sessions-count" }, `${rows.length} worktree${rows.length === 1 ? "" : "s"}`));
     for (const r of orderWorktrees(rows)) listBox.append(worktreeItem(describeWorktree(r, now), r.worktree_id === selectedWt, project));
+    markPicked();
+    syncInspector(true);
     const back = returnFocusWt;
     returnFocusWt = undefined;
     const a = document.activeElement;
@@ -405,7 +452,8 @@ export function createSessions(
   function sessionItem(s: SessionSummary, status: Status, buckets: readonly number[], scale: number, now: number): HTMLElement {
     const needs = status.needs;
     const last = Date.parse(s.last_time);
-    const age = Number.isNaN(last) ? "" : formatAge(now - last);
+    const timeKnown = !Number.isNaN(last);
+    const age = timeKnown ? formatAge(now - last) : "unknown";
     const summary = (needs && status.text) || (s.last_summary ?? "");
     const where = sessionWhere(s);
     const row = el(
@@ -413,8 +461,14 @@ export function createSessions(
       { class: "band-row", style: `--hue:${sessionHue(s.id)}` },
       el("span", { class: "cell name", title: s.title ? sessionName(s) : "" }, sessionName(s)),
       el("span", { class: "cell spark", "aria-hidden": "true" }, sparkline(buckets, scale)),
-      el("span", { class: "cell age" }, age),
-      el("span", { class: `cell state${needs ? " needs" : ""}` }, status.label),
+      el("span", { class: `cell age${timeKnown ? "" : " unknown"}`, ...(timeKnown ? {} : { title: NO_TIME_REASON }) }, age),
+      el(
+        "span",
+        status.unknown
+          ? { class: "cell state unknown", "data-mark": FORK_GLYPH.unknown, title: UNKNOWN_STATE_REASON }
+          : { class: `cell state${needs ? " needs" : ""}` },
+        status.label,
+      ),
       el(
         "span",
         s.has_error
@@ -423,7 +477,8 @@ export function createSessions(
         s.has_error ? ERROR_MARK : "",
       ),
     );
-    const facts = [s.agent || s.source, where.label, s.first_time ? `started ${formatClock(s.first_time)}` : "", `${s.events} events`].filter(Boolean);
+    const startedKnown = !!s.first_time && !Number.isNaN(Date.parse(s.first_time));
+    const facts = [s.agent || s.source, where.label, startedKnown ? `started ${formatClock(s.first_time)}` : "", `${s.events} events`].filter(Boolean);
     const subRow = el("div", { class: "session-sub" }, el("span", { class: "session-facts", title: where.full ?? "" }, facts.join(" · ")));
     if (onOpenScore) {
       // The score replays this one session; the row itself still opens the list.
@@ -448,30 +503,48 @@ export function createSessions(
         role: "group",
         "aria-label": `open ${sessionName(s)}, ${status.label}`,
         "data-id": s.id,
+        "data-key": sessionKey(s.source, s.id),
         ...(s.source ? { "data-source": s.source } : {}),
       },
       row,
       el("div", { class: "session-last", title: summary }, summary),
       subRow,
-      idChip(s.id),
     );
-    // Choosing a row narrows the scope first, then opens its history. Its own
-    // controls (score, loops, id chip) are not the row.
-    onActivate(
-      item,
-      () => {
-        const ref = s.source ? { id: s.id, source: s.source } : { id: s.id };
-        // Inside a worktree each member has its own row, so a row opens only its source's events (no source
-        // cannot qualify). Elsewhere s.source is only the first seen under an aggregated id: another agent
-        // sharing it has no row, so the unfiltered history is the only way to its events.
-        const filter = store.get().worktree ? s.source || undefined : undefined;
-        onSelectSession(ref);
-        void openSession(s.id, filter);
-        // The history tracks the scope's identity whether or not it is filtered.
-        historyRef = ref;
-      },
-      { self: true },
-    );
+    // Selecting only fills the inspector; opening narrows the scope first, then opens the history. Its own
+    // controls (score, loops) are not the row. The native id lives in the inspector, not on the row (MS-10).
+    const open = (): void => {
+      const ref = s.source ? { id: s.id, source: s.source } : { id: s.id };
+      // Inside a worktree each member has its own row, so a row opens only its source's events (no source
+      // cannot qualify). Elsewhere s.source is only the first seen under an aggregated id: another agent
+      // sharing it has no row, so the unfiltered history is the only way to its events.
+      const filter = store.get().worktree ? s.source || undefined : undefined;
+      onSelectSession(ref);
+      void openSession(s.id, filter);
+      // The history tracks the scope's identity whether or not it is filtered.
+      historyRef = ref;
+    };
+    const key = sessionKey(s.source, s.id);
+    onSelectOpen(item, { select: () => pick(key), open }, { self: true, siblings: () => [...listBox.querySelectorAll(ITEMS)] });
+    pickables.set(key, () => ({
+      kind: "session", key, title: sessionName(s),
+      status: status.needs
+        ? { word: "needs you", mark: NEEDS_MARK, needs: true }
+        : status.unknown
+          ? { word: "unknown", mark: FORK_GLYPH.unknown, reason: UNKNOWN_STATE_REASON }
+          : { word: status.label, mark: SESSION_STATE_MARKS[status.label as keyof typeof SESSION_STATE_MARKS] ?? FORK_GLYPH.never_diverged },
+      facts: [
+        { label: "agent", value: s.agent || s.source || undefined },
+        { label: "where", value: where.label || undefined },
+        { label: "started", value: startedKnown ? formatClock(s.first_time) : undefined },
+        { label: "last activity", value: timeKnown ? `${age} ago` : undefined },
+        { label: "events", value: String(s.events) },
+        { label: "error", value: s.has_error ? "an error was captured" : "none captured" },
+        ...(needs && status.text ? [{ label: "asked", value: status.text }] : []),
+      ],
+      id: { label: "session id", value: s.id },
+      open: { label: "Open history", run: open },
+      actions: actionsForSession({ source: s.source, agent: s.agent, id: s.id }),
+    }));
     return item;
   }
 
@@ -480,7 +553,40 @@ export function createSessions(
     const wt = n.getAttribute("data-wt");
     return wt !== null ? `wt\0${wt}` : `${n.getAttribute("data-source") ?? ""}\0${n.getAttribute("data-id") ?? ""}`;
   };
-  const CONTROLS = ["score-open", "loops-open", "session-id"];
+  const CONTROLS = ["score-open", "loops-open"];
+
+  // ---- selection and the inspector (MS-8) -------------------------------------------------
+  function markPicked(): void {
+    for (const n of listBox.querySelectorAll<HTMLElement>(ITEMS)) {
+      const on = picked !== undefined && itemKey(n) === picked;
+      n.classList.toggle("picked", on);
+      // A row that is not picked goes back to its base state: a session row has none, a worktree row has the one it was drawn with.
+      if (on || (n.classList.contains("worktree-item") && n.getAttribute("data-wt") === selectedWt)) n.setAttribute("aria-current", "true");
+      else n.removeAttribute("aria-current");
+    }
+  }
+  /** Tells the inspector what is selected, once per change; nothing is ever shown unasked. */
+  function syncInspector(settled: boolean): void {
+    let subject = picked !== undefined ? pickables.get(picked)?.() : undefined;
+    // Only a settled draw may decide the row is gone; a held key waits for its rows. This holds with or without a sink.
+    if (picked !== undefined && !subject && settled) picked = undefined;
+    if (!opts.inspect) return;
+    const sig = subject ? JSON.stringify([subject.kind, subject.key, subject.title, subject.status, subject.facts, subject.id, (subject.actions ?? []).map((a) => a.id)]) : undefined;
+    if (sig === inspectedSig) return;
+    inspectedSig = sig;
+    try { opts.inspect(subject ?? null); } catch { /* a sink must not break the view */ }
+  }
+  function pick(key: string | undefined): void {
+    picked = key;
+    markPicked();
+    syncInspector(true);
+  }
+  function onEscapeCapture(e: KeyboardEvent): void {
+    if (!LOCAL.rowClear.matches(e) || picked === undefined || !root.isConnected || !isEscapeEligible(e)) return;
+    pick(undefined);
+    claimEscape(e);
+  }
+  document.addEventListener("keydown", onEscapeCapture, true);
 
   /**
    * Remembers what has focus in the list so a rebuild can give it back: the same
@@ -589,6 +695,7 @@ export function createSessions(
         });
       willClear(captureFocus());
       clear(listBox);
+      pickables = new Map();
       if (scope) {
         listBox.append(scopeChip(scope));
       }
@@ -602,6 +709,7 @@ export function createSessions(
       }
       if (all.length === 0) {
         listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this worktree" : members ? "no sessions in this scope" : "no sessions captured yet"));
+        syncInspector(true);
         return;
       }
       if (members) {
@@ -631,6 +739,8 @@ export function createSessions(
         });
         listBox.append(more);
       }
+      markPicked();
+      syncInspector(true);
     } catch (err) {
       if (gen !== refreshGen) return;
       willClear(captureFocus());
@@ -645,10 +755,24 @@ export function createSessions(
   }, REFRESH_MS);
 
   async function activate(o?: { needsOnly?: boolean }) {
+    // A selection is for the visit; Back restores one by key afterwards. Clearing goes through the inspector
+    // so a pane left open by the last visit closes with it.
+    if (picked !== undefined) pick(undefined);
     if (o?.needsOnly !== undefined) applyNeeds(o.needsOnly);
     drawScopeLine();
     await Promise.all([refresh(), needs ? refreshInbox() : undefined]);
   }
 
-  return { root, refresh, openSession, setScope, setNeedsOnly, needsOnly: () => needs, activate, hasWorktreeList: () => listRows(store.get()) !== undefined };
+  return {
+    root, refresh, openSession, setScope, setNeedsOnly, needsOnly: () => needs, activate, hasWorktreeList: () => listRows(store.get()) !== undefined,
+    clearSelection: () => pick(undefined),
+    selectedKey: () => picked,
+    selectableKeys: () => [...listBox.querySelectorAll(ITEMS)].map(itemKey),
+    visibleKeys: () => [...listBox.querySelectorAll(ITEMS)].map(itemKey),
+    selectKey(key) {
+      picked = key;
+      markPicked();
+      syncInspector(false);
+    },
+  };
 }

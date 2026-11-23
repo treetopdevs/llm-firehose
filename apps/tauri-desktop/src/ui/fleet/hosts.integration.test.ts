@@ -39,7 +39,7 @@ test.each(["map", "dwell"])("leaving Patches to %s during playback leaves no tim
   });
   document.body.append(fleet.root);
   await fleet.activate();
-  fleet.root.querySelector<HTMLElement>(".fleet-enc[data-enc='ecosystem']")!.click();
+  fleet.root.querySelector<HTMLElement>(".more-item[data-enc='ecosystem']")!.click();
   await settle();
   expect(refresh).toHaveBeenCalledTimes(1);
   input(eco.root, "Source", event.source);
@@ -49,7 +49,8 @@ test.each(["map", "dwell"])("leaving Patches to %s during playback leaves no tim
   click(eco.root, "Beginning");
   click(eco.root, "Play");
   const during = vi.getTimerCount();
-  fleet.root.querySelector<HTMLElement>(`.fleet-enc[data-enc='${dest}']`)!.click();
+  fleet.root.querySelector<HTMLElement>(`.fleet-enc[data-enc='${dest}']`)?.click();
+  if (dest === "dwell") fleet.encoding = "dwell"; // retired from the switcher (MS-9): reached by name
   expect(vi.getTimerCount()).toBeLessThan(during);
   vi.advanceTimersByTime(1000);
   expect(eco.root.isConnected).toBe(false);

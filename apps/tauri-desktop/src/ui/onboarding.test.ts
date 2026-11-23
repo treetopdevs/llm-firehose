@@ -87,6 +87,14 @@ test("the adapter step can go back to the privacy choice", async () => {
   expect(overlay.querySelector('[role="dialog"]')!.contains(document.activeElement)).toBe(true);
 });
 
+test("the adapter step has no install buttons: installing is Doctor's job (MS-9)", async () => {
+  button(overlay, "Continue").click();
+  await settle();
+  expect(overlay.querySelector("h3")!.textContent).toContain("2 / 3");
+  expect([...overlay.querySelectorAll("button")].filter((b) => /^install /.test(b.textContent ?? ""))).toHaveLength(0);
+  expect(overlay.textContent).toContain("Doctor");
+});
+
 test("Tab and Shift+Tab wrap inside the dialog", () => {
   const all = stops(overlay);
   all[all.length - 1].focus();

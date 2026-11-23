@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { remapScope } from "./privacy-remap";
+import { describe, expect, expectTypeOf, test } from "vitest";
+import { remapPlace, remapScope } from "./privacy-remap";
 import { createScope } from "./scope";
 import type { Scope } from "./scope";
 
@@ -84,5 +84,31 @@ describe("remapScope", () => {
     expect(s2.get().window).toEqual(FROZEN);
     expect(s2.get().project).toBeUndefined();
     expect(s2.get().session).toBeUndefined();
+  });
+});
+
+describe("remapPlace (history entries follow a privacy change)", () => {
+  const place = { panel: "project", view: "lanes", project: "/Users/n/a", worktree: "w1", session: { id: "s1" } };
+  test("a place on a remapped project takes the new id and drops the worktree and session, as the scope did", () => {
+    expect(remapPlace(place, before, after)).toEqual({ panel: "project", view: "lanes", project: "sha256-aaa", worktree: undefined, session: undefined });
+  });
+  test("a place with no identity, or one whose id still exists, is returned as it was", () => {
+    const bare = { panel: "fleet", view: "map" };
+    expect(remapPlace(bare, before, after)).toBe(bare);
+    const same = { panel: "project", project: "sha256-aaa", worktree: "w9" };
+    expect(remapPlace(same, before, after)).toBe(same);
+  });
+  test("the result type admits cleared identity fields (checked by tsc, not at run time)", () => {
+    const r = remapPlace({ panel: "project", project: "p" }, before, undefined);
+    expectTypeOf(r.project).toEqualTypeOf<string | undefined>();
+    expectTypeOf(r.worktree).toEqualTypeOf<string | undefined>();
+    expectTypeOf(r.panel).toEqualTypeOf<string>();
+    expect(r.project).toBeUndefined();
+  });
+  test("a project that cannot be matched, or identities that could not be verified, clear the identity of the place", () => {
+    const dup = { repos: [repo("x1", "alpha"), repo("x2", "alpha")] };
+    expect(remapPlace(place, before, dup)).toEqual({ panel: "project", view: "lanes", project: undefined, worktree: undefined, session: undefined });
+    expect(remapPlace(place, before, undefined)).toEqual({ panel: "project", view: "lanes", project: undefined, worktree: undefined, session: undefined });
+    expect(remapPlace({ panel: "fleet" }, before, undefined)).toEqual({ panel: "fleet" });
   });
 });

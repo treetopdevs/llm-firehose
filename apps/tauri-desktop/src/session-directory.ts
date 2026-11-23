@@ -19,7 +19,7 @@ export interface SessionDirectory {
 const COOLDOWN_MS = 10_000;
 const keyOf = (source: string, id: string) => `${source}\0${id}`;
 const same = (a: SessionLike, b: SessionLike) =>
-  a.title === b.title && a.agent === b.agent && a.repo === b.repo && a.cwd === b.cwd;
+  a.title === b.title && a.agent === b.agent && a.repo === b.repo && a.cwd === b.cwd && a.first_time === b.first_time && a.last_time === b.last_time;
 
 export function createSessionDirectory(
   loader?: () => Promise<readonly SessionLike[]>,
@@ -36,9 +36,9 @@ export function createSessionDirectory(
   function put(s: SessionLike, gen: number): boolean {
     const k = keyOf(s.source, s.id);
     const prev = entries.get(k);
-    // An entry without first_time or title (an /attention row) never erases one a /sessions row supplied.
+    // An entry without first_time, last_time or title (an /attention row) never erases one a /sessions row supplied.
     const merged = { ...s };
-    for (const f of ["first_time", "title"] as const)
+    for (const f of ["first_time", "last_time", "title"] as const)
       if (merged[f] === undefined && prev?.s[f] !== undefined) merged[f] = prev.s[f];
     entries.set(k, { s: merged, gen });
     let set = byId.get(s.id);

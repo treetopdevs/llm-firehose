@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { isEscapeClaimed } from './escape';
 import { PRESETS, createScope, formatRange, liveSpanOf, presetWindow, type ScopeStore } from './scope';
-import { createTransport, type Transport } from './transport';
+import { createTransport, type Transport, type TransportDeps } from './transport';
 
 const NOW = Date.UTC(2026, 10, 1, 12, 0, 0);
 const H = 3_600_000;
@@ -19,9 +19,9 @@ const flushRaf = (): void => {
 };
 
 let made: Transport[] = [];
-function setup(opts: { span?: () => number; store?: ScopeStore } = {}) {
+function setup(opts: { span?: () => number; store?: ScopeStore; sessionSpan?: TransportDeps['sessionSpan'] } = {}) {
   const store = opts.store ?? createScope();
-  const t = createTransport({ store, now: () => NOW, effectiveLiveSpan: opts.span ?? (() => liveSpanOf(store.get())) });
+  const t = createTransport({ store, now: () => NOW, effectiveLiveSpan: opts.span ?? (() => liveSpanOf(store.get())), sessionSpan: opts.sessionSpan });
   made.push(t);
   document.body.append(t.root);
   const track = t.root.querySelector<HTMLElement>('.transport-track')!;
@@ -165,6 +165,22 @@ test('explicit window readout', () => {
   expect(preset(t, '2h').getAttribute('aria-pressed')).toBe('false');
 });
 
+describe('the trigger tooltip follows whether the range applies', () => {
+  test('it explains why the range is inert, and the range readout comes back when it applies again', () => {
+    const { t } = setup();
+    const trigger = q(t, '.transport-trigger');
+    const range = q(t, '.transport-range');
+    const shown = range.title;
+    expect(shown).not.toBe('');
+    expect(trigger.title).toBe(shown);
+    t.setApplies(false);
+    expect(trigger.title).toBe('The range does not apply to this view');
+    t.setApplies(true);
+    expect(trigger.title).toBe(range.title);
+    expect(trigger.title).toBe(shown);
+  });
+});
+
 describe('altitude from the displayed panel', () => {
   test('session panel disables window controls, Live still acts', () => {
     const { store, t, track } = setup();
@@ -188,6 +204,55 @@ describe('altitude from the displayed panel', () => {
     store.subscribe(fn);
     q(t, '.transport-live').click();
     expect(store.get().window).toBe('live');
+  });
+  describe('Session · whole (MS-7)', () => {
+    const inSession = (span: { from?: number; to?: number } | undefined, held: 'live' | { from: number; to: number }) => {
+      let known = span;
+      const { store, t } = setup({ sessionSpan: () => known });
+      store.narrow({ window: held });
+      store.narrow({ session: { id: 's' } });
+      t.setPanel('session');
+      return { store, t, learn: (s: typeof span) => { known = s; t.refresh(); } };
+    };
+    test('a session the held range does not cover reads Session · whole', () => {
+      const { t } = inSession({ from: NOW - 3 * D, to: NOW - 2 * D }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+      expect(q(t, '.transport-trigger').getAttribute('aria-label')).toBe('Time range: Session · whole');
+    });
+    test('a session inside the held range keeps Live · whole session', () => {
+      const { t } = inSession({ from: NOW - 3 * H, to: NOW - H }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+    });
+    test('a known end before the held range starts reads Session · whole even without a known start', () => {
+      const { t } = inSession({ to: NOW - 2 * D }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('a known end inside the held range, with no known start, keeps Live · whole session', () => {
+      const { t } = inSession({ to: NOW - H }, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+    });
+    test('the held live range counts as the last live span', () => {
+      const { t } = inSession({ from: NOW - 10 * D, to: NOW - 9 * D }, 'live');
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('no known extent, or a session installed whole, never claims the range failed to cover', () => {
+      const { t } = inSession(undefined, { from: NOW - D, to: NOW });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+      const w = createScope();
+      const t2 = createTransport({ store: w, now: () => NOW, sessionSpan: () => ({ from: NOW - 30 * D, to: NOW - 29 * D }) });
+      made.push(t2);
+      w.set({ session: { id: 's' }, window: 'live' });
+      t2.setPanel('session');
+      expect(q(t2, '.transport-range').textContent).toBe('Live · whole session');
+    });
+    test('an extent that arrives late repaints, and leaving the session puts the range back', () => {
+      const { store, t, learn } = inSession(undefined, { from: NOW - D, to: NOW });
+      learn({ from: NOW - 5 * D, to: NOW - 4 * D });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+      t.setPanel('project');
+      store.narrow({ session: undefined });
+      expect(q(t, '.transport-range').textContent).not.toContain('whole');
+    });
   });
   test('navigating away re-enables controls even though session is retained', () => {
     for (const panel of ['project', 'fleet']) {
@@ -545,6 +610,65 @@ describe('review fixes', () => {
     n += 3 * H;
     r.dispatchEvent(new MouseEvent('pointerenter'));
     expect(r.title).not.toBe(before);
+  });
+  test('entering the trigger re-reads the clock, so the trigger tooltip is not stale', () => {
+    let n = NOW;
+    const store = createScope();
+    const t = createTransport({ store, now: () => n, effectiveLiveSpan: () => 2 * H });
+    made.push(t);
+    document.body.append(t.root);
+    const trigger = q(t, '.transport-trigger');
+    const before = trigger.title;
+    n += 3 * H;
+    trigger.dispatchEvent(new MouseEvent('pointerenter'));
+    expect(trigger.title).not.toBe(before);
+  });
+  describe('the visible readout follows the clock while a live range is held over a session', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+    const open = (applies = true, ext: { from?: number; to?: number } = { from: NOW - 90 * 60_000, to: NOW - 30 * 60_000 }) => {
+      let n = NOW;
+      const store = createScope();
+      const t = createTransport({ store, now: () => n, effectiveLiveSpan: () => 2 * H, sessionSpan: () => ext });
+      made.push(t);
+      document.body.append(t.root);
+      store.narrow({ window: 'live', session: { id: 's' } });
+      t.setPanel('session');
+      t.setApplies(applies);
+      return { t, store, advance: (ms: number) => { n += ms; vi.advanceTimersByTime(ms); } };
+    };
+    test('the readout switches to partial coverage when the range start passes the session start, with no store change or hover', () => {
+      const { t, advance } = open();
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+      advance(H);
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('a session opened at the instant its start sits on the range start repaints a millisecond later, not a span later', () => {
+      // Two-hour range; the session started exactly two hours ago, so the start is still covered now and not at now + 1.
+      const { t, advance } = open(true, { from: NOW - 2 * H, to: NOW - H });
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+      advance(1);
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+    });
+    test('a session whose end is ahead of the clock repaints when the clock reaches that end', () => {
+      // Producer clocks can run ahead: the end is 30 minutes in the future, so the range does not cover it yet.
+      const { t, advance } = open(true, { from: NOW - 30 * 60_000, to: NOW + 30 * 60_000 });
+      expect(q(t, '.transport-range').textContent).toBe('Session · whole');
+      advance(30 * 60_000 + 1);
+      expect(q(t, '.transport-range').textContent).toBe('Live · whole session');
+    });
+    test('no timer runs while the range does not apply, after leaving the session, or after destroy', () => {
+      const a = open(false);
+      expect(vi.getTimerCount()).toBe(0);
+      a.t.setApplies(true);
+      expect(vi.getTimerCount()).toBe(1);
+      a.t.setPanel('project');
+      expect(vi.getTimerCount()).toBe(0);
+      a.t.setPanel('session');
+      expect(vi.getTimerCount()).toBe(1);
+      a.t.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
   test('held window labels the button as the return action', () => {
     const { store, t } = setup();

@@ -172,7 +172,7 @@ test("rejects an old response after disconnect and recovers with an authoritativ
   expect(p.strip.textContent).toContain("1 needs you");
 });
 
-test("shows captured warnings and explains storage failures without losing the inbox", async () => {
+test("capture warnings are not in the Needs you queue or its count; they are held for Doctor (MS-9)", async () => {
   snapshot.warnings = [evidence("warning", "capture_warning")];
   const p = mount({
     storage: {
@@ -185,11 +185,34 @@ test("shows captured warnings and explains storage failures without losing the i
     },
   });
   await p.refresh();
-  expect(p.root.textContent).toContain("reason warning");
-  expect(p.strip.textContent).toContain("1 capture warning");
+  expect(p.root.querySelector(".capture-warning")).toBeNull();
+  expect(p.root.textContent).not.toContain("reason warning");
+  expect(p.strip.textContent).not.toContain("capture warning");
+  expect(p.count()).toBe(1); // the one session that needs you; the warning is not a need
+  expect(p.warnings()).toBe(1);
+  expect(p.captureIssues().warnings.map((w) => w.event_id)).toEqual(["warning"]);
   button(p.root, "Snooze 15 minutes").click();
   expect(p.root.textContent).toContain("could not be saved");
   expect(p.strip.textContent).toContain("1 snoozed");
+});
+
+test("a warning is inspected through the panel, once, by its event id", async () => {
+  const selected = vi.fn();
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  await p.inspectWarning("w1");
+  expect(selected).toHaveBeenCalledWith(expect.objectContaining({ summary: "captured request" }));
+  expect(fetcher.mock.calls.filter(([u]) => u.includes("/attention/event?id=w1"))).toHaveLength(1);
+});
+
+test("inspecting a warning answers whether the evidence could be shown", async () => {
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  const p = mount();
+  await p.refresh();
+  expect(await p.inspectWarning("w1")).toBe(true);
+  fetcher.mockImplementationOnce(async () => new Response("no", { status: 500 }));
+  expect(await p.inspectWarning("w1")).toBe(false);
 });
 
 test("notifications require opt-in and send once for a new episode across reconnect and restart", async () => {
@@ -387,7 +410,7 @@ test("native episode identity preserves snooze when its supporting event changes
   expect(p.strip.textContent).toContain("1 snoozed");
 });
 
-test("unrecorded capture gaps are inspectable and show workspace identity separately", async () => {
+test("unrecorded capture gaps are held for Doctor, counted on its badge and inspectable; the queue shows workspace identity only", async () => {
   const selected = vi.fn();
   Object.assign(snapshot, {
     gaps: [
@@ -402,8 +425,11 @@ test("unrecorded capture gaps are inspectable and show workspace identity separa
   const p = mount({ onSelect: selected });
   await p.refresh();
   expect(p.root.textContent).toContain("/work/app");
-  expect(p.strip.textContent).toContain("1 capture gap");
-  button(p.root, "Inspect capture gap").click();
+  expect(p.root.querySelector(".capture-warning")).toBeNull();
+  expect(p.root.textContent).not.toContain("Unreadable spool line");
+  expect(p.strip.textContent).not.toContain("capture gap");
+  expect(p.warnings()).toBe(1);
+  p.inspectGap(p.captureIssues().gaps[0]);
   expect(selected).toHaveBeenCalledWith(
     expect.objectContaining({
       name: "capture.gap",
@@ -413,6 +439,36 @@ test("unrecorded capture gaps are inspectable and show workspace identity separa
   expect(fetcher.mock.calls.some(([url]) => url.includes("undefined"))).toBe(
     false,
   );
+});
+
+test("a gap selected while a warning is still loading is not replaced by the warning", async () => {
+  const selected = vi.fn();
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  Object.assign(snapshot, { gaps: [{ source: "firehose", time: new Date(now).toISOString(), summary: "Unreadable spool line" }] });
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  let release!: (r: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise<Response>((r) => { release = r; }));
+  const pending = p.inspectWarning("w1");
+  p.inspectGap(p.captureIssues().gaps[0]);
+  release(new Response(JSON.stringify({ id: "w1", source: "codex", category: "permission", time: new Date(now).toISOString(), summary: "captured request" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await pending;
+  expect(selected).toHaveBeenCalledTimes(1);
+  expect(selected).toHaveBeenLastCalledWith(expect.objectContaining({ name: "capture.gap" }));
+});
+
+test("a warning inspection superseded by a gap resolves null, even when its read failed, and writes no status", async () => {
+  const selected = vi.fn();
+  snapshot.warnings = [evidence("w1", "capture_warning")];
+  Object.assign(snapshot, { gaps: [{ source: "firehose", time: new Date(now).toISOString(), summary: "Unreadable spool line" }] });
+  const p = mount({ onSelect: selected });
+  await p.refresh();
+  let release!: (r: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise<Response>((r) => { release = r; }));
+  const pending = p.inspectWarning("w1");
+  p.inspectGap(p.captureIssues().gaps[0]);
+  release(new Response("nope", { status: 500 }));
+  expect(await pending).toBeNull();
 });
 
 test("the panel heading is the nav label and the old name is gone", async () => {

@@ -16,7 +16,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const LABEL_W = 150;
 const LABEL_CHARS = 18;
 const AXIS_H = 16;
-const ROW_H = 22;
+/** A lane is a button: 24px is the smallest target (MS-11). */
+const ROW_H = 24;
 const PAD = 6;
 
 /** Namespaces session_id by source so two sources reusing an id never share a lane or pair a call. */
@@ -98,7 +99,7 @@ export function lanesStrip(
     g.append(
       svg("title", {}, `${lane.label} · ${lane.state ? stateWord(lane.state) : FORK_GLYPH.unknown}${lane.reason ? ` · ${lane.reason}` : ""}`),
       svg("rect", { class: "lane-hit", x: 0, y, width: w, height: ROW_H }),
-      svg("rect", { x: 0, y: y + 4, width: 3, height: ROW_H - 8, fill: `hsl(${sessionHue(lane.id)} 55% 55%)` }),
+      svg("rect", { x: 0, y: y + 4, width: 3, height: ROW_H - 8, style: `fill:hsl(${sessionHue(lane.id)} var(--hue-s) var(--hue-l))` }),
       svg("text", { class: `lane-label${needs ? " needs" : ""}`, x: 8, y: mid + 4 }, cut(lane.label)),
       svg("line", { class: "lane-base", x1: LABEL_W, x2: w - PAD, y1: mid, y2: mid }),
     );

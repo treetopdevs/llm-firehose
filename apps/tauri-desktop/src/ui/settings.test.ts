@@ -84,3 +84,37 @@ test("no configured address row when the config matches", async () => {
   expect(dts).toContain("daemon address");
   expect(dts).not.toContain("configured address");
 });
+
+test("replay sound lives in Settings: an off-by-default checkbox with its tones, bound to the shared setting", async () => {
+  const { replaySoundSetting } = await import("./score/sound-setting");
+  replaySoundSetting.reset();
+  const s = createSettings();
+  await s.refresh();
+  const box = s.root.querySelector<HTMLInputElement>("#replay-sound")!;
+  expect(box.type).toBe("checkbox");
+  expect(box.checked).toBe(false);
+  expect(s.root.querySelector(`label[for="replay-sound"]`)!.textContent).toContain("replay sound");
+  expect(s.root.textContent).toContain("196 Hz");
+  box.checked = true;
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(replaySoundSetting.get()).toBe(true);
+  replaySoundSetting.report("unavailable");
+  expect(s.root.querySelector(".replay-sound-status")!.textContent).toContain("unavailable");
+  replaySoundSetting.reset();
+});
+
+test("the device-local replay sound control stays when the daemon's settings cannot be read", async () => {
+  api.getConfig.mockReset().mockRejectedValue(new Error("daemon down"));
+  const s = createSettings();
+  await s.refresh();
+  await flush();
+  expect(s.root.querySelector(".error")).not.toBeNull();
+  expect(s.root.querySelector("#replay-sound")).not.toBeNull();
+  expect(s.root.querySelector("#mode-full")).toBeNull();
+  // And once the daemon answers, one control remains, beside privacy and engine.
+  api.getConfig.mockResolvedValue({ privacy_mode: "balanced" });
+  await s.refresh();
+  await flush();
+  expect(s.root.querySelectorAll("#replay-sound")).toHaveLength(1);
+  expect(s.root.querySelector("#mode-full")).not.toBeNull();
+});

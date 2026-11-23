@@ -67,13 +67,11 @@ describe("focus visibility", () => {
 
   test("rings use --focus", () => {
     const bad: string[] = [];
-    const graphScope = /\.workspace-graph|\.graph-search|\.graph-canvas|\.workspace-label|\.workspace-cluster|\.revision-node/;
     for (const r of rules.filter((x) => /:focus/.test(x.selector))) {
       for (const m of r.body.matchAll(ringProps)) {
         const val = m[2].trim();
         if (m[1] === "outline" && /^none\b/.test(val)) continue;
         if (/var\(\s*--focus\s*\)/.test(val)) continue;
-        if (/var\(\s*--selected\s*\)/.test(val) && graphScope.test(r.selector)) continue;
         bad.push(`${r.selector} { ${m[1]}: ${val} }`);
       }
     }

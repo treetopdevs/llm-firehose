@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import {
   contrast,
   hexToRgb,
+  isLightContext,
   isOklchContext,
   oklchToHex,
   parseOklch,
@@ -38,14 +39,19 @@ const appTs = walk(SRC)
 // ---- the contract --------------------------------------------------------------------------
 
 const NEUTRALS = ["--bg", "--bg-panel", "--bg-hover", "--border", "--text", "--text-dim"];
-const ROLES = ["--accent", "--needs", "--selected", "--focus", "--stale", "--fog", "--ok", "--warn", "--err"];
+const ROLES = ["--accent", "--needs", "--focus", "--stale", "--fog", "--ok", "--warn", "--err"];
+// MS-6: selection is a neutral fill, a surface like --bg-hover, not an accent-family colour.
+const SELECTION = ["--selected"];
 const FILLS = ["--on-err", "--on-fill"];
 const STATUS = ["--attention", "--working", "--observed", "--none"];
 const SERIES = [1, 2, 3, 4, 5].map((n) => `--series-${n}`);
-const TYPE = ["--fs-xs", "--fs-sm", "--fs-base", "--fs-md", "--fs-lg", "--font-sans"];
-const COLOUR_TOKENS = [...NEUTRALS, ...ROLES, ...FILLS, ...STATUS, ...SERIES];
+const TYPE = ["--fs-xs", "--fs-sm", "--fs-base", "--fs-md", "--fs-lg", "--font-sans", "--font-mono"];
+const RADII = ["--radius-sm", "--radius-md", "--radius-lg"];
+// Saturation and lightness of the per-session identity hue: data colour that must read on both themes.
+const IDENTITY = ["--hue-s", "--hue-l"];
+const COLOUR_TOKENS = [...NEUTRALS, ...SELECTION, ...ROLES, ...FILLS, ...STATUS, ...SERIES];
 // Status tokens stay equal to ui/graph/names.ts in hex; they carry no oklch override.
-const NEEDS_OKLCH = [...NEUTRALS, ...ROLES, ...FILLS];
+const NEEDS_OKLCH = [...NEUTRALS, ...SELECTION, ...ROLES, ...FILLS];
 
 // Properties set locally on an element (not on :root); everything else must resolve on :root.
 const LOCAL_PROPS = ["--hue"]; // ui/sessions.ts:181 sets --hue per band row
@@ -54,20 +60,26 @@ const LOCAL_PROPS = ["--hue"]; // ui/sessions.ts:181 sets --hue per band row
 // ui/graph/names.ts pins the four graph state hues that the parity test compares against :root.
 const OFFLIMITS_TS = ["ui/graph/names.ts"];
 // The per-session identity colour is data, not theme: the only literal allowed besides tokens.
-const IDENTITY_HUE_CSS = "hsl(var(--hue) 55% 55%)";
-const IDENTITY_HUE_TS = /hsl\(\$\{sessionHue\([^)]*\)\} 55% 55%\)/g;
+const IDENTITY_HUE_CSS = "hsl(var(--hue) var(--hue-s) var(--hue-l))";
+const IDENTITY_HUE_TS = /hsl\(\$\{sessionHue\([^)]*\)\} var\(--hue-s\) var\(--hue-l\)\)/g;
 
-const resolveHex = (name: string, mode: "base" | "oklch"): string | undefined => {
-  const v = mode === "oklch" ? (tokens.oklch[name] ?? tokens.base[name]) : tokens.base[name];
+type Mode = "base" | "oklch" | "light" | "light-oklch";
+// What the cascade yields: base, then the light hex, then the dark oklch, then the light oklch.
+const resolveHex = (name: string, mode: Mode): string | undefined => {
+  const v =
+    mode === "base" ? tokens.base[name]
+    : mode === "oklch" ? (tokens.oklch[name] ?? tokens.base[name])
+    : mode === "light" ? (tokens.light[name] ?? tokens.base[name])
+    : (tokens.lightOklch[name] ?? tokens.oklch[name] ?? tokens.light[name] ?? tokens.base[name]);
   if (v === undefined) return undefined;
   return v.startsWith("oklch(") ? parseOklch(v) : v;
 };
-const hexOf = (name: string, mode: "base" | "oklch"): string => {
+const hexOf = (name: string, mode: Mode): string => {
   const v = resolveHex(name, mode);
   if (!v || !/^#[0-9a-fA-F]{3,6}$/.test(v)) throw new Error(`${name} (${mode}) is not a resolvable colour: ${v}`);
   return v;
 };
-const MODES = ["base", "oklch"] as const;
+const MODES = ["base", "oklch", "light", "light-oklch"] as const;
 
 describe("token contract", () => {
   test.each([...COLOUR_TOKENS, ...TYPE])("%s is declared on :root", (name) => {
@@ -80,6 +92,32 @@ describe("token contract", () => {
 
   test.each(NEEDS_OKLCH)("%s has an oklch override under @supports", (name) => {
     expect(tokens.oklch[name], `${name} missing from the @supports oklch block`).toMatch(/^oklch\(/);
+  });
+
+  test.each([...COLOUR_TOKENS, "--map-zero", "--map-heat", "--replay-alt", "--replay-alt-bg"])("%s has a light hex value", (name) => {
+    expect(tokens.light[name], `${name} missing from the light :root`).toMatch(/^#[0-9a-fA-F]{6}$/);
+  });
+
+  test.each(NEEDS_OKLCH)("%s has a light oklch override (or the dark oklch would win in light)", (name) => {
+    expect(tokens.lightOklch[name], `${name} missing from the light @supports oklch block`).toMatch(/^oklch\(/);
+  });
+
+  test("every dark oklch override has a light one", () => {
+    expect(Object.keys(tokens.oklch).filter((k) => tokens.lightOklch[k] === undefined)).toEqual([]);
+  });
+
+  test("native controls follow the appearance", () => {
+    const root = (light: boolean): string => rules.filter((r) => r.selector === ":root" && !isOklchContext(r) && isLightContext(r) === light).map((r) => r.body).join(";");
+    expect(root(false)).toMatch(/color-scheme\s*:\s*dark/);
+    expect(root(true)).toMatch(/color-scheme\s*:\s*light/);
+  });
+
+  test.each([...RADII, ...IDENTITY])("%s is declared on :root", (name) => {
+    expect(tokens.base[name], `${name} missing from :root`).toBeDefined();
+  });
+
+  test.each(IDENTITY)("%s has a light value", (name) => {
+    expect(tokens.light[name]).toBeDefined();
   });
 
   test("the oklch override sits in a single @supports block that tests oklch support", () => {
@@ -204,6 +242,16 @@ describe("oklch agrees with the hex fallback", () => {
     for (let i = 0; i < 3; i++) expect(Math.abs(a[i] - b[i]), `${name} channel ${i}: ${hex} vs ${ok}`).toBeLessThanOrEqual(TOL);
   });
 
+  test.each(NEEDS_OKLCH)("[light] %s", (name) => {
+    const hex = tokens.light[name];
+    const ok = tokens.lightOklch[name];
+    expect(hex, `${name} light hex`).toBeDefined();
+    expect(ok, `${name} light oklch`).toBeDefined();
+    const a = hexToRgb(hex);
+    const b = hexToRgb(parseOklch(ok));
+    for (let i = 0; i < 3; i++) expect(Math.abs(a[i] - b[i]), `${name} channel ${i}: ${hex} vs ${ok}`).toBeLessThanOrEqual(TOL);
+  });
+
   test("the converter is right on known values", () => {
     expect(oklchToHex(1, 0, 0)).toBe("#ffffff");
     expect(oklchToHex(0, 0, 0)).toBe("#000000");
@@ -244,6 +292,11 @@ describe("contrast (WCAG AA)", () => {
     }
   });
 
+  // Marks, not text: state dots, rings and series strokes need 3:1 against the surface they sit on.
+  test.each(MODES.flatMap((m) => [...STATUS, ...SERIES].map((t) => [m, t] as const)))("[%s] %s >= 3:1 on --bg", (mode, t) => {
+    expect(contrast(hexOf(t, mode), hexOf("--bg", mode)), `${t} on --bg`).toBeGreaterThanOrEqual(3);
+  });
+
   test("the fills are the ones actually used for text on those surfaces", () => {
     const body = (sel: string): string => rules.filter((r) => r.selector === sel).map((r) => r.body).join(";");
     expect(body(".badge.err")).toMatch(/color\s*:\s*var\(--on-err\)/);
@@ -277,9 +330,100 @@ describe("type scale", () => {
   });
 });
 
+describe("shadows and scrims", () => {
+  // Mixed from --bg they darken in dark but turn into a white haze in light.
+  test("neither is mixed from the surface colour", () => {
+    const bad = rules.filter((r) => /box-shadow[^;]*var\(--bg\)/.test(r.body) || (/^\.(legend-backdrop|onboarding-overlay|action-dialog)$/.test(r.selector) && /var\(--bg\)/.test(r.body)));
+    expect(bad.map((r) => r.selector)).toEqual([]);
+  });
+  test.each(["--shadow", "--scrim"])("%s has a dark and a light value", (name) => {
+    expect(tokens.base[name]).toMatch(/^#[0-9a-fA-F]{8}$/);
+    expect(tokens.light[name]).toMatch(/^#[0-9a-fA-F]{8}$/);
+  });
+  test.each([".legend-backdrop", ".onboarding-overlay", ".action-dialog"])("%s uses --scrim", (sel) => {
+    expect(rules.filter((r) => r.selector === sel).map((r) => r.body).join(";")).toMatch(/background\s*:\s*var\(--scrim\)/);
+  });
+});
+
+describe("typefaces", () => {
+  const FAMILY = /(?:^|[;{\s])font-family\s*:\s*([^;}]+)/g;
+  test("the default face is the system sans; monospace is opt-in", () => {
+    const root = rules.filter((r) => r.selector === ":root" && r.context.length === 0).map((r) => r.body).join(";");
+    expect(root).toMatch(/font-family\s*:\s*var\(--font-sans\)/);
+    expect(tokens.base["--font-sans"]).toMatch(/^-apple-system/);
+    expect(tokens.base["--font-mono"]).toMatch(/^ui-monospace/);
+  });
+  test("every font-family outside :root is a token or inherit", () => {
+    const bad: string[] = [];
+    for (const r of rules) {
+      if (r.selector === ":root") continue;
+      for (const m of r.body.matchAll(FAMILY)) {
+        if (!/^(?:var\(--font-(?:sans|mono)\)|inherit)$/.test(m[1].trim())) bad.push(`${r.selector}: ${m[1].trim()}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+  // Evidence stays monospace: identifiers, clocks, paths and captured payloads.
+  test.each([".mono", ".session-id", ".detail-payload", ".cell.time", ".transport-range", ".score-clock", ".spark"])("%s is monospace", (sel) => {
+    const hit = rules.filter((r) => r.selector.split(",").map((x) => x.trim()).includes(sel) && /font-family\s*:\s*var\(--font-mono\)/.test(r.body));
+    expect(hit.length, sel).toBeGreaterThan(0);
+  });
+});
+
+describe("radius scale", () => {
+  test("every border-radius is a scale step, a pill, a circle or zero", () => {
+    const bad: string[] = [];
+    for (const r of rules) {
+      for (const m of r.body.matchAll(/(?:^|[;{\s])border-radius\s*:\s*([^;}]+)/g)) {
+        if (!/^(?:var\(--radius-(?:sm|md|lg)\)|0|50%|999px)$/.test(m[1].trim())) bad.push(`${r.selector}: ${m[1].trim()}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
+describe("neutral selection (MS-6)", () => {
+  const chroma = (v: string): number => Number(v.match(/^oklch\(\s*[\d.]+\s+([\d.]+)/)![1]);
+  const selectionSel = /\.selected\b|\.active\b|\.current\b|\[aria-(?:pressed|selected|current|checked)="?(?:true|page)"?\]/;
+  // The Score playhead is a position in time, the one place the accent marks "here".
+  const ACCENT_POSITION = [".score-tick.current"];
+
+  test("--selected carries no more chroma than the neutral surfaces, in both appearances", () => {
+    expect(chroma(tokens.oklch["--selected"])).toBeLessThanOrEqual(0.012);
+    expect(chroma(tokens.lightOklch["--selected"])).toBeLessThanOrEqual(0.012);
+  });
+
+  test.each(MODES.flatMap((m) => ["--text", "--text-dim", "--needs", "--err", "--ok"].map((t) => [m, t] as const)))("[%s] %s reads on the selected fill", (mode, t) => {
+    expect(contrast(hexOf(t, mode), hexOf("--selected", mode)), `${t} on --selected`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(MODES)("[%s] the selected fill is told apart from hover and the page", (mode) => {
+    for (const s of ["--bg", "--bg-panel", "--bg-hover"]) expect(hexOf("--selected", mode)).not.toBe(hexOf(s, mode));
+  });
+
+  test("--selected is only ever a fill, never a text, stroke, border or ring colour", () => {
+    const bad: string[] = [];
+    for (const r of rules) {
+      if (r.selector === ":root") continue;
+      for (const m of r.body.matchAll(/(?:^|[;{\s])([\w-]+)\s*:\s*([^;}]*var\(\s*--selected\s*\)[^;}]*)/g)) {
+        if (!/^(?:background|background-color|fill)$/.test(m[1])) bad.push(`${r.selector} { ${m[1]}: ${m[2].trim()} }`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  test("no selected, pressed or current state is painted with the accent", () => {
+    const bad = rules
+      .filter((r) => /var\(\s*--accent\s*[,)]/.test(r.body))
+      .flatMap((r) => r.selector.split(/,(?![^(]*\))/).map((x) => x.trim()))
+      .filter((x) => selectionSel.test(x) && !/\.primary\b/.test(x) && !ACCENT_POSITION.includes(x));
+    expect(bad).toEqual([]);
+  });
+});
+
 describe("accent policy", () => {
   // Accent-family colour is for: needs you, selection, the focus ring, the primary action, errors.
-  const ACCENT_USERS = /var\(\s*--(?:accent|needs|selected|focus)\s*[,)]/;
+  const ACCENT_USERS = /var\(\s*--(?:accent|needs|focus)\s*[,)]/;
   const ALLOWED = [
     /:focus(?:-visible|-within)?\b/, // focus ring
     /\.focus\b/,

@@ -68,16 +68,20 @@ function walk(dir: string, out: string[] = []): string[] {
 const ONACTIVATE_CALLERS: Record<string, { descendants: boolean; why: string }> = {
   "ui/project/index.ts:bead#1": { descendants: false, why: "SVG rect leaf; stop keeps it out of its lane" },
   "ui/project/index.ts:g#1": { descendants: true, why: "lane holds focusable beads" },
-  "ui/sessions.ts:node#1": { descendants: false, why: "worktree row: text cells only" },
-  "ui/sessions.ts:item#1": { descendants: true, why: "session card holds score, loops and the id chip" },
   "ui/events/view.ts:line#1": { descendants: false, why: "text cells only (self:true kept so a future control cannot double-fire)" },
   "ui/fleet/encodings.ts:g#1": { descendants: false, why: "lane row: shapes and text only" },
-  "ui/fleet/index.ts:head#1": { descendants: false, why: "row head: spans only" },
-  "ui/fleet/index.ts:k.node#1": { descendants: false, why: "fork chip: spans only" },
-  "ui/fleet/index.ts:k.node#2": { descendants: false, why: "need chip: spans only" },
   "ui/fleet/index.ts:n#1": { descendants: false, why: "dwell row: spans and bar only" },
-  "ui/fleet/index.ts:head#2": { descendants: false, why: "matrix th: text only" },
+  "ui/fleet/index.ts:head#1": { descendants: false, why: "matrix th: text only" },
   "ui/fleet/index.ts:needs#1": { descendants: false, why: "matrix td: text only" },
+};
+
+/** The rows that select on click and open on Enter or a double click (MS-8): the same rule, so the same audit. */
+const SELECTOPEN_CALLERS: Record<string, { descendants: boolean; why: string }> = {
+  "ui/sessions.ts:node#1": { descendants: false, why: "worktree row: text cells only" },
+  "ui/sessions.ts:item#1": { descendants: true, why: "session card holds score and loops" },
+  "ui/fleet/index.ts:head#1": { descendants: false, why: "row head: spans only" },
+  "ui/fleet/index.ts:k.node#1": { descendants: false, why: "worktree chip: spans only" },
+  "ui/fleet/index.ts:k.node#2": { descendants: false, why: "need chip: spans only" },
 };
 
 function callText(src: string, at: number): string {
@@ -112,6 +116,30 @@ describe("onActivate callers", () => {
     const text = found.get(key) ?? "";
     if (info.descendants) expect(text).toMatch(/self:\s*true/);
     if (key === "ui/project/index.ts:bead#1") expect(text).toMatch(/stop:\s*true/);
+  });
+});
+
+describe("onSelectOpen callers", () => {
+  const found = new Map<string, string>();
+  for (const file of walk(SRC)) {
+    const rel = relative(SRC, file).split(sep).join("/");
+    if (rel === "select-open.ts") continue;
+    const src = readFileSync(file, "utf8");
+    const seen = new Map<string, number>();
+    for (const m of src.matchAll(/\bonSelectOpen\(\s*([A-Za-z_][\w.]*)/g)) {
+      const base = `${rel}:${m[1]}`;
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      found.set(`${base}#${n}`, callText(src, m.index!));
+    }
+  }
+
+  test("every non-test caller is listed, and the list has no stale entries", () => {
+    expect([...found.keys()].sort()).toEqual(Object.keys(SELECTOPEN_CALLERS).sort());
+  });
+
+  test.each(Object.entries(SELECTOPEN_CALLERS))("%s: elements with interactive descendants use self:true", (key, info) => {
+    if (info.descendants) expect(found.get(key) ?? "").toMatch(/self:\s*true/);
   });
 });
 

@@ -62,6 +62,19 @@ function setup(opts: { scope?: Parameters<typeof createScope>[0]; realGo?: boole
   const byKey = (k: string) => q("[data-key]").find((n) => n.getAttribute("data-key") === k)!;
   return { store, api, data, go, panel, q, byKey };
 }
+/** MS-10: a project row starts as one line. Opens every project row and its Show all, so a test can reach any worktree. */
+const showEverything = (panel: FleetPanel): void => {
+  for (const d of panel.root.querySelectorAll<HTMLButtonElement>(".fleet-disclose")) if (!d.hidden && d.getAttribute("aria-expanded") === "false") d.click();
+  for (const b of panel.root.querySelectorAll<HTMLButtonElement>(".fleet-showall")) if (b.getAttribute("aria-expanded") === "false") b.click();
+};
+/** Picks a view as a user would: a tab, an item of the More menu, else (a retired view) by name. */
+const chooseEnc = (panel: FleetPanel, q: (s: string) => HTMLElement[], enc: string): void => {
+  const b = q(`.fleet-enc[data-enc='${enc}'], .more-item[data-enc='${enc}']`)[0];
+  if (b) b.click();
+  else panel.encoding = enc as never;
+};
+/** Open is a double click (MS-8); a single click only selects. */
+const openIt = (n: Element): void => { n.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); };
 const key = (e: string, ...parts: string[]) => `${e}:${parts.join("|")}`;
 const needKey = (source: string, id: string) => key("need", JSON.stringify([source, id]));
 const press = (k: string, init: KeyboardEventInit = {}, target: EventTarget = document.body): KeyboardEvent => {
@@ -90,6 +103,9 @@ describe("render", () => {
     expect(q(".fleet-row").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoB"), key("row", "repoA"), key("row", "repoZ"), key("row", "__no_repo__")]);
     expect(q(".fleet-row.fog").map((r) => r.getAttribute("data-key"))).toEqual([key("row", "repoZ")]);
     expect(q(".fleet-row.norepo")).toHaveLength(1);
+    // MS-10: only the project with a needs you worktree starts open, and it shows that worktree alone.
+    expect(q(".fleet-fork")).toHaveLength(1);
+    showEverything(panel);
     expect(q(".fleet-fork")).toHaveLength(7);
     expect(q(".fleet-need")).toHaveLength(2);
     expect(api.worktrees.mock.calls[0]![0]).toBeInstanceOf(AbortSignal);
@@ -204,6 +220,10 @@ describe("in-place rendering", () => {
     expect(byKey(key("row", "repoZ"))).toBe(fog);
     expect(ids().indexOf(key("row", "repoZ"))).toBe(idx);
     expect(fog.classList.contains("fog")).toBe(false);
+    // Now it has a worktree to show, behind the disclosure it did not have before.
+    expect(fog.querySelector<HTMLElement>(".fleet-disclose")!.hidden).toBe(false);
+    fog.querySelector<HTMLElement>(".fleet-disclose")!.click();
+    fog.querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(fog.querySelectorAll(".fleet-fork")).toHaveLength(1);
   });
 });
@@ -216,9 +236,10 @@ describe("navigation", () => {
   test("every go patch carries project, worktree, session, cell and window keys", async () => {
     const { panel, go, byKey } = setup({ scope: populated() });
     await panel.activate();
-    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
-    byKey(key("fork", "repoA", "wt-landed")).click();
-    byKey(needKey("claude-code", "sa")).click();
+    showEverything(panel);
+    openIt(byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!);
+    openIt(byKey(key("fork", "repoA", "wt-landed")));
+    openIt(byKey(needKey("claude-code", "sa")));
     // Changed (fleet-altitude item 3): a fork glyph narrows project+worktree and descends to Sessions, not Project.
     expect(go.mock.calls.map((c) => c[0])).toEqual(["project", "sessions", "score"]);
     for (const c of go.mock.calls) {
@@ -233,7 +254,7 @@ describe("navigation", () => {
   test("a live window is passed as 'live'", async () => {
     const { panel, go, byKey } = setup();
     await panel.activate();
-    byKey(key("fork", "repoA", "wt-open")).click();
+    openIt(byKey(key("fork", "repoA", "wt-open")));
     expect((go.mock.calls[0]![1] as ScopePatch).window).toBe("live");
   });
 
@@ -242,24 +263,25 @@ describe("navigation", () => {
     ["fork", () => key("fork", "repoA", "wt-landed"), ""],
     ["need", () => needKey("claude-code", "sa"), ""],
     ["lane", () => `claude-code\u0000sa`, ""],
-  ])("%s click keeps the historical window in the real store", async (name, k, sub) => {
+  ])("%s open keeps the historical window in the real store", async (name, k, sub) => {
     const { panel, store, byKey, data } = setup({ scope: populated(), realGo: true });
     data.events = [ev({ id: "e1", session_id: "sa", time: iso(hist.to - 10_000) })];
     if (name === "lane") panel.encoding = "lanes";
     await panel.activate();
     await flush();
+    showEverything(panel);
     const node = name === "lane" ? panel.root.querySelector<HTMLElement>(".fleet-lane-row")! : byKey(k());
-    (sub ? node.querySelector<HTMLElement>(sub)! : node).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    (sub ? node.querySelector<HTMLElement>(sub)! : node).dispatchEvent(new MouseEvent(name === "lane" ? "click" : "dblclick", { bubbles: true }));
     expect(store.get().window).toEqual(hist);
   });
 
   test("the unattributed row and fog rows are not navigable but their needs are", async () => {
     const { panel, go, byKey } = setup();
     await panel.activate();
-    byKey(key("row", "__no_repo__")).querySelector<HTMLElement>(".fleet-row-head")!.click();
-    byKey(key("row", "repoZ")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    openIt(byKey(key("row", "__no_repo__")).querySelector<HTMLElement>(".fleet-row-head")!);
+    openIt(byKey(key("row", "repoZ")).querySelector<HTMLElement>(".fleet-row-head")!);
     expect(go).not.toHaveBeenCalled();
-    byKey(needKey("claude-code", "sn")).click();
+    openIt(byKey(needKey("claude-code", "sn")));
     expect(go.mock.calls[0]![0]).toBe("score");
     expect((go.mock.calls[0]![1] as ScopePatch).project).toBeUndefined();
   });
@@ -321,13 +343,13 @@ describe("navigation", () => {
     const { panel, store, go, byKey } = setup({ realGo: true });
     store.narrow({ liveSpanMs: 2 * 3_600_000 });
     await panel.activate();
-    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    openIt(byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!);
     const patch = go.mock.calls[0]![1] as ScopePatch;
     expect(patch.window).toBe("live");
     expect(Object.keys(patch).sort()).toEqual(["cell", "project", "session", "window", "worktree"]);
     expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
     store.narrow({ window: hist });
-    byKey(key("row", "repoA")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    openIt(byKey(key("row", "repoA")).querySelector<HTMLElement>(".fleet-row-head")!);
     expect((go.mock.calls[1]![1] as ScopePatch).window).toEqual(hist);
     expect(store.get().liveSpanMs).toBe(2 * 3_600_000);
   });
@@ -533,7 +555,7 @@ describe("keys", () => {
     document.body.append(panel.root);
     const shown = () => listKeys().filter((r) => r.scope === "fleet").map((r) => r.display);
     expect(shown()).toEqual(["Enter", "1–9", "n / N", "Space"]);
-    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    chooseEnc(panel, q, "dwell");
     expect(shown()).toEqual(["Enter", "n / N", "Space"]);
     for (const enc of ["lanes", "matrix", "airspace"]) {
       panel.encoding = enc as never;
@@ -543,12 +565,338 @@ describe("keys", () => {
 });
 
 describe("Fleet encoding buttons", () => {
-  test("visible labels in order are Map, Waiting, Table, Lanes, By state; ids unchanged", async () => {
+  test("the switcher is List and Lanes; Waiting, Table and By state are retired from it but still resolve by name (MS-9)", async () => {
     const { panel, q } = setup();
     await panel.activate();
     const btns = q(".fleet-enc");
-    expect(btns.map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state"]);
-    expect(btns.map((b) => b.getAttribute("data-enc"))).toEqual(["map", "dwell", "matrix", "lanes", "airspace"]);
+    expect(btns.map((b) => b.textContent)).toEqual(["List", "Lanes"]);
+    expect(btns.map((b) => b.getAttribute("data-enc"))).toEqual(["map", "lanes"]);
+    for (const enc of ["dwell", "matrix", "airspace"] as const) {
+      panel.encoding = enc;
+      expect(panel.encoding).toBe(enc);
+    }
+  });
+});
+
+// MS-10: a project row is one line; a disclosure control expands it to its needs you and working worktrees, then one
+// rest line with Show all. These are the tests of that rule; the chip tests above were rewritten to it.
+describe("expandable project rows (MS-10)", () => {
+  const rowOf = (byKey: (k: string) => HTMLElement, id: string) => byKey(key("row", id));
+  const disclose = (r: HTMLElement) => r.querySelector<HTMLButtonElement>(".fleet-disclose")!;
+  const kids = (r: HTMLElement) => [...r.querySelectorAll<HTMLElement>(".fleet-fork")];
+  // The selection key of a worktree joins project and worktree with NUL; its data-key (the scroll anchor) uses "|".
+  const forkSelKey = (repo: string, wtId: string) => `fork:${repo}\u0000${wtId}`;
+  const pressKey = (n: Element, k: string) => n.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+
+  test("a project row is one line: name, the status summary in words, the spark, last activity; no chips under it", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoB");
+    expect(r.querySelector(".fleet-row-head .fleet-row-label")!.textContent).not.toBe("");
+    expect(r.querySelector(".fleet-row-head .fleet-counts")!.textContent).toBe("1 working");
+    expect(r.querySelector(".fleet-row-head .fleet-spark")).not.toBeNull();
+    expect(r.querySelector(".fleet-row-head .fleet-last")!.textContent).not.toBe("");
+    expect(r.querySelector(".fleet-more")).toBeNull();
+    expect(kids(r)).toHaveLength(0);
+  });
+
+  test("a project with a needs you worktree starts expanded; one with only working worktrees starts collapsed", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("true");
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("false");
+    expect(kids(rowOf(byKey, "repoA")).map((c) => c.getAttribute("data-key"))).toEqual([key("fork", "repoA", "wt-open")]);
+  });
+
+  test("the disclosure is a named button that controls the child list; the row head toggles nothing", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoB");
+    const d = disclose(r);
+    expect(d.tagName).toBe("BUTTON");
+    expect(d.getAttribute("aria-label")).toMatch(/^Expand /);
+    expect(r.querySelector(`#${d.getAttribute("aria-controls")}`)).not.toBeNull();
+    r.querySelector<HTMLElement>(".fleet-row-head")!.click();
+    expect(d.getAttribute("aria-expanded")).toBe("false");
+    d.click();
+    expect(d.getAttribute("aria-expanded")).toBe("true");
+    expect(d.getAttribute("aria-label")).toMatch(/^Collapse /);
+    expect(kids(r)).toHaveLength(1);
+    d.click();
+    expect(kids(r)).toHaveLength(0);
+  });
+
+  test("a child is one line: state mark and word, name, what it waits on, age; unknown keeps its mark and reason", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const child = byKey(key("fork", "repoA", "wt-open"));
+    expect(child.querySelector(".fleet-fork-mark")!.textContent).toBe("?");
+    expect(child.querySelector(".fleet-fork-state")!.textContent).toBe("needs you");
+    expect(child.querySelector(".fleet-fork-label")!.textContent).toBe("alpha-open");
+    expect(child.querySelector(".fleet-fork-doing")!.textContent).toBe("may I run this?");
+    expect(child.querySelector(".fleet-fork-age")!.textContent).toBe("30m");
+    rowOf(byKey, "repoA").querySelector<HTMLElement>(".fleet-showall")!.click();
+    const unk = byKey(key("fork", "repoA", "wt-unk"));
+    expect(unk.querySelector(".fleet-fork-mark")!.textContent).toBe("◌");
+    expect(unk.querySelector(".fleet-fork-state")!.textContent).toBe("unknown");
+    expect(unk.querySelector(".fleet-fork-doing")!.textContent).toBe("repository not registered");
+  });
+
+  test("one rest line counts what is left by status, and Show all reveals it", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoA");
+    const line = r.querySelector<HTMLElement>(".fleet-rest")!;
+    expect(line.querySelector(".fleet-rest-text")!.textContent).toMatch(/^5 more worktrees: /);
+    const all = r.querySelector<HTMLButtonElement>(".fleet-showall")!;
+    expect(all.textContent).toBe("Show all");
+    expect(all.getAttribute("aria-expanded")).toBe("false");
+    all.click();
+    expect(kids(r)).toHaveLength(6);
+    expect(all.getAttribute("aria-expanded")).toBe("true");
+    expect(all.textContent).toBe("Show fewer");
+    all.click();
+    expect(kids(r)).toHaveLength(1);
+  });
+
+  test("a row with only needs you and working worktrees has no rest line; a row with none has no disclosure", async () => {
+    const { panel, byKey, data } = setup();
+    data.wt = [row({ repo_id: "repoC", worktree_id: "wc", label: "/w/c" })];
+    data.sessions = [att({ id: "sc", repo_id: "repoC", worktree_id: "wc", waitMs: MIN }), att({ id: "sz", repo_id: "repoZ", repo: "zeta" })];
+    await panel.activate();
+    expect(rowOf(byKey, "repoC").querySelector(".fleet-rest")).toBeNull();
+    // Nothing to expand: the control is not offered (hidden keeps the head's left edge aligned in CSS).
+    expect(rowOf(byKey, "repoZ").querySelector<HTMLElement>(".fleet-disclose")!.hidden).toBe(true);
+  });
+
+  test("the choice survives a refresh: a refresh never expands a collapsed row, even one that now has a needs you worktree", async () => {
+    const { panel, byKey, data } = setup();
+    await panel.activate();
+    disclose(rowOf(byKey, "repoA")).click(); // collapse the project that started open
+    disclose(rowOf(byKey, "repoB")).click(); // expand the one that started closed
+    data.sessions = [...baseSessions(), att({ id: "sb2", repo_id: "repoB", worktree_id: "wt-b1", waitMs: MIN })];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("false");
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
+    // A row that only later gains a needs you worktree is not opened under the pointer.
+    data.sessions = baseSessions().filter((x) => x.id !== "sa");
+    await panel.refresh();
+    data.sessions = baseSessions();
+    await panel.refresh();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  test("a refresh that changes nothing keeps every row and child node, in the same order", async () => {
+    const { panel, byKey, q } = setup();
+    await panel.activate();
+    const before = q(".fleet-row, .fleet-fork");
+    const parentOf = byKey(key("fork", "repoA", "wt-open")).parentElement;
+    nowMs += 1000;
+    await panel.refresh();
+    expect(q(".fleet-row, .fleet-fork")).toEqual(before);
+    expect(byKey(key("fork", "repoA", "wt-open")).parentElement).toBe(parentOf);
+  });
+
+  test("rows do not move under the pointer between the two clicks of a double click (Codex finding 4)", async () => {
+    const { panel, byKey, data } = setup();
+    data.sessions = [...baseSessions(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    await panel.activate();
+    const order = (): Array<string | null> => kids(rowOf(byKey, "repoA")).map((c) => c.getAttribute("data-key"));
+    expect(order()).toEqual([key("fork", "repoA", "wt-open"), key("fork", "repoA", "wt-idle")]);
+    const second = byKey(key("fork", "repoA", "wt-idle"));
+    second.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    // The first worktree stops needing anything while the user is mid double click: the list would shift up.
+    data.sessions = [S.fog(), S.workB(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(order()).toEqual([key("fork", "repoA", "wt-open"), key("fork", "repoA", "wt-idle")]);
+    expect(byKey(key("fork", "repoA", "wt-idle"))).toBe(second);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(order()).toEqual([key("fork", "repoA", "wt-idle")]);
+  });
+
+  test("a click that selects is drawn at once even while rows are held still", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const c = byKey(key("fork", "repoA", "wt-open"));
+    c.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    c.click();
+    expect(c.classList.contains("selected")).toBe(true);
+  });
+
+  test("a child selects on click and opens on double click exactly as the chips did, with the same key", async () => {
+    const { panel, byKey, go } = setup();
+    await panel.activate();
+    const c = byKey(key("fork", "repoA", "wt-open"));
+    c.click();
+    expect(c.classList.contains("selected")).toBe(true);
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+    expect(go).not.toHaveBeenCalled();
+    c.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(go).toHaveBeenCalledWith("sessions", expect.objectContaining({ project: "repoA", worktree: "wt-open" }));
+  });
+
+  test("arrow keys: Right expands, Right again enters the children, Down walks them, Left climbs back and then collapses", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoB");
+    const head = r.querySelector<HTMLElement>(".fleet-row-head")!;
+    head.focus();
+    pressKey(head, "ArrowRight");
+    expect(disclose(r).getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(head);
+    pressKey(head, "ArrowRight");
+    const child = byKey(key("fork", "repoB", "wt-b1"));
+    expect(document.activeElement).toBe(child);
+    pressKey(child, "ArrowLeft");
+    expect(document.activeElement).toBe(head);
+    pressKey(head, "ArrowLeft");
+    expect(disclose(r).getAttribute("aria-expanded")).toBe("false");
+    // The disclosure button itself answers the same keys.
+    pressKey(disclose(r), "ArrowRight");
+    expect(disclose(r).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("selecting a child that is hidden (collapsed row, or behind Show all) reveals it; collapsing moves a selection inside back to the row", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    expect(panel.selectableKeys()).toContain(forkSelKey("repoA", "wt-unk"));
+    panel.selectKey(forkSelKey("repoA", "wt-unk"));
+    expect(byKey(key("fork", "repoA", "wt-unk")).classList.contains("selected")).toBe(true);
+    panel.selectKey(forkSelKey("repoB", "wt-b1"));
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
+    disclose(rowOf(byKey, "repoB")).click();
+    expect(panel.selectedKey()).toBe(key("row", "repoB"));
+  });
+
+  test("Show fewer moves a selection that sits behind Show all to the project row, and focus with it", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoA");
+    const all = r.querySelector<HTMLButtonElement>(".fleet-showall")!;
+    all.click();
+    panel.selectKey(forkSelKey("repoA", "wt-unk"));
+    const hidden = byKey(key("fork", "repoA", "wt-unk"));
+    expect(hidden.classList.contains("selected")).toBe(true);
+    hidden.focus();
+    expect(document.activeElement).toBe(hidden);
+    all.click();
+    expect(kids(r)).toHaveLength(1);
+    expect(panel.selectedKey()).toBe(key("row", "repoA"));
+    expect(document.activeElement).toBe(r.querySelector(".fleet-row-head"));
+  });
+
+  test("Show fewer keeps a selection that stays visible", async () => {
+    const { panel, byKey } = setup();
+    await panel.activate();
+    const r = rowOf(byKey, "repoA");
+    const all = r.querySelector<HTMLButtonElement>(".fleet-showall")!;
+    all.click();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    all.click();
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+  });
+
+  test("a refresh that hides the selected worktree moves the selection, and focus, to its project row without expanding anything", async () => {
+    const { panel, byKey, data } = setup();
+    await panel.activate();
+    disclose(rowOf(byKey, "repoB")).click();
+    panel.selectKey(forkSelKey("repoB", "wt-b1"));
+    const fork = byKey(key("fork", "repoB", "wt-b1"));
+    expect(fork.classList.contains("selected")).toBe(true);
+    fork.focus();
+    data.sessions = baseSessions().filter((x) => x.id !== S.workB().id); // the worktree stops working and is no longer drawn
+    nowMs += 1000;
+    await panel.refresh();
+    expect(kids(rowOf(byKey, "repoB"))).toHaveLength(0);
+    expect(panel.selectedKey()).toBe(key("row", "repoB"));
+    expect(document.activeElement).toBe(rowOf(byKey, "repoB").querySelector(".fleet-row-head"));
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("a refresh that hides the selected worktree leaves focus on another worktree that is still drawn", async () => {
+    const { panel, byKey, data } = setup();
+    data.sessions = [...baseSessions(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    await panel.activate();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    const other = byKey(key("fork", "repoA", "wt-idle"));
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    data.sessions = [S.fog(), S.workB(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    nowMs += 1000;
+    await panel.refresh();
+    await vi.advanceTimersByTimeAsync(700);
+    expect(panel.selectedKey()).toBe(key("row", "repoA"));
+    expect(document.activeElement).toBe(byKey(key("fork", "repoA", "wt-idle")));
+  });
+
+  test("a selected worktree that goes idle between two clicks stays selected and drawn until the hold ends", async () => {
+    const { panel, byKey, data } = setup();
+    data.sessions = [...baseSessions(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    await panel.activate();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    const selected = byKey(key("fork", "repoA", "wt-open"));
+    selected.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    data.sessions = [S.fog(), S.workB(), att({ id: "sw2", repo_id: "repoA", worktree_id: "wt-idle" })];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+    expect(byKey(key("fork", "repoA", "wt-open"))).toBe(selected);
+    expect(selected.isConnected).toBe(true);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(panel.selectedKey()).toBe(key("row", "repoA"));
+    expect(selected.isConnected).toBe(false);
+  });
+
+  test("a refresh that leaves the selected worktree drawn keeps the selection", async () => {
+    const { panel, byKey, data } = setup();
+    await panel.activate();
+    panel.selectKey(forkSelKey("repoA", "wt-open"));
+    data.sessions = [...baseSessions()];
+    nowMs += 1000;
+    await panel.refresh();
+    expect(panel.selectedKey()).toBe(forkSelKey("repoA", "wt-open"));
+  });
+
+  test("a row whose /attention answered before /worktrees still starts open when a worktree needs you", async () => {
+    const { panel, byKey, api } = setup();
+    let release!: (v: typeof FIXTURE_ROWS) => void;
+    api.worktrees.mockImplementation(() => new Promise<typeof FIXTURE_ROWS>((r) => { release = r; }));
+    const loading = panel.activate();
+    await flush();
+    release(FIXTURE_ROWS);
+    await loading;
+    await flush();
+    expect(disclose(rowOf(byKey, "repoA")).getAttribute("aria-expanded")).toBe("true");
+    expect(disclose(rowOf(byKey, "repoB")).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  test("selectableKeys lists each row, its worktrees and its needs, in drawn order", async () => {
+    const { panel } = setup();
+    await panel.activate();
+    const keys = panel.selectableKeys();
+    const a = keys.indexOf(key("row", "repoA"));
+    expect(keys.slice(a, a + 3)).toEqual([key("row", "repoA"), forkSelKey("repoA", "wt-open"), expect.stringMatching(/^fork:repoA\u0000wt-/)]);
+    expect(keys.some((k) => k.startsWith("need:"))).toBe(true);
+  });
+});
+
+// MS-9: nothing is deleted. Dwell, Matrix and Airspace left the switcher and the Fleet code still serves them by name,
+// so each gets one test that reaches it by name and sees it render (the existing detail tests sit beside their features).
+describe("retired Fleet views stay reachable by name and render", () => {
+  test.each([
+    ["dwell", ".fleet-dwell-list .fleet-dwell-row"],
+    ["matrix", "table.fleet-matrix tbody tr"],
+    ["airspace", ".fleet-band"],
+  ] as const)("%s", async (enc, selector) => {
+    const { panel, q } = setup();
+    panel.encoding = enc;
+    await panel.activate();
+    expect(panel.encoding).toBe(enc);
+    expect(q(".fleet-enc[aria-selected='true']")).toHaveLength(0); // no tab claims it
+    expect(q(selector).length).toBeGreaterThan(0);
+    expect(q(".fleet-map")).toHaveLength(0);
   });
 });
 
@@ -566,24 +914,31 @@ const hostRig = () => {
 const NON_HOST = ["map", "dwell", "matrix", "lanes", "airspace"] as const;
 
 describe("Fleet host encodings", () => {
-  test("hosts add Strata and Patches buttons; without hosts they are absent", async () => {
+  test("Events is a tab; Strata and Patches sit behind More; without hosts there is no More", async () => {
     const { panel, q } = hostRig();
     await panel.activate();
-    expect(q(".fleet-enc").map((b) => b.textContent)).toEqual(["Map", "Waiting", "Table", "Lanes", "By state", "Strata", "Patches", "Events"]);
-    expect(q(".fleet-enc").map((b) => b.getAttribute("data-enc")).slice(5)).toEqual(["strata", "ecosystem", "events"]);
+    expect(q(".fleet-enc").map((b) => b.textContent)).toEqual(["List", "Lanes", "Events"]);
+    expect(q(".fleet-views .more-btn")).toHaveLength(1);
+    expect(q(".fleet-views .more-item").map((b) => [b.textContent, b.getAttribute("data-enc")])).toEqual([["Strata", "strata"], ["Patches", "ecosystem"]]);
     const bare = setup();
-    expect(bare.q(".fleet-enc")).toHaveLength(5);
+    expect(bare.q(".fleet-enc")).toHaveLength(2);
+    expect(bare.q(".more-btn")).toHaveLength(0);
   });
 
   test("clicking Strata mounts its root in .fleet-body and activates once; Patches swaps it", async () => {
     const { panel, q, strata, ecosystem } = hostRig();
     await panel.activate();
-    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    q(".more-item[data-enc='strata']")[0]!.click();
     expect(q(".fleet-body > .fake-host-strata")).toHaveLength(1);
     expect(strata.activate).toHaveBeenCalledTimes(1);
-    expect(q(".fleet-enc[aria-selected='true']").map((b) => b.textContent)).toEqual(["Strata"]);
+    // No tab is selected; More names the view that is showing.
+    expect(q(".fleet-enc[aria-selected='true']")).toHaveLength(0);
+    // The tablist stays reachable: exactly one tab keeps the tab stop while a More view shows.
+    expect(q(".fleet-enc[tabindex='0']")).toHaveLength(1);
+    expect(q(".more-btn")[0]!.textContent).toContain("Strata");
+    expect(q(".more-item[data-enc='strata']")[0]!.getAttribute("aria-checked")).toBe("true");
     expect(q(".fleet-hint")[0]!.hidden).toBe(true);
-    q(".fleet-enc[data-enc='ecosystem']")[0]!.click();
+    q(".more-item[data-enc='ecosystem']")[0]!.click();
     expect(strata.deactivate).toHaveBeenCalledTimes(1);
     expect(q(".fleet-body > .fake-host-strata")).toHaveLength(0);
     expect(q(".fleet-body > .fake-host-ecosystem")).toHaveLength(1);
@@ -598,10 +953,10 @@ describe("Fleet host encodings", () => {
     for (const dest of [...NON_HOST, host === "strata" ? "ecosystem" : "strata", "deactivate"] as const) {
       const rig = hostRig();
       await rig.panel.activate();
-      rig.q(`.fleet-enc[data-enc='${host}']`)[0]!.click();
+      chooseEnc(rig.panel, rig.q, host);
       expect(rig[host].activate).toHaveBeenCalledTimes(1);
       if (dest === "deactivate") rig.panel.deactivate();
-      else rig.q(`.fleet-enc[data-enc='${dest}']`)[0]!.click();
+      else chooseEnc(rig.panel, rig.q, dest);
       expect(rig[host].deactivate, dest).toHaveBeenCalledTimes(1);
       expect(rig.q(`.fake-host-${host}`), dest).toHaveLength(0);
       rig.panel.deactivate();
@@ -613,14 +968,14 @@ describe("Fleet host encodings", () => {
     const { panel, q, go } = hostRig();
     await panel.activate();
     expect(listKeys().filter((r) => r.scope === "fleet").map((r) => r.display)).toEqual(["Enter", "1–9", "n / N", "Space"]);
-    q(".fleet-enc[data-enc='strata']")[0]!.click();
+    chooseEnc(panel, q, "strata");
     expect(listKeys().filter((r) => r.scope === "fleet")).toEqual([]);
     press(" ");
     press("1");
     press("n");
     press("Enter");
     expect(go).not.toHaveBeenCalled();
-    q(".fleet-enc[data-enc='map']")[0]!.click();
+    chooseEnc(panel, q, "map");
     expect(listKeys().filter((r) => r.scope === "fleet")).toHaveLength(4);
   });
 
@@ -660,24 +1015,24 @@ describe("encoding tablist", () => {
     await panel.activate();
     const key = (enc: string, k: string) => q(`.fleet-enc[data-enc='${enc}']`)[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
     key("map", "ArrowRight");
-    expect(panel.encoding).toBe("dwell");
-    expect(q(".fleet-enc[tabindex='0']").map((b) => b.dataset.enc)).toEqual(["dwell"]);
-    key("dwell", "End");
-    expect(panel.encoding).toBe("airspace");
-    key("airspace", "ArrowRight");
+    expect(panel.encoding).toBe("lanes");
+    expect(q(".fleet-enc[tabindex='0']").map((b) => b.dataset.enc)).toEqual(["lanes"]);
+    key("lanes", "End");
+    expect(panel.encoding).toBe("lanes");
+    key("lanes", "ArrowRight");
     expect(panel.encoding).toBe("map");
     key("map", "ArrowLeft");
-    expect(panel.encoding).toBe("airspace");
-    key("airspace", "Home");
+    expect(panel.encoding).toBe("lanes");
+    key("lanes", "Home");
     expect(panel.encoding).toBe("map");
   });
 
   test("click, Enter and Space on a tab select it", async () => {
     const { panel, q } = setup();
     await panel.activate();
-    const t = q(".fleet-enc[data-enc='matrix']")[0]!;
+    const t = q(".fleet-enc[data-enc='lanes']")[0]!;
     t.click();
-    expect(panel.encoding).toBe("matrix");
+    expect(panel.encoding).toBe("lanes");
     expect(t.getAttribute("aria-selected")).toBe("true");
   });
 });
@@ -688,7 +1043,7 @@ describe("encodings", () => {
     expect(panel.encoding).toBe("map");
     await panel.activate();
     expect(q(".fleet-enc[aria-selected='true']").map((b) => b.getAttribute("data-enc"))).toEqual(["map"]);
-    q(".fleet-enc[data-enc='dwell']")[0]!.click();
+    chooseEnc(panel, q, "dwell");
     expect(panel.encoding).toBe("dwell");
     expect(q(".fleet-row")).toHaveLength(0);
     expect(q(".fleet-dwell-row").length).toBeGreaterThan(0);
@@ -909,7 +1264,8 @@ describe("deadlines", () => {
     await p;
     expect(hungSignal!.aborted).toBe(true);
     expect(q(".fleet-stale")).toHaveLength(1);
-    expect(q(".fleet-fork")).toHaveLength(7);
+    // The new need in repoB does not open repoB under the user: only its row says so.
+    expect(q(".fleet-fork")).toHaveLength(1);
     // attention, a separate request in the same load, was not affected by the timeout
     expect(q(".fleet-need")).toHaveLength(3);
     const calls = api.worktrees.mock.calls.length;
@@ -1071,86 +1427,101 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     Array.from({ length: n }, (_, i) => row({ repo_id: "/Users/n/browser-life/.git", worktree_id: `/Users/n/browser-life/.claude/worktrees/w${String(i).padStart(3, "0")}`, label: `/Users/n/browser-life/.claude/worktrees/w${String(i).padStart(3, "0")}`, state: "open", last_time: iso(NOW - MIN), ...extra }));
   const repoKey = key("row", "/Users/n/browser-life/.git");
 
-  test("a row draws at most 12 glyphs, a +N overflow chip, and labels only for open forks", async () => {
+  test("a big project is one line until opened; opened, it names the rest in one line and Show all lists them without paths", async () => {
     const { panel, data, byKey } = setup();
     data.wt = [...big(40), row({ repo_id: "/Users/n/browser-life/.git", worktree_id: "wg", label: "/x/gone-one", state: "gone", last_time: iso(NOW - D) })];
     data.sessions = [];
     await panel.activate();
     const r = byKey(repoKey);
+    expect(r.querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(r.querySelector(".fleet-more")).toBeNull();
+    r.querySelector<HTMLElement>(".fleet-disclose")!.click();
+    // Nothing needs you or works here: no worktree rows, one line that counts them all.
+    expect(r.querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(r.querySelector(".fleet-rest-text")!.textContent).toBe("41 more worktrees: 40 idle · 1 gone");
+    r.querySelector<HTMLElement>(".fleet-showall")!.click();
     const forks = [...r.querySelectorAll<HTMLElement>(".fleet-fork")];
-    expect(forks).toHaveLength(12);
-    expect(r.querySelector(".fleet-more")!.textContent).toBe("+29");
-    // Open forks carry the last path segment; no absolute path text anywhere in the row.
+    expect(forks).toHaveLength(41);
+    // Every row carries the last path segment; no absolute path text anywhere, only in the tooltip and name.
     expect(forks[0]!.querySelector(".fleet-fork-label")!.textContent).toBe("w000");
     expect(r.textContent).not.toContain("/Users/");
     expect(forks[0]!.getAttribute("title")).toContain("/Users/n/browser-life/.claude/worktrees/w000");
     expect(forks[0]!.getAttribute("aria-label")).toContain("/Users/n/browser-life/.claude/worktrees/w000");
   });
 
-  test("non-open forks are glyph-only: no label text", async () => {
+  test("every child says its state in words beside its mark, gone and landed included", async () => {
     const { panel, byKey } = setup();
     await panel.activate();
+    showEverything(panel);
     const gone = byKey(key("fork", "repoA", "wt-gone"));
-    expect(gone.querySelector(".fleet-fork-label")?.textContent ?? "").toBe("");
-    expect(gone.textContent).toContain("×");
+    expect(gone.querySelector(".fleet-fork-mark")!.textContent).toBe("×");
+    expect(gone.querySelector(".fleet-fork-state")!.textContent).toBe("gone");
+    expect(gone.querySelector(".fleet-fork-label")!.textContent).toBe("alpha-gone");
+    expect(byKey(key("fork", "repoA", "wt-landed")).querySelector(".fleet-fork-state")!.textContent).toBe("landed");
     expect(byKey(key("fork", "repoA", "wt-open")).querySelector(".fleet-fork-label")!.textContent).toBe("alpha-open");
   });
 
-  test("glyphs are ordered open+idle, open, landed, never_diverged, unknown, gone", async () => {
+  test("glyphs are ordered needs you and working first (MS-10), then open+idle, open, landed, never_diverged, unknown, gone", async () => {
     const { panel, byKey } = setup();
     await panel.activate();
+    showEverything(panel);
     const order = [...byKey(key("row", "repoA")).querySelectorAll(".fleet-fork")].map((f) => f.getAttribute("data-key"));
-    expect(order.slice(0, 2).sort()).toEqual([key("fork", "repoA", "wt-idle"), key("fork", "repoA", "wt-open")].sort());
-    expect(order[0]).toBe(key("fork", "repoA", "wt-idle"));
+    // wt-open has a session waiting on you in the fixture, so it leads; the rest keep the old order.
+    expect(order[0]).toBe(key("fork", "repoA", "wt-open"));
+    expect(order[1]).toBe(key("fork", "repoA", "wt-idle"));
     expect(order.slice(2)).toEqual([key("fork", "repoA", "wt-landed"), key("fork", "repoA", "wt-never"), key("fork", "repoA", "wt-unk"), key("fork", "repoA", "wt-gone")]);
   });
 
-  test("gone forks older than seven days are behind the overflow; clicking it expands only that row and survives refresh", async () => {
+  test("a long-gone worktree is just part of the rest; Show all and the opening of a row are per row and survive a refresh", async () => {
     const { panel, data, byKey, q } = setup();
     data.wt = [...big(14), ...FIXTURE_ROWS.filter((w) => w.repo_id === "repoB"), row({ repo_id: "repoB", worktree_id: "old-gone", label: "/x/old-gone", state: "gone", last_time: iso(NOW - 9 * D), last_observed: iso(NOW - 9 * D) })];
     data.sessions = [];
     await panel.activate();
-    expect(byKey(key("row", "repoB")).querySelectorAll(".fleet-fork")).toHaveLength(1);
-    expect(byKey(key("row", "repoB")).querySelector(".fleet-more")!.textContent).toBe("+1");
-    const bigRow = byKey(repoKey);
-    expect(bigRow.querySelectorAll(".fleet-fork")).toHaveLength(12);
-    bigRow.querySelector<HTMLElement>(".fleet-more")!.click();
-    expect(bigRow.querySelectorAll(".fleet-fork")).toHaveLength(14);
-    expect(bigRow.querySelector(".fleet-more")!.textContent).toBe("collapse");
-    expect(byKey(key("row", "repoB")).querySelectorAll(".fleet-fork")).toHaveLength(1);
+    const repoB = (): HTMLElement => byKey(key("row", "repoB"));
+    const bigRow = (): HTMLElement => byKey(repoKey);
+    repoB().querySelector<HTMLElement>(".fleet-disclose")!.click();
+    bigRow().querySelector<HTMLElement>(".fleet-disclose")!.click();
+    bigRow().querySelector<HTMLElement>(".fleet-showall")!.click();
+    expect(repoB().querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(repoB().querySelector(".fleet-rest-text")!.textContent).toBe("2 more worktrees: 1 idle · 1 gone");
+    expect(bigRow().querySelectorAll(".fleet-fork")).toHaveLength(14);
     await panel.refresh();
     nowMs += 1000;
     await panel.refresh();
-    expect(byKey(repoKey).querySelectorAll(".fleet-fork")).toHaveLength(14);
+    expect(bigRow().querySelectorAll(".fleet-fork")).toHaveLength(14);
+    expect(repoB().querySelectorAll(".fleet-fork")).toHaveLength(0);
     expect(q(".fleet-row").length).toBe(2);
-    byKey(repoKey).querySelector<HTMLElement>(".fleet-more")!.click();
-    expect(byKey(repoKey).querySelectorAll(".fleet-fork")).toHaveLength(12);
+    bigRow().querySelector<HTMLElement>(".fleet-showall")!.click();
+    expect(bigRow().querySelectorAll(".fleet-fork")).toHaveLength(0);
+    expect(bigRow().querySelector(".fleet-showall")!.textContent).toBe("Show all");
   });
 
-  test("the overflow chip does not navigate", async () => {
+  test("the disclosure and Show all do not navigate or select", async () => {
     const { panel, data, byKey, go } = setup();
     data.wt = big(20);
     data.sessions = [];
     await panel.activate();
-    byKey(repoKey).querySelector<HTMLElement>(".fleet-more")!.click();
+    byKey(repoKey).querySelector<HTMLElement>(".fleet-disclose")!.click();
+    byKey(repoKey).querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(go).not.toHaveBeenCalled();
+    expect(panel.selectedKey()).toBeUndefined();
   });
 
-  test("row counts are open, idle and needs forks, never 0 on a repo with open forks", async () => {
+  test("the row summary counts worktrees by status in words, never 0 on a repo with open forks", async () => {
     const { panel, data, byKey } = setup();
     data.wt = big(56);
     data.sessions = [att({ id: "n", repo_id: "/Users/n/browser-life/.git", waitMs: MIN })];
     await panel.activate();
     const counts = byKey(repoKey).querySelector(".fleet-counts")!.textContent!;
-    expect(counts).toContain("56●");
-    expect(counts).toContain("0…");
+    // MS-10: worktrees by status in words. One waits on you (no worktree id on that session), the rest have recent evidence and no live session.
+    expect(counts).toBe("56 idle");
     expect(byKey(repoKey).querySelector(".fleet-needs-count")!.textContent).toBe("1?");
   });
 
-  test("idle forks are counted separately from open", async () => {
+  test("each status is counted on its own, in a fixed order", async () => {
     const { panel, byKey } = setup();
     await panel.activate();
-    expect(byKey(key("row", "repoA")).querySelector(".fleet-counts")!.textContent).toBe("2● 1…");
+    expect(byKey(key("row", "repoA")).querySelector(".fleet-counts")!.textContent).toBe("1 needs you · 1 idle · 1 unknown · 1 landed · 1 never diverged · 1 gone");
   });
 
   test("repo labels drop the .git suffix but ids stay raw", async () => {
@@ -1160,7 +1531,7 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     await panel.activate();
     const r = byKey(repoKey);
     expect(r.querySelector(".fleet-row-label")!.textContent).toBe("browser-life");
-    r.querySelector<HTMLElement>(".fleet-row-head")!.click();
+    openIt(r.querySelector<HTMLElement>(".fleet-row-head")!);
     expect((go.mock.calls[0]![1] as ScopePatch).project).toBe("/Users/n/browser-life/.git");
   });
 
@@ -1323,19 +1694,20 @@ describe("adversarial review round 2", () => {
     expect(gone.getAttribute("title")).toContain("1 gone (age unknown)");
   });
 
-  test("expanding a static +N row adds no transition class and collapsing then expanding repeats nothing", async () => {
+  test("opening a row and showing all adds no transition class, and repeating it repeats nothing", async () => {
     const { panel, data, byKey } = setup();
     const id = "/Users/n/b/.git";
     data.wt = Array.from({ length: 20 }, (_, i) => row({ repo_id: id, worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${String(i).padStart(2, "0")}`, state: "open", last_time: iso(NOW - MIN) }));
     data.sessions = [];
     await panel.activate();
     const r = () => byKey(key("row", id));
-    expect(r().querySelectorAll(".fleet-fork")).toHaveLength(12);
-    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    expect(r().querySelectorAll(".fleet-fork")).toHaveLength(0);
+    r().querySelector<HTMLElement>(".fleet-disclose")!.click();
+    r().querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(r().querySelectorAll(".fleet-fork")).toHaveLength(20);
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
-    r().querySelector<HTMLElement>(".fleet-more")!.click();
-    r().querySelector<HTMLElement>(".fleet-more")!.click();
+    r().querySelector<HTMLElement>(".fleet-showall")!.click();
+    r().querySelector<HTMLElement>(".fleet-showall")!.click();
     expect(r().querySelectorAll(".fleet-fork.changed")).toHaveLength(0);
   });
 });
@@ -1449,6 +1821,7 @@ describe("fork aria labels", () => {
   test("idle and needs show in the fork's accessible name and follow changes", async () => {
     const { panel, data, byKey } = setup();
     await panel.activate();
+    showEverything(panel);
     expect(byKey(key("fork", "repoA", "wt-idle")).getAttribute("aria-label")).toContain("idle");
     expect(byKey(key("fork", "repoA", "wt-open")).getAttribute("aria-label")).toContain("1 needs you");
     data.sessions = [...baseSessions(), att({ id: "sx", repo_id: "repoA", worktree_id: "wt-open", waitMs: 5 * MIN })];
@@ -1473,7 +1846,7 @@ describe("Fleet Events host", () => {
     expect(q(".fleet-body > .fake-host-events")).toHaveLength(1);
     expect(events.activate).toHaveBeenCalledTimes(1);
     expect(q(".fleet-enc[data-enc='events']")[0]!.getAttribute("aria-selected")).toBe("true");
-    q(".fleet-enc[data-enc='map']")[0]!.click();
+    chooseEnc(panel, q, "map");
     expect(events.deactivate).toHaveBeenCalledTimes(1);
     expect(q(".fake-host-events")).toHaveLength(0);
     q(".fleet-enc[data-enc='events']")[0]!.click();
@@ -1527,6 +1900,7 @@ describe("actions", () => {
     r.data.wt = wts;
     r.data.sessions = o.sessions ?? [];
     await r.panel.activate();
+    showEverything(r.panel);
     return { ...r, ...a };
   }
 
@@ -1755,5 +2129,181 @@ describe("actions", () => {
     menu.remove();
     press("Escape");
     expect(q(".fleet-row.selected")).toHaveLength(0);
+  });
+});
+
+
+describe("select and open (MS-8)", () => {
+  // setup() does not take inspect; build a panel with it through the same fixtures.
+  function withInspect() {
+    const store: ScopeStore = createScope();
+    const data = { wt: FIXTURE_ROWS, sessions: baseSessions() };
+    const api = {
+      worktrees: vi.fn(() => Promise.resolve(data.wt)),
+      attention: vi.fn(() => Promise.resolve({ sessions: data.sessions, warnings: [] })),
+      sessions: vi.fn(() => Promise.resolve([])),
+    };
+    const go = vi.fn();
+    const inspect = vi.fn();
+    const panel = createFleet({ store, go: go as never, events: () => [], api: api as unknown as FleetApi, now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT, inspect });
+    document.body.append(panel.root);
+    panels.push(panel);
+    const q = (s: string) => [...panel.root.querySelectorAll<HTMLElement>(s)];
+    const byKey = (k: string) => q("[data-key]").find((n) => n.getAttribute("data-key") === k)!;
+    return { panel, go, inspect, q, byKey, data };
+  }
+  const subjects = (inspect: ReturnType<typeof vi.fn>) => inspect.mock.calls.map((c) => c[0] as { kind: string; key: string; title: string; status: { word: string; reason?: string }; open: { run(): void } } | null);
+
+  test("nothing is inspected until the user selects something", async () => {
+    const { panel, inspect } = withInspect();
+    await panel.activate();
+    await flush();
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  test("a single click on a project row selects it and fills the inspector without navigating", async () => {
+    const { panel, inspect, go, byKey } = withInspect();
+    await panel.activate();
+    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    const last = subjects(inspect).at(-1)!;
+    expect(last).toMatchObject({ kind: "project", key: "repoB" });
+    expect(byKey(key("row", "repoB")).classList.contains("selected")).toBe(true);
+    expect(go).not.toHaveBeenCalled();
+    expect(panel.selectedKey()).toBe("row:repoB");
+  });
+
+  test("a double click or Enter opens the project; the inspector's Open does too", async () => {
+    const { panel, inspect, go, byKey } = withInspect();
+    await panel.activate();
+    const head = byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!;
+    head.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(go).toHaveBeenCalledTimes(1);
+    head.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(go).toHaveBeenCalledTimes(2);
+    head.click();
+    subjects(inspect).at(-1)!.open.run();
+    expect(go).toHaveBeenCalledTimes(3);
+    expect(go.mock.calls[2]![0]).toBe("project");
+  });
+
+  test("an arrow key selects the next row and fills the inspector", async () => {
+    const { panel, inspect, byKey } = withInspect();
+    await panel.activate();
+    const heads = [...panel.root.querySelectorAll<HTMLElement>(".fleet-row-head")];
+    heads[0]!.focus();
+    heads[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(heads[1]);
+    expect(subjects(inspect).at(-1)!.key).toBe(heads[1]!.closest(".fleet-row")!.getAttribute("data-key")!.slice(4));
+    expect(byKey(heads[1]!.closest(".fleet-row")!.getAttribute("data-key")!).classList.contains("selected")).toBe(true);
+  });
+
+  test("selecting a need fills a session inspector with the id as a copyable field; opening scores it", async () => {
+    const { panel, inspect, go, byKey } = withInspect();
+    await panel.activate();
+    byKey(needKey("claude-code", "sa")).click();
+    const last = subjects(inspect).at(-1) as unknown as { kind: string; id: { value: string }; status: { word: string } };
+    expect(last.kind).toBe("session");
+    expect(last.id.value).toBe("sa");
+    expect(last.status.word).toBe("needs you");
+    expect(go).not.toHaveBeenCalled();
+    byKey(needKey("claude-code", "sa")).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(go.mock.calls[0]![0]).toBe("score");
+  });
+
+  test("a need's inspector Open uses the need as it is now, not as it was when selected", async () => {
+    const { panel, inspect, go, byKey, data } = withInspect();
+    data.sessions = [att({ id: "sx", repo_id: "repoB", waitMs: 8 * MIN })];
+    await panel.activate();
+    byKey(needKey("claude-code", "sx")).click();
+    const first = subjects(inspect).at(-1)!;
+    expect(first.kind).toBe("session");
+    // The same fields are displayed, so the inspector is not re-filled; only the worktree is learned.
+    data.sessions = [att({ id: "sx", repo_id: "repoB", worktree_id: "wt-b1", waitMs: 8 * MIN })];
+    await panel.refresh();
+    const n = inspect.mock.calls.length;
+    first.open.run();
+    expect(inspect.mock.calls.length).toBe(n);
+    expect(go).toHaveBeenCalledWith("score", expect.objectContaining({ project: "repoB", worktree: "wt-b1" }));
+  });
+
+  test("selecting an unknown worktree shows unknown and why, never idle", async () => {
+    const { panel, inspect, byKey } = withInspect();
+    await panel.activate();
+    showEverything(panel);
+    byKey(key("fork", "repoA", "wt-unk")).click();
+    const last = subjects(inspect).at(-1)!;
+    expect(last.kind).toBe("worktree");
+    expect(last.status.word).toBe("unknown");
+    expect(last.status.reason).toBeTruthy();
+  });
+
+  test("a project seen only by the needs-you snapshot is unknown, with its reason, and cannot be opened", async () => {
+    const { panel, inspect, go, byKey } = withInspect();
+    await panel.activate();
+    byKey(key("row", "repoZ")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    const last = subjects(inspect).at(-1)!;
+    expect(last.status.word).toBe("unknown");
+    expect(last.status.reason).toContain("no worktree data");
+    last.open.run();
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  test("Escape clears the selection, empties the inspector and is claimed", async () => {
+    const { panel, inspect, byKey } = withInspect();
+    await panel.activate();
+    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    const e = press("Escape", {}, byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!);
+    expect(isEscapeClaimed(e)).toBe(true);
+    expect(subjects(inspect).at(-1)).toBeNull();
+    expect(panel.selectedKey()).toBeUndefined();
+    expect(byKey(key("row", "repoB")).classList.contains("selected")).toBe(false);
+  });
+
+  test("a refresh that changes nothing does not re-fill the inspector", async () => {
+    const { panel, inspect, byKey } = withInspect();
+    await panel.activate();
+    byKey(key("row", "repoB")).querySelector<HTMLElement>(".fleet-row-head")!.click();
+    const n = inspect.mock.calls.length;
+    await panel.refresh();
+    await flush();
+    expect(inspect.mock.calls.length).toBe(n);
+  });
+
+  test("selectKey restores a selection by key, and clearSelection drops it", async () => {
+    const { panel, inspect } = withInspect();
+    await panel.activate();
+    panel.selectKey("row:repoA");
+    expect(subjects(inspect).at(-1)).toMatchObject({ kind: "project", key: "repoA" });
+    panel.clearSelection();
+    expect(subjects(inspect).at(-1)).toBeNull();
+  });
+
+  test("a daemon that needs 30 seconds to answer still fills the list: slow is not failed", async () => {
+    vi.useFakeTimers();
+    const store: ScopeStore = createScope();
+    const later = <T>(v: T): Promise<T> => new Promise((res) => setTimeout(() => res(v), 30_000));
+    const panel = createFleet({ store, go: vi.fn() as never, events: () => [], api: { worktrees: () => later(FIXTURE_ROWS), attention: () => later({ sessions: baseSessions(), warnings: [] }), sessions: () => Promise.resolve([]) }, now: () => nowMs, refreshMs: 10 * 60_000 });
+    document.body.append(panel.root);
+    panels.push(panel);
+    void panel.activate();
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(panel.root.querySelector(".fleet-error")).toBeNull();
+    expect(panel.root.querySelector(".fleet-loading")).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await flush();
+    expect(panel.root.querySelector(".fleet-error")).toBeNull();
+    expect(panel.root.querySelectorAll(".fleet-row").length).toBeGreaterThan(0);
+  });
+
+  test("the rest line names what it leaves out, by status, and says unknown only for what it is", async () => {
+    const store: ScopeStore = createScope();
+    const wts = Array.from({ length: 20 }, (_, i) => row({ repo_id: "big", worktree_id: `w${String(i).padStart(2, "0")}`, label: `/x/w${i}`, state: i < 15 ? "open" : "unknown", state_reason: "daemon could not tell", last_time: iso(NOW - MIN) }));
+    const panel = createFleet({ store, go: vi.fn() as never, events: () => [], api: { worktrees: () => Promise.resolve(wts), attention: () => Promise.resolve({ sessions: [], warnings: [] }), sessions: () => Promise.resolve([]) }, now: () => nowMs, refreshMs: REFRESH, loadTimeoutMs: TIMEOUT });
+    document.body.append(panel.root);
+    panels.push(panel);
+    await panel.activate();
+    showEverything(panel);
+    expect(panel.root.querySelector(".fleet-rest-text")!.textContent).toBe("20 more worktrees: 15 idle · 5 unknown");
+    expect(panel.root.querySelector(".fleet-showall")!.getAttribute("aria-label")).toBe("Show fewer of the 20 other worktrees");
   });
 });
