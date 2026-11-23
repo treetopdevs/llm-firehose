@@ -78,6 +78,8 @@ export function mergeRepoAliases(prev: ReadonlyMap<string, string>, before: Iden
     if (next !== from) out.set(from, next);
   }
   for (const [from, to] of step) if (!out.has(from) && !prev.has(from)) out.set(from, to);
+  // An id that names a root now is that root, whatever an earlier mode called it.
+  for (const r of after.repos) out.delete(r.id);
   return out;
 }
 
@@ -90,14 +92,14 @@ type Identity = { project?: string; worktree?: string; session?: { id: string; s
 /** The place with its three identity fields typed as optional, whatever the caller's type promised. */
 export type Remapped<P extends Identity> = Omit<P, keyof Identity> & Identity;
 
-export function remapPlace<P extends Identity>(place: P, before: IdentitySet, after: IdentitySet | undefined): Remapped<P> {
+export function remapPlace<P extends Identity>(place: P, before: IdentitySet, after: IdentitySet | undefined, fleetView = "map"): Remapped<P> {
   const has = place.project !== undefined || place.worktree !== undefined || place.session !== undefined;
   if (!has) return place as Remapped<P>;
   // A Session place without a session is an empty Score: it lands on what is left of its scope instead.
   const landed = <T extends Identity & { panel?: string; view?: string }>(p: T): T => {
     if (p.panel !== "session") return p;
-    const { view: _view, ...rest } = p;
-    return { ...rest, panel: p.project !== undefined ? "project" : "fleet" } as T;
+    // The view is explicit: activating the panel records it, and a stop that differs from it would cut Forward.
+    return (p.project !== undefined ? { ...p, panel: "project", view: "lanes" } : { ...p, panel: "fleet", view: fleetView }) as T;
   };
   const cleared = landed({ ...place, project: undefined, worktree: undefined, session: undefined });
   if (!after) return cleared;

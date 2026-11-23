@@ -93,6 +93,11 @@ describe("mergeRepoAliases (captured ids keep reaching their project)", () => {
     expect(mergeRepoAliases(new Map(), before, after).get("/Users/n/a")).toBe("sha256-aaa");
     expect(mergeRepoAliases(new Map(), dupBefore, after).has("/Users/n/a")).toBe(false);
   });
+  test("an id that is a current root is never redirected by an older alias", () => {
+    const learned = mergeRepoAliases(new Map(), before, after);
+    const renamed = { repos: [repo("/Users/n/a", "alpha-renamed"), repo("sha256-bbb", "beta"), repo("sha256-ccc", "gamma", "jj")] };
+    expect(mergeRepoAliases(learned, after, renamed).has("/Users/n/a")).toBe(false);
+  });
   test("follows a chain of mode changes, and going back to an id drops its alias", () => {
     const third = { repos: [repo("other-a", "alpha"), repo("other-b", "beta"), repo("other-c", "gamma", "jj")] };
     const once = mergeRepoAliases(new Map(), before, after);
@@ -118,8 +123,9 @@ describe("remapPlace (history entries follow a privacy change)", () => {
   });
   test("a Session place that loses its session becomes its Project, or Fleet when no project survives", () => {
     const score = { panel: "session", view: "score", project: "/Users/n/a", worktree: "w1", session: { id: "s1" } };
-    expect(remapPlace(score, before, after)).toEqual({ panel: "project", project: "sha256-aaa", worktree: undefined, session: undefined });
-    expect(remapPlace(score, before, undefined)).toEqual({ panel: "fleet", project: undefined, worktree: undefined, session: undefined });
+    expect(remapPlace(score, before, after)).toEqual({ panel: "project", view: "lanes", project: "sha256-aaa", worktree: undefined, session: undefined });
+    expect(remapPlace(score, before, undefined)).toEqual({ panel: "fleet", view: "map", project: undefined, worktree: undefined, session: undefined });
+    expect(remapPlace(score, before, undefined, "lanes").view).toBe("lanes");
     const kept = { panel: "session", view: "score", project: "sha256-aaa", session: { id: "s1" } };
     expect(remapPlace(kept, before, after)).toBe(kept);
   });

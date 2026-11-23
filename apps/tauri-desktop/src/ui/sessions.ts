@@ -63,12 +63,14 @@ const REQUEST_DEADLINE_MS = 15_000;
 const RANGE_REDRAW_MS = 120;
 
 /** Whether a session's lifetime touches the range. Unreadable times stay: unknown is not out of range. */
-function overlapsRange(s: { first_time: string; last_time: string }, w: Scope["window"]): boolean {
-  if (w === "live") return true;
+function overlapsRange(s: { first_time: string; last_time: string }, sc: Pick<Scope, "window" | "liveSpanMs">, now: number): boolean {
+  // Plain Live has no range to apply; Live with a chosen span looks back that far.
+  if (sc.window === "live" && sc.liveSpanMs === undefined) return true;
+  const { from, to } = sc.window === "live" ? { from: now - sc.liveSpanMs!, to: now } : sc.window;
   const first = Date.parse(s.first_time);
   const last = Date.parse(s.last_time);
   if (Number.isNaN(first) || Number.isNaN(last)) return true;
-  return last >= w.from && first <= w.to;
+  return last >= from && first <= to;
 }
 
 /** Settles with p, or with undefined once the deadline signal aborts (or the same deadline elapses on the clock): a consumer must not outlive its deadline on a collaborator that ignores the signal. */
@@ -243,7 +245,7 @@ export function createSessions(
       }
     }
     if (next.project !== prev.project || next.worktree !== prev.worktree || next.cell?.where !== prev.cell?.where || next.cell?.agent !== prev.cell?.agent) cap = SESSION_PAGE;
-    if (!sameWindow(next.window, prev.window)) redrawForRange();
+    if (!sameWindow(next.window, prev.window) || next.liveSpanMs !== prev.liveSpanMs) redrawForRange();
     if (!historyRef) return;
     const cellOpened = next.cell !== undefined && (next.cell.where !== prev.cell?.where || next.cell.agent !== prev.cell?.agent);
     const contextMoved = next.project !== prev.project || next.worktree !== prev.worktree || !sameSession(next.session, prev.session);
@@ -709,8 +711,10 @@ export function createSessions(
         .filter((s) => inCell(s, sc.cell) && (!members || members({ id: s.id, source: s.source })))
         .map((s) => ({ s, status: statusOf(attended.get(sessionKey(s.source, s.id)), now) }));
       // A session waiting on you is never hidden by the range.
+      // Outside a worktree a row stands for every source of its native id, so any of them waiting keeps it.
+      const waitingIds = new Set(sc.worktree ? [] : [...attended.values()].filter((a) => statusOf(a, now).needs).map((a) => a.id));
       const all = scopedAll
-        .filter(({ s, status }) => status.needs || overlapsRange(s, sc.window))
+        .filter(({ s, status }) => status.needs || waitingIds.has(s.id) || overlapsRange(s, sc, now))
         .sort((a, b) => {
           if (a.status.needs !== b.status.needs) return a.status.needs ? -1 : 1;
           // Longest wait first, then most recent activity, then id.

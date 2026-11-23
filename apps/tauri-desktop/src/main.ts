@@ -384,7 +384,7 @@ async function handlePrivacyChange(before: IdentitySet = snapshotBeforeSave()): 
   else if (result.kind === "cleared") scope.narrow({ project: undefined, worktree: undefined, session: undefined, window: current.window });
   if (result.kind !== "unchanged") showShellNote(result.note);
   // Back and Forward must not return to a place that names an identity the new mode no longer has.
-  places.rewrite((p) => remapPlace(p, before, after));
+  places.rewrite((p) => remapPlace(p, before, after, fleetPanel.encoding));
   here = places.current()?.place ?? here;
   // Panels re-read only after the scope is settled.
   void projectPanel.refresh();

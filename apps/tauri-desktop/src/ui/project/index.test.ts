@@ -532,6 +532,36 @@ describe("empty and degraded states", () => {
     expect(worktreesMock).not.toHaveBeenCalled();
   });
 
+  test("with the heartbeat and the Sessions poll overlapping, a slow answer applies while a newer read is out", async () => {
+    const { store, panel } = setup();
+    worktreesMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await store.resolver()!.refresh!();
+    const heartbeat = deferred<WorktreeLifetimeView[]>();
+    const poll = deferred<WorktreeLifetimeView[]>();
+    worktreesMock.mockClear().mockReturnValueOnce(heartbeat.promise).mockReturnValueOnce(poll.promise);
+    panel.setConnected(true);
+    void store.resolver()!.refresh!(new AbortController().signal);
+    expect(worktreesMock).toHaveBeenCalledTimes(2);
+    heartbeat.resolve(FIXTURE_ROWS);
+    await flush();
+    expect(store.resolver()!.knows!({ window: "live", project: "repoA" })).toBe(true);
+    poll.resolve([]);
+    await flush();
+    expect(store.resolver()!.knows!({ window: "live", project: "repoA" })).toBe(false);
+  });
+
+  test("a hidden read from before the panel was opened cannot apply after it closes", async () => {
+    const { store, panel } = setup();
+    const stale = deferred<WorktreeLifetimeView[]>();
+    worktreesMock.mockClear().mockReturnValueOnce(stale.promise);
+    void store.resolver()!.refresh!();
+    await panel.activate();
+    panel.deactivate();
+    stale.resolve([]);
+    await flush();
+    expect(store.resolver()!.knows!({ window: "live", project: "repoA" })).toBe(true);
+  });
+
   test("a hidden recovery read that fails is tried again on the next heartbeat", async () => {
     const { store, panel } = setup();
     worktreesMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));

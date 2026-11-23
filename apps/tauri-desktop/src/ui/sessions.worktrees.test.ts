@@ -710,6 +710,25 @@ describe("the session list follows the time range", () => {
     expect(count(panel.root)).toBe("2 sessions");
   });
 
+  test("a live span limits the list to its last stretch and redraws when it changes", async () => {
+    const { panel, store } = await rig();
+    store.narrow({ liveSpanMs: 2 * H });
+    await vi.waitFor(() => expect(sessionIds(panel.root)).toEqual(["recent"]));
+    store.narrow({ liveSpanMs: 24 * H });
+    await vi.waitFor(() => expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]));
+  });
+
+  test("outside a worktree, a row stays in range when another source of its id is waiting; inside one it does not", async () => {
+    const waiting = { id: "old", source: "claude-code", events: 1, state: "needs_input", last: { event_id: "l", kind: "activity", source: "claude-code", summary: "s", time: ago(1000), observed_at: ago(1000) }, pending: { event_id: "p", kind: "request", source: "claude-code", summary: "s", time: ago(1000), observed_at: ago(1000) } } as AttentionSession;
+    attention.mockResolvedValue({ gaps: [], warnings: [], sessions: [waiting] });
+    const { panel, store } = await rig();
+    store.narrow({ window: { from: now - H, to: now } });
+    await vi.waitFor(() => expect(sessionIds(panel.root)).toEqual(["recent"]));
+    store.narrow({ project: undefined, worktree: undefined });
+    await panel.refresh();
+    expect(sessionIds(panel.root).sort()).toEqual(["old", "recent"]);
+  });
+
   test("a session that overlaps the range stays, and one with unreadable times is never hidden", async () => {
     const rows = [wt("w", { sessions: [{ ...refAt("span", 60_000), first_time: ago(9 * H) }, { ...refAt("odd", 60_000), first_time: "", last_time: "" }], sessions_total: 2 })];
     sessions.mockResolvedValue([summary("span", { first_time: ago(9 * H), last_time: ago(60_000) }), summary("odd", { first_time: "", last_time: "" })]);
