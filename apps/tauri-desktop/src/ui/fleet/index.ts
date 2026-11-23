@@ -28,7 +28,7 @@ import type { SessionDirectory } from "../../session-directory";
 import { needYouCount } from "../../needs";
 import { airspaceBands, lanesStrip, qualifyLaneInput } from "./encodings";
 import { FORK_GLYPH, IDLE_MARK, NEEDS_MARK, NO_DATA_MARK, NO_PROJECT_MARK } from "../../glyphs";
-import { ENCODINGS, KIND_WORD, NOREPO_KEY, isHostEncoding, buildFleet, childrenOf, forkAriaLabel, longestWaiting, nextNeed, repoBuckets, restOf, signature, stripOf, summarize } from "./model";
+import { ENCODINGS, KIND_WORD, NOREPO_KEY, isHostEncoding, buildFleet, childrenOf, forkAriaLabel, longestWaiting, nextNeed, rangeBuckets, repoBuckets, restOf, rowActiveIn, signature, stripOf, summarize } from "./model";
 import type { Encoding, FleetFork, HostEncoding, FleetNeed, FleetOrder, FleetResult, FleetRow } from "./model";
 
 export type { Encoding, HostEncoding } from "./model";
@@ -54,6 +54,8 @@ export interface FleetDeps {
   /** Names lane sessions the summaries do not cover; optional, so lanes fall back to agent names. */
   directory?: SessionDirectory;
   api?: FleetApi;
+  /** The shell's shared needs-you snapshot, so the list and the sidebar never show two answers. */
+  attention?: FleetApi["attention"];
   now?: () => number;
   refreshMs?: number;
   /** A load that has not settled by then is aborted and its slot released. */
@@ -113,8 +115,6 @@ const MORE_ENCODINGS: readonly Encoding[] = ["strata", "ecosystem"];
 const FALLBACK_W = 800;
 const TOAST_MS = 2500;
 const NO_NEEDS = "no sessions need you";
-/** Dwell admits what Map and the queue count: a stale pending request is drawn and labelled, not dropped. */
-const DWELL_ADMIT = { includeStalePending: true } as const;
 const NO_WORKTREE_DATA = "no worktree data";
 
 const setText = (n: Element, v: string): void => { if (n.textContent !== v) n.textContent = v; };
@@ -209,7 +209,13 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   const startedOpen = new Map<string, boolean>();
   const showAll = new Set<string>();
   const isOpen = (id: string): boolean => openChoice.get(id) ?? startedOpen.get(id) ?? false;
-  const expansionKey = (): string => JSON.stringify([[...openChoice], [...startedOpen], [...showAll]]);
+  const expansionKey = (): string => JSON.stringify([[...openChoice], [...startedOpen], [...showAll], showOlder]);
+  let showOlder = false;
+  const rangeNote = el("p", { class: "fleet-range-note dim", role: "status" });
+  const olderText = el("span", {});
+  const olderToggle = el("button", { class: "fleet-showall", type: "button", "aria-expanded": "false" }, "Show");
+  const olderBar = el("div", { class: "fleet-older dim" }, olderText, olderToggle);
+  olderToggle.addEventListener("click", () => { showOlder = !showOlder; recompute(true); });
   let kidsSeq = 0;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -374,7 +380,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       const row = result.rows.find((r) => r.id === n.repoId);
       return {
         kind: "session", key: n.key, title: n.label,
-        status: { word: n.stale ? "needs you (stale)" : "needs you", mark: NEEDS_MARK, needs: true, ...(n.stale ? { reason: "no recent activity captured; the request is still pending" } : {}) },
+        status: { word: "needs you", mark: NEEDS_MARK, needs: true },
         facts: [
           { label: "waiting", value: formatAge(n.dwellMs) },
           { label: "asked", value: n.summary || undefined },
@@ -447,6 +453,39 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   // ---- derivation -------------------------------------------------------
 
   const resolveLabel = (id: string): string | undefined => store.resolver()?.labels({ project: id, window: "live" } as Scope).project;
+  // Until the registered list is known nothing is called older history.
+  const isTracked = (id: string): boolean => !deps.roots || !deps.roots.loaded() || deps.roots.rawLabel(id) !== undefined;
+  const resolvePath = (id: string): string | undefined => deps.roots?.rawLabel(id) ?? (id.startsWith("/") ? id : undefined);
+  const rangeNow = (): { from: number; to: number } | undefined => {
+    const { window: w, liveSpanMs } = store.get();
+    if (!isLive(w)) return { from: w.from, to: w.to };
+    // Live with a chosen span looks back that far, as the session list reads it.
+    if (liveSpanMs === undefined) return undefined;
+    const now = nowFn();
+    return { from: now - liveSpanMs, to: now };
+  };
+
+  /** What the List draws: projects in the range, registered ones first, older history behind one line. */
+  function listing(): { rows: FleetRow[]; older: FleetRow[]; inRange: number; total: number } {
+    const range = rangeNow();
+    const projects = result.rows.filter((r) => !r.noRepo);
+    const inRange = range ? result.rows.filter((r) => r.noRepo || r.needsCount > 0 || (r.lastMs >= range.from && r.lastMs <= range.to) || rowActiveIn(r, range.from, range.to)) : result.rows;
+    const tail = inRange.filter((r) => r.noRepo);
+    const shown = inRange.filter((r) => !r.noRepo);
+    // With nothing registered there is no shorter list to offer.
+    if (!projects.some((r) => isTracked(r.id))) return { rows: inRange, older: [], inRange: shown.length, total: projects.length };
+    const tracked = shown.filter((r) => r.tracked);
+    const older = shown.filter((r) => !r.tracked);
+    return { rows: [...tracked, ...(showOlder ? older : []), ...tail], older, inRange: tracked.length, total: projects.filter((r) => r.tracked).length };
+  }
+
+  /** A selection on a row the List no longer draws has nothing to fill the inspector from. */
+  function dropUnlistedSelection(): void {
+    if (encoding !== "map") return;
+    const id = selRow ?? selFork?.split(SEP)[0] ?? (selNeed !== undefined ? result.needs.find((n) => n.key === selNeed)?.repoId : undefined);
+    if (id === undefined || !result.rows.some((r) => r.id === id)) return;
+    if (!listing().rows.some((r) => r.id === id)) dropSelection();
+  }
 
   function scopeKey(sc: Scope): string {
     return [sc.project ?? "", sc.worktree ?? "", sc.session?.source ?? "", sc.session?.id ?? ""].join(SEP);
@@ -463,18 +502,18 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function recompute(force = false): void {
     const now = nowFn();
     attBy = new Map((att ?? []).map((s) => [sessionKey(s), s]));
-    result = buildFleet({ worktrees: wt, sessions: att ?? [], now, order, resolveLabel });
+    result = buildFleet({ worktrees: wt, sessions: att ?? [], now, order, resolveLabel, isTracked, resolvePath });
     order = result.order;
     // Mid double click the selection is part of what waits: relocating it would redraw the rows under the pointer.
     // An explicit act (force) relocates at once; otherwise the relocation runs when the hold ends.
     if (!force && holdTimer !== undefined && encoding === "map") { if (selectedForkHidden()) redrawHeld = true; }
-    else hideSelectedFork();
+    else { hideSelectedFork(); dropUnlistedSelection(); }
     emitLabels();
     renderStatus();
     syncFlags();
     syncButtons();
     const selPart = [selRow ?? "", selNeed ?? "", selFork ?? ""].join("\u0001");
-    const key = [encoding, scopeKey(store.get()), selPart, signature(result), expansionKey(), encodingKey(now)].join("\u0001");
+    const key = [encoding, scopeKey(store.get()), selPart, signature(result), expansionKey(), encodingKey(now), windowKey(store.get()), encoding === "map" ? listing().rows.map((r) => r.id).join(SEP) : ""].join("\u0001");
     // A press just happened: data that would shift the rows waits until the double-click window has passed. A selection,
     // a toggle or any other act of the user's own is drawn at once.
     if (!force && holdTimer !== undefined && encoding === "map" && key !== lastKey && selPart === lastSelPart) {
@@ -590,7 +629,9 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   function updateTimes(row: FleetRow, refs: RowRefs, now: number): void {
     setText(refs.dwell, row.needsCount > 0 ? formatAge(row.longestDwellMs) : "");
-    setText(refs.spark, row.known ? sparkText(repoBuckets(row, now)) : "");
+    const range = rangeNow();
+    setText(refs.spark, row.known ? sparkText(range ? rangeBuckets(row, range.from, range.to) : repoBuckets(row, now)) : "");
+    setAttr(refs.spark, "title", range ? "sessions across the selected range" : "sessions per 12 hours, last 7 days");
     setText(refs.last, lastText(row, now));
   }
   const ageOfFork = (f: FleetFork, now: number): string => (f.lastMs > 0 ? formatAge(Math.max(0, now - f.lastMs)) : NO_DATA_MARK);
@@ -607,6 +648,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   }
 
   const forkSig = (f: { state: string; idle: boolean; needs: number }): string => `${f.state}|${f.idle}|${f.needs}`;
+  const rowSig = (r: FleetRow): string => `${r.needsCount}|${r.failed}|${r.known}`;
 
   function rowNode(row: FleetRow, sc: Scope, seen: Set<string>, sigSeen: Set<string>, now: number) {
     const { node, fresh } = keyed("row:" + row.id, () => el("article", { class: "fleet-row" }), seen);
@@ -709,7 +751,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     setText(refs.counts, summarize(row).text);
     setAttr(refs.counts, "title", "worktrees by status; unknown means no recent evidence was captured" + (row.goneUnknown > 0 ? `\n${row.goneUnknown} gone (age unknown)` : ""));
     updateTimes(row, refs, now);
-    track("row:" + row.id, `${row.needsCount}|${row.failed}|${row.known}`, node);
+    track("row:" + row.id, rowSig(row), node);
 
     // A start of "open" needs the attention snapshot: until it has answered (or failed), a needs you worktree cannot be known.
     // /attention answering first leaves a provisional row with no worktrees, so the choice also waits for /worktrees (or its absence).
@@ -802,8 +844,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       setAttr(k.node, "data-source", n.source);
       setClass(k.node, "failed", n.failed);
       setClass(k.node, "selected", selNeed === n.key);
-      setClass(k.node, "stale", n.stale);
-      setAttr(k.node, "title", n.stale ? `${n.summary}\nstale: no recent activity captured, request still pending` : n.summary);
+      setAttr(k.node, "title", n.summary);
       setText(nr.label, n.label);
       setText(nr.summary, n.summary);
       updateNeedTimes(n, nr, k.node);
@@ -822,8 +863,28 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     mapEntries = [];
     let list = body.querySelector<HTMLElement>(":scope > .fleet-map");
     if (!list) { clear(body); list = el("div", { class: "fleet-map" }); body.append(list); }
-    const rows = result.rows.map((r) => rowNode(r, sc, seen, sigSeen, now));
+    const view = listing();
+    const rows = view.rows.map((r) => rowNode(r, sc, seen, sigSeen, now));
     reconcile(list, rows);
+    // Rows behind a line keep their signatures, so revealing them is not mistaken for a state change.
+    const drawn = new Set(view.rows);
+    for (const r of result.rows) {
+      if (drawn.has(r)) continue;
+      prevStates.set("row:" + r.id, rowSig(r));
+      sigSeen.add("row:" + r.id);
+      for (const f of r.forks) { prevStates.set(`fork:${r.id}|${f.id}`, forkSig(f)); sigSeen.add(`fork:${r.id}|${f.id}`); }
+    }
+    const range = rangeNow();
+    if (range) {
+      setText(rangeNote, view.inRange === 0 ? "No project activity in this range" : `${view.inRange} of ${view.total} project${view.total === 1 ? "" : "s"} active in this range`);
+      if (rangeNote.nextElementSibling !== list) body.insertBefore(rangeNote, list);
+    } else rangeNote.remove();
+    if (view.older.length > 0) {
+      setText(olderText, `${view.older.length} more from older history, not registered`);
+      setText(olderToggle, showOlder ? "Hide" : "Show");
+      setAttr(olderToggle, "aria-expanded", showOlder ? "true" : "false");
+      if (olderBar.parentNode !== body || olderBar.previousElementSibling !== list) list.after(olderBar);
+    } else olderBar.remove();
     for (const k of [...nodes.keys()]) {
       if (!seen.has(k) && !k.startsWith("dwell:")) nodes.delete(k);
     }
@@ -833,7 +894,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   function renderDwell(now: number): void {
     const seen = new Set<string>();
-    const { rows, more } = buildDwell(att ?? [], now, DWELL_ADMIT);
+    const { rows, more } = buildDwell(att ?? [], now);
     let list = body.querySelector<HTMLElement>(":scope > .fleet-dwell-list");
     if (!list) { clear(body); nodes.clear(); list = el("div", { class: "fleet-dwell-list" }); body.append(list); }
     const wanted = rows.map((r: DwellRow) => {
@@ -851,11 +912,10 @@ export function createFleet(deps: FleetDeps): FleetPanel {
       }
       setClass(n, "needs", r.needs);
       setClass(n, "selected", selNeed === r.key);
-      setClass(n, "stale", !!r.stale);
-      setAttr(n, "title", r.stale ? `${r.source} · ${r.id}\nstale: no recent activity captured, request still pending` : `${r.source} · ${r.id}`);
+      setAttr(n, "title", `${r.source} · ${r.id}`);
       setText(parts.label, r.label);
       setText(parts.where, r.where);
-      setText(parts.status, r.stale ? `${r.status} (stale)` : r.status);
+      setText(parts.status, r.status);
       setAttr(parts.bar, "style", `width:${Math.round(r.fraction * 1000) / 10}%`);
       setText(parts.age, formatAge(r.dwellMs));
       setText(parts.text, r.hasError ? `! ${r.text}` : r.text);
@@ -968,7 +1028,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     if (isHostEncoding(encoding) && mountedHost === encoding) return; // already mounted: a refresh must not restart the host
     deactivateHosts();
     if (isHostEncoding(encoding)) { drawHost(encoding); return; }
-    if (encoding !== "map") body.querySelector(":scope > .fleet-map")?.remove();
+    if (encoding !== "map") { body.querySelector(":scope > .fleet-map")?.remove(); rangeNote.remove(); olderBar.remove(); }
     if (encoding === "map") renderMap(now);
     else if (encoding === "dwell") renderDwell(now);
     else if (encoding === "matrix") renderMatrix(now);
@@ -1033,7 +1093,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
         recompute();
       },
     );
-    const attDone = call(() => api.attention(ctl.signal)).then(
+    const attDone = call(() => (deps.attention ?? api.attention)(ctl.signal)).then(
       (d) => {
         if (!live()) return;
         att = d.sessions ?? []; attStale = false; attFailed = false;
@@ -1095,14 +1155,14 @@ export function createFleet(deps: FleetDeps): FleetPanel {
 
   // ---- scope / keys / events -------------------------------------------
 
-  const windowKey = (s: Scope): string => JSON.stringify([s.window, s.liveSpanMs ?? null]);
+  function windowKey(s: Scope): string { return JSON.stringify([s.window, s.liveSpanMs ?? null]); }
   let seenWindow = "";
   function onScope(next: Scope, prev: Scope): void {
     const ctx = (s: Scope) => scopeKey(s);
     if (ctx(next) !== ctx(prev)) recompute();
     else {
       const w = windowKey(next);
-      if (w !== seenWindow) { syncFlags(); if (encoding === "lanes") recompute(); }
+      if (w !== seenWindow) { syncFlags(); if (encoding === "lanes" || encoding === "map") recompute(); }
     }
     seenWindow = windowKey(next);
   }
@@ -1110,7 +1170,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   /** Needs the active encoding actually draws; Dwell caps its list. */
   function visibleNeeds(now: number): FleetNeed[] {
     if (encoding !== "dwell") return result.needs;
-    const shown = new Set(buildDwell(att ?? [], now, DWELL_ADMIT).rows.map((r) => r.key));
+    const shown = new Set(buildDwell(att ?? [], now).rows.map((r) => r.key));
     return result.needs.filter((n) => shown.has(n.key));
   }
   const needNodeKey = (k: string): string => (encoding === "dwell" ? "dwell:" : "need:") + k;
@@ -1223,7 +1283,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
   function onPick(e: KeyboardEvent): boolean {
     const t = inScope(e);
     if (t === false || encoding !== "map") return false;
-    const row = result.rows[Number(e.key) - 1];
+    const row = listing().rows[Number(e.key) - 1];
     if (!row) return false;
     e.preventDefault();
     selectRow(row.id);
@@ -1295,8 +1355,8 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     },
     selectedKey: () => (selNeed !== undefined ? `need:${selNeed}` : selFork !== undefined ? `fork:${selFork}` : selRow !== undefined ? `row:${selRow}` : undefined),
     // Every row, then its worktrees (revealed on demand) and its needs, in the order they are drawn.
-    selectableKeys: () => result.rows.flatMap((r) => [`row:${r.id}`, ...stripOf(r.forks, true).shown.map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
-    visibleKeys: () => result.rows.flatMap((r) => [`row:${r.id}`, ...drawnForks(r).map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
+    selectableKeys: () => listing().rows.flatMap((r) => [`row:${r.id}`, ...stripOf(r.forks, true).shown.map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
+    visibleKeys: () => listing().rows.flatMap((r) => [`row:${r.id}`, ...drawnForks(r).map((f) => `fork:${forkSel(r.id, f.id)}`), ...r.needs.map((n) => `need:${n.key}`)]),
     selectKey(k) {
       if (k === undefined) { this.clearSelection(); return; }
       const at = k.indexOf(":");

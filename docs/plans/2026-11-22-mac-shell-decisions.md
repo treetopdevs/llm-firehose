@@ -392,6 +392,20 @@ Still not done or not verified:
 - The native app menu and the toolbar search remain out of scope (see slice 3).
 - Escape while a restore is pending and the user's own click or selection end the restore; Tab alone does not.
 
+### Honest list on 2026-11-23
+
+The owner's first look at the real app found counts and lists that disagreed. These rules replace earlier ones:
+
+| Earlier rule | New rule |
+|---|---|
+| A stale pending request is counted and flagged, never dropped (fleet-altitude item 6) | One 24-hour rule for every count. An older episode stays in the Needs you queue, labelled and uncounted |
+| A window change redraws nothing in the All projects list | The List shows projects active in the range and says how many; anything needing you stays listed |
+| Every repository seen in history is a row | Registered, live and needing-you projects are listed. The rest wait behind one "older history" line |
+| Two projects may share a name | An unregistered project sharing a registered name shows its parent folder |
+| A gone worktree is drawn in the fault colour | Gone is muted; red is for faults (MS-6) |
+| A landed worktree's whole row is green | The row is quiet and only its mark stays green (MS-6) |
+| The list and the sidebar poll needs-you separately | Both read one shared snapshot |
+
 ## Answered on 2026-11-22
 
 - MS-4: macOS is the only target today; Linux and Windows are on the roadmap. The overlay

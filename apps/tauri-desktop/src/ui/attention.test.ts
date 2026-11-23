@@ -598,3 +598,105 @@ test("byProject counts a session under its project's current id after a privacy 
   expect(counts.has("digest-a")).toBe(false);
   expect(panel.byProject().get("digest-a")?.needs).toBe(1);
 });
+
+const daysOld = (id: string, days: number, repo_id = "repoA") => {
+  const at = new Date(now - days * 86_400_000).toISOString();
+  const old = { ...evidence(id, "failure"), time: at, observed_at: at };
+  return { ...session(id), repo_id, state: "failed", last: old, pending: old };
+};
+
+test("a pending episode past the freshness limit is listed but not counted", async () => {
+  snapshot = { sessions: [daysOld("ancient", 27), { ...session("fresh"), repo_id: "repoA" }] as typeof snapshot.sessions, warnings: [] };
+  const p = mount();
+  await p.refresh();
+  expect(p.count()).toBe(1);
+  expect(p.byProject().get("repoA")).toEqual({ needs: 1, active: 0 });
+  const rows = [...p.root.querySelectorAll(".attention-row")].map((r) => r.textContent ?? "");
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toContain("reason fresh");
+  expect(rows[1]).toContain("Older than 24 hours");
+  expect(rows[1]).not.toContain("Snooze");
+});
+
+test("with only an old episode the count is zero", async () => {
+  snapshot = { sessions: [daysOld("ancient", 27)] as typeof snapshot.sessions, warnings: [] };
+  const p = mount();
+  await p.refresh();
+  expect(p.count()).toBe(0);
+  expect(p.byProject().get("repoA")?.needs ?? 0).toBe(0);
+});
+
+test("read shares one request and hands every reader the snapshot the count was drawn from", async () => {
+  const p = mount();
+  fetcher.mockClear();
+  const [a, b] = await Promise.all([p.read(), p.read()]);
+  expect(fetcher.mock.calls.filter(([u]) => u.endsWith("/attention"))).toHaveLength(1);
+  expect(a).toBe(b);
+  expect(a.sessions.filter((s) => s.pending)).toHaveLength(p.count());
+});
+
+test("read rejects when the snapshot cannot be loaded, and asks directly while the stream is down", async () => {
+  const p = mount();
+  fetcher.mockImplementationOnce(async () => new Response("no", { status: 500 }));
+  await expect(p.read()).rejects.toBeDefined();
+  p.setConnected(false);
+  await expect(p.read()).resolves.toMatchObject({ sessions: expect.any(Array) });
+  p.dispose();
+  await expect(p.read()).rejects.toBeDefined();
+});
+
+test("read does not wait for a slow notification permission check", async () => {
+  let release = () => {};
+  const granted = new Promise<boolean>((r) => { release = () => r(true); });
+  const notifications = { enable: async () => true, granted: () => granted, send: async () => {} };
+  const p = mount({ notifications });
+  await p.refresh();
+  button(p.root, "Enable desktop notifications").click();
+  await vi.waitFor(() => expect(button(p.root, "Disable desktop notifications")).toBeTruthy());
+  snapshot = { ...snapshot, sessions: [...snapshot.sessions, session("new-request")] };
+  const refreshing = p.refresh();
+  await vi.waitFor(() => expect(p.count()).toBe(2));
+  await expect(p.read()).resolves.toBeDefined();
+  release();
+  await refreshing;
+});
+
+test("a direct read while the stream is down updates the count too", async () => {
+  const p = mount();
+  await p.refresh();
+  expect(p.count()).toBe(1);
+  p.setConnected(false);
+  snapshot = { ...snapshot, sessions: [...snapshot.sessions, session("arrived")] };
+  await p.read();
+  expect(p.count()).toBe(2);
+});
+
+test("a direct read that lands as the stream connects still updates the count, unless a newer snapshot already did", async () => {
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  const two = { sessions: [session("r1"), session("r2")], warnings: [] };
+  const one = { sessions: [session("r1")], warnings: [] };
+  const p = mount();
+  await p.refresh();
+  p.setConnected(false);
+  let answerDirect = (_: Response) => {};
+  let answerOwn = (_: Response) => {};
+  fetcher.mockImplementationOnce(() => new Promise((r) => { answerDirect = r; }));
+  fetcher.mockImplementationOnce(() => new Promise((r) => { answerOwn = r; }));
+  const direct = p.read();
+  p.setConnected(true);
+  answerDirect(ok(two));
+  await direct;
+  expect(p.count()).toBe(2);
+  answerOwn(ok(one));
+  await vi.waitFor(() => expect(p.count()).toBe(1));
+
+  p.setConnected(false);
+  fetcher.mockImplementationOnce(() => new Promise((r) => { answerDirect = r; }));
+  const late = p.read();
+  p.setConnected(true);
+  await p.refresh();
+  const settled = p.count();
+  answerDirect(ok({ sessions: [session("x"), session("y"), session("z")], warnings: [] }));
+  await late;
+  expect(p.count()).toBe(settled);
+});

@@ -8,7 +8,7 @@ import type {
 } from "../api";
 import { clear, el, keepFocus } from "../dom";
 import { disambiguateSessionLabel, projectName, sessionName, workspaceLabel, worktreeName } from "../format";
-import { needYouCount } from "../needs";
+import { needYouCount, pendingNow } from "../needs";
 import { formatAge } from "../spark";
 import { idChip } from "./session-id";
 
@@ -149,6 +149,17 @@ export function createAttention(options: AttentionOptions) {
   let inFlight: Promise<void> | null = null;
   let abort: AbortController | null = null;
   let snapshot: AttentionSnapshot = { sessions: [], warnings: [] };
+  /** How many snapshots have been applied: an answer that began before a newer one is dropped. */
+  let applied = 0;
+  /** Waiting for the load in flight; settled before any slow notification work. */
+  const readers = new Set<{ resolve(s: AttentionSnapshot): void; reject(e: unknown): void }>();
+  const settleReaders = (error?: unknown, failed = false): void => {
+    for (const r of [...readers]) {
+      readers.delete(r);
+      if (failed) r.reject(error);
+      else r.resolve(snapshot);
+    }
+  };
 
   /** Pending episodes that are not snoozed: the number the strip shows. */
   let needing = 0;
@@ -191,7 +202,8 @@ export function createAttention(options: AttentionOptions) {
     sessionButton.addEventListener("click", () =>
       options.onOpenSession(s.id, s.source),
     );
-    const snooze = s.pending
+    const current = !!s.pending && pendingNow(s, Date.now());
+    const snooze = current
       ? el(
           "button",
           { "data-key": `snooze:${episodeKey(s)}` },
@@ -233,7 +245,7 @@ export function createAttention(options: AttentionOptions) {
       el(
         "p",
         { class: "dim" },
-        `${formatAge(Math.max(0, Date.now() - eventTime(evidence)))} ago · ${s.pending ? "No later resolution captured" : s.state}`,
+        `${formatAge(Math.max(0, Date.now() - eventTime(evidence)))} ago · ${s.pending ? (current ? "No later resolution captured" : "Older than 24 hours · not counted as needing you") : s.state}`,
       ),
       el(
         "p",
@@ -259,7 +271,8 @@ export function createAttention(options: AttentionOptions) {
     clear(rows);
     clear(strip);
     names = snapshot.sessions.map((s) => [keyOf(s), sessionName(s)] as const);
-    const pending = snapshot.sessions.filter((s) => s.pending);
+    // One freshness rule for who needs you: an old episode stays listed but is not counted.
+    const pending = snapshot.sessions.filter((s) => s.pending && pendingNow(s, Date.now()));
     const snoozed = pending.filter((s) => prefs.snoozed(episodeKey(s))).length;
     needing = pending.length - snoozed;
     for (const fn of countListeners) {
@@ -311,12 +324,14 @@ export function createAttention(options: AttentionOptions) {
     const term = search.value.trim().toLocaleLowerCase();
     const rank = (s: AttentionSession) =>
       s.pending
-        ? prefs.snoozed(episodeKey(s))
-          ? 2
-          : s.pending.kind === "request"
-            ? 0
-            : 1
-        : 3;
+        ? !pendingNow(s, Date.now())
+          ? 3
+          : prefs.snoozed(episodeKey(s))
+            ? 2
+            : s.pending.kind === "request"
+              ? 0
+              : 1
+        : 4;
     const all = snapshot.sessions
       .filter(
         (s) =>
@@ -402,9 +417,11 @@ export function createAttention(options: AttentionOptions) {
     const controller = new AbortController();
     abort = controller;
     const timeout = setTimeout(() => controller.abort(), READ_DEADLINE_MS);
+    let settled = false;
     try {
       const result = await attention(controller.signal);
       if (disposed || !connected || version !== epoch) return;
+      applied++;
       snapshot = result;
       fresh = true;
       options.onSessions?.(result.sessions);
@@ -416,17 +433,22 @@ export function createAttention(options: AttentionOptions) {
       initialized = true;
       status.textContent = `Snapshot checked at ${new Date(Date.now()).toLocaleTimeString()} · source coverage is not guaranteed`;
       render();
+      settled = true;
+      settleReaders();
       // Release the network slot before OS permission checks, which can be slow.
       inFlight = null;
       await deliverNotifications(version);
-    } catch {
+    } catch (error) {
       if (disposed || version !== epoch) return;
       fresh = false;
       status.textContent =
         "Needs you is unavailable — waiting for the local engine.";
       render();
+      if (!settled) { settled = true; settleReaders(error, true); }
     } finally {
       clearTimeout(timeout);
+      // Superseded with no newer load to answer: readers must not hang.
+      if (!settled && abort === controller) settleReaders(new Error("needs-you snapshot unavailable"), true);
       if (abort === controller) abort = null;
     }
   }
@@ -457,6 +479,23 @@ export function createAttention(options: AttentionOptions) {
     root,
     strip,
     refresh,
+    /** The next snapshot, from the one request every view shares. */
+    read(signal?: AbortSignal): Promise<AttentionSnapshot> {
+      if (disposed) return Promise.reject(new Error("needs-you snapshot unavailable"));
+      // The live stream being down does not mean the daemon is: a view may still ask it directly.
+      if (!connected) {
+        // The stream may connect while this is in flight, so only a newer snapshot outranks it.
+        const seen = applied;
+        return attention(signal).then((result) => {
+          if (!disposed && seen === applied) { applied++; snapshot = result; options.onSessions?.(result.sessions); render(); }
+          return result;
+        });
+      }
+      return new Promise((resolve, reject) => {
+        readers.add({ resolve, reject });
+        void refresh();
+      });
+    },
     /** The strip's count (pending, not snoozed). */
     count: () => needing,
     /** Per project: sessions that need you (pending, not snoozed) and sessions working now, from the last snapshot. */
@@ -466,7 +505,7 @@ export function createAttention(options: AttentionOptions) {
         if (!s.repo_id) continue;
         const repo = current(s.repo_id);
         const row = out.get(repo) ?? { needs: 0, active: 0 };
-        if (s.pending) { if (!prefs.snoozed(episodeKey(s))) row.needs++; }
+        if (s.pending) { if (pendingNow(s, Date.now()) && !prefs.snoozed(episodeKey(s))) row.needs++; }
         else if (s.state === "working" && Date.now() - eventTime(s.last) < 30 * 60_000) row.active++;
         out.set(repo, row);
       }
@@ -504,6 +543,7 @@ export function createAttention(options: AttentionOptions) {
       epoch++;
       abort?.abort();
       clearInterval(timer);
+      settleReaders(new Error("needs-you snapshot unavailable"), true);
     },
   };
 }
