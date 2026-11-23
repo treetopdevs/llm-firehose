@@ -21,6 +21,19 @@ import (
 var ErrNotFound = errors.New("repository unavailable")
 var ErrCursor = errors.New("expired or invalid graph cursor")
 
+// scanFunc is the VCS scan implementation; tests replace it to inspect
+// coalescing and concurrency without running git/jj subprocesses.
+var scanFunc = scan
+
+type inflightScan struct {
+	done     chan struct{}
+	epoch    uint64
+	sequence uint64
+	limit    int
+	snap     Snapshot
+	err      error
+}
+
 type registration struct {
 	// root is where commands run and what the project is named after: the main
 	// checkout or main workspace (the git dir of a bare repository).
@@ -36,6 +49,7 @@ type registration struct {
 	project  string
 	git      gitLayout
 	snapshot *Snapshot
+	inflight *inflightScan
 	limit    int
 	sequence uint64
 	failed   bool
@@ -152,6 +166,7 @@ func (s *Service) registerGit(ctx context.Context, root string) (*registration, 
 		if existing.git.main == "" && layout.main != "" {
 			existing.git.main, existing.git.anchor = layout.main, layout.anchor
 			existing.root, existing.projectRoot, existing.snapshot = layout.anchor, layout.anchor, nil
+			existing.inflight = nil
 			// A scan already running copied the old layout: supersede it, so its
 			// result is discarded instead of cached.
 			existing.sequence++
@@ -244,6 +259,7 @@ func (s *Service) SetPrivacy(mode privacy.Mode) {
 		s.epoch++
 		for _, r := range s.repos {
 			r.snapshot = nil
+			r.inflight = nil
 		}
 	}
 }
@@ -279,24 +295,39 @@ func (s *Service) Snapshot(ctx context.Context, id, cursor string, refresh bool)
 		s.mu.Unlock()
 		return out, nil
 	}
+	if in := r.inflight; in != nil && in.epoch == epoch && in.sequence == r.sequence && in.limit >= limit {
+		s.mu.Unlock()
+		select {
+		case <-in.done:
+			if in.err != nil {
+				return Snapshot{}, in.err
+			}
+			return clone(in.snap), nil
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		}
+	}
 	r.sequence++
 	sequence := r.sequence
+	in := &inflightScan{done: make(chan struct{}), epoch: epoch, sequence: sequence, limit: limit}
+	r.inflight = in
 	s.mu.Unlock()
 	scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	v, e := scan(scanCtx, copyReg, limit, mode)
+	v, e := scanFunc(scanCtx, copyReg, limit, mode)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if epoch != s.epoch {
-		return Snapshot{}, errors.New("privacy changed; retry scan")
-	}
-	if sequence != r.sequence {
+	var out Snapshot
+	var outErr error
+	switch {
+	case epoch != s.epoch:
+		outErr = errors.New("privacy changed; retry scan")
+	case sequence != r.sequence:
 		if r.snapshot != nil {
-			return clone(*r.snapshot), nil
+			out = clone(*r.snapshot)
+		} else {
+			outErr = errors.New("scan superseded; retry")
 		}
-		return Snapshot{}, errors.New("scan superseded; retry")
-	}
-	if e != nil {
+	case e != nil:
 		r.failed = true
 		if r.snapshot != nil {
 			v = clone(*r.snapshot)
@@ -304,21 +335,34 @@ func (s *Service) Snapshot(ctx context.Context, id, cursor string, refresh bool)
 			v.Repository.Status = "stale"
 			v.Warnings = append(v.Warnings, "scan failed; last successful snapshot retained")
 			r.snapshot = &v
-			return clone(v), nil
+			out = clone(v)
+		} else {
+			outErr = e
 		}
-		return Snapshot{}, e
-	}
-	r.failed = false
-	v.Generation = strconv.FormatInt(time.Now().UnixNano(), 36)
-	for _, boundary := range v.Boundaries {
-		if boundary.Reason == "history not loaded" {
-			v.NextCursor = v.Generation + ":" + strconv.Itoa(limit)
-			break
+	default:
+		r.failed = false
+		v.Generation = strconv.FormatInt(time.Now().UnixNano(), 36)
+		for _, boundary := range v.Boundaries {
+			if boundary.Reason == "history not loaded" {
+				v.NextCursor = v.Generation + ":" + strconv.Itoa(limit)
+				break
+			}
 		}
+		r.snapshot = &v
+		r.limit = limit
+		out = clone(v)
 	}
-	r.snapshot = &v
-	r.limit = limit
-	return clone(v), nil
+	in.snap = out
+	in.err = outErr
+	if r.inflight == in {
+		r.inflight = nil
+	}
+	close(in.done)
+	s.mu.Unlock()
+	if outErr != nil {
+		return Snapshot{}, outErr
+	}
+	return clone(out), nil
 }
 func clone(v Snapshot) Snapshot {
 	v.Nodes = append([]Revision{}, v.Nodes...)
@@ -455,6 +499,25 @@ func (s *Service) EventScope(repoID, workspaceID string) ([]string, []string, er
 		}
 	}
 	return nil, nil, ErrNotFound
+}
+
+// WorkspaceAliases returns the repository's identity aliases and every cached
+// workspace's identity aliases keyed by workspace ID under a single lock,
+// without cloning the snapshot's revision graph. ok is false when the
+// repository is unknown or has no cached snapshot yet.
+func (s *Service) WorkspaceAliases(repoID string) ([]string, map[string][]string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.find(repoID)
+	if r == nil || r.snapshot == nil {
+		return nil, nil, false
+	}
+	repo := []string{r.identity, digest(r.identity)}
+	ws := make(map[string][]string, len(r.snapshot.Workspaces))
+	for _, w := range r.snapshot.Workspaces {
+		ws[w.ID] = []string{w.rawIdentity, digest(w.rawIdentity)}
+	}
+	return repo, ws, true
 }
 
 type commandError struct {

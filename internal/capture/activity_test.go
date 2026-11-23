@@ -405,9 +405,8 @@ func TestActivityReadsOnlyWindowDays(t *testing.T) {
 	if err != nil || r.FileEvents != 2 {
 		t.Fatalf("days 5 and 6 hold the window's events: %+v %v", r, err)
 	}
-	got := rec.scanned()
-	if !reflect.DeepEqual(got, []string{"2026-10-06", "2026-10-05", "2026-10-04"}) {
-		t.Fatalf("only UTC days overlapping [from, to) may be read; read %v", got)
+	if got := rec.scanned(); len(got) != 0 {
+		t.Fatalf("activity is served from projection without scanning spool day files; read %v", got)
 	}
 	rec.reset()
 	q := activityQuery(from, to, time.Hour)
@@ -454,17 +453,19 @@ func TestActivityHonoursCancel(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rec.reset()
-	rec.before = func(day string) {
-		if day == "2026-10-05" {
+	resolved := 0
+	q.Resolve = func(ev event.Event, path string) (string, string) {
+		resolved++
+		if resolved == 2 {
 			cancel()
 		}
+		return stripRoot(ev, path)
 	}
 	if _, err := e.Activity(ctx, q); !errors.Is(err, context.Canceled) {
 		t.Fatalf("mid-scan: %v", err)
 	}
-	if got := rec.scanned(); !reflect.DeepEqual(got, []string{"2026-10-06", "2026-10-05"}) {
-		t.Fatalf("scan continued after cancellation: %v", got)
+	if resolved != 2 {
+		t.Fatalf("activity continued after cancellation: resolved %d records, want 2", resolved)
 	}
 }
 

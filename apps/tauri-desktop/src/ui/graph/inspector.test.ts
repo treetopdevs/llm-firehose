@@ -559,3 +559,17 @@ test("a path change redraws the inspector", () => {
   inspector.update(ctx({ workspacePath: "/new/wt" }));
   expect(root.querySelector(".insp-path code")!.textContent).toBe("/new/wt");
 });
+
+test("update paints only once when switching to an uncached comparison", async () => {
+  const { inspector, root } = mount(ctx());
+  await flush();
+  const appendSpy = vi.spyOn(root, "append");
+  // Switching to a revision with an uncached comparison should paint once (not before + after ensureCompare).
+  inspector.update(ctx({ workspace: undefined, revision: P, agents: [], activity: [] }));
+  expect(appendSpy).toHaveBeenCalledTimes(1);
+  // Updating with identical inputs should not paint at all.
+  appendSpy.mockClear();
+  inspector.update(ctx({ workspace: undefined, revision: P, agents: [], activity: [] }));
+  expect(appendSpy).toHaveBeenCalledTimes(0);
+  appendSpy.mockRestore();
+});

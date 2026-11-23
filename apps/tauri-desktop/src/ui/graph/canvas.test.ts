@@ -737,3 +737,27 @@ test("a cluster button names its aggregate state and updates on the same node", 
   expect(chip.getAttribute("aria-label")).toContain("working");
   expect(chip.getAttribute("aria-label")).not.toContain("needs you");
 });
+
+test("panning avoids rewriting static axis chrome when height is unchanged and setState reuses unchanged selection ancestry", () => {
+  const { canvas } = mount(graphOf(commits("c", 80), [cw("w", "c79")]), handlers(), { workspace: "w", revision: "c79" });
+  const firstHighlight = canvas.highlighted();
+  expect(firstHighlight).toBeTruthy();
+
+  // Updating agent state without changing selection must reuse the same ancestry Set.
+  canvas.setState({
+    ...idle,
+    workspace: "w",
+    revision: "c79",
+    agents: new Map<string, AgentInfo>([["w", { state: "working", count: 1 }]]),
+  });
+  expect(canvas.highlighted()).toBe(firstHighlight);
+
+  // Static axis arrows should not be rewritten on every pan when canvas height did not change.
+  const arrowUp = q(canvas, ".axis-arrow.up");
+  const setAttr = vi.spyOn(arrowUp, "setAttribute");
+  for (let i = 1; i <= 10; i++) {
+    canvas.setView({ x: i * 15, y: i * 10, scale: 1 });
+  }
+  expect(setAttr).not.toHaveBeenCalled();
+  setAttr.mockRestore();
+});

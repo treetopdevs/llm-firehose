@@ -261,20 +261,26 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     agents: new Map(),
   };
   let highlight: Set<string> | null = null;
+  let highlightInput: { graph: CanvasGraph; chosen: string; descendants: boolean } | undefined;
   let chosenKey = "";
   let view: View = { x: 0, y: 0, scale: 1 };
   let autoView: (() => View | undefined) | undefined;
   let tabStop: Element | undefined;
   let nodeStop: Element | undefined;
   let clusterByRev = new Map<string, LaidCluster>();
+  let groupedText = "";
   let childrenOf = new Map<string, string[]>();
   let rows: Map<number, { key: string; x: number }[]> | undefined;
   let activeSig = "";
   let activeSet = new Set<string>();
   let far = false;
   let rebuilds = 0;
+  let observedSize: { w: number; h: number } | undefined;
+  let axisH = -1;
+  let axisBands: [number, number][] = [];
 
   function size() {
+    if (observedSize) return observedSize;
     const r = canvas.getBoundingClientRect?.();
     return {
       w: canvas.clientWidth || r?.width || 900,
@@ -444,34 +450,42 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
 
   function updateAxis() {
     const { h } = size();
-    // Annotation text bands (screen y), so tick numbers never print over them.
-    const bands: [number, number][] = [];
-    for (const t of [newer, older, caption]) {
-      const bottom = t.dataset.bottom === "1";
-      const lines = t.childElementCount;
-      const lift = bottom ? (t === caption ? 74 : 44) : 0;
-      const baseline = bottom ? h - lift - (lines - 1) * 14 : 26;
-      t.setAttribute("y", num(baseline));
-      for (const s of Array.from(t.children)) s.setAttribute("x", String(NOTE_X));
-      bands.push([baseline - 13, baseline + (lines - 1) * 14 + 5]);
+    if (h !== axisH) {
+      axisH = h;
+      // Annotation text bands (screen y), so tick numbers never print over them.
+      axisBands = [];
+      for (const t of [newer, older, caption]) {
+        const bottom = t.dataset.bottom === "1";
+        const lines = t.childElementCount;
+        const lift = bottom ? (t === caption ? 74 : 44) : 0;
+        const baseline = bottom ? h - lift - (lines - 1) * 14 : 26;
+        t.setAttribute("y", num(baseline));
+        for (const s of Array.from(t.children)) s.setAttribute("x", String(NOTE_X));
+        axisBands.push([baseline - 13, baseline + (lines - 1) * 14 + 5]);
+      }
+      // arrowheads beside the "Newer" and "Older" notes, joined by a faint rule
+      const topY = 12;
+      const bottomY = h - 26;
+      arrowUp.setAttribute("d", `M ${ARROW_X} ${topY + 34} V ${topY} M ${ARROW_X - 5} ${topY + 5} L ${ARROW_X} ${topY} L ${ARROW_X + 5} ${topY + 5}`);
+      arrowDown.setAttribute("d", `M ${ARROW_X} ${bottomY - 44} V ${bottomY} M ${ARROW_X - 5} ${bottomY - 5} L ${ARROW_X} ${bottomY} L ${ARROW_X + 5} ${bottomY - 5}`);
+      rule.setAttribute("y1", String(topY + 44));
+      rule.setAttribute("y2", String(Math.max(topY + 44, bottomY - 54)));
     }
-    // arrowheads beside the "Newer" and "Older" notes, joined by a faint rule
-    const topY = 12;
-    const bottomY = h - 26;
-    arrowUp.setAttribute("d", `M ${ARROW_X} ${topY + 34} V ${topY} M ${ARROW_X - 5} ${topY + 5} L ${ARROW_X} ${topY} L ${ARROW_X + 5} ${topY + 5}`);
-    arrowDown.setAttribute("d", `M ${ARROW_X} ${bottomY - 44} V ${bottomY} M ${ARROW_X - 5} ${bottomY - 5} L ${ARROW_X} ${bottomY} L ${ARROW_X + 5} ${bottomY - 5}`);
-    rule.setAttribute("y1", String(topY + 44));
-    rule.setAttribute("y2", String(Math.max(topY + 44, bottomY - 54)));
+    const bands = axisBands;
     for (const t of tickRecs) {
       const y = view.y + t.y * view.scale;
-      if (y < 4 || y > h - 4) t.g.setAttribute("display", "none");
-      else {
-        t.g.removeAttribute("display");
+      if (y < 4 || y > h - 4) {
+        if (t.g.getAttribute("display") !== "none") t.g.setAttribute("display", "none");
+      } else {
+        if (t.g.hasAttribute("display")) t.g.removeAttribute("display");
         t.g.setAttribute("transform", `translate(0 ${num(y)})`);
         // the number sits just above its gridline: [y - 15, y - 1]
         const clash = bands.some(([top, bottom]) => y - 15 < bottom && y - 1 > top);
-        if (clash) t.label.setAttribute("display", "none");
-        else t.label.removeAttribute("display");
+        if (clash) {
+          if (t.label.getAttribute("display") !== "none") t.label.setAttribute("display", "none");
+        } else if (t.label.hasAttribute("display")) {
+          t.label.removeAttribute("display");
+        }
       }
     }
   }
@@ -520,12 +534,8 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       return;
     }
     const total = graph.workspaces.length;
-    const clustered = layout.clusterOf.size;
-    const grouped = clustered
-      ? ` (${clustered} grouped in ${new Set(layout.clusterOf.values()).size} counted ${new Set(layout.clusterOf.values()).size === 1 ? "cluster" : "clusters"})`
-      : "";
     const counts = viewCounts();
-    const text = `All ${total} worktrees labelled${grouped} · ${counts.inView} in view`;
+    const text = `All ${total} worktrees labelled${groupedText} · ${counts.inView} in view`;
     if (footerStatus.textContent !== text) footerStatus.textContent = text;
     for (const side of ["left", "right", "top", "bottom"] as const) {
       const hint = edgeHints[side];
@@ -719,6 +729,7 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     clusterRecs = new Map();
     tickRecs = [];
     highlight = null;
+    highlightInput = undefined;
     chosenKey = "";
     tabStop = undefined;
     nodeStop = undefined;
@@ -726,6 +737,11 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     activeSig = "";
     activeSet = new Set();
     clusterByRev = new Map(lay.clusters.map((c) => [c.revision_key, c]));
+    const clustered = lay.clusterOf.size;
+    const clusterGroups = clustered ? new Set(lay.clusterOf.values()).size : 0;
+    groupedText = clustered
+      ? ` (${clustered} grouped in ${clusterGroups} counted ${clusterGroups === 1 ? "cluster" : "clusters"})`
+      : "";
     childrenOf = new Map();
 
     const edgeFrag = document.createDocumentFragment();
@@ -912,36 +928,49 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
     if (!layout || !graph) return;
     const sel = state.workspace ? wsById.get(state.workspace) : undefined;
     const chosen = state.revision || sel?.revision_key || "";
-    const next = chosen && nodesByKey.has(chosen) ? relatives(graph.nodes, chosen, state.descendants) : null;
+    const sameSelection =
+      !force &&
+      highlightInput !== undefined &&
+      highlightInput.graph === graph &&
+      highlightInput.chosen === chosen &&
+      highlightInput.descendants === state.descendants;
+    const next = sameSelection
+      ? highlight
+      : chosen && nodesByKey.has(chosen)
+        ? relatives(graph.nodes, chosen, state.descendants)
+        : null;
+    highlightInput = { graph, chosen, descendants: state.descendants };
 
-    // Ancestry highlight: touch only the nodes and edges whose membership changed.
-    const prev = force ? null : highlight;
-    const touched = new Set<string>();
-    if (next) for (const k of next) if (!prev?.has(k)) touched.add(k);
-    if (prev) for (const k of prev) if (!next?.has(k)) touched.add(k);
-    const edgeIdx = new Set<number>();
-    for (const k of touched) {
-      const rec = nodeRecs.get(k);
-      if (rec) {
-        rec.sel = !!next?.has(k);
-        setClass(rec.el, nodeClass(rec));
+    if (!sameSelection) {
+      // Ancestry highlight: touch only the nodes and edges whose membership changed.
+      const prev = force ? null : highlight;
+      const touched = new Set<string>();
+      if (next) for (const k of next) if (!prev?.has(k)) touched.add(k);
+      if (prev) for (const k of prev) if (!next?.has(k)) touched.add(k);
+      const edgeIdx = new Set<number>();
+      for (const k of touched) {
+        const rec = nodeRecs.get(k);
+        if (rec) {
+          rec.sel = !!next?.has(k);
+          setClass(rec.el, nodeClass(rec));
+        }
+        for (const i of incident.get(k) ?? []) edgeIdx.add(i);
       }
-      for (const i of incident.get(k) ?? []) edgeIdx.add(i);
+      for (const i of edgeIdx) {
+        const e = edgeRecs[i];
+        e.sel = !!next && next.has(e.child) && next.has(e.parent);
+        setClass(e.el, edgeClass(e));
+      }
+      if (edgeIdx.size || force) {
+        const halo = document.createDocumentFragment();
+        let count = 0;
+        if (next)
+          for (const e of edgeRecs)
+            if (e.sel && ++count <= GLOW_LIMIT) halo.append(svg("path", { class: "halo", d: e.d }));
+        haloLayer.replaceChildren(count <= GLOW_LIMIT ? halo : document.createDocumentFragment());
+      }
+      highlight = next;
     }
-    for (const i of edgeIdx) {
-      const e = edgeRecs[i];
-      e.sel = !!next && next.has(e.child) && next.has(e.parent);
-      setClass(e.el, edgeClass(e));
-    }
-    if (edgeIdx.size || force) {
-      const halo = document.createDocumentFragment();
-      let count = 0;
-      if (next)
-        for (const e of edgeRecs)
-          if (e.sel && ++count <= GLOW_LIMIT) halo.append(svg("path", { class: "halo", d: e.d }));
-      haloLayer.replaceChildren(count <= GLOW_LIMIT ? halo : document.createDocumentFragment());
-    }
-    highlight = next;
     viewport.classList.toggle("has-selection", !!next || !!state.workspace);
 
     if (chosenKey !== chosen) {
@@ -1305,7 +1334,11 @@ export function createGraphCanvas(handlers: CanvasHandlers) {
       });
     };
   if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(() => {
+    new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      const w = cr?.width || canvas.clientWidth;
+      const h = cr?.height || canvas.clientHeight;
+      observedSize = w > 0 && h > 0 ? { w, h } : undefined;
       if (autoView) reapplyAuto();
       else updateAxis();
       updateFooter();

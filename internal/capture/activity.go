@@ -2,7 +2,6 @@ package capture
 
 import (
 	"agentfirehose/internal/capture/internal/projection"
-	"agentfirehose/internal/capture/internal/spool"
 	"agentfirehose/internal/event"
 	"context"
 	"fmt"
@@ -62,10 +61,10 @@ func ActivityWindow(from, to time.Time, bucket time.Duration) (time.Time, int) {
 
 // Activity counts file-category observations per path per time bucket.
 //
-// Like Timeline it never reads the whole spool: the Projection's identity
-// index names the day files that can hold a matching event, and only those
-// UTC days that overlap [From, To) are read. Cost is bounded by the window's
-// days, and ctx is honoured between and inside day files.
+// It answers directly from the Projection's in-memory file/error activity
+// index without re-reading or decoding spool NDJSON files, keeping cost
+// proportional to matching file/error observations rather than total spool
+// size. ctx is honoured before and during iteration.
 func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult, error) {
 	out := ActivityResult{Paths: []ActivityPath{}}
 	if q.RepoID == "" {
@@ -85,101 +84,70 @@ func (e *Engine) Activity(ctx context.Context, q ActivityQuery) (ActivityResult,
 	}
 
 	repo := identityValues(q.RepoID, q.RepoAliases)
-	workspace := identityValues(q.WorkspaceID, q.WorkspaceAliases)
-	var groups [][]string
-	var filter spool.Prefilter
-	for _, values := range [][]string{repo, workspace} {
-		if values == nil {
-			continue
-		}
-		groups = append(groups, values)
-		if needles, ok := spool.IdentityNeedles(values); ok {
-			filter = append(filter, needles)
-		}
-	}
-	firstDay, lastDay := from.Format("2006-01-02"), out.To.Add(-time.Nanosecond).Format("2006-01-02")
-
 	type key struct{ group, path string }
 	heat := map[key]map[int]int{}
 	errorCounts := map[activityPathKey]map[string]map[int]int{}
-	seen := map[string]bool{}
-	onGap := func() { out.CaptureGap = true }
-	for _, day := range e.projection.TimelineDays(groups, "") {
-		if day < firstDay || day > lastDay {
-			continue // no event in this file can fall inside the window
-		}
+	var canceledErr error
+	e.projection.ActivityRecords(repo, from, out.To, func(rec projection.ActivityRecord) bool {
 		if err := ctx.Err(); err != nil {
-			return out, err
+			canceledErr = err
+			return false
 		}
-		err := e.scanDay(ctx, e.spoolDir, day, filter, onGap, func(ev event.Event) {
-			if !identityMatches(q.RepoID, q.RepoAliases, ev.RepoID, ev.JJRepoID) || !identityMatches(q.WorkspaceID, q.WorkspaceAliases, ev.WorktreeID, ev.JJWorkspaceID) {
-				return
-			}
-			if ev.Time.Before(from) || !ev.Time.Before(out.To) {
-				return
-			}
-			signature, isError := projection.ErrorObservationKey(ev)
-			if ev.Category != event.CategoryFile && !isError {
-				return // unrelated history never enters the aggregation dedupe set
-			}
-			if ev.ID != "" {
-				// A stable ID replayed into a different day file keeps its
-				// first (canonical) record, exactly as Timeline does.
-				if canonical := e.projection.EventDay(ev.ID); (canonical != "" && canonical != day) || seen[ev.ID] {
-					return
-				}
-				seen[ev.ID] = true
-			}
-			paths := projection.EventActivityPaths(ev)
-			bucket := int(ev.Time.Sub(from) / q.Bucket)
-			if isError {
-				// Read explicit path fields on this error only; keep its original
-				// category for signature identity and Heat eligibility.
-				pathEvent := ev
-				pathEvent.Category = event.CategoryFile
-				paths = projection.EventActivityPaths(pathEvent)
-				resolved := map[activityPathKey]bool{}
-				for _, p := range paths {
-					group, rel := resolve(ev, p)
-					k := activityPathKey{group, rel}
-					if resolved[k] {
-						continue
-					}
-					resolved[k] = true
-					if errorCounts[k] == nil {
-						errorCounts[k] = map[string]map[int]int{}
-					}
-					if errorCounts[k][signature] == nil {
-						errorCounts[k][signature] = map[int]int{}
-					}
-					errorCounts[k][signature][bucket]++
-				}
-			}
-			if ev.Category != event.CategoryFile {
-				return
-			}
-			out.FileEvents++
-			if len(paths) == 0 {
-				out.UnreadableFileEvents++
-				return
-			}
-			counted := map[key]bool{} // two spellings of one file count once
-			for _, p := range paths {
+		if !identityMatches(q.WorkspaceID, q.WorkspaceAliases, rec.WorktreeID, rec.JJWorkspaceID) {
+			return true
+		}
+		ev := event.Event{
+			WorktreeID:    rec.WorktreeID,
+			JJWorkspaceID: rec.JJWorkspaceID,
+			RootAlias:     rec.RootAlias,
+		}
+		bucket := int(rec.Time.Sub(from) / q.Bucket)
+		if rec.ErrorSig != "" {
+			resolved := map[activityPathKey]bool{}
+			for _, p := range rec.Paths {
 				group, rel := resolve(ev, p)
-				k := key{group, rel}
-				if counted[k] {
+				k := activityPathKey{group, rel}
+				if resolved[k] {
 					continue
 				}
-				counted[k] = true
-				if heat[k] == nil {
-					heat[k] = map[int]int{}
+				resolved[k] = true
+				if errorCounts[k] == nil {
+					errorCounts[k] = map[string]map[int]int{}
 				}
-				heat[k][bucket]++
+				if errorCounts[k][rec.ErrorSig] == nil {
+					errorCounts[k][rec.ErrorSig] = map[int]int{}
+				}
+				errorCounts[k][rec.ErrorSig][bucket]++
 			}
-		})
-		if err != nil {
-			return out, err
 		}
+		if !rec.IsFile {
+			return true
+		}
+		out.FileEvents++
+		if len(rec.Paths) == 0 {
+			out.UnreadableFileEvents++
+			return true
+		}
+		counted := map[key]bool{} // two spellings of one file count once
+		for _, p := range rec.Paths {
+			group, rel := resolve(ev, p)
+			k := key{group, rel}
+			if counted[k] {
+				continue
+			}
+			counted[k] = true
+			if heat[k] == nil {
+				heat[k] = map[int]int{}
+			}
+			heat[k][bucket]++
+		}
+		return true
+	})
+	if canceledErr != nil {
+		return out, canceledErr
+	}
+	if err := ctx.Err(); err != nil {
+		return out, err
 	}
 	if e.projection.ReadGap() {
 		out.CaptureGap = true

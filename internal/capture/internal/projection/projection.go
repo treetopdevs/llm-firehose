@@ -76,6 +76,11 @@ type Projection struct {
 	identityDays map[string]map[string]bool
 	allDays      map[string]bool
 	readGap      bool
+
+	activity       []ActivityRecord
+	activityByRepo map[string][]int
+	activitySeen   map[string]bool
+	strings        map[string]string
 }
 
 type sessionEntry struct {
@@ -110,6 +115,10 @@ func New() *Projection {
 
 		identityDays: map[string]map[string]bool{},
 		allDays:      map[string]bool{},
+
+		activityByRepo: map[string][]int{},
+		activitySeen:   map[string]bool{},
+		strings:        map[string]string{},
 	}
 }
 
@@ -192,11 +201,13 @@ func (ix *Projection) ApplyResult(ev event.Event) ([]*event.Event, bool) {
 
 	day := ev.Time.UTC().Format("2006-01-02")
 	if ev.ID != "" {
-		if ix.seen[ev.ID] != "" {
+		if canonical := ix.seen[ev.ID]; canonical != "" {
+			ix.foldActivity(ev, day, canonical)
 			return nil, false
 		}
 		ix.seen[ev.ID] = day
 	}
+	ix.foldActivity(ev, day, "")
 
 	ix.applyInbox(ev)
 	ix.indexDay(ev, day)

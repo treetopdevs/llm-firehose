@@ -93,8 +93,8 @@ func TestActivityCostIsBoundedByWindowDays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.scanned(); !reflect.DeepEqual(got, []string{"2026-09-21", "2026-09-20"}) {
-		t.Fatalf("a window over two UTC days opens two of 40 day files; read %v", got)
+	if got := rec.scanned(); len(got) != 0 {
+		t.Fatalf("activity should answer from projection with zero spool reads; read %v", got)
 	}
 	want := referenceActivity(t, dir, q)
 	if got := heatOf(r); len(got) == 0 || !reflect.DeepEqual(got, want) {

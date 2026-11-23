@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -684,5 +685,96 @@ func TestGitStatusShadowHandlesSHA256Repos(t *testing.T) {
 	out, err := gitStatus(context.Background(), root)
 	if err != nil || !strings.Contains(out, "f.txt") {
 		t.Fatalf("status %q %v", out, err)
+	}
+}
+
+func TestSnapshotCoalescesConcurrentRefreshes(t *testing.T) {
+	root := fixture(t)
+	s := New(privacy.ModeFull)
+	ctx := context.Background()
+	repo, err := s.Register(ctx, root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scans int64
+	orig := scanFunc
+	gate := make(chan struct{})
+	started := make(chan struct{}, 4)
+	scanFunc = func(ctx context.Context, r registration, limit int, m privacy.Mode) (Snapshot, error) {
+		atomic.AddInt64(&scans, 1)
+		started <- struct{}{}
+		<-gate
+		return orig(ctx, r, limit, m)
+	}
+	t.Cleanup(func() { scanFunc = orig })
+
+	type res struct {
+		snap Snapshot
+		err  error
+	}
+	ch := make(chan res, 2)
+	go func() {
+		v, e := s.Snapshot(ctx, repo.ID, "", true)
+		ch <- res{v, e}
+	}()
+	<-started
+	go func() {
+		v, e := s.Snapshot(ctx, repo.ID, "", true)
+		ch <- res{v, e}
+	}()
+	// Give the second caller a moment to join the in-flight scan.
+	time.Sleep(25 * time.Millisecond)
+	close(gate)
+	r1, r2 := <-ch, <-ch
+	if r1.err != nil || r2.err != nil {
+		t.Fatalf("errs: %v %v", r1.err, r2.err)
+	}
+	if atomic.LoadInt64(&scans) != 1 {
+		t.Fatalf("expected 1 coalesced scan, got %d", scans)
+	}
+	if r1.snap.Generation != r2.snap.Generation {
+		t.Fatalf("expected shared generation, got %q vs %q", r1.snap.Generation, r2.snap.Generation)
+	}
+}
+
+func TestWorkspaceAliasesReturnsCachedScopesWithoutNodeClone(t *testing.T) {
+	root := fixture(t)
+	s := New(privacy.ModeBalanced)
+	ctx := context.Background()
+	repo, err := s.Register(ctx, root, "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.WorkspaceAliases(repo.ID); ok {
+		t.Fatal("expected ok=false before first snapshot")
+	}
+	snap, err := s.Snapshot(ctx, repo.ID, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoAliases, wsAliases, ok := s.WorkspaceAliases(repo.ID)
+	if !ok || len(repoAliases) == 0 || len(wsAliases) != len(snap.Workspaces) {
+		t.Fatalf("ok=%v repo=%v ws=%v", ok, repoAliases, wsAliases)
+	}
+	for _, ws := range snap.Workspaces {
+		got := wsAliases[ws.ID]
+		if len(got) != 2 || got[0] == "" || got[1] == "" {
+			t.Fatalf("aliases for %s = %v", ws.ID, got)
+		}
+	}
+}
+
+func TestHasTrackedChanges(t *testing.T) {
+	if hasTrackedChanges("") {
+		t.Fatal("empty status has no tracked changes")
+	}
+	if hasTrackedChanges("?? a.txt\x00?? dir/\x00") {
+		t.Fatal("untracked-only status has no tracked changes")
+	}
+	if !hasTrackedChanges("?? a.txt\x00 M b.go\x00") {
+		t.Fatal("modified tracked file must be detected")
+	}
+	if !hasTrackedChanges("A  new.go\x00") {
+		t.Fatal("staged file must be detected")
 	}
 }

@@ -154,3 +154,30 @@ func TestScanDaySkipsOversizedRecordsAsGaps(t *testing.T) {
 		t.Fatalf("ids=%v gap=%v err=%v", ids, gap, err)
 	}
 }
+
+func TestScanDayReusesLineBufferAcrossSkippedRecords(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 2000)
+	pad := strings.Repeat("x", 2048)
+	for i := range lines {
+		lines[i] = fmt.Sprintf(`{"id":"e%d","time":"2026-07-02T10:00:00Z","source":"g","category":"meta","repo_id":"other","summary":%q}`, i, pad)
+	}
+	lines = append(lines, rec("keep", "target"))
+	writeDayFile(t, dir, "2026-07-02", lines...)
+	needles, _ := IdentityNeedles([]string{"target"})
+	filter := Prefilter{needles}
+
+	allocs := testing.AllocsPerRun(5, func() {
+		var count int
+		if err := ScanDay(context.Background(), dir, "2026-07-02", filter, func() {}, func(event.Event) { count++ }); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("count=%d, want 1", count)
+		}
+	})
+	// Reusing the line scratch buffer keeps allocations tiny (well under 1 per skipped line).
+	if allocs > 200 {
+		t.Fatalf("ScanDay allocated %.0f objects per scan of 2000 skipped lines, want <= 200", allocs)
+	}
+}

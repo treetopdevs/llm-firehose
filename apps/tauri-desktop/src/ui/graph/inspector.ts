@@ -112,9 +112,37 @@ export function createInspector(h: InspectorHandlers) {
   let originHelp = false;
   let epoch = 0;
   let cache = new Map<string, CompareEntry>();
+  let indexedSnap: Snapshot | undefined;
+  let nodesByKey = new Map<string, GraphNode>();
+  let nodesByCommit = new Map<string, GraphNode>();
+  let ancestorCache = new Map<string, number>();
 
-  const node = (key: string): GraphNode | undefined =>
-    ctx?.snapshot.nodes.find((n) => n.key === key);
+  function syncNodeIndex() {
+    const snap = ctx?.snapshot;
+    if (snap === indexedSnap) return;
+    indexedSnap = snap;
+    nodesByKey = new Map();
+    nodesByCommit = new Map();
+    ancestorCache = new Map();
+    if (!snap) return;
+    for (const n of snap.nodes) {
+      nodesByKey.set(n.key, n);
+      if (n.commit_id && !nodesByCommit.has(n.commit_id)) nodesByCommit.set(n.commit_id, n);
+    }
+  }
+  const node = (key: string): GraphNode | undefined => {
+    syncNodeIndex();
+    return nodesByKey.get(key);
+  };
+  const sharedAncestors = (c: InspectorContext, rev: string, targetKey: string): number => {
+    syncNodeIndex();
+    const k = `${rev}\0${targetKey}`;
+    const hit = ancestorCache.get(k);
+    if (hit !== undefined) return hit;
+    const n = sharedAncestorCount(c.snapshot.nodes, rev, targetKey);
+    ancestorCache.set(k, n);
+    return n;
+  };
   const effectiveTarget = () => {
     if (target === CUSTOM) return FULL_ID.test(custom.trim()) ? custom.trim() : "";
     return target || ctx?.snapshot.default_target || "";
@@ -416,9 +444,10 @@ export function createInspector(h: InspectorHandlers) {
         stats.append(stat("file", `${files}${ws.changes_truncated ? "+" : ""} uncommitted ${files === 1 ? "file" : "files"}`));
       }
       if (tgt) {
-        const targetKey = c.snapshot.nodes.find((x) => x.key === tgt || x.commit_id === tgt)?.key;
+        syncNodeIndex();
+        const targetKey = (nodesByKey.get(tgt) ?? nodesByCommit.get(tgt))?.key;
         if (targetKey && c.revision)
-          stats.append(stat("nodes", `${plural(sharedAncestorCount(c.snapshot.nodes, c.revision, targetKey), "shared ancestor")} loaded`));
+          stats.append(stat("nodes", `${plural(sharedAncestors(c, c.revision, targetKey), "shared ancestor")} loaded`));
       }
       frag.append(stats);
     }
@@ -550,15 +579,13 @@ export function createInspector(h: InspectorHandlers) {
     }
   }
   function rerender(force = false) {
-    paint(force);
     ensureCompare();
-    // ensureCompare may have created a loading entry; show it.
-    paint();
+    paint(force);
   }
   function update(next: InspectorContext) {
     ctx = next;
+    syncNodeIndex();
     normalizeTarget();
-    paint();
     ensureCompare();
     paint();
   }
@@ -566,6 +593,10 @@ export function createInspector(h: InspectorHandlers) {
   function reset() {
     epoch++;
     cache = new Map();
+    indexedSnap = undefined;
+    nodesByKey = new Map();
+    nodesByCommit = new Map();
+    ancestorCache = new Map();
     target = "";
     custom = "";
     detailOpen = false;

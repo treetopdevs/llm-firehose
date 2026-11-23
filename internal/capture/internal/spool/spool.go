@@ -571,13 +571,15 @@ func ScanDay(ctx context.Context, dir, day string, filter Prefilter, onGap func(
 	}
 	defer f.Close()
 	reader := bufio.NewReaderSize(f, 1<<20)
+	var scratch []byte
 	for n := 1; ; n++ {
 		if n%scanCheckInterval == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
-		line, _, err := readLine(reader, true)
+		var line []byte
+		line, _, scratch, err = readLineInto(reader, true, scratch)
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
