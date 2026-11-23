@@ -80,20 +80,24 @@ snapshots when a bounded stream disconnects. The API surface
 ## The desktop app
 
 A Tauri shell in [apps/tauri-desktop](apps/tauri-desktop) wraps the engine
-for non-terminal users. Views are altitudes with one shared scope (project,
-worktree, session, time window), Escape ascends one altitude: **Fleet** (one
-row per repository: forks as state glyphs, needs-you units with dwell, event
-sparkline; map, dwell, matrix, lanes and airspace encodings), **Project** (the landing
-view: worktree lanes leaving and rejoining the default branch, sessions as
-beads, commits as ticks, the window as a scrubber), **Sessions** and **Score**.
-Lenses: the live feed, the attention strip and inbox, a read-only workspace
-ancestry graph with a companion captured-event timeline, loops, strata, court,
-handoffs, loom, ecosystem, replay, and a touched-file view; plus doctor with
-one-click adapter install, settings, and a first-run onboarding wizard. An
-event detail pairs a tool call's request and response. The Project and Fleet
-views need a daemon that serves `GET /worktrees` and degrade to a notice
-against an older one. It bundles `firehosed` as a sidecar and spawns it when no daemon is
-already running — a daemon you run yourself always wins.
+for non-terminal users with a native source-list sidebar, light and dark
+appearance following the system, one kept time range across views, Back and
+Forward history (`[` / `]` or toolbar buttons), and select-then-open rows with
+an optional inspector. **All projects** is the landing view (expandable project
+rows matching the sidebar with needs-you and working worktrees), alongside
+**Needs you** (sessions waiting on you within the last 24 hours). Each project
+opens with a segmented view switcher — **Lanes** (worktree lanes leaving and
+rejoining the default branch, sessions as beads, commits as ticks), **Graph**
+(read-only workspace ancestry), **Map** (file-activity treemap and scrubber),
+**Events** (scoped timeline), and **Sessions** (worktree sessions and **Score**
+detail, pairing a tool call's request and response) — while `Esc` clears a
+selection before ascending. Secondary views (**Files**, **Doctor** with its
+warning badge and one-click adapter install, **Settings**, and **More** lenses:
+loops, strata, court, handoffs, loom, ecosystem, and replay) stay out of the
+way until opened. The All projects and Project views need a daemon that serves
+`GET /worktrees` and degrade to a notice against an older one. It bundles
+`firehosed` as a sidecar and spawns it when no daemon is already running — a
+daemon you run yourself always wins.
 
 **Actions.** Click a repository's **Actions** button, or right-click / press `.`
 (also `ContextMenu` / `Shift+F10`) on a worktree, lane, bead or session in Fleet
@@ -141,9 +145,9 @@ Packaging for macOS, Windows, and Linux is validated in CI
 feed are documented in the [release runbook](docs/release-runbook.md).
 
 See the [attention guide](docs/attention.md) for signal rules, capture limitations,
-and notification behavior. Project is the landing view (Fleet when several
-repositories are captured); the attention strip remains visible across the
-existing activity views.
+and notification behavior. All projects is the landing view; Needs you stays one
+click away in the sidebar with its live count, and capture warnings move to the
+Doctor badge.
 
 ## Supported sources
 

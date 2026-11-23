@@ -53,10 +53,10 @@ turn a green build into a shippable, signed release.
 
 - `main` green: `gofmt` clean, `go vet`, `go test ./...`,
   `pnpm -C apps/tauri-desktop test`, `cargo test` in `src-tauri`.
-- Version bumped in **four** places (keep them identical):
+- Version bumped in **six** files (keep them identical):
   `cmd/firehose/main.go`, `cmd/firehosed/main.go`,
-  `apps/tauri-desktop/package.json`, `apps/tauri-desktop/src-tauri/tauri.conf.json`
-  (and `Cargo.toml`).
+  `apps/tauri-desktop/package.json`, `apps/tauri-desktop/src-tauri/tauri.conf.json`,
+  `apps/tauri-desktop/src-tauri/Cargo.toml`, and `apps/tauri-desktop/src-tauri/Cargo.lock`.
 - `docs/compatibility.md` row added for the new version.
 
 ## 1. Build artifacts
