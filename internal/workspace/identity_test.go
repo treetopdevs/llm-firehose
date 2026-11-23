@@ -324,6 +324,12 @@ func TestTrimPathSuffix(t *testing.T) {
 		"case differs":    {"/link/pkg", "/Pkg", false, "", false},
 		"case folded":     {`C:\link\pkg`, `\Pkg`, true, `C:\link`, true},
 		"suffix too long": {"/a", "/abc", true, "", false},
+		// Case pairs can differ in UTF-8 length: ſ is two bytes, S is one.
+		"folded, path has longer rune":   {`C:\link\ſrc`, `\Src`, true, `C:\link`, true},
+		"folded, suffix has longer rune": {`C:\link\Src`, `\ſrc`, true, `C:\link`, true},
+		"folded, whole path":             {`\S`, `\ſ`, true, "", true},
+		"folded, too few runes":          {`ſ`, `\S`, true, "", false},
+		"exact, rune pair differs":       {`C:\link\ſrc`, `\Src`, false, "", false},
 	} {
 		got, ok := trimPathSuffix(tc.path, tc.suffix, tc.fold)
 		if got != tc.want || ok != tc.ok {

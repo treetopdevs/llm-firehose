@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
 	"agentfirehose/internal/event"
 )
@@ -151,13 +152,21 @@ func rootAlias(cwd, root string) string {
 }
 
 // trimPathSuffix removes suffix from path. Fold matches Windows, where
-// EvalSymlinks normalises letter case.
+// EvalSymlinks normalises letter case. Folded case pairs can differ in UTF-8
+// length, so a folded match finds its boundary by counting runes.
 func trimPathSuffix(path, suffix string, fold bool) (string, bool) {
-	if len(suffix) > len(path) {
-		return "", false
-	}
 	cut := len(path) - len(suffix)
-	if !samePath(path[cut:], suffix, fold) {
+	if fold {
+		cut = len(path)
+		for range utf8.RuneCountInString(suffix) {
+			if cut == 0 {
+				return "", false
+			}
+			_, size := utf8.DecodeLastRuneInString(path[:cut])
+			cut -= size
+		}
+	}
+	if cut < 0 || !samePath(path[cut:], suffix, fold) {
 		return "", false
 	}
 	return path[:cut], true
