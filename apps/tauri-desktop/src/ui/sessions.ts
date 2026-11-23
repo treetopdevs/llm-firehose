@@ -60,6 +60,16 @@ export interface WorktreeOptions {
 const REFRESH_MS = 5000;
 /** A refresh request that has not settled by now is abandoned, so the periodic poll is never starved by a hung one. */
 const REQUEST_DEADLINE_MS = 15_000;
+const RANGE_REDRAW_MS = 120;
+
+/** Whether a session's lifetime touches the range. Unreadable times stay: unknown is not out of range. */
+function overlapsRange(s: { first_time: string; last_time: string }, w: Scope["window"]): boolean {
+  if (w === "live") return true;
+  const first = Date.parse(s.first_time);
+  const last = Date.parse(s.last_time);
+  if (Number.isNaN(first) || Number.isNaN(last)) return true;
+  return last >= w.from && first <= w.to;
+}
 
 /** Settles with p, or with undefined once the deadline signal aborts (or the same deadline elapses on the clock): a consumer must not outlive its deadline on a collaborator that ignores the signal. */
 function bounded<T>(p: Promise<T> | undefined, signal: AbortSignal): Promise<T | undefined> | undefined {
@@ -233,6 +243,7 @@ export function createSessions(
       }
     }
     if (next.project !== prev.project || next.worktree !== prev.worktree || next.cell?.where !== prev.cell?.where || next.cell?.agent !== prev.cell?.agent) cap = SESSION_PAGE;
+    if (!sameWindow(next.window, prev.window)) redrawForRange();
     if (!historyRef) return;
     const cellOpened = next.cell !== undefined && (next.cell.where !== prev.cell?.where || next.cell.agent !== prev.cell?.agent);
     const contextMoved = next.project !== prev.project || next.worktree !== prev.worktree || !sameSession(next.session, prev.session);
@@ -240,6 +251,17 @@ export function createSessions(
     if (cellOpened || departed) dropHistory();
     else if (loaded && !sameWindow(next.window, prev.window)) drawHistory();
   });
+
+  // A drag moves the range many times a second: the list follows once it pauses.
+  let rangeTimer: ReturnType<typeof setTimeout> | undefined;
+  function redrawForRange(): void {
+    if (!root.isConnected) return;
+    if (rangeTimer !== undefined) clearTimeout(rangeTimer);
+    rangeTimer = setTimeout(() => {
+      rangeTimer = undefined;
+      if (root.isConnected) void refresh();
+    }, RANGE_REDRAW_MS);
+  }
 
   function sameWindow(a: Scope["window"], b: Scope["window"]): boolean {
     if (a === "live" || b === "live") return a === b;
@@ -683,9 +705,12 @@ export function createSessions(
       if (list.status === "rejected") throw list.reason;
       const scope = sc.cell ?? null;
       const members = sc.worktree || sc.project ? membership(store, sc) : undefined;
-      const all = scopedRows
+      const scopedAll = scopedRows
         .filter((s) => inCell(s, sc.cell) && (!members || members({ id: s.id, source: s.source })))
-        .map((s) => ({ s, status: statusOf(attended.get(sessionKey(s.source, s.id)), now) }))
+        .map((s) => ({ s, status: statusOf(attended.get(sessionKey(s.source, s.id)), now) }));
+      // A session waiting on you is never hidden by the range.
+      const all = scopedAll
+        .filter(({ s, status }) => status.needs || overlapsRange(s, sc.window))
         .sort((a, b) => {
           if (a.status.needs !== b.status.needs) return a.status.needs ? -1 : 1;
           // Longest wait first, then most recent activity, then id.
@@ -708,7 +733,7 @@ export function createSessions(
         listBox.append(back);
       }
       if (all.length === 0) {
-        listBox.append(el("p", { class: "dim" }, scope ? "no sessions in this worktree" : members ? "no sessions in this scope" : "no sessions captured yet"));
+        listBox.append(el("p", { class: "dim" }, scopedAll.length > 0 ? "no sessions in this range" : scope ? "no sessions in this worktree" : members ? "no sessions in this scope" : "no sessions captured yet"));
         syncInspector(true);
         return;
       }
@@ -720,7 +745,7 @@ export function createSessions(
         // Nothing to filter by: the scope line names the scope, so say these rows are not limited to it.
         listBox.append(el("p", { class: "dim sessions-scope-note" }, sc.worktree ? "This worktree's membership is unknown: showing sessions from all projects." : "No worktree rows for this project, so its membership is unknown: showing sessions from all projects."));
       }
-      listBox.append(el("p", { class: "dim sessions-count" }, all.length > cap ? `Showing ${cap} of ${all.length} sessions` : `${all.length} session${all.length === 1 ? "" : "s"}`));
+      listBox.append(el("p", { class: "dim sessions-count" }, all.length > cap ? `Showing ${cap} of ${all.length} sessions${all.length < scopedAll.length ? " in range" : ""}` : all.length < scopedAll.length ? `${all.length} of ${scopedAll.length} sessions in range` : `${all.length} session${all.length === 1 ? "" : "s"}`));
       // Rows in a worktree are one source's, so their activity is too; elsewhere a row aggregates the native id, as its history does.
       const sparkKey = sc.worktree ? (source: string, id: string) => sessionKey(source, id) : (_source: string, id: string) => id;
       const counts = bucketCountsByKey(recentEvents(), (ev) => sparkKey(ev.source, ev.session_id!), now);

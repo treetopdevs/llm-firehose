@@ -514,6 +514,37 @@ describe("empty and degraded states", () => {
     expect(q(".project-error, .project-connecting, .project-lane")).toHaveLength(0);
   });
 
+  test("hidden recovery waits for its read, so responses slower than the heartbeat still apply", async () => {
+    const { store, panel } = setup();
+    worktreesMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await store.resolver()!.refresh!();
+    const slow = deferred<WorktreeLifetimeView[]>();
+    worktreesMock.mockClear().mockReturnValue(slow.promise);
+    panel.setConnected(true);
+    panel.setConnected(true);
+    panel.setConnected(true);
+    expect(worktreesMock).toHaveBeenCalledTimes(1);
+    slow.resolve(FIXTURE_ROWS);
+    await flush();
+    expect(store.resolver()!.knows!({ window: "live", project: "repoA" })).toBe(true);
+    worktreesMock.mockClear();
+    panel.setConnected(true);
+    expect(worktreesMock).not.toHaveBeenCalled();
+  });
+
+  test("a hidden recovery read that fails is tried again on the next heartbeat", async () => {
+    const { store, panel } = setup();
+    worktreesMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await store.resolver()!.refresh!();
+    worktreesMock.mockClear().mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    panel.setConnected(true);
+    await flush();
+    panel.setConnected(true);
+    await flush();
+    expect(worktreesMock).toHaveBeenCalledTimes(2);
+    expect(store.resolver()!.knows!({ window: "live", project: "repoA" })).toBe(true);
+  });
+
   test("disconnected failure shows connecting and recovers on setConnected(true)", async () => {
     worktreesMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const { panel, q, keys } = setup();
