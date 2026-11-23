@@ -120,6 +120,56 @@ func canonical(path string) string {
 	return path
 }
 
+// rootAlias returns root as spelled through cwd, or "" when that spelling is
+// the canonical root or cannot be derived. A symlink below the root leaves no
+// spelling of the root in cwd, and matching text alone can name another
+// directory, so the candidate must itself resolve to root.
+func rootAlias(cwd, root string) string {
+	if root == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(root, canonical(abs))
+	if err != nil {
+		return ""
+	}
+	fold := runtime.GOOS == "windows"
+	alias := abs
+	if rel != "." {
+		var ok bool
+		if alias, ok = trimPathSuffix(abs, string(filepath.Separator)+rel, fold); !ok {
+			return ""
+		}
+	}
+	if samePath(alias, root, fold) || !samePath(canonical(alias), root, fold) {
+		return ""
+	}
+	return alias
+}
+
+// trimPathSuffix removes suffix from path. Fold matches Windows, where
+// EvalSymlinks normalises letter case.
+func trimPathSuffix(path, suffix string, fold bool) (string, bool) {
+	if len(suffix) > len(path) {
+		return "", false
+	}
+	cut := len(path) - len(suffix)
+	if !samePath(path[cut:], suffix, fold) {
+		return "", false
+	}
+	return path[:cut], true
+}
+
+func samePath(a, b string, fold bool) bool {
+	if fold {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
 // maxMetadata bounds every VCS pointer file read (.git, commondir, HEAD,
 // .jj/repo, git_target): real ones are a path or a ref, far below this.
 const maxMetadata = 32768
