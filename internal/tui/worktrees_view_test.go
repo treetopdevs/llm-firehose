@@ -245,7 +245,7 @@ func TestWorktreeHeaderBreadcrumb(t *testing.T) {
 
 func TestWorktreeFooterHints(t *testing.T) {
 	m := listModel(true, row("org/repo", "wt1", "/p/feature"))
-	mustContain(t, wtView(m), "↑↓ pick · enter open · esc back")
+	mustContain(t, wtView(m), "↑↓ pick · enter open · esc workspace")
 	m, _ = keyCmd(m, "enter")
 	mustContain(t, wtView(m), "esc worktrees", "l band")
 	m, _ = keyCmd(m, "l")
@@ -256,7 +256,7 @@ func TestHelpDocumentsWorktreeKey(t *testing.T) {
 	m := wtModel(nil)
 	m, _ = keyCmd(m, "?")
 	v := wtView(m)
-	mustContain(t, v, "w      worktree list", "workspace › worktree › session › call", "esc ascends one rung",
+	mustContain(t, v, "w      worktree list", "workspace › worktree › session › call", "then ascends one rung",
 		"loaded events", "STATE needs the daemon", "BRANCH is not captured")
 }
 

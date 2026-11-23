@@ -93,13 +93,6 @@ func (m Model) viewHeader() string {
 		mode = pauseStyle.Render(fmt.Sprintf("⏸ PAUSED · %d new", m.unread))
 	}
 	parts := []string{headerStyle.Render("AGENT FIREHOSE"), mode, dimStyle.Render(fmt.Sprintf("%d events", m.total))}
-	if n := m.needsYouCount(); n > 0 {
-		label := fmt.Sprintf("NEEDS YOU · %d", n)
-		if reason := sanitizeNeedsYouReason(m.oldestNeedsYouReason()); reason != "" {
-			label += " · " + reason
-		}
-		parts = append(parts, needsStyle.Render(label))
-	}
 	switch {
 	case m.alt == altWorkspace:
 		parts = append(parts, dimStyle.Render("workspace"))
@@ -112,13 +105,22 @@ func (m Model) viewHeader() string {
 		parts = append(parts, dimStyle.Render("worktrees ▸ sessions of ")+stripControl(m.wscope.Label)+dimStyle.Render(" · loaded events"))
 	}
 	if m.scope != nil {
-		parts = append(parts, dimStyle.Render("▸ ")+whereLabel(m.scope.Where)+" · "+m.scope.Agent)
+		parts = append(parts, dimStyle.Render("workspace ▸ ")+whereLabel(m.scope.Where)+" · "+m.scope.Agent)
 	}
 	if f := m.filterLabel(); f != "" {
 		parts = append(parts, dimStyle.Render("filter: ")+f)
 	}
 	if m.search {
 		parts = append(parts, "search: "+m.buf+"█")
+	}
+	// Last, because its reason is the one part of unbounded length: a long one
+	// must not push the reader's place off a narrow terminal.
+	if n := m.needsYouCount(); n > 0 {
+		label := fmt.Sprintf("NEEDS YOU · %d", n)
+		if reason := sanitizeNeedsYouReason(m.oldestNeedsYouReason()); reason != "" {
+			label += " · " + reason
+		}
+		parts = append(parts, needsStyle.Render(label))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -379,7 +381,7 @@ func (m Model) viewWorkspace(now time.Time) []string {
 		head += " …"
 	}
 	lines := []string{dimStyle.Render(strings.TrimRight(fit(head, m.width), " "))}
-	sel := min(m.cellIdx, len(mx.Cells)-1)
+	sel := m.selectedCellIndex(mx.Cells)
 	idx := 0
 	for _, w := range mx.Wheres {
 		line := padRight(fit(whereLabel(w), whereW), whereW)
@@ -494,23 +496,13 @@ func laneGlyph(c laneCell) (string, *lipgloss.Style) {
 }
 
 func (m Model) viewFooter() string {
-	help := "? help · esc workspace · l lanes"
-	switch {
-	case m.alt == altWorkspace:
-		help = "? help · ↑↓ pick · enter open · w wt"
-	case m.alt == altWorktree:
-		help = m.worktreeFooter()
-	case m.wscope != nil && m.lanes:
-		help = "? help · esc worktrees · l band"
-	case m.wscope != nil:
-		help = "? help · esc worktrees · l lanes"
-	case m.lanes:
-		help = "? help · esc workspace · l band"
+	switch m.alt {
+	case altWorkspace:
+		return m.footerWith(m.hintLine([]string{"↑↓ pick", "enter open"}, "w wt", "g all activity"))
+	case altWorktree:
+		return m.footerWith(m.worktreeFooter())
 	}
-	if m.status != "" {
-		return m.status + "  " + dimStyle.Render(help)
-	}
-	return dimStyle.Render(help)
+	return m.footerWith(m.feedHint())
 }
 
 func (m Model) viewHelp() string {
@@ -519,12 +511,17 @@ func (m Model) viewHelp() string {
 	b.WriteString("  altitudes\n")
 	b.WriteString("  workspace (repos × agents)  ›  session (band or lanes over rows)  ›  call\n")
 	b.WriteString("  workspace › worktree › session › call   (w adds the worktree rung between workspace and session)\n")
-	b.WriteString("  enter descends, esc ascends one rung; the header keeps the scope as a breadcrumb\n\n")
+	b.WriteString("  enter descends; esc clears a selected row, then ascends one rung; the header keeps the scope as a breadcrumb\n\n")
+	b.WriteString("  moving\n")
+	b.WriteString("  [ back   ] forward   return to where you were, with the same row selected\n")
+	b.WriteString("  n        next session that needs you, longest wait first\n")
+	b.WriteString("  g        all activity, the whole feed\n")
+	b.WriteString("  filters and the lane window stay as set across every move\n\n")
 	b.WriteString("  keys\n")
 	b.WriteString("  space  pause / resume      ↑↓ j k  scroll / pick  enter  descend\n")
 	b.WriteString("  f      cycle category      a       cycle source   /      search summaries\n")
 	b.WriteString("  l      lanes ⇄ band        - +     lane window    t      hide / show cwd\n")
-	b.WriteString("  e      export visible      q       quit           esc    ascend\n")
+	b.WriteString("  e      export visible      q       quit           esc    clear, then ascend\n")
 	b.WriteString("  w      worktree list       (from workspace or session)\n\n")
 	b.WriteString("  glyphs\n ")
 	for _, cat := range glyphOrder {

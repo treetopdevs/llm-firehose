@@ -14,7 +14,7 @@ AGENT FIREHOSE  ● LIVE  1,204 events  NEEDS YOU · 1 · approve Run: rm -rf bu
      :19 │ codex    ■ patched router.ex, health.ex                  …/dev/api
      :20 │ opencode ? permission requested: Run: rm -rf build
      :21 │ claude   ■ ran Edit on auth.go ×3                        …/dev/app
-? help · esc workspace · l lanes
+? help · n needs you · esc workspace · l lanes
 ```
 
 Everything runs on-device. No backend, no accounts, no sync, no telemetry.
@@ -168,7 +168,11 @@ existing activity views.
   category (`?` shows the legend), and reserve color for warn, error, and
   needs-you; under the default privacy mode a workspace prints as the first
   eight digits of its digest
-- four **altitudes** (workspace › worktree › session › call), one glyph grammar: `esc` ascends to the **workspace**
+- `[` and `]` go back and forward through where you have been, restoring the
+  view and the selected row; `n` opens the next session that needs you, longest
+  wait first; `g` returns to all activity. Filters and the lane window stay as
+  set across every move
+- four **altitudes** (workspace › worktree › session › call), one glyph grammar: `esc` clears a selected row, then ascends to the **workspace**
   matrix (one row per workspace, one column per agent, each cell a sparkline,
   state glyph, and session count); `enter` on a cell descends into a session
   view scoped to it, with the scope kept in the header as a breadcrumb;

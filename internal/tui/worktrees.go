@@ -235,7 +235,9 @@ func (m Model) enterWorktrees() (tea.Model, tea.Cmd) {
 		m.status = "worktrees: no source available"
 		return m, nil
 	}
-	m.alt, m.scope, m.wscope = altWorktree, nil, nil
+	m.pushPlace()
+	m.leaveScope()
+	m.alt, m.cursor = altWorktree, -1
 	m.wtUnavailable, m.wtErr = false, nil
 	if m.wtInflight {
 		return m, nil
@@ -316,6 +318,7 @@ func (m Model) handleWorktreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.wtIdx++
 		m.syncWorktreeSelection()
 	case "esc":
+		m.pushPlace()
 		m.alt = altWorkspace
 	case "enter":
 		if len(m.worktrees) == 0 {
@@ -323,6 +326,8 @@ func (m Model) handleWorktreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.syncWorktreeSelection()
 		row := m.worktrees[m.wtIdx]
+		m.pushPlace()
+		m.enterScope()
 		rows := make(map[SessionRef]bool, len(row.Sessions))
 		for _, s := range row.Sessions {
 			rows[s] = true
@@ -336,7 +341,6 @@ func (m Model) handleWorktreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.noteWorktreeScope(ev)
 		}
 		m.scope = nil
-		m.alt, m.lanes, m.cursor = altSession, true, -1
 	}
 	return m, nil
 }
@@ -541,10 +545,7 @@ func lipglossWidth(s string) int { return lipgloss.Width(s) }
 // to know about the freshness and provenance of what they see.
 func (m Model) worktreeFooter() string {
 	now := m.now()
-	parts := []string{"? help", "↑↓ pick", "enter open", "esc back"}
-	if m.wtLost {
-		parts = append([]string{"selected worktree no longer listed"}, parts...)
-	}
+	var parts []string
 	if !m.wtFetchedAt.IsZero() {
 		parts = append(parts, "fetched "+formatAge(max(now.Sub(m.wtFetchedAt), 0))+" ago")
 		// The selected row's own observation; a local view never observes,
@@ -560,5 +561,9 @@ func (m Model) worktreeFooter() string {
 			parts = append(parts, "state needs the daemon", "local view, may lag the writer")
 		}
 	}
-	return fit(strings.Join(parts, " · "), m.width)
+	line := m.hintLine([]string{"↑↓ pick", "enter open", "esc workspace"}, parts...)
+	if m.wtLost {
+		line = "selected worktree no longer listed · " + line
+	}
+	return fit(line, m.width)
 }
