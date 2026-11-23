@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Firehose: plan map</title>
+<style>
+:root{
+  --bg:var(--background,#0d1117);--panel:var(--card,#161b22);--raised:var(--popover,#1f2630);--line:var(--border,#30363d);--row:var(--border,#1a2029);
+  --ink:var(--foreground,#e6edf3);--dim:var(--muted-foreground,#8b949e);--link:var(--info,#8fcdff);
+  --done:#3fb950;--wip:#a78bfa;--plan:#8b949e;--you:#ff9f43;
+  --mono:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--mono)}
+a{color:var(--link)}
+header,.below{max-width:1180px;padding:0 24px}
+header{padding-top:28px}
+.eyebrow{color:var(--dim);font-size:11px;letter-spacing:.06em;margin:0 0 6px}
+h1{font-size:24px;line-height:1.2;margin:0 0 8px;font-weight:700}
+.lede{color:var(--dim);margin:0 0 18px;max-width:82ch}
+h2{font-size:15px;font-weight:600;margin:32px 0 10px}
+
+/* Status: shape first, colour second. Done and In progress also differ by fill. */
+.g{display:inline-block;width:10px;height:10px;border-radius:50%;flex:none;border:1.5px solid var(--c)}
+.s-done{--c:var(--done)} .s-wip{--c:var(--wip)} .s-plan{--c:var(--plan)}
+.s-done .g,.g.s-done{background:var(--done)}
+.s-wip .g,.g.s-wip{background:linear-gradient(90deg,var(--wip) 50%,transparent 50%)}
+.s-plan .g,.g.s-plan{background:transparent}
+
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.filter{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:10px;
+  padding:9px 14px;min-width:190px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.filter b{font-size:20px;font-weight:700;line-height:1}
+.filter small{display:block;color:var(--dim);font-size:11px;line-height:1.3}
+.filter:hover{background:var(--raised)}
+.filter[aria-pressed=false]{opacity:.45}
+.filter[aria-pressed=false] b{text-decoration:line-through}
+:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+.rule{color:var(--dim);font-size:12px;margin:8px 0 0;max-width:110ch}
+
+.you{margin:18px 0 0;padding:10px 14px;border:1px solid var(--line);border-left:3px solid var(--you);border-radius:0 6px 6px 0;background:var(--panel);max-width:1132px}
+.you strong{font-size:12px;display:block;margin-bottom:4px}
+.you ul{margin:0;padding-left:18px;color:var(--ink)}
+.you li{margin:2px 0}
+.you button{all:unset;cursor:pointer;color:var(--link);text-decoration:underline}
+
+/* The map */
+.scroll{overflow-x:auto;margin-top:22px;padding:0 24px 8px}
+.map{position:relative;display:grid;min-width:1460px;
+  grid-template-columns:128px .7fr .85fr .85fr 1.9fr 2fr 2fr;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+.map svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.col,.lane,.cell{border-bottom:1px solid var(--line);border-right:1px solid var(--row)}
+.col{padding:8px 10px;background:var(--panel)}
+.col b{display:block;font-size:12px}
+.col small{color:var(--dim);font-size:10.5px}
+.lane{padding:10px;background:var(--panel)}
+.lane b{display:block;font-size:12px;line-height:1.3}
+.tally{display:block;color:var(--dim);font-size:10.5px;margin-top:6px;line-height:1.6}
+.cell{padding:7px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(122px,100%),1fr));align-content:start;gap:5px;background:var(--bg);min-height:44px}
+.cell>.period{display:none}
+.card{all:unset;box-sizing:border-box;cursor:pointer;position:relative;z-index:2;
+  min-width:0;display:grid;grid-template-columns:10px 1fr;gap:1px 7px;
+  padding:5px 7px;font-size:11.5px;line-height:1.3;overflow-wrap:anywhere;background:var(--panel);border:1px solid var(--line);border-radius:4px}
+.card .g{margin-top:2px}
+.card .meta{grid-column:2;color:var(--dim);font-size:10.5px}
+.card.s-done{background:color-mix(in srgb,var(--done) 12%,var(--panel));border-color:color-mix(in srgb,var(--done) 35%,var(--line))}
+.card.s-wip{border-color:color-mix(in srgb,var(--wip) 50%,var(--line));background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--wip) 10%,var(--panel)) 0 6px,color-mix(in srgb,var(--wip) 17%,var(--panel)) 6px 12px)}
+.card.s-plan{background:transparent;border-style:dashed}
+.card:hover,.card.lit{border-color:var(--ink)}
+.card.sel{box-shadow:0 0 0 2px var(--link)}
+.card.you-flag{border-left:3px solid var(--you)}
+.card.off{opacity:.13;pointer-events:none}
+.map.tracing .card:not(.lit):not(.sel):not(.off){opacity:.4}
+path{fill:none;stroke:#6e7a88;stroke-width:1;opacity:.28}
+path.near{opacity:0}
+path.lit{opacity:1;stroke:var(--ink);stroke-width:1.5}
+path.off{opacity:0}
+
+/* Detail */
+aside{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);padding:20px 22px;background:var(--raised);
+  border-left:1px solid var(--line);overflow:auto;z-index:10;transform:translateX(100%);visibility:hidden;transition:transform .16s ease-out,visibility .16s}
+aside.open{transform:none;visibility:visible;transition:transform .16s ease-out}
+@media (prefers-reduced-motion:reduce){aside{transition:none}}
+aside h3{font-size:15px;margin:6px 0 10px;line-height:1.3}
+aside .x{all:unset;cursor:pointer;float:right;color:var(--dim);padding:2px 6px}
+aside .pill{display:inline-flex;gap:7px;align-items:center;font-size:12px}
+aside dt{color:var(--dim);font-size:11px;margin-top:12px}
+aside dd{margin:2px 0 0}
+aside ul{list-style:none;padding:0;margin:2px 0 0}
+aside button.ln{all:unset;cursor:pointer;color:var(--link);text-decoration:underline}
+.tag{display:inline-block;padding:0 5px;margin-right:4px;border:1px solid var(--line);border-radius:3px;font-size:10.5px;color:var(--dim)}
+
+/* Tables */
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{text-align:left;vertical-align:top;padding:6px 10px 6px 0;border-bottom:1px solid var(--row)}
+th{color:var(--dim);font-weight:400;border-bottom-color:var(--line)}
+td.n{white-space:nowrap;color:var(--dim)}
+.cut{color:var(--dim);max-width:110ch}
+footer{color:var(--dim);font-size:11.5px;padding:0 24px 40px;max-width:1180px;margin-top:28px}
+
+@media (min-width:981px){body.drawer .scroll{padding-right:444px;scroll-padding-right:444px}}
+
+/* Narrow: one column, periods become labels */
+@media (max-width:980px){
+  header,.below,footer{padding-left:14px;padding-right:14px}
+  .scroll{padding:0 14px;overflow:visible}
+  .map{display:block;min-width:0}
+  .map svg,.col{display:none}
+  .lane{border-top:1px solid var(--line)}
+  .lane b{font-size:14px}
+  .cell{padding:8px}
+  .cell:empty,.cell.none{display:none}
+  .cell>.period{display:block;grid-column:1/-1;color:var(--dim);font-size:10.5px}
+  .filter{flex:1 1 150px;min-width:0}
+}
+@media print{aside{display:none}body{background:#fff;color:#000}}
+@media (forced-colors:active){.g{forced-color-adjust:none}}
+</style>
+</head>
+<body>
+<header>
+<p class="eyebrow" id="asof">AGENT FIREHOSE · PLAN MAP</p>
+<h1>All our plans, by what actually landed</h1>
+<p class="lede">Every plan, phase and slice, placed by when it reached main. Select any card for its evidence and to trace what it builds on.</p>
+<div class="filters" id="filters"></div>
+<p class="rule"><b>How status is decided.</b> Done means the code is on <code>origin/main</code> (<span id="mainref"></span>). In progress means an open PR or live work, even if the journal calls the slice "delivered". Planned only means no PR and no code. Tags refine this: parked, gated, archived, retired, design only, draft.</p>
+<div class="you" id="you"><strong>Waiting on you</strong><ul id="youlist"></ul></div>
+</header>
+
+<div class="scroll"><div class="map" id="map"><svg id="edges" aria-hidden="true"></svg></div></div>
+
+<div class="below">
+<h2>Plan documents</h2>
+<p class="rule" style="margin-bottom:10px">Each document rolled up from the items it covers. Several documents still open with a status line older than the work; those are marked "header lags".</p>
+<table><thead><tr><th>Document</th><th>Items</th><th>Roll-up</th></tr></thead><tbody id="docs"></tbody></table>
+<h2>Cut on purpose</h2>
+<p class="cut">Not counted above, because they are decisions not to build, each with a revival trigger in the <a href="2026-07-23-post-v01-design-review.html">design review §8</a>: repo-state reconstruction, Watchtower enforce and Control-Room actions, Arena, Capsule continuation prompts. Also out of scope by rule: steering agents from the map (assessment §5).</p>
+</div>
+<footer>Generated from GitHub PR state, <code>origin/main</code>, the landing queue (<code>.git/firehose-loop/landing.json</code>) and the backlog journal. "Queue n/m" is the current merge order. Merged PRs flip to Done automatically on each refresh; new PRs, decisions and plans are added by hand. "Slice n" tags on planned cards are the order set in D135. Planned-only items were checked by searching for their code, which can show a thing is absent but cannot prove every partial form of it is.</footer>
+
+<aside id="detail" aria-label="Item details" tabindex="-1"></aside>
+
+<script>
+/*LIVE-START*/const LIVE={"asOf": "5 Nov 2026, 6:53 PM", "main": "b19b09c", "mainDate": "5 Nov", "merged": {"83": "2026-11-05", "82": "2026-11-05", "81": "2026-11-05", "80": "2026-11-05", "79": "2026-11-05", "78": "2026-11-05", "77": "2026-11-05", "76": "2026-11-05", "75": "2026-11-05", "73": "2026-11-05", "72": "2026-11-05", "71": "2026-11-05", "70": "2026-11-05", "69": "2026-11-05", "68": "2026-11-05", "67": "2026-11-05", "66": "2026-11-05", "65": "2026-11-05", "64": "2026-11-05", "63": "2026-11-05", "62": "2026-11-05", "61": "2026-11-05", "60": "2026-11-05", "59": "2026-11-05", "58": "2026-11-05", "57": "2026-11-05", "56": "2026-10-31", "55": "2026-10-31", "54": "2026-10-19", "53": "2026-10-19", "52": "2026-10-19", "51": "2026-10-18", "50": "2026-10-18", "49": "2026-10-18", "48": "2026-10-18", "47": "2026-10-18", "46": "2026-10-18", "45": "2026-10-18", "44": "2026-10-18", "43": "2026-10-18", "42": "2026-10-18", "41": "2026-10-18", "40": "2026-10-18", "39": "2026-10-18", "38": "2026-10-18", "37": "2026-10-18", "36": "2026-10-18", "35": "2026-10-18", "34": "2026-10-17", "33": "2026-10-17", "32": "2026-10-17", "31": "2026-10-17", "30": "2026-10-17", "29": "2026-10-16", "28": "2026-10-16", "27": "2026-10-16", "26": "2026-10-14", "25": "2026-10-13", "24": "2026-10-16"}, "queue": [], "blocked": ""};/*LIVE-END*/
+/*HANDLED-THROUGH*/83
+/*HANDLED-DECISION*/138
+const PR=n=>`https://github.com/treetopdevs/llm-firehose/pull/${n}`;
+const COLS=[["jul","Jul","v0.1 and migration plans"],["aug","Aug – Sep","capture, Tufte, attention"],["oct1","Oct 1 – 15","v0.1.0 · v0.2.0"],["oct2","Oct 16 – 19","v0.3.0 · v0.4.0"],["now","Oct 31 – Nov 5","the stack landed · v0.5.0"],["next","Not started","no PR, no code"]];
+const LANES=[["found","Foundation and platform"],["capture","Capture and adapters"],["super","Supervision and history"],["graph","Workspace graph and performance"],["proto","Ten-concept prototypes"],["flow","Change-flow spine"]];
+const ST={done:"Done",wip:"In progress",plan:"Planned only"};
+const D={
+ v01:"2026-07-02-agent-firehose-v0.1.md",mig:"../agent-firehose-migration-plan.md",migi:"2026-07-06-daemon-desktop-migration.md",orbit:"2026-07-08-orbit-view-design.md",
+ rev:"2026-07-19-review-plans/README.md",cloud:"../architecture/cloud-control-plane.md",pain:"../migration/pain-review.md",eng:"../architecture/capture-engine.md",
+ dr:"2026-07-23-post-v01-design-review.html",pm:"2026-07-23-post-v01-product-design-map.html",cap:"2026-07-25-agent-capture-expansion.md",
+ tv:"2026-09-01-tufte-views.md",ta:"2026-09-01-tufte-altitudes.md",att:"2026-09-06-attention-inbox.md",fu:"2026-09-26-altitudes-followups.md",
+ wg:"2026-10-04-workspace-graph-timeline.md",spec:"../specs/workspace-graph-and-hook-timeline.md",gm:"2026-10-08-graph-mockup-fidelity.md",
+ amb:"2026-10-16-activity-map-build-brief.md",es:"2026-10-16-error-signature.md",ep:"2026-10-16-session-endpoint-perf.md",ss:"2026-10-16-session-score-and-activity-map.md",
+ pp:"2026-10-17-projection-build-perf.md",tl:"2026-10-17-session-timeline-view.md",
+ aeo:"2026-10-18-activity-error-overlay.md",asf:"2026-10-18-airspace-shared-files.md",aa:"2026-10-18-attention-airspace.md",bc:"2026-10-18-backlog-coordination.html",cl:"2026-10-18-causal-loom.md",ec:"2026-10-18-evidence-court.md",fsa:"2026-10-18-file-session-activity.md",fr:"2026-10-18-forked-replay.md",hs:"2026-10-18-handoff-subway.md",hc:"2026-10-18-history-cancellation.md",lrt:"2026-10-18-loom-reference-traversal.md",lo:"2026-10-18-loop-observatory.md",lsc:"2026-10-18-loop-sequence-comparison.md",pe:"2026-10-18-patch-ecosystem.md",cov:"2026-10-18-prototype-coverage.html",pi:"2026-10-18-prototype-integration.md",son:"2026-10-18-score-sonification.md",st:"2026-10-18-session-stratigraphy.md",
+ bs:"../brainstorms/2026-10-15-wild-visualizations/README.md",cf:"2026-10-31-first-principles-change-flow.md",aud:"../reviews/2026-11-01-impeccable-audit-workspace-and-app.md"
+};
+const LAGS={cap:'Header still says "Ready to execute"',amb:'Header still says "Ready to build"',ec:'Header still says "PR #37 open"',att:'Header predates the merge',cf:'Header says "Assessment. No code changed"',spec:'Header still says "specification draft"',hs:'Header still says PR #38 awaiting checks',st:'Header says "PR #36 ready"',tl:'Header says "Brief agreed"; the Shipped section below is current'};
+
+// id,title,lane,period,status,{pr,q,tags,docs,from,why,you}
+const N=[
+// Foundation
+["v01","v0.1 TUI + capture core","found","jul","done",{docs:["v01"],why:"The envelope, spool, adapters and TUI this plan set out are all on main. Tagged v0.1.0 on 2026-10-02."}],
+["m0","Phase 0: contract freeze","found","aug","done",{docs:["mig","migi"],from:["v01"],pr:[1],why:"Migration plan status table: done. contracts.md and event.schema.json exist."}],
+["m1","Phase 1: engine/clients split","found","aug","done",{docs:["mig","migi"],from:["m0"],pr:[1],why:"Migration plan status table: done. Daemon, firehosed and full local API."}],
+["m2","Phase 2: derived index","found","aug","done",{docs:["mig","migi"],from:["m1"],pr:[1],why:"Migration plan status table: done. Later reworked as the sealed projection inside Capture Engine."}],
+["m3","Phase 3: Tauri desktop (alpha)","found","aug","done",{docs:["mig","migi"],from:["m2"],pr:[1],why:"Migration plan status table: done (alpha). The desktop shell is in apps/tauri-desktop."}],
+["eng","Capture Engine rewrite","found","aug","done",{docs:["eng"],from:["m1"],pr:[4],why:"PR #4 merged 2026-09-01. Sole admission and lifecycle boundary."}],
+["r003","Review 003: recursive privacy","found","oct1","done",{tags:["archived","absorbed"],docs:["rev"],from:["eng"],why:"Never executed as written. The archive note says main covered it through internal/privacy."}],
+["r005","Review 005: atomic live bootstrap","found","oct1","done",{tags:["archived","absorbed"],docs:["rev"],from:["eng"],pr:[21],why:"Never executed as written. The archive note says snapshot-bracketed stream recovery in internal/client covered it."}],
+["r001","Review 001: self-contained desktop adapters","found","next","plan",{tags:["archived"],docs:["rev"],why:"Archived 2026-10-02 as TODO. Needs its drift check re-run before anyone acts on it; not re-run for this map."}],
+["r002","Review 002: local API trust boundary","found","next","plan",{tags:["archived","partly absorbed"],docs:["rev"],why:"The browser-origin allowlist shipped; the rest stayed TODO when archived. Drift check not re-run."}],
+["r004","Review 004: newline-safe JSONL follower","found","next","plan",{tags:["archived","partly absorbed"],docs:["rev"],why:"Archived as TODO, not listed as absorbed, though internal/durablejsonl on main has a partial-line test. Drift check not re-run."}],
+["rel5","Release 0.5.0","found","now","wip",{pr:[82],from:["s81"],why:"Tagged v0.5.0. It releases main as of 58acab7: the ladder navigation, event list, map actions, TUI Worktree rung and GET /worktrees, with schema_version staying 1. It leaves out slice 18 and #74."}],
+["m4","Phase 4: keep or replace Go","found","next","plan",{tags:["gated"],docs:["mig","pain"],from:["m3"],why:"Framework only. pain-review.md's Results section stays empty until at least 4 weeks of beta with 10 active installs."}],
+["m5","Phase 5: Phoenix cloud","found","next","plan",{tags:["design only","gated"],docs:["mig","cloud"],from:["m3"],why:"Design document only, deferred, and kept out by the local-first rule (D105)."}],
+// Capture
+["p1","P1: contracts and drift reporting","capture","aug","done",{docs:["cap"],pr:[2],from:["v01"],why:"PR #2: additive envelope fields, adapter manifests and doctor reporting, described as complete and audited."}],
+["p2","P2: OpenCode corpus","capture","aug","done",{docs:["cap"],pr:[2],from:["p1"],why:"PR #2: 27 real fixtures and parser fixes. session.error, permission and compaction shapes still await real captures."}],
+["p3","P3: Claude hook coverage","capture","aug","done",{docs:["cap"],pr:[3],from:["p1"],why:"Adapter on main handles PostToolUseFailure, StopFailure, PreCompact, Notification, SubagentStop, SessionEnd. Rare events the plan could not trigger stay fixture-blocked."}],
+["p5","P5: Antigravity (replaced Gemini)","capture","aug","done",{docs:["cap"],pr:[2],from:["p1"],why:"PR #2 amended the plan: classic Gemini CLI was decommissioned for individuals, so this adapter replaced it. Live-verified."}],
+["p4","P4: Claude local OTel","capture","oct2","done",{docs:["cap"],pr:[53],from:["p1"],why:"Inbound loopback receiver shipped; PR #53 added install conflict handling. Any non-loopback export remains behind the plan's policy gate."}],
+["otlp","OTLP forward test order flake","capture","now","done",{pr:[72],from:["p4"],why:"Test-only fix, first in the landing queue. The monitor merged it on 2026-11-05 at 19:14 UTC, the first PR to land under D131."}],
+["ci15","CI: move macOS jobs to macos-15","capture","now","wip",{pr:[79],why:"GitHub retired the macos-14 image on 2026-11-02, which is why those jobs stopped in about a second and reruns could not pass. Also gives frontend tests a longer per-test limit in CI only."}],
+["vite","vite 6.4.5 bump","capture","now","wip",{pr:[60],why:"Dependabot PR. Landing through roll-up #80."}],
+["p6","P6: Pi session capture","capture","next","plan",{tags:["gated"],docs:["cap"],from:["p1"],why:"The durable watcher core was extracted, but there is no Pi parser. PR #2 lists it as blocked until the binary is installed; D105 keeps it gated on real fixtures."}],
+["p7","P7: Copilot CLI capture","capture","next","plan",{tags:["gated"],docs:["cap"],from:["p1"],why:"No adapter on main. Blocked the same way as Pi: the plan bans invented payloads, so real captures have to come first."}],
+// Supervision
+["orbit","Orbit view","super","jul","done",{tags:["retired"],docs:["orbit"],pr:[12],why:"Shipped, then removed on 2026-10-02 (PR #12). Dwell bars and the attention inbox carry the same signal."}],
+["tv","Tufte: rows, band, lanes","super","aug","done",{docs:["tv"],pr:[5],why:"PR #5 merged 2026-09-02."}],
+["ta","Tufte: dwell and altitudes","super","aug","done",{docs:["ta"],pr:[5],from:["tv","orbit"],why:"PR #5 merged 2026-09-02. Also delivers much of the review's feed-craft line."}],
+["att","Attention inbox + notifications","super","aug","done",{docs:["att","dr","pm"],pr:[6],from:["ta"],why:"PR #6 merged 2026-09-08. Evidence, snooze, and quiet notifications through the Tauri plugin. This is the review's Phase 1 item 2, without the runaway class."}],
+["fu","Altitudes follow-ups","super","aug","done",{docs:["fu"],pr:[8],from:["ta","att"],why:"PR #8 merged 2026-09-26: honest state_since, fresh needs-you count, workspace error marks."}],
+["ci","Review Phase 1.0: capture integrity","super","aug","done",{docs:["dr"],pr:[3,4],from:["p1"],why:"Codex and process events now persist in the spool, native IDs are kept, and source and capture time are separate. Done through capture expansion and Capture Engine, not as its own project."}],
+["hon0","Review 1.1: adapter fidelity in doctor","super","aug","done",{docs:["dr"],pr:[2],from:["p1"],why:"Adapter manifests report transport and fidelity through doctor. The per-session half is a separate card."}],
+["hon1","Per-session fidelity badge","super","next","plan",{tags:["slice 21"],docs:["dr"],from:["hon0"],why:"On main, the fidelity field appears on the doctor check, not on sessions. The session-header badge and degrade-gracefully table were not found."}],
+["run","Runaway attention class","super","next","plan",{tags:["gated"],docs:["dr"],from:["att"],why:"Not on main. Loop Observatory lets you inspect recurrence by hand but raises no alert, and D04 and D12 hold automatic inference back until thresholds are justified."}],
+["turn","Turn grouping (Threads v0)","super","next","plan",{tags:["slice 21"],docs:["dr"],why:"No threads toggle or grouping on main, though turn IDs are captured."}],
+["lens","Hotkey lenses + saved views","super","next","plan",{docs:["dr"],why:"No saved views or named lens config found. (Lens as used in the change-flow stack means something else: tabs inside an altitude.)"}],
+["coll","Collision events","super","next","plan",{tags:["gated"],docs:["dr"],why:"No derived collision event. Airspace's shared-file lanes (PR #47) show overlap and explicitly raise no conflict alarm."}],
+["store","Derived-data store + artifact registry","super","next","plan",{tags:["slice 22"],docs:["dr"],why:"Phase 2 foundation. No store or hash-addressed artifact registry on main. Some relationship fields such as parent_id did ship."}],
+["autopsy","Deterministic session autopsy","super","next","plan",{tags:["slice 22"],docs:["dr"],from:["store"],why:"Not on main."}],
+["erep","Event-scoped replay in the TUI","super","next","plan",{tags:["slice 22"],docs:["dr"],from:["store"],why:"Not on main in this form. Session Score replays in the desktop, but the review's pager-style TUI replay does not exist. Forked Replay Lab is a different thing."}],
+["why","Why cards","super","next","plan",{tags:["slice 22"],docs:["dr"],from:["store"],why:"No why-card key. Causal Loom answers the question on the desktop from native IDs."}],
+["bundle","Session bundle export","super","next","plan",{tags:["slice 22"],docs:["dr"],from:["autopsy"],why:"Not on main. Current export is the event export, not the bundle the review describes."}],
+["fix","Adapter fixture CLI","super","next","plan",{tags:["slice 21"],docs:["dr"],why:"No firehose adapter dev command on main."}],
+["parked","Parked: thread phases, detectors, radar, query language, weather status","super","next","plan",{tags:["parked"],docs:["dr"],why:"Five features with written revival triggers in the review's §8. None has been revived."}],
+["adr","Gateway question: write the ADR","super","next","plan",{docs:["dr"],why:"An open decision from the review's §9. The review is the only doc on main that mentions it. Its other §9 questions were not audited here."}],
+// Graph & perf
+["wg","Workspace graph + hook timeline","graph","oct1","done",{docs:["wg","spec"],pr:[17,19],why:"PR #19 merged 2026-10-05."}],
+["gm","Graph mockup fidelity","graph","oct1","done",{docs:["gm"],pr:[22],from:["wg"],why:"PR #22 merged 2026-10-10, released as v0.2.0."}],
+["ep","Session endpoint perf (fixes A, C)","graph","oct2","done",{docs:["ep"],pr:[27,33],why:"Fix A went in with PR #27; fix C shipped as ?view=timeline."}],
+["tl","Session timeline view","graph","oct2","done",{docs:["tl"],pr:[33],from:["ep"],why:"PR #33 merged 2026-10-17."}],
+["pp","Projection build streaming","graph","oct2","done",{docs:["pp"],pr:[34],from:["ep"],why:"PR #34 merged 2026-10-17."}],
+["hc","History scan cancellation","graph","oct2","done",{docs:["hc"],pr:[48],from:["tl"],why:"PR #48 merged 2026-10-18."}],
+["chk","Sealed-day on-disk checkpoint","graph","next","plan",{docs:["pp"],from:["pp"],why:"Deferred to its own ticket: the only remaining lever on decode CPU, about 57% of Build CPU."}],
+["trv","GET /traces/{id}?view=","graph","next","plan",{docs:["tl"],from:["tl"],why:"Out of scope for the timeline slice, recorded as a follow-up. The daemon trace route on main reads no view parameter."}],
+// Prototypes
+["bs","Ten wild concepts","proto","oct2","done",{docs:["bs"],pr:[55],why:"The brainstorm itself. All ten now have a working prototype; see the coverage audit for what each leaves out. Its PR merged 2026-10-31 after the prototypes it inspired."}],
+["ss","Session Score (Agent Score)","proto","oct2","done",{docs:["ss"],pr:[27,29],from:["bs"],why:"v1, v1.1 and motifs shipped 2026-10-16."}],
+["am","Activity Map (Repository Weather)","proto","oct2","done",{docs:["ss","amb"],pr:[31],from:["bs"],why:"PR #31 merged 2026-10-17. Reports observed heat only, never code quality."}],
+["es","Error Signature","proto","oct2","done",{docs:["es"],pr:[28,30],from:["ss"],why:"PRs #28 and #30, 2026-10-16 and 17. The shared identity that loops, strata and storm cells need."}],
+["lo","Loop Observatory","proto","oct2","done",{docs:["lo"],pr:[35],from:["es","tl","bs"],why:"PR #35 merged 2026-10-18."}],
+["st","Session Stratigraphy","proto","oct2","done",{docs:["st"],pr:[36],from:["es","bs"],why:"PR #36 merged 2026-10-18."}],
+["ec","Evidence Court","proto","oct2","done",{docs:["ec"],pr:[37],from:["bs"],why:"PR #37 merged 2026-10-18. Manual claims and receipts."}],
+["hs","Handoff Subway","proto","oct2","done",{docs:["hs"],pr:[38],from:["bs"],why:"PR #38 merged 2026-10-18. Explicit annotations only."}],
+["aa","Attention Airspace","proto","oct2","done",{docs:["aa"],pr:[39],from:["att","bs"],why:"PR #39 merged 2026-10-18."}],
+["cl","Causal Loom","proto","oct2","done",{docs:["cl"],pr:[40],from:["bs"],why:"PR #40 merged 2026-10-18."}],
+["pe","Patch Ecosystem","proto","oct2","done",{docs:["pe"],pr:[41],from:["bs"],why:"PR #41 merged 2026-10-18."}],
+["fr","Forked Replay Lab","proto","oct2","done",{docs:["fr"],pr:[42],from:["bs"],why:"PR #42 merged 2026-10-18. A hypothetical notebook, never an execution."}],
+["int","Combined prototype integration","proto","oct2","done",{docs:["pi","cov","bc"],pr:[43],from:["ec","hs","aa","cl","pe","fr"],why:"PR #43 merged 2026-10-18, with the coverage audit of all ten concepts."}],
+["aeo","Activity Map error overlay","proto","oct2","done",{docs:["aeo"],pr:[44],from:["am","es"],why:"PR #44 merged 2026-10-18. Storm cells, restricted to errors that carry their own path."}],
+["lsc","Loop sequence comparison","proto","oct2","done",{docs:["lsc"],pr:[45],from:["lo"],why:"PR #45 merged 2026-10-18."}],
+["fsa","File activity by session","proto","oct2","done",{docs:["fsa"],pr:[46],why:"PR #46 merged 2026-10-18."}],
+["asf","Airspace shared-file lanes","proto","oct2","done",{docs:["asf"],pr:[47],from:["aa","fsa"],why:"PR #47 merged 2026-10-18."}],
+["lrt","Loom reference traversal","proto","oct2","done",{docs:["lrt"],pr:[51],from:["cl"],why:"PR #51 merged 2026-10-18."}],
+["son","Score sonification","proto","oct2","done",{docs:["son"],pr:[52],from:["ss"],why:"PR #52 merged 2026-10-19."}],
+["dh","Source-confirmed handoffs","proto","next","plan",{docs:["hs"],from:["hs"],why:"Deferred until adapter-specific evidence exists. Today's links are user assertions."}],
+["dl","Cross-agent Loom traversal","proto","next","plan",{docs:["cov"],from:["lrt"],why:"The coverage audit lists cross-agent traversal and inferred links as unimplemented."}],
+["di","Automatic loop inference","proto","next","plan",{tags:["gated"],docs:["cov"],from:["lsc"],why:"No strategy classifier or intervention threshold. D12 says useful thresholds must be defined first."}],
+// Spine
+["cf","Slice 0: first-principles assessment","flow","now","wip",{docs:["cf","bc"],pr:[57],why:"Docs-only PR carrying the plan and journal, the base of the whole stack."}],
+["s1","Slice 1: worktree lifetime + /worktrees","flow","now","wip",{docs:["cf"],pr:[58],from:["cf"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s2","Slice 2: desktop scope store","flow","now","wip",{docs:["cf"],pr:[59],from:["s1"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s3","Slice 3: Project altitude","flow","now","wip",{docs:["cf"],pr:[62],from:["s2"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s5","Slice 5: Fleet altitude","flow","now","wip",{docs:["cf"],pr:[63],from:["s3"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s8","Slice 8: Session tabs","flow","now","wip",{docs:["bc"],pr:[66],from:["s5"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s10","Slice 10: shell transport","flow","now","wip",{docs:["bc","aud"],pr:[67],from:["s8"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s9","Slice 9: one Project view","flow","now","wip",{docs:["bc","aud"],pr:[68],from:["s10"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s11","Slice 11: one vocabulary","flow","now","wip",{docs:["bc","aud"],pr:[70],from:["s9"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s13","Slice 13: token layer, DESIGN.md","flow","now","wip",{docs:["bc","aud"],pr:[69],from:["s11"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s12","Slice 12: keyboard and focus","flow","now","wip",{docs:["bc","aud"],pr:[71],from:["s13"],why:"Reviewed in its own PR, and now landing through roll-up #80."}],
+["s14","Slice 14: the ladder","flow","now","wip",{docs:["bc","aud"],pr:[73],from:["s12"],why:"Landing through roll-up #80. Fleet · Project · Worktree · Session nav, with two recorded deviations (D126)."}],
+["s15","Slice 15: one event list","flow","now","wip",{docs:["bc","aud"],pr:[75],from:["s14"],why:"Landing through roll-up #80."}],
+["s4","Slice 4: Bash lifecycle verbs","flow","now","wip",{docs:["cf"],pr:[61],from:["s1"],why:"Landing through roll-up #80. A leaf off slice 1."}],
+["s7","Slice 7: TUI Worktree rung","flow","now","wip",{docs:["bc"],pr:[64],from:["s1"],why:"Landing through roll-up #80. A leaf off slice 1."}],
+["s6","Slice 6: map actions","flow","now","wip",{docs:["bc"],pr:[65],from:["s15"],why:"Landing through roll-up #80. Stacked on #75 so its conflict with the top of the stack is settled once (D132). Its confirmation dialogs could not be reached outside Tauri, so they remain unverified."}],
+["s16","Slice 16: landing, as roll-up PR","flow","now","wip",{docs:["bc"],pr:[80],from:["s15","s4","s7","s6","s17"],why:"D131–D137. The queue of 17 PRs became one roll-up merge, c487c80, after one full CI run on Go, macos-15, Windows and Linux. GitHub marked all 17 merged. Accepted cost: intermediate commits have no CI of their own, so a later bisect can land on an untested commit."}],
+["s81","Roll-up review follow-up","flow","now","wip",{docs:["bc"],pr:[81],from:["s16"],why:"D137. Fixes the findings from CodeRabbit's seven threads on #80, including the restored prune safety check for a relative gitdir."}],
+["s17","Slice 17: trust pass","flow","now","wip",{docs:["bc"],pr:[77],from:["s6"],why:"D133 and D135. Polling deadline, privacy-change scope remap, landing time only from verified evidence, Escape by resulting altitude, one label source, and small fixes."}],
+["s74","Symlinked activity paths","flow","now","wip",{tags:["draft"],docs:["bc"],pr:[74],you:"#74: review the privacy-table change and the choice to stay on schema version 1, then decide when it lands. The monitor is set never to merge it.",why:"Option 3 chosen and built (D134): a capture-time root_alias, with the disk-checking fix removed. Not part of roll-up #80. Its macOS job fails in 1s because the branch still names the retired macos-14 image; merging main picks up the #79 fix."}],
+["mini","Fleet minimap strip","flow","next","plan",{tags:["slice 21"],docs:["cf"],from:["s5"],why:"Assessment §5. No minimap code on main; Fleet is a full view, not an always-visible strip."}],
+["fog","Fog of war: draw absent capture","flow","next","plan",{tags:["slice 21"],docs:["cf"],from:["s5"],why:"Assessment §5. No code on main."}],
+["grp","Control groups: bind worktrees to keys","flow","next","plan",{tags:["slice 21"],docs:["cf"],from:["s12"],why:"Assessment §5. No control-group code on main. Slice 12's key map (D122) reserves 1–9 and queue keys, but nothing found binds worktrees to them."}],
+["diff","Worktree diff scrub, in-app diff","flow","next","plan",{tags:["slice 21"],docs:["cf","bc"],from:["s6"],why:"Assessment §4. D106 ships a copyable git diff command and defers an in-app diff view."}],
+["idn","Mode-independent worktree identity","flow","next","plan",{tags:["slice 19"],docs:["cf"],from:["s1"],why:"Known limit: a privacy-mode switch splits one worktree into two lifetimes. Open work with a required fixture."}],
+["inc","Worktree lifetime discriminator","flow","next","plan",{tags:["slice 19"],docs:["cf"],from:["s1"],why:"Known limit: removing and recreating a worktree at one path merges both under a single key."}],
+["tgt","Lifecycle target digest","flow","next","plan",{tags:["slice 19"],docs:["cf"],from:["s4"],why:"Known limit: git worktree add from another worktree is attributed to the caller, and failed commands still mark."}],
+["wtl","Real /worktrees list at the rung","flow","now","wip",{tags:["slice 18"],docs:["bc"],pr:[83],from:["s14"],why:"D138. With a project in scope, the rung lists its worktrees, newest first. The final review fixes have mocked-API tests only, with no further Codex pass or live run. Landed after the 0.5.0 release."}],
+["sq","Source-qualify session-to-attention join","flow","now","wip",{tags:["slice 18"],docs:["bc"],pr:[83],from:["s14"],why:"D138. A row joins only the attention entry for its own source and id. Needs you stays a toggle, because a filter that agrees with the strip would need a daemon change. Landed after the 0.5.0 release."}],
+["tab","Fleet encoding buttons get tab roles","flow","now","wip",{docs:["bc"],pr:[77],from:["s14"],why:"D130 follow-up, picked up by slice 17."}],
+["fnt","Event-list font in Project Events","flow","now","wip",{docs:["bc"],pr:[77],from:["s15"],why:"D130 follow-up, picked up by slice 17."}],
+["cgr","canonicalGraphRoot locality reuse","flow","next","plan",{docs:["bc"],from:["s74"],why:"D129 and D130 follow-up."}],
+["race","Port race in unreachable_when_nothing_listens","flow","next","plan",{docs:["bc"],from:["s6"],why:"D137. This Rust test frees a port and then expects nothing to listen, so a parallel test can take it. It failed once locally and passed on every rerun."}],
+["wrf","Worktree rung follow-ups","flow","next","plan",{docs:["bc"],from:["wtl"],why:"D138. The Project panel shows a default repo without setting scope.project, so clicking Worktree from there gives the all-sessions list. A colliding agent outside a selected worktree shows only in the inbox. The list leaves the right side empty until a history opens."}],
+["app","Installed-app proof","flow","next","plan",{tags:["slice 20"],docs:["bc"],from:["s6"],why:"D135. Build the real Tauri app and exercise what a browser cannot reach, including the map-action dialogs."}],
+["intr","Real interrupted-command fixture","flow","next","plan",{docs:["bc"],from:["s1"],why:"D133. No captured interrupted payload exists yet, so the #58 test alters the flag on a real uninterrupted one."}],
+].map(([id,t,lane,col,s,o])=>({id,t,lane,col,s,from:[],docs:[],tags:[],pr:[],...o}));
+// LIVE is rewritten by the refresh script: a card is done once all its PRs merged.
+// #80 lands these together. Their own PRs may never show as merged on GitHub.
+const ROLLUP=[58,59,60,61,62,63,64,65,66,67,68,69,70,71,73,75,77];
+const landedOn=p=>LIVE.merged[p]||(ROLLUP.includes(p)&&LIVE.merged[80]);
+N.forEach(n=>{
+  if(n.s==="wip"&&n.pr.length&&n.pr.every(landedOn)){n.s="done";n.why+=` Merged ${landedOn(n.pr[n.pr.length-1])}.`;delete n.you}
+  else if(n.s==="wip"&&n.pr.some(p=>ROLLUP.includes(p)))n.tags=[...n.tags,"in #80"];
+  const i=n.pr.length?LIVE.queue.indexOf(n.pr[0]):-1;n.q=i<0?0:i+1;
+});
+
+const byId=Object.fromEntries(N.map(n=>[n.id,n]));
+const out=Object.fromEntries(N.map(n=>[n.id,[]]));
+N.forEach(n=>n.from.forEach(f=>out[f].push(n.id)));
+const $=s=>document.querySelector(s), map=$("#map"), svg=$("#edges");
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const on={done:true,wip:true,plan:true};
+const count=(a,s)=>a.filter(n=>n.s===s).length;
+
+document.getElementById("asof").textContent=`AGENT FIREHOSE · PLAN MAP · UPDATED ${LIVE.asOf.toUpperCase()}`;
+document.getElementById("mainref").textContent=`${LIVE.main}, ${LIVE.mainDate}`;
+// Filters
+$("#filters").innerHTML=Object.entries(ST).map(([k,l])=>`<button class="filter s-${k}" data-k="${k}" aria-pressed="true"><span class="g"></span><span><b>${count(N,k)}</b><small>${l}</small></span></button>`).join("");
+document.querySelectorAll(".filter").forEach(b=>b.onclick=()=>{const k=b.dataset.k;on[k]=!on[k];b.setAttribute("aria-pressed",on[k]);applyFilter()});
+
+// Grid
+const frag=document.createDocumentFragment();
+const add=(cls,html)=>{const d=document.createElement("div");d.className=cls;d.innerHTML=html;frag.append(d);return d};
+add("col","<small>workstream</small>");
+COLS.forEach(([,a,b])=>add("col",`<b>${a}</b><small>${b}</small>`));
+LANES.forEach(([lid,name])=>{
+  const inLane=N.filter(n=>n.lane===lid);
+  add("lane",`<b>${name}</b><span class="tally">${count(inLane,"done")} done<br>${count(inLane,"wip")} in progress<br>${count(inLane,"plan")} planned</span>`);
+  COLS.forEach(([cid,a])=>{
+    const items=inLane.filter(n=>n.col===cid);
+    const c=add("cell"+(items.length?"":" none"),items.length?`<span class="period">${a}</span>`:"");
+    items.forEach(n=>{
+      const b=document.createElement("button");
+      b.className=`card s-${n.s}`+(n.you?" you-flag":"");b.id="n-"+n.id;b.dataset.id=n.id;
+      const meta=[n.pr.length?n.pr.map(p=>"#"+p).join(" "):"",n.q?`queue ${n.q}/${LIVE.queue.length}`:"",...n.tags].filter(Boolean).join(" · ");
+      b.setAttribute("aria-label",`${n.t}. ${ST[n.s]}${meta?". "+meta:""}`);
+      b.innerHTML=`<span class="g"></span><span>${esc(n.t)}</span>${meta?`<span class="meta">${esc(meta)}</span>`:""}`;
+      b.onclick=()=>select(n.id);
+      b.onmouseenter=()=>trace(n.id);b.onmouseleave=()=>trace(selected);
+      b.onfocus=()=>trace(n.id);b.onblur=()=>trace(selected);
+      c.append(b);
+    });
+  });
+});
+map.append(frag);
+
+// Edges
+let paths=[];
+function draw(){
+  if(getComputedStyle(svg).display==="none")return;
+  const R=map.getBoundingClientRect();
+  svg.setAttribute("viewBox",`0 0 ${R.width} ${R.height}`);
+  svg.innerHTML="";paths=[];
+  N.forEach(n=>n.from.forEach(f=>{
+    const a=document.getElementById("n-"+f).getBoundingClientRect(),b=document.getElementById("n-"+n.id).getBoundingClientRect();
+    const fwd=b.left>a.right-4;
+    const x1=(fwd?a.right:a.left+a.width/2)-R.left,y1=(fwd?a.top+a.height/2:a.bottom)-R.top;
+    const x2=(fwd?b.left:b.left+b.width/2)-R.left,y2=(fwd?b.top+b.height/2:b.top)-R.top;
+    const d=fwd?`M${x1} ${y1}C${x1+40} ${y1} ${x2-40} ${y2} ${x2} ${y2}`:`M${x1} ${y1}C${x1} ${y1+24} ${x2} ${y2-24} ${x2} ${y2}`;
+    const p=document.createElementNS("http://www.w3.org/2000/svg","path");
+    p.setAttribute("d",d);
+    if(byId[f].col===n.col&&byId[f].lane===n.lane)p.classList.add("near");
+    svg.append(p);paths.push({p,f,t:n.id});
+  }));
+  applyFilter();trace(selected);
+}
+function chain(id){ // ancestors and descendants, so a trace shows the whole line
+  const up=new Set(),dn=new Set();
+  const w=(i,g,s)=>g(i).forEach(x=>{if(!s.has(x)){s.add(x);w(x,g,s)}});
+  w(id,i=>byId[i].from,up);w(id,i=>out[i],dn);
+  return new Set([id,...up,...dn]);
+}
+function trace(id){
+  map.classList.toggle("tracing",!!id);
+  document.querySelectorAll(".card.lit").forEach(c=>c.classList.remove("lit"));
+  paths.forEach(x=>x.p.classList.remove("lit"));
+  if(!id)return;
+  const s=chain(id);
+  s.forEach(i=>document.getElementById("n-"+i).classList.add("lit"));
+  paths.forEach(x=>{if(s.has(x.f)&&s.has(x.t))x.p.classList.add("lit")});
+}
+function applyFilter(){
+  N.forEach(n=>{const c=document.getElementById("n-"+n.id);c.classList.toggle("off",!on[n.s]);c.tabIndex=on[n.s]?0:-1});
+  paths.forEach(x=>x.p.classList.toggle("off",!on[byId[x.f].s]||!on[byId[x.t].s]));
+}
+
+// Detail
+let selected=null,opener=null;
+const docHref=k=>D[k];
+const docName=k=>D[k].split("/").slice(-1)[0]==="README.md"?D[k].split("/").slice(-2)[0]:D[k].split("/").pop();
+function links(ids){return ids.length?`<ul>${ids.map(i=>`<li><button class="ln" data-go="${i}">${esc(byId[i].t)}</button></li>`).join("")}</ul>`:""}
+function select(id){
+  document.querySelector(".card.sel")?.classList.remove("sel");
+  const n=byId[id];selected=id;
+  const c=document.getElementById("n-"+id);c.classList.add("sel");
+  if(!$("#detail").classList.contains("open"))opener=c;
+  trace(id);
+  const lag=n.docs.filter(k=>LAGS[k]).map(k=>`${docName(k)}: ${LAGS[k]}`);
+  $("#detail").innerHTML=`<button class="x" aria-label="Close details">✕</button>
+  <span class="pill s-${n.s}"><span class="g"></span>${ST[n.s]}</span>
+  <h3>${esc(n.t)}</h3>${n.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}
+  <dl><dt>Evidence</dt><dd>${esc(n.why)}</dd>
+  ${n.you?`<dt>Waiting on you</dt><dd>${esc(n.you)}</dd>`:""}
+  ${n.q?`<dt>Landing queue</dt><dd>Position ${n.q} of ${LIVE.queue.length}</dd>`:""}
+  ${n.pr.length?`<dt>Pull requests</dt><dd>${n.pr.map(p=>`<a href="${PR(p)}">#${p}</a>`).join(" ")}</dd>`:""}
+  ${n.docs.length?`<dt>Plan</dt><dd><ul>${n.docs.map(k=>`<li><a href="${docHref(k)}">${esc(docName(k))}</a></li>`).join("")}</ul></dd>`:""}
+  ${lag.length?`<dt>Header lags</dt><dd>${esc(lag.join("; "))}</dd>`:""}
+  ${n.from.length?`<dt>Builds on</dt><dd>${links(n.from)}</dd>`:""}
+  ${out[id].length?`<dt>Leads to</dt><dd>${links(out[id])}</dd>`:""}</dl>`;
+  document.body.classList.add("drawer");c.scrollIntoView({block:"nearest",inline:"nearest"});
+  const d=$("#detail");d.classList.add("open");d.querySelector(".x").onclick=closeDetail;
+  d.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{select(b.dataset.go);document.getElementById("n-"+b.dataset.go).scrollIntoView({block:"nearest",inline:"nearest"})});
+  d.scrollTop=0;d.focus();
+}
+function closeDetail(){
+  $("#detail").classList.remove("open");document.body.classList.remove("drawer");
+  document.querySelector(".card.sel")?.classList.remove("sel");
+  selected=null;trace(null);opener?.focus();opener=null;
+}
+addEventListener("keydown",e=>{if(e.key==="Escape"&&selected)closeDetail()});
+
+// Waiting on you
+const YOU=[
+ ...N.filter(n=>n.you).map(n=>[n.id,n.you]),
+ ["p6","Pi and Copilot adapters: these need the binaries installed and real captures from you before they can start."],
+ ["m4","Phase 4 keep-or-replace: this needs real beta usage first, so nothing is due yet."]
+];
+const next=LIVE.queue[0];
+if(next)document.querySelector("#you").insertAdjacentHTML("afterend",`<p class="rule"><b>Landing now.</b> Next to merge is <a href="${PR(next)}">#${next}</a>${LIVE.blocked?`, held up by: ${esc(LIVE.blocked)}`:""}. ${LIVE.queue.length} PRs are queued.</p>`);
+$("#youlist").innerHTML=YOU.map(([id,txt])=>`<li>${esc(txt)} <button data-go="${id}">Open</button></li>`).join("");
+document.querySelectorAll("#youlist [data-go]").forEach(b=>b.onclick=()=>{const c=document.getElementById("n-"+b.dataset.go);c.scrollIntoView({block:"center",inline:"center"});select(b.dataset.go)});
+
+// Documents
+const seen=new Set(N.flatMap(n=>n.docs));
+$("#docs").innerHTML=Object.keys(D).filter(k=>seen.has(k)).map(k=>{
+  const items=N.filter(n=>n.docs.includes(k));
+  const r=Object.keys(ST).filter(s=>count(items,s)).map(s=>`<span class="s-${s}" style="white-space:nowrap;margin-right:10px"><span class="g" style="margin-right:5px"></span>${count(items,s)} ${ST[s].toLowerCase()}</span>`).join("");
+  return `<tr><td><a href="${D[k]}">${esc(docName(k))}</a>${LAGS[k]?`<br><small style="color:var(--dim)">header lags: ${esc(LAGS[k])}</small>`:""}</td><td class="n">${items.length}</td><td>${r}</td></tr>`;
+}).join("");
+
+draw();
+new ResizeObserver(draw).observe(map);
+</script>
+</body>
+</html>
