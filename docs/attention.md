@@ -40,6 +40,14 @@ or resolve a newer episode. Last observation time is tracked separately. Snapsho
 Older `/sessions` fields and stream-only state transitions retain their existing
 semantics; `/attention` provides the more conservative evidence-based view.
 
+## What counts as needing you
+
+Every desktop count (the sidebar badge, per-project counts and the All projects list)
+uses one freshness rule: a pending request or failure counts for 24 hours past the
+session's last captured activity, the same limit the TUI uses. An older episode stays
+listed in the Needs you queue, labelled "Older than 24 hours · not counted as needing
+you", and can still be inspected. Captured history is not changed.
+
 ## Snooze and notifications
 
 Snooze hides an episode from the unsnoozed count for 15 minutes; the item stays

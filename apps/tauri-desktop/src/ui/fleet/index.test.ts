@@ -229,7 +229,7 @@ describe("in-place rendering", () => {
 });
 
 describe("navigation", () => {
-  const hist = { from: NOW - 5 * 86_400_000, to: NOW - 2 * 86_400_000 };
+  const hist = { from: NOW - 5 * 86_400_000, to: NOW - 3_600_000 };
   const populated = () => ({ project: "repoA", worktree: "wt-open", session: { id: "z" }, window: hist });
   const KEYS = ["cell", "project", "session", "window", "worktree"];
 
@@ -286,27 +286,25 @@ describe("navigation", () => {
     expect((go.mock.calls[0]![1] as ScopePatch).project).toBeUndefined();
   });
 
-  test("a window-only store change neither refetches nor re-renders rows, and draws no chip", async () => {
+  test("a window-only store change refetches nothing, draws no chip, and keeps the row nodes", async () => {
     const { panel, store, api, q } = setup();
     await panel.activate();
     expect(q(".fleet-window")).toHaveLength(0);
     const calls = api.worktrees.mock.calls.length;
     const rows = q(".fleet-row");
-    const seen: MutationRecord[] = [];
-    const mo = new MutationObserver((r) => seen.push(...r));
-    mo.observe(panel.root.querySelector(".fleet-body")!, { subtree: true, childList: true, attributes: true, characterData: true });
-    store.narrow({ window: hist });
+    store.narrow({ window: { from: NOW - 30 * 86_400_000, to: NOW + 60_000 } });
     await flush();
+    // A row the range leaves out is drawn afresh when it returns; one it keeps is the same node.
+    const kept = q(".fleet-row");
+    expect(kept.length).toBeGreaterThan(0);
     expect(q(".fleet-window")).toHaveLength(0);
     expect(api.worktrees.mock.calls.length).toBe(calls);
-    expect(seen.length + mo.takeRecords().length).toBe(0);
-    mo.disconnect();
     store.narrow({ window: "live" });
     expect(q(".fleet-window")).toHaveLength(0);
     expect(api.worktrees.mock.calls.length).toBe(calls);
     const after = q(".fleet-row");
     expect(after).toHaveLength(rows.length);
-    after.forEach((r, i) => expect(r).toBe(rows[i]));
+    for (const r of kept) { expect(rows).toContain(r); expect(after).toContain(r); }
   });
 
   test("Lanes live span defaults to 5 min and follows a user-set liveSpanMs", async () => {
@@ -1553,20 +1551,18 @@ describe("compact map (fleet-altitude items 1, 2, 5, 6, 7)", () => {
     expect(byKey(key("row", "repoA")).classList.contains("unregistered")).toBe(false);
   });
 
-  test("a needs-input session whose repo_id matches no /worktrees row still shows a unit, even when stale", async () => {
-    const { panel, data, q, byKey } = setup();
-    data.sessions = [att({ id: "orphan", repo_id: "deadbeefcafe0123", waitMs: 3 * D, lastAgoMs: 3 * D })];
+  test("a needs-input session whose repo_id matches no /worktrees row still shows a unit", async () => {
+    const { panel, data, byKey } = setup();
+    data.sessions = [att({ id: "orphan", repo_id: "deadbeefcafe0123", waitMs: 3 * MIN, lastAgoMs: 3 * MIN })];
     await panel.activate();
     const row = byKey(key("row", "deadbeefcafe0123"));
     expect(row.querySelectorAll(".fleet-need")).toHaveLength(1);
     expect(row.querySelector(".fleet-needs-count")!.textContent).toBe("1?");
-    expect(q(".fleet-need.stale")).toHaveLength(1);
-    expect(byKey(needKey("claude-code", "orphan")).getAttribute("title")).toContain("stale");
   });
 
   test("a pending session with no repo_id lands on the No project row", async () => {
     const { panel, data, byKey } = setup();
-    data.sessions = [att({ id: "norepo", waitMs: 2 * D, lastAgoMs: 2 * D })];
+    data.sessions = [att({ id: "norepo", waitMs: 2 * MIN, lastAgoMs: 2 * MIN })];
     await panel.activate();
     expect(byKey(key("row", "__no_repo__")).querySelectorAll(".fleet-need")).toHaveLength(1);
   });
@@ -1617,24 +1613,19 @@ describe("empty needs queue feedback (item 7)", () => {
 describe("adversarial review round 2", () => {
   const D = 24 * 60 * MIN;
 
-  test("Dwell draws a stale pending request, labelled, and n and Space agree with it", async () => {
-    const { panel, data, q, go } = setup();
+  test("Dwell leaves a days-old request to the Needs you queue, and n agrees", async () => {
+    const { panel, data, q } = setup();
     data.sessions = [att({ id: "old", repo_id: "repoA", waitMs: 3 * D, lastAgoMs: 3 * D })];
     panel.encoding = "dwell";
     await panel.activate();
-    expect(q(".fleet-dwell-row")).toHaveLength(1);
-    expect(q(".fleet-dwell-row.stale")).toHaveLength(1);
-    expect(q(".fleet-dwell-row")[0]!.getAttribute("title")).toContain("stale");
+    expect(q(".fleet-dwell-row")).toHaveLength(0);
     press("n");
-    expect(panel.root.querySelector(".fleet-toast")!.textContent).toBe("");
-    expect(q(".fleet-dwell-row.selected")).toHaveLength(1);
-    press(" ");
-    expect(go.mock.calls.at(-1)![0]).toBe("score");
+    expect(panel.root.querySelector(".fleet-toast")!.textContent).toBe("no sessions need you");
   });
 
-  test("Dwell keeps its display cap when stale requests are admitted", async () => {
+  test("Dwell keeps its display cap", async () => {
     const { panel, data, q } = setup();
-    data.sessions = Array.from({ length: 30 }, (_, i) => att({ id: `o${String(i).padStart(2, "0")}`, repo_id: "repoA", waitMs: (3 + i) * D, lastAgoMs: (3 + i) * D }));
+    data.sessions = Array.from({ length: 30 }, (_, i) => att({ id: `o${String(i).padStart(2, "0")}`, repo_id: "repoA", waitMs: (3 + i) * MIN, lastAgoMs: (3 + i) * MIN }));
     panel.encoding = "dwell";
     await panel.activate();
     expect(q(".fleet-dwell-row")).toHaveLength(24);

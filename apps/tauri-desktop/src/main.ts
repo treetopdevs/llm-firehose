@@ -238,6 +238,7 @@ const feedPanel = createEventList(liveSource(feedState, { renderLimit: 1000 }), 
 });
 const fleetPanel = createFleet({
   store: scope,
+  attention: (signal) => attentionPanel.read(signal),
   actions,
   roots,
   inspect: inspectFor(() => fleetPanel.clearSelection()),

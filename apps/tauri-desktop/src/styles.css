@@ -1300,7 +1300,7 @@ span.agent-dot.big { width: 14px; height: 14px; }
 }
 .project-lane.state-landed { color: var(--ok); }
 .project-lane.state-open { color: var(--text); }
-.project-lane.state-gone { color: var(--err); }
+.project-lane.state-gone { color: var(--text-dim); }
 .project-lane.flat,
 .project-lane.hatched { color: var(--text-dim); }
 .project-tail { stroke-opacity: 0.6; }
@@ -1389,7 +1389,6 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-queue { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 0 100%; }
 .fleet-toast { color: var(--warn); font-size: var(--fs-sm); }
 .fleet-toast:empty { display: none; }
-.fleet-need.stale { border-style: dashed; color: var(--text-dim); }
 .fleet-forks:empty, .fleet-queue:empty { display: none; }
 .fleet-fork, .fleet-need { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 8px; font-size: var(--fs-sm); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; min-height: 24px; }
 .fleet-fork { padding: 0 4px; gap: 3px; border-color: transparent; }
@@ -1398,8 +1397,11 @@ span.agent-dot.big { width: 14px; height: 14px; }
 .fleet-fork:hover, .fleet-need:hover, .fleet-dwell-row:hover { background: var(--bg-hover); }
 .fleet-fork.current { border-color: var(--text); }
 .fleet-fork.state-open { color: var(--text); }
-.fleet-fork.state-landed { color: var(--ok); }
-.fleet-fork.state-gone { color: var(--err); }
+.fleet-fork.state-landed { color: var(--text-dim); }
+.fleet-fork.state-landed .fleet-fork-mark { color: var(--ok); }
+.fleet-fork.state-gone { color: var(--text-dim); }
+.fleet-range-note { margin: 0; padding: 6px 16px; font-size: var(--fs-xs); }
+.fleet-older { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: var(--fs-xs); }
 .fleet-fork.state-never_diverged, .fleet-fork.state-unknown { color: var(--text-dim); }
 .fleet-fork.idle { border-style: dashed; }
 .fleet-fork-needs, .fleet-need-mark { color: var(--warn); font-weight: 700; }

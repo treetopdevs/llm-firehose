@@ -6,6 +6,7 @@ import {
 } from "./model";
 import type { FleetInput, FleetNeed } from "./model";
 import { forkAriaLabel } from "./model";
+import { pendingNow } from "../../needs";
 
 const MIN = 60_000;
 const key = (source: string, id: string) => JSON.stringify([source, id]);
@@ -95,15 +96,11 @@ describe("needs and counts", () => {
   test("needs-you count and longest dwell, sorted longest first, keyed by [source,id]", () => {
     const r = buildFleet(input({ sessions }));
     const a = r.rows.find((x) => x.id === "repoA")!;
-    // The stale "old" request is included (item 6), so it is the longest wait and leads.
-    expect(a.needsCount).toBe(3);
-    expect(a.longestDwellMs).toBe(3 * 24 * 60 * MIN);
-    expect(a.needs.map((n) => n.key)).toEqual([key("claude-code", "old"), key("codex", "n2"), key("claude-code", "n1")]);
-    expect(r.needs.map((n) => n.key)[0]).toBe(key("claude-code", "old"));
-    // Changed (fleet-altitude item 6): a days-old pending request is no longer dropped, because the
-    // attention strip counts it; the row shows it flagged stale instead of silently disagreeing.
-    expect(r.needs.find((n) => n.id === "old")!.stale).toBe(true);
-    expect(r.needs.find((n) => n.id === "n2")!.stale).toBe(false);
+    // A days-old request is out of every count; it stays in the Needs you queue, labelled as old.
+    expect(a.needsCount).toBe(2);
+    expect(a.longestDwellMs).toBe(9 * MIN);
+    expect(a.needs.map((n) => n.key)).toEqual([key("codex", "n2"), key("claude-code", "n1")]);
+    expect(r.needs.map((n) => n.key)[0]).toBe(key("codex", "n2"));
   });
 
   test("a live failure without pending evidence flags its repo without counting as idle", () => {
@@ -415,19 +412,18 @@ describe("repo labels (item 5)", () => {
   });
 });
 
-describe("needs-you never silently dropped (item 6)", () => {
+describe("a current need is never silently dropped", () => {
   test("a pending session whose repo_id matches no /worktrees row still shows as a unit, on its own fog row", () => {
-    const s = att({ id: "orphan", repo_id: "deadbeefcafe0123", waitMs: 40 * 60 * MIN, lastAgoMs: 40 * 60 * MIN });
+    const s = att({ id: "orphan", repo_id: "deadbeefcafe0123", waitMs: 40 * MIN, lastAgoMs: 40 * MIN });
     const r = buildFleet(input({ sessions: [s] }));
     const row = r.rows.find((x) => x.id === "deadbeefcafe0123")!;
     expect(row.known).toBe(false);
     expect(row.needsCount).toBe(1);
-    expect(row.needs[0]!.stale).toBe(true);
     expect(r.needs.map((n) => n.id)).toEqual(["orphan"]);
   });
 
-  test("a pending session with an empty repo_id lands on the No project row even when stale", () => {
-    const r = buildFleet(input({ sessions: [att({ id: "e", waitMs: 5 * 24 * 60 * MIN, lastAgoMs: 5 * 24 * 60 * MIN })] }));
+  test("a pending session with an empty repo_id lands on the No project row", () => {
+    const r = buildFleet(input({ sessions: [att({ id: "e", waitMs: 5 * MIN, lastAgoMs: 5 * MIN })] }));
     const last = r.rows[r.rows.length - 1]!;
     expect(last.noRepo).toBe(true);
     expect(last.needsCount).toBe(1);
@@ -440,7 +436,8 @@ describe("needs-you never silently dropped (item 6)", () => {
       att({ id: "c", waitMs: 3 * 24 * 60 * MIN, lastAgoMs: 3 * 24 * 60 * MIN }),
     ];
     const r = buildFleet(input({ sessions }));
-    expect(r.rows.reduce((n, x) => n + x.needsCount, 0)).toBe(sessions.filter((s) => s.pending).length);
+    expect(r.rows.reduce((n, x) => n + x.needsCount, 0)).toBe(sessions.filter((s) => pendingNow(s, NOW)).length);
+    expect(r.rows.reduce((n, x) => n + x.needsCount, 0)).toBe(1);
   });
 });
 
