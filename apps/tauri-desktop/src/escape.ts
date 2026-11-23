@@ -32,9 +32,16 @@ export function yieldsToModal(_e: Event, ownerEl: Element | null | undefined): b
 
 const OVERLAYS = '.onboarding-overlay, [role="dialog"], dialog[open], [aria-modal], .action-menu, .action-dialog';
 
-/** True when nothing else owns this Escape (input, IME, dialog, menu, claim). */
-export function isEscapeEligible(e: KeyboardEvent): boolean {
+let overlayUp: () => boolean = () => false;
+/** The shell's narrow-window sidebar overlay: while it is up, it owns Escape ahead of every panel. */
+export function setEscapeOverlay(isUp: () => boolean): void {
+  overlayUp = isUp;
+}
+
+/** True when nothing else owns this Escape (input, IME, dialog, menu, claim, sidebar overlay). `forOverlay` is the overlay asking. */
+export function isEscapeEligible(e: KeyboardEvent, forOverlay = false): boolean {
   if (e.defaultPrevented || e.isComposing || isEscapeClaimed(e)) return false;
+  if (!forOverlay && overlayUp()) return false;
   const t = e.target as Element | null;
   if (t && typeof t.closest === 'function') {
     const tag = t.tagName;

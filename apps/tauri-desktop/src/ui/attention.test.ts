@@ -588,3 +588,13 @@ test("without labels a digest worktree shows its 8-character prefix, not 64 hex"
   expect(panel.root.textContent).toContain(`Worktree: ${HEX.slice(0, 8)}`);
   expect(panel.root.textContent).not.toContain(HEX);
 });
+
+test("byProject counts a session under its project's current id after a privacy change", async () => {
+  snapshot = { sessions: [{ ...session("moved"), repo_id: "digest-a" } as ReturnType<typeof session>], warnings: [] };
+  const panel = mount();
+  await panel.refresh();
+  const counts = panel.byProject((id) => (id === "digest-a" ? "/work/app" : id));
+  expect(counts.get("/work/app")?.needs).toBe(1);
+  expect(counts.has("digest-a")).toBe(false);
+  expect(panel.byProject().get("digest-a")?.needs).toBe(1);
+});
