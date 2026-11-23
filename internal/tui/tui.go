@@ -117,6 +117,14 @@ type Model struct {
 	cellIdx   int // selected cell at the workspace altitude, reading order
 	now       func() time.Time
 
+	// Moving between places: see nav.go.
+	cellKey    cellScope // the selected cell by identity, since the matrix reorders
+	hasCellKey bool
+	feedLanes  bool // the reader's strip choice for the whole feed
+	back       []place
+	forward    []place
+	navNote    string // a one-key note, cleared by the next key
+
 	// Worktree rung: the list altitude between workspace and session.
 	wsrc          WorktreeSource
 	worktrees     []WorktreeRow
@@ -260,6 +268,13 @@ func hasSource(list []string, s string) bool {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.navNote = ""
+	// A terminal sends Esc as a prefix byte, so Esc pressed just before a
+	// bracket arrives as one alt+bracket key. Honor both presses.
+	if k := msg.String(); k == "alt+[" || k == "alt+]" {
+		escaped, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+		return escaped.(Model).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: msg.Runes})
+	}
 	if m.search {
 		switch msg.Type {
 		case tea.KeyCtrlC:
@@ -298,6 +313,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if moved, ok := m.handlePlaceKey(msg.String()); ok {
+		return moved, nil
+	}
 	if m.alt == altWorkspace {
 		return m.handleWorkspaceKey(msg)
 	}
@@ -310,14 +328,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w":
 		return m.enterWorktrees()
 	case "esc":
-		if m.wscope != nil {
+		// A selected row is cleared first, so one Esc never both drops the
+		// selection and leaves the view.
+		if m.cursor >= 0 {
+			m.cursor = -1
+			return m, nil
+		}
+		m.pushPlace()
+		toList := m.wscope != nil
+		m.leaveScope()
+		if toList {
 			// Ascend to the worktree list, selection unchanged.
-			m.alt, m.wscope, m.cursor = altWorktree, nil, -1
+			m.alt = altWorktree
 			return m, nil
 		}
 		// Ascend: the workspace shows everything, with the cursor left on
 		// the cell we came from.
-		m.alt, m.scope, m.cursor = altWorkspace, nil, -1
+		m.alt = altWorkspace
 	case " ":
 		if m.paused {
 			m.paused = false
@@ -398,19 +425,21 @@ func (m Model) handleWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w":
 		return m.enterWorktrees()
 	case "up", "k", "left", "h":
-		m.cellIdx = max(m.cellIdx-1, 0)
+		cells := buildMatrix(m.liveSessions(m.now())).Cells
+		m.selectCell(cells, m.selectedCellIndex(cells)-1)
 	case "down", "j", "right":
-		n := len(buildMatrix(m.liveSessions(m.now())).Cells)
-		m.cellIdx = min(m.cellIdx+1, max(n-1, 0))
+		cells := buildMatrix(m.liveSessions(m.now())).Cells
+		m.selectCell(cells, m.selectedCellIndex(cells)+1)
 	case "enter":
 		cells := buildMatrix(m.liveSessions(m.now())).Cells
 		if len(cells) == 0 {
 			return m, nil
 		}
-		m.cellIdx = min(m.cellIdx, len(cells)-1)
-		c := cells[m.cellIdx]
-		m.scope = &cellScope{Where: c.Where, Agent: c.Agent}
-		m.alt, m.lanes, m.cursor = altSession, true, -1
+		m.selectCell(cells, m.selectedCellIndex(cells))
+		m.pushPlace()
+		m.enterScope()
+		scope := m.cellKey
+		m.scope = &scope
 	}
 	return m, nil
 }
