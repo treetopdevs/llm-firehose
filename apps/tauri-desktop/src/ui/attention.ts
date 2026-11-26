@@ -17,6 +17,7 @@ import type { LocalStorage } from "./attention-preferences";
 
 import { desktopNotifications } from "../notifications";
 import type { NotificationDelivery } from "../notifications";
+import { sessionRefKey } from "../scope";
 
 export type AttentionOptions = {
   notifications?: NotificationDelivery;
@@ -179,7 +180,7 @@ export function createAttention(options: AttentionOptions) {
       return false;
     }
   }
-  const keyOf = (s: AttentionSession) => `${s.source}\0${s.id}`;
+  const keyOf = (s: AttentionSession) => sessionRefKey(s.source, s.id);
   /** Names of the whole snapshot, so two sessions with one title can be told apart. */
   let names: (readonly [string, string])[] = [];
   const nameOf = (s: AttentionSession) => disambiguateSessionLabel(keyOf(s), sessionName(s), names);

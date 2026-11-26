@@ -36,11 +36,13 @@ export function stateFresh(state: string | undefined, lastAtMs: number, nowMs: n
  * When a session last gave evidence of life, for freshness checks: its last
  * event, or its state change when the engine asserts it is working or waiting.
  * Idle and done are absences, not reports: a daemon restart stamps every
- * historical session idle, and that must not make hundreds of them live.
+ * historical session idle, and that must not make hundreds of them live. With
+ * no last event, only an asserted state's change counts; an idle or done
+ * session then has no evidence of life (NaN), matching the Go TUI rule.
  */
 export function lastReported(lastAtMs: number, sinceMs: number, state: string | undefined): number {
   const asserted = state === "needs_input" || state === "working";
-  if (!Number.isFinite(lastAtMs)) return sinceMs;
+  if (!Number.isFinite(lastAtMs)) return asserted ? sinceMs : NaN;
   if (!Number.isFinite(sinceMs) || !asserted) return lastAtMs;
   return Math.max(lastAtMs, sinceMs);
 }
