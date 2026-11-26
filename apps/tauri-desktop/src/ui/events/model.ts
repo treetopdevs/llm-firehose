@@ -6,6 +6,7 @@
 import type { FirehoseEvent } from "../../api";
 import { coalesce, type FeedState } from "../../state";
 import type { TimelineFilter, TimelineState } from "../graph/model";
+import { sessionRefKey } from "../../scope";
 
 export interface EventRow {
   /** Logical identity, stable across coalescing (the first event's id). */
@@ -87,7 +88,7 @@ export function scopeEvents(events: readonly FirehoseEvent[], scope: EventScope)
 }
 
 function sessionRef(e: FirehoseEvent): string {
-  return e.session_id ? `${e.source}\0${e.session_id}` : "";
+  return e.session_id ? sessionRefKey(e.source, e.session_id) : "";
 }
 
 function toRow(event: FirehoseEvent, key: string, count: number): EventRow {

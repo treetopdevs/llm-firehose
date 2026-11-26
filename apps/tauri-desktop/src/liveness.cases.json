@@ -1,0 +1,125 @@
+{
+  "now": "2026-07-02T12:00:00Z",
+  "cases": [
+    {
+      "name": "needs_input fresh",
+      "state": "needs_input",
+      "last": "2026-07-02T10:00:00Z",
+      "since": "",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "needs_input stale",
+      "state": "needs_input",
+      "last": "2026-07-01T11:00:00Z",
+      "since": "",
+      "go": false,
+      "ts": false
+    },
+    {
+      "name": "needs_input revived by since",
+      "state": "needs_input",
+      "last": "2026-07-01T11:00:00Z",
+      "since": "2026-07-02T11:00:00Z",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "needs_input exactly 24h",
+      "state": "needs_input",
+      "last": "2026-07-01T12:00:00Z",
+      "since": "",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "working fresh",
+      "state": "working",
+      "last": "2026-07-02T11:40:00Z",
+      "since": "",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "working stale",
+      "state": "working",
+      "last": "2026-07-02T11:29:00Z",
+      "since": "",
+      "go": false,
+      "ts": false
+    },
+    {
+      "name": "working exactly 30m",
+      "state": "working",
+      "last": "2026-07-02T11:30:00Z",
+      "since": "",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "working revived by since",
+      "state": "working",
+      "last": "2026-07-02T11:20:00Z",
+      "since": "2026-07-02T11:55:00Z",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "idle fresh",
+      "state": "idle",
+      "last": "2026-07-02T11:55:00Z",
+      "since": "",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "idle since ignored",
+      "state": "idle",
+      "last": "2026-07-02T11:49:00Z",
+      "since": "2026-07-02T11:59:00Z",
+      "go": false,
+      "ts": false
+    },
+    {
+      "name": "done fresh",
+      "state": "done",
+      "last": "2026-07-02T11:51:00Z",
+      "since": "",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "empty state uses band window",
+      "state": "",
+      "last": "2026-07-02T11:45:00Z",
+      "since": "",
+      "go": false,
+      "ts": false
+    },
+    {
+      "name": "needs_input no last, since only",
+      "state": "needs_input",
+      "last": "",
+      "since": "2026-07-02T11:00:00Z",
+      "go": true,
+      "ts": true
+    },
+    {
+      "name": "working no times",
+      "state": "working",
+      "last": "",
+      "since": "",
+      "go": false,
+      "ts": false
+    },
+    {
+      "name": "idle no last, since only",
+      "state": "idle",
+      "last": "",
+      "since": "2026-07-02T11:59:00Z",
+      "go": false,
+      "ts": false
+    }
+  ]
+}

@@ -94,7 +94,7 @@ describe("lastReported", () => {
     expect(lastReported(1000, 5000, "needs_input")).toBe(5000);
     expect(lastReported(1000, 5000, "idle")).toBe(1000);
     expect(lastReported(1000, 5000, "done")).toBe(1000);
-    expect(lastReported(NaN, 5000, "idle")).toBe(5000);
+    expect(lastReported(NaN, 5000, "idle")).toBeNaN();
     expect(lastReported(1000, NaN, "working")).toBe(1000);
   });
 });

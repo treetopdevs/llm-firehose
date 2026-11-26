@@ -6,6 +6,7 @@ import { ApiError, worktree as fetchWorktree, worktrees as fetchWorktrees } from
 import type { WorktreeCommit, WorktreeDetail, WorktreeLifetimeView } from "../../api";
 import { clear, el, keepFocus, onActivate } from "../../dom";
 import { idLabel, projectName, shortId, worktreeName } from "../../format";
+import { sessionRefKey } from "../../scope";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
@@ -219,7 +220,6 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
   // Membership is exactly what /worktrees returned: the per-lane session list is
   // capped, so a lane with sessions_total > sessions.length is partial. Nothing is
   // inferred beyond that. Unknown project/worktree answers undefined (unrestricted).
-  const memberKey = (source: string, id: string): string => `${source}\0${id}`;
   const scopedRows = (sc: Scope): WorktreeLifetimeView[] | undefined => {
     if (sc.project === undefined) return undefined;
     const inRepo = rows.filter((r) => r.repo_id === sc.project);
@@ -244,13 +244,13 @@ export function createProject(deps: ProjectDeps): ProjectPanel {
     matcher(sc) {
       const sel = scopedRows(sc);
       if (!sel) return undefined;
-      const keys = new Set(sel.flatMap((r) => r.sessions.map((s) => memberKey(s.source, s.session_id))));
-      if (!partialOf(sel)) return (ref) => ref.source !== undefined && keys.has(memberKey(ref.source, ref.id));
+      const keys = new Set(sel.flatMap((r) => r.sessions.map((s) => sessionRefKey(s.source, s.session_id))));
+      if (!partialOf(sel)) return (ref) => ref.source !== undefined && keys.has(sessionRefKey(ref.source, ref.id));
       // Partial: only sessions known to sit in another lane are excluded.
-      const elsewhere = new Set(rows.filter((r) => !sel.includes(r)).flatMap((r) => r.sessions.map((s) => memberKey(s.source, s.session_id))));
+      const elsewhere = new Set(rows.filter((r) => !sel.includes(r)).flatMap((r) => r.sessions.map((s) => sessionRefKey(s.source, s.session_id))));
       return (ref) => {
         if (ref.source === undefined) return true;
-        const k = memberKey(ref.source, ref.id);
+        const k = sessionRefKey(ref.source, ref.id);
         return keys.has(k) || !elsewhere.has(k);
       };
     },

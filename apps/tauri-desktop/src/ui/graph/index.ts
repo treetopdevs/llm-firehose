@@ -46,7 +46,7 @@ import {
 } from "./names";
 import { createToolbar, type SearchResult, type WorkspaceTab } from "./toolbar";
 import { createActivityMap } from "../activity";
-import { createScope, formatRange, formatSpan, liveSpanOf, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
+import { createScope, formatRange, formatSpan, liveSpanOf, sessionRefKey, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, registerKeys } from "../../keys";
 
@@ -191,7 +191,7 @@ export function createWorkspaceGraph(
   function sessionRefs(): string[] {
     return Array.from(
       new Set([
-        ...scopedSessions().map((s) => `${s.source}\0${s.id}`),
+        ...scopedSessions().map((s) => sessionRefKey(s.source, s.id)),
         ...timeline
           .all()
           .filter(
@@ -199,7 +199,7 @@ export function createWorkspaceGraph(
               e.session_id &&
               (!eventsWorkspace() || timeline.association(e, repo).workspace_id === eventsWorkspace()),
           )
-          .map((e) => `${e.source}\0${e.session_id}`),
+          .map((e) => sessionRefKey(e.source, e.session_id ?? "")),
         ...(session ? [session] : []),
       ]),
     ).filter((s) => !source || s.startsWith(source + "\0"));
@@ -272,7 +272,7 @@ export function createWorkspaceGraph(
     const last = s.last?.event_id ? timeline.event(s.last.event_id) : undefined;
     if (last && (last.repo_id || last.jj_repo_id))
       return timeline.association(last, repo);
-    const observed = snapshot?.attention_associations?.[`${s.source}\0${s.id}`];
+    const observed = snapshot?.attention_associations?.[sessionRefKey(s.source, s.id)];
     return (
       (observed?.event_id === s.last?.event_id ? observed : undefined) ?? {
         repo_id: snapshot?.repository.vcs === "git" ? s.repo_id : s.jj_repo_id,
@@ -301,8 +301,9 @@ export function createWorkspaceGraph(
       if (!eventIndex) {
         eventIndex = new Map();
         for (const e of timeline.all()) {
-          const k = `${e.source}\0${e.session_id}`;
-          if (e.session_id && !eventIndex.has(k)) eventIndex.set(k, e);
+          if (!e.session_id) continue;
+          const k = sessionRefKey(e.source, e.session_id);
+          if (!eventIndex.has(k)) eventIndex.set(k, e);
         }
       }
       const seen = eventIndex.get(key);
@@ -463,7 +464,7 @@ export function createWorkspaceGraph(
   const inspector = createInspector({
     openSession: (id, src) => onOpenSession(id, src),
     filterTimeline: (src, id) => {
-      session = `${src}\0${id}`;
+      session = sessionRefKey(src, id);
       // A source filter naming another source would drop this session in setQuery; the session wins.
       if (source && source !== src) source = "";
       switchTab("timeline");
@@ -759,7 +760,7 @@ export function createWorkspaceGraph(
         if (a.workspace_id !== sc.worktree) continue;
         if (known && !known.has(a.workspace_id)) continue;
       }
-      out.add(`${s.source}\0${s.id}`);
+      out.add(sessionRefKey(s.source, s.id));
     }
     return out;
   }
@@ -772,7 +773,7 @@ export function createWorkspaceGraph(
       const keys = memberKeys(sc);
       if (!keys) return undefined;
       const ids = new Set([...keys].map((k) => k.slice(k.indexOf("\0") + 1)));
-      return (ref) => (ref.source !== undefined ? keys.has(`${ref.source}\0${ref.id}`) : ids.has(ref.id));
+      return (ref) => (ref.source !== undefined ? keys.has(sessionRefKey(ref.source, ref.id)) : ids.has(ref.id));
     },
     knows: (sc) => !hidden() && (!sc.worktree || ((sc.project ?? repo) === repo && !!snapshot?.workspaces.some((w) => w.id === sc.worktree))),
     async refresh(signal?: AbortSignal) {

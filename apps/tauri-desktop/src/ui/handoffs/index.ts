@@ -7,6 +7,7 @@ import type { Endpoint, Handoff, HandoffBook } from "./model";
 import { renderHandoffMap } from "./map";
 import { disambiguateSessionLabel, sessionRefLabel } from "../../format";
 import type { SessionDirectory } from "../../session-directory";
+import { sessionRefKey } from "../../scope";
 type StorageAccess = Pick<Storage, "getItem" | "setItem">;
 export function createHandoffs(openScore: (session: string, source: string) => void = () => { }, getRecent: () => readonly FirehoseEvent[] = () => [], storage?: StorageAccess, directory?: SessionDirectory) {
     let unsubscribe: (() => void) | undefined;
@@ -19,10 +20,10 @@ export function createHandoffs(openScore: (session: string, source: string) => v
         const seen = new Map<string, readonly [string, string]>();
         for (const e of [...state.links.flatMap(l => [l.from, l.to]), ...Object.values(verified)])
             if (e)
-                seen.set(`${e.source}\0${e.session_id}`, [`${e.source}\0${e.session_id}`, known({ id: e.session_id, source: e.source })]);
+                seen.set(sessionRefKey(e.source, e.session_id), [sessionRefKey(e.source, e.session_id), known({ id: e.session_id, source: e.source })]);
         return [...seen.values()];
     };
-    const nameOf = (ref: { id: string; source: string }) => disambiguateSessionLabel(`${ref.source}\0${ref.id}`, known(ref), peers());
+    const nameOf = (ref: { id: string; source: string }) => disambiguateSessionLabel(sessionRefKey(ref.source, ref.id), known(ref), peers());
     const status = el("p", { role: "status" }), recovery = el("section"), saved = el("section"), detail = el("section", { class: "handoff-detail", "aria-label": "Inspected receipt" }), confirmation = el("section", { class: "handoff-confirm" });
     const label = el("input", { "aria-label": "Link label", maxlength: "500" });
     const sides = ["departure", "arrival"] as const;

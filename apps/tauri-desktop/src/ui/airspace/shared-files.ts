@@ -5,6 +5,7 @@ import { matchesFileReceipt } from '../files';
 import { disambiguateSessionLabel, idLabel, sessionRefLabel } from '../../format';
 import { stripControl } from '../score/model';
 import { sharedFileLanes } from './shared-files-model';
+import { sessionRefKey } from "../../scope";
 
 const button = (label: string, action: () => void) => {
   const result = el('button', {}, label);
@@ -55,7 +56,7 @@ export function createSharedFiles(now: () => number = Date.now) {
     let previous = '';
     let list: HTMLOListElement | undefined;
     const visible = participants.slice(page * 40, page * 40 + 40);
-    const peerNames = participants.map(p => [`${p.member.source}\0${p.member.session_id}`, nameOf(p.member)] as const);
+    const peerNames = participants.map(p => [sessionRefKey(p.member.source, p.member.session_id), nameOf(p.member)] as const);
     for (const { lane, member, laneIndex, memberIndex } of visible) {
       const key = JSON.stringify([lane.workspace_kind, lane.workspace, lane.path]);
       if (key !== previous) {
@@ -66,7 +67,7 @@ export function createSharedFiles(now: () => number = Date.now) {
         body.append(el('p', {}, `Lane ${laneIndex + 1}: participants ${memberIndex + 1}–${memberIndex + shown} of ${lane.members.length}.`));
         list = el('ol', { 'aria-label': `File lane ${laneIndex + 1}: ${stripControl(lane.path)}`, start: String(memberIndex + 1) }); body.append(list);
       }
-      const name = `${stripControl(member.source)} / ${stripControl(disambiguateSessionLabel(`${member.source}\0${member.session_id}`, nameOf(member), peerNames))}`;
+      const name = `${stripControl(member.source)} / ${stripControl(disambiguateSessionLabel(sessionRefKey(member.source, member.session_id), nameOf(member), peerNames))}`;
       const inspect = button(`Inspect latest file observation: ${name}`, () => void inspectFile(member, inspect));
       inspect.setAttribute('aria-label', `Inspect latest file observation: ${name}; ${stripControl(lane.path)}; ${stripControl(lane.workspace_kind)}: ${stripControl(lane.workspace)}; lane ${laneIndex + 1}, participant ${memberIndex + 1}`);
       inspect.disabled = !member.last_event_id || !connected || !active;

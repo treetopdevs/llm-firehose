@@ -4,6 +4,7 @@
 import type { FirehoseEvent } from "../../api";
 import { clear, el, onActivate } from "../../dom";
 import { FORK_GLYPH } from "../../glyphs";
+import { sessionRefKey } from "../../scope";
 import { stateWord } from "../../needs";
 import { isTransition, sessionHue } from "../../spark";
 import { axisTicks } from "../lanes/model";
@@ -28,10 +29,10 @@ export function qualifyLaneInput(events: readonly FirehoseEvent[]): FirehoseEven
     if (isTransition(e)) {
       // Synthetic transitions carry the originating adapter in payload.source.
       const origin = typeof e.payload?.source === "string" && e.payload.source ? e.payload.source : e.source;
-      out.push({ ...e, session_id: `${origin}${SEP}${e.session_id}` });
+      out.push({ ...e, session_id: sessionRefKey(origin, e.session_id) });
     } else if (e.category === "meta") {
       continue; // adapter noise is not fleet activity (D95)
-    } else out.push({ ...e, session_id: `${e.source}${SEP}${e.session_id}` });
+    } else out.push({ ...e, session_id: sessionRefKey(e.source, e.session_id) });
   }
   return out;
 }

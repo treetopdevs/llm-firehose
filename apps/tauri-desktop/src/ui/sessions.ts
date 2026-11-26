@@ -17,7 +17,7 @@ import { bucketCountsByKey, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventRows } from "./events";
 import { scopeEvents } from "./events/model";
 import type { CellScope } from "./workspace/model";
-import { createScope, membership, sameSession } from "../scope";
+import { createScope, membership, sameSession, sessionRefKey } from "../scope";
 import type { Scope, ScopeStore, SessionRef } from "../scope";
 import { describeWorktree, orderWorktrees } from "./worktree-list";
 import type { WorktreeRow } from "./worktree-list";
@@ -101,7 +101,6 @@ type Status = {
   text?: string;
 };
 
-const sessionKey = (source: string | undefined, id: string): string => `${source ?? ""}\0${id}`;
 const UNKNOWN_STATE_REASON = "not in the needs-you snapshot, so no state was captured for it";
 const NO_TIME_REASON = "no readable activity time was captured";
 
@@ -357,7 +356,7 @@ export function createSessions(
     const refs = store.resolver()?.lifetimes?.(sc)?.find((r) => r.worktree_id === sc.worktree)?.sessions;
     if (!refs) return listed;
     const fromRef = (r: WorktreeSessionRef, s: SessionSummary | undefined): SessionSummary => {
-      const own = attended.get(sessionKey(r.source, r.session_id));
+      const own = attended.get(sessionRefKey(r.source, r.session_id));
       const title = s?.title ?? own?.title;
       return {
         id: r.session_id,
@@ -371,15 +370,15 @@ export function createSessions(
         ...(title ? { title } : {}),
       };
     };
-    const member = new Map(refs.map((r) => [sessionKey(r.source, r.session_id), r]));
+    const member = new Map(refs.map((r) => [sessionRefKey(r.source, r.session_id), r]));
     const have = new Set<string>();
     const kept = listed.map((s) => {
-      const key = sessionKey(s.source, s.id);
+      const key = sessionRefKey(s.source, s.id);
       have.add(key);
       const r = member.get(key);
       return r && attended.get(key)?.events !== s.events ? fromRef(r, s) : s;
     });
-    return [...kept, ...refs.filter((r) => !have.has(sessionKey(r.source, r.session_id))).map((r) => fromRef(r, undefined))];
+    return [...kept, ...refs.filter((r) => !have.has(sessionRefKey(r.source, r.session_id))).map((r) => fromRef(r, undefined))];
   }
 
   function scopeChip(active: CellScope): HTMLElement {
@@ -453,10 +452,10 @@ export function createSessions(
 
   /** What names the history on screen: the row itself when it was rebuilt, else the matching source's attention entry when the open is source-qualified. */
   function headingSubject(id: string, s: SessionSummary | undefined, source: string | undefined): SessionLike | undefined {
-    const row = source ? rebuiltRows.get(sessionKey(source, id)) : undefined;
+    const row = source ? rebuiltRows.get(sessionRefKey(source, id)) : undefined;
     if (row) return row;
-    if (source && s && s.source !== source) return knownBySource.get(sessionKey(source, id)) ?? { id, source };
-    if (source && !s) return knownBySource.get(sessionKey(source, id));
+    if (source && s && s.source !== source) return knownBySource.get(sessionRefKey(source, id)) ?? { id, source };
+    if (source && !s) return knownBySource.get(sessionRefKey(source, id));
     return s;
   }
 
@@ -527,7 +526,7 @@ export function createSessions(
         role: "group",
         "aria-label": `open ${sessionName(s)}, ${status.label}`,
         "data-id": s.id,
-        "data-key": sessionKey(s.source, s.id),
+        "data-key": sessionRefKey(s.source, s.id),
         ...(s.source ? { "data-source": s.source } : {}),
       },
       row,
@@ -547,7 +546,7 @@ export function createSessions(
       // The history tracks the scope's identity whether or not it is filtered.
       historyRef = ref;
     };
-    const key = sessionKey(s.source, s.id);
+    const key = sessionRefKey(s.source, s.id);
     onSelectOpen(item, { select: () => pick(key), open }, { self: true, siblings: () => [...listBox.querySelectorAll(ITEMS)] });
     pickables.set(key, () => ({
       kind: "session", key, title: sessionName(s),
@@ -575,7 +574,7 @@ export function createSessions(
   const ITEMS = ".session-item, .worktree-item";
   const itemKey = (n: Element): string => {
     const wt = n.getAttribute("data-wt");
-    return wt !== null ? `wt\0${wt}` : `${n.getAttribute("data-source") ?? ""}\0${n.getAttribute("data-id") ?? ""}`;
+    return wt !== null ? `wt\0${wt}` : sessionRefKey(n.getAttribute("data-source") ?? "", n.getAttribute("data-id") ?? "");
   };
   const CONTROLS = ["score-open", "loops-open"];
 
@@ -685,14 +684,14 @@ export function createSessions(
       const now = Date.now();
       const attended = new Map<string, AttentionSession>();
       if (inbox.status === "fulfilled") {
-        for (const a of inbox.value.sessions) attended.set(sessionKey(a.source, a.id), a);
+        for (const a of inbox.value.sessions) attended.set(sessionRefKey(a.source, a.id), a);
         knownBySource = attended;
       }
       // The scope may have moved while the requests were in flight: read it now.
       const sc = store.get();
       const scopedRows = list.status === "fulfilled" ? rowsInScope(sc, list.value, attended) : [];
       if (list.status === "fulfilled") {
-        if (sc.worktree) rebuiltRows = new Map(scopedRows.filter((s) => !list.value.includes(s)).map((s) => [sessionKey(s.source, s.id), s]));
+        if (sc.worktree) rebuiltRows = new Map(scopedRows.filter((s) => !list.value.includes(s)).map((s) => [sessionRefKey(s.source, s.id), s]));
         known = new Map(list.value.map((s) => [s.id, s]));
         directory?.remember([...list.value, ...(inbox.status === "fulfilled" ? inbox.value.sessions : [])]);
         // A title that arrived since the history was opened moves into its heading.
@@ -710,7 +709,7 @@ export function createSessions(
       const members = sc.worktree || sc.project ? membership(store, sc) : undefined;
       const scopedAll = scopedRows
         .filter((s) => inCell(s, sc.cell) && (!members || members({ id: s.id, source: s.source })))
-        .map((s) => ({ s, status: statusOf(attended.get(sessionKey(s.source, s.id)), now) }));
+        .map((s) => ({ s, status: statusOf(attended.get(sessionRefKey(s.source, s.id)), now) }));
       // A session waiting on you is never hidden by the range.
       // Outside a worktree a row stands for every source of its native id, so any of them waiting keeps it.
       const waitingIds = new Set(sc.worktree ? [] : [...attended.values()].filter((a) => statusOf(a, now).needs).map((a) => a.id));
@@ -752,7 +751,7 @@ export function createSessions(
       }
       listBox.append(el("p", { class: "dim sessions-count" }, all.length > cap ? `Showing ${cap} of ${all.length} sessions${all.length < scopedAll.length ? " in range" : ""}` : all.length < scopedAll.length ? `${all.length} of ${scopedAll.length} sessions in range` : `${all.length} session${all.length === 1 ? "" : "s"}`));
       // Rows in a worktree are one source's, so their activity is too; elsewhere a row aggregates the native id, as its history does.
-      const sparkKey = sc.worktree ? (source: string, id: string) => sessionKey(source, id) : (_source: string, id: string) => id;
+      const sparkKey = sc.worktree ? (source: string, id: string) => sessionRefKey(source, id) : (_source: string, id: string) => id;
       const counts = bucketCountsByKey(recentEvents(), (ev) => sparkKey(ev.source, ev.session_id!), now);
       let scale = 0;
       for (const c of counts.values()) {

@@ -12,7 +12,7 @@ import type { Inspected } from "../inspector";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, QUEUE_KEYS, registerKeys } from "../../keys";
 import type { KeyBinding } from "../../keys";
-import { DEFAULT_LIVE_SPAN_MS, isLive } from "../../scope";
+import { DEFAULT_LIVE_SPAN_MS, isLive, sessionRefKey } from "../../scope";
 import type { Scope, ScopePatch, ScopeStore } from "../../scope";
 import type { CellScope } from "../workspace/model";
 import type { ActionsUi } from "../actions";
@@ -994,7 +994,7 @@ export function createFleet(deps: FleetDeps): FleetPanel {
     const live = isLive(w);
     const end = live ? now : w.to;
     const windowMs = live ? (store.get().liveSpanMs ?? LANE_WINDOWS_MS[1]) : Math.max(w.to - w.from, 1);
-    const qualified = summaries.map((s) => ({ ...s, id: `${s.source}${SEP}${s.id}` }));
+    const qualified = summaries.map((s) => ({ ...s, id: sessionRefKey(s.source, s.id) }));
     const lanes = buildLanes(qualifyLaneInput(deps.events().filter((e) => live || !(Date.parse(e.time) > end))), qualified, end, windowMs, deps.directory ? (ref) => deps.directory!.lookup(ref) : undefined);
     // A lane nothing has named asks the directory (rate-limited there) so it is named once it is known.
     if (deps.directory) for (const l of lanes) { const ref = decodeLaneId(l.id); try { if (!deps.directory.lookup(ref)) deps.directory.ensure(ref); } catch { /* ignore */ } }

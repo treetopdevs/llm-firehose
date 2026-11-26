@@ -1,5 +1,6 @@
 import type { FirehoseEvent } from "../../api";
 import { isTransition } from "../../spark";
+import { sessionRefKey } from "../../scope";
 export interface GraphNode {
   key: string;
   parents: string[];
@@ -205,7 +206,7 @@ export class TimelineState {
         (!f.workspace ||
           this.association(e, f.repo).workspace_id === f.workspace) &&
         (!f.source || e.source === f.source) &&
-        (!f.session || `${e.source}\0${e.session_id}` === f.session) &&
+        (!f.session || (!!e.session_id && sessionRefKey(e.source, e.session_id) === f.session)) &&
         (!f.category || e.category === f.category) &&
         (!f.search ||
           [e.name, e.summary, e.agent, e.source, e.session_id]

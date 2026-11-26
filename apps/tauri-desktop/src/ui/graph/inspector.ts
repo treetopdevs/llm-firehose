@@ -9,6 +9,7 @@ import { sharedAncestorCount, type GraphNode } from "./model";
 import { displayText, fileName, isDigest, shortDigest, sourceName, stateDescription, type AgentState } from "./names";
 import { icon } from "./toolbar";
 import { LOCAL } from "../../keys";
+import { sessionRefKey } from "../../scope";
 
 export interface AgentRow {
   source: string;
@@ -363,7 +364,7 @@ export function createInspector(h: InspectorHandlers) {
 
       const agents = el("div", { class: "insp-agents" });
       for (const a of c.agents) {
-        const row = el("div", { class: "agent-row", "data-session": `${a.source}\0${a.id}` });
+        const row = el("div", { class: "agent-row", "data-session": sessionRefKey(a.source, a.id) });
         const open = el("button", { type: "button", class: "agent-open", title: `Open ${sourceName(a.source)} session ${a.id}`, "data-action": `session:${a.source}:${a.id}` });
         open.append(
           el("span", { class: `agent-dot state-${a.state}`, role: "img", "aria-label": stateDescription(a.state) }),

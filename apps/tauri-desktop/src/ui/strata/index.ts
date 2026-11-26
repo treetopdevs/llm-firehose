@@ -3,6 +3,7 @@ import type { ErrorSignature, ErrorSignatureSession, ErrorSignatureSessions } fr
 import { clear, el, keepFocus } from "../../dom";
 import { disambiguateSessionLabel, sessionRefLabel } from "../../format";
 import type { SessionDirectory } from "../../session-directory";
+import { sessionRefKey } from "../../scope";
 
 const PAGE_SIZE = 50;
 type Navigate = (session: string, source: string) => void;
@@ -69,7 +70,7 @@ export function createStrata(openLoops: Navigate = () => {}, openScore: Navigate
   }
   /** Names the rows on screen in place; the page, selection and scroll are untouched. */
   function relabel() {
-    const names = shown.map(({row}) => [`${row.source}\0${row.session_id}`, sessionRefLabel({id: row.session_id, source: row.source}, directory?.lookup({id: row.session_id, source: row.source})).label] as const);
+    const names = shown.map(({row}) => [sessionRefKey(row.source, row.session_id), sessionRefLabel({id: row.session_id, source: row.source}, directory?.lookup({id: row.session_id, source: row.source})).label] as const);
     shown.forEach(({name}, i) => {
       const label = disambiguateSessionLabel(names[i]![0], names[i]![1], names);
       if (name.textContent !== label) name.textContent = label;

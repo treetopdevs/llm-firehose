@@ -4,6 +4,7 @@
 // fetch of its own. A load never overwrites what was remembered after it began.
 import { sessionRefLabel } from "./format";
 import type { SessionLike } from "./format";
+import { sessionRefKey } from "./scope";
 
 export type SessionRefLike = { id: string; source?: string };
 
@@ -17,7 +18,6 @@ export interface SessionDirectory {
 }
 
 const COOLDOWN_MS = 10_000;
-const keyOf = (source: string, id: string) => `${source}\0${id}`;
 const same = (a: SessionLike, b: SessionLike) =>
   a.title === b.title && a.agent === b.agent && a.repo === b.repo && a.cwd === b.cwd && a.first_time === b.first_time && a.last_time === b.last_time;
 
@@ -34,7 +34,7 @@ export function createSessionDirectory(
 
   /** Stores one entry; true when the visible data changed. */
   function put(s: SessionLike, gen: number): boolean {
-    const k = keyOf(s.source, s.id);
+    const k = sessionRefKey(s.source, s.id);
     const prev = entries.get(k);
     // An entry without first_time, last_time or title (an /attention row) never erases one a /sessions row supplied.
     const merged = { ...s };
@@ -48,10 +48,10 @@ export function createSessionDirectory(
   }
 
   function lookup(ref: SessionRefLike): SessionLike | undefined {
-    if (ref.source !== undefined) return entries.get(keyOf(ref.source, ref.id))?.s;
+    if (ref.source !== undefined) return entries.get(sessionRefKey(ref.source, ref.id))?.s;
     const sources = byId.get(ref.id);
     if (!sources || sources.size !== 1) return undefined;
-    return entries.get(keyOf([...sources][0]!, ref.id))?.s;
+    return entries.get(sessionRefKey([...sources][0]!, ref.id))?.s;
   }
 
   function notify() {
@@ -89,7 +89,7 @@ export function createSessionDirectory(
           loading = false;
           let changed = false;
           for (const s of list) {
-            const prev = entries.get(keyOf(s.source, s.id));
+            const prev = entries.get(sessionRefKey(s.source, s.id));
             if (prev && prev.gen > startGen) continue;
             if (put(s, ++counter)) changed = true;
           }

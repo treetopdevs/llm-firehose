@@ -8,6 +8,7 @@ import {
   isLive,
   liveSpanOf,
   presetWindow,
+  sessionRefKey,
   resolveRange,
   shiftWindow,
   spanOf,
@@ -593,5 +594,21 @@ describe("composed lifetimes", () => {
     store.setResolver({ ...base });
     store.setFallbackResolver({ ...base });
     expect(store.resolver()!.lifetimes!(sc)).toBeUndefined();
+  });
+});
+
+describe('sessionRefKey', () => {
+  test('is source NUL id', () => {
+    expect(sessionRefKey('codex', 's1')).toBe('codex\u0000s1');
+  });
+  test('an absent source becomes empty', () => {
+    expect(sessionRefKey(undefined, 's1')).toBe('\u0000s1');
+  });
+  test('is order sensitive', () => {
+    expect(sessionRefKey('a', 'b')).not.toBe(sessionRefKey('b', 'a'));
+  });
+  test('the id after the first NUL round-trips', () => {
+    const k = sessionRefKey('src', 'id\u0000x');
+    expect(k.slice(k.indexOf('\0') + 1)).toBe('id\u0000x');
   });
 });

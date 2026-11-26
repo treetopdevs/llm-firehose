@@ -97,6 +97,15 @@ export function sameSession(a?: SessionRef, b?: SessionRef): boolean {
   return a.id === b.id && a.source === b.source;
 }
 
+/**
+ * The string form of a session identity, `source NUL id`, as the daemon keys
+ * associations (docs/contracts.md). An absent source becomes "".
+ * Do not change the order: callers decode the id after the first NUL.
+ */
+export function sessionRefKey(source: string | undefined, id: string): string {
+  return `${source ?? ""}\u0000${id}`;
+}
+
 const validWindow = (w: { from: number; to: number }): boolean =>
   Number.isFinite(w.from) && Number.isFinite(w.to) && w.from <= w.to;
 
