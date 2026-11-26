@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"agentfirehose/internal/cli"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/install"
 )
 
 const (
@@ -40,7 +40,7 @@ type otelForwarder struct {
 	dropped atomic.Int64
 
 	mu      sync.Mutex
-	cached  cli.OTelForwardTargets
+	cached  install.OTelForwardTargets
 	modTime time.Time
 	size    int64
 	loaded  bool
@@ -66,26 +66,26 @@ func newOTelForwarder(home string, ownAddr func() string, stop <-chan struct{}, 
 
 // targets returns the validated forward destinations, re-reading the record
 // when it changes so an install takes effect without a daemon restart.
-func (f *otelForwarder) targets() cli.OTelForwardTargets {
+func (f *otelForwarder) targets() install.OTelForwardTargets {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	info, err := os.Stat(cli.OTelForwardPath(f.home))
+	info, err := os.Stat(install.OTelForwardPath(f.home))
 	if err != nil {
-		f.cached, f.loaded = cli.OTelForwardTargets{}, false
+		f.cached, f.loaded = install.OTelForwardTargets{}, false
 		return f.cached
 	}
 	if f.loaded && info.ModTime().Equal(f.modTime) && info.Size() == f.size {
 		return f.cached
 	}
-	targets, err := cli.LoadOTelForward(f.home)
+	targets, err := install.LoadOTelForward(f.home)
 	if err != nil {
-		targets = cli.OTelForwardTargets{}
+		targets = install.OTelForwardTargets{}
 	}
 	own := f.ownAddr()
-	if cli.ValidateOTelForwardTarget(targets.Logs, own) != nil {
+	if install.ValidateOTelForwardTarget(targets.Logs, own) != nil {
 		targets.Logs = ""
 	}
-	if cli.ValidateOTelForwardTarget(targets.Metrics, own) != nil {
+	if install.ValidateOTelForwardTarget(targets.Metrics, own) != nil {
 		targets.Metrics = ""
 	}
 	targets.OriginalEnv = nil

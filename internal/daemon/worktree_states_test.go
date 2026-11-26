@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 )
 
 func sha(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -447,7 +447,7 @@ func TestWorktreeTestsAreHermetic(t *testing.T) {
 			t.Fatalf("%s %s is outside the temp dir %s", name, p, tmp)
 		}
 	}
-	if addr := s.config().DaemonAddr; addr == cli.DefaultDaemonAddr || strings.HasSuffix(addr, ":4517") {
+	if addr := s.config().DaemonAddr; addr == config.DefaultDaemonAddr || strings.HasSuffix(addr, ":4517") {
 		t.Fatalf("daemon addr must not be the real one: %s", addr)
 	}
 	if s.worktrees.latest != nil {

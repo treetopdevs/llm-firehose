@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/host"
 )
@@ -31,12 +31,12 @@ func TestViewFeedDaemonlessReturnsWorktreeSource(t *testing.T) {
 	dead.Close() // closed listener: the daemon probe fails
 
 	home := t.TempDir()
-	cfg := cli.Config{DaemonAddr: addr, SpoolDir: t.TempDir(), PrivacyMode: "full"}
+	cfg := config.Config{DaemonAddr: addr, SpoolDir: t.TempDir(), PrivacyMode: "full"}
 	engine, err := host.NewEngineWithSources(cfg, home, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	opener := func(ctx context.Context, _ cli.Config, _ string) (host.Feed, error) {
+	opener := func(ctx context.Context, _ config.Config, _ string) (host.Feed, error) {
 		return host.OpenFeedForEngine(ctx, engine)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -79,9 +79,9 @@ func TestViewFeedDaemonModeReturnsDaemonSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := cli.Config{DaemonAddr: srv.Listener.Addr().String(), SpoolDir: t.TempDir()}
+	cfg := config.Config{DaemonAddr: srv.Listener.Addr().String(), SpoolDir: t.TempDir()}
 	called := false
-	opener := func(context.Context, cli.Config, string) (host.Feed, error) {
+	opener := func(context.Context, config.Config, string) (host.Feed, error) {
 		called = true
 		return host.Feed{}, nil
 	}

@@ -82,8 +82,10 @@ sources ──adapters──▶ event.Event ──capture.Admit──▶ spool (
   `GET /worktrees` and `GET /worktrees/{id}` (route family `/worktrees[/{id}]`), `/doctor`, `/install/{adapter}`, `/export`.
 - **`internal/client`** — HTTP client the TUI/desktop use to consume the daemon.
 - **`internal/tui`** — Bubble Tea model (`tui.go`) + rendering (`view.go`).
-- **`internal/cli`** — testable subcommand implementations (config, doctor, install, status,
-  emit, ingest, export). `cmd/firehose/main.go` is flag parsing + wiring only.
+- **`internal/cli`** — testable subcommand implementations (status, emit, ingest,
+  export, privacy, hook forwarding). `cmd/firehose/main.go` is flag parsing + wiring only.
+- **`internal/install`** — adapter hook/OTel installers, doctor checks, OTel forward targets.
+- **`internal/config`** — load/save of `~/.agentfirehose/config.json` and defaults.
 
 **Daemon-optional design (important):** capture NEVER depends on the daemon being up. When
 a daemon is running, `firehose emit` and adapters route through it and the TUI consumes its

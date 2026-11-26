@@ -17,13 +17,14 @@ import (
 	"agentfirehose/internal/capture"
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/testsupport/capturehistory"
 )
 
-func testCaptureEngine(t *testing.T, cfg cli.Config) *capture.Engine {
+func testCaptureEngine(t *testing.T, cfg config.Config) *capture.Engine {
 	t.Helper()
 	mode, err := privacy.ParseMode(cfg.PrivacyMode)
 	if err != nil {
@@ -40,7 +41,7 @@ func testCaptureEngine(t *testing.T, cfg cli.Config) *capture.Engine {
 // host:port it listens on plus that spool dir.
 func startDaemon(t *testing.T) (addr, spoolDir string) {
 	t.Helper()
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "daemon-spool"),
 		PrivacyMode: "balanced",
 	}
@@ -51,7 +52,7 @@ func startDaemon(t *testing.T) (addr, spoolDir string) {
 
 func TestEmitRoutesThroughDaemonWhenReachable(t *testing.T) {
 	daemonAddr, daemonSpool := startDaemon(t)
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  daemonAddr,
@@ -73,7 +74,7 @@ func TestEmitRoutesThroughDaemonWhenReachable(t *testing.T) {
 
 func TestHookForwardRoutesThroughDaemonAndReturnsNeutralJSON(t *testing.T) {
 	daemonAddr, daemonSpool := startDaemon(t)
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  daemonAddr,
@@ -96,7 +97,7 @@ func TestHookForwardRoutesThroughDaemonAndReturnsNeutralJSON(t *testing.T) {
 }
 
 func TestEmitFallsBackToLocalSpoolWhenDaemonDown(t *testing.T) {
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  "127.0.0.1:1", // nothing listens here
@@ -113,7 +114,7 @@ func TestEmitFallsBackToLocalSpoolWhenDaemonDown(t *testing.T) {
 
 func TestEmitBadPayloadIsNotSwallowedByFallback(t *testing.T) {
 	daemonAddr, daemonSpool := startDaemon(t)
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  daemonAddr,
@@ -130,7 +131,7 @@ func TestEmitBadPayloadIsNotSwallowedByFallback(t *testing.T) {
 }
 
 func TestEmitDaemonPersistenceFailureFallsBackOnce(t *testing.T) {
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir: filepath.Join(t.TempDir(), "local-spool"), PrivacyMode: "balanced",
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -152,7 +153,7 @@ func TestEmitDaemonPersistenceFailureFallsBackOnce(t *testing.T) {
 
 func TestStatusReportsRunningDaemon(t *testing.T) {
 	daemonAddr, _ := startDaemon(t)
-	cfg := cli.Config{DaemonAddr: daemonAddr}
+	cfg := config.Config{DaemonAddr: daemonAddr}
 	var out bytes.Buffer
 	if running := cli.Status(cfg, &out); !running {
 		t.Fatalf("Status = false with daemon up; output: %s", out.String())
@@ -163,7 +164,7 @@ func TestStatusReportsRunningDaemon(t *testing.T) {
 }
 
 func TestStatusReportsDownDaemon(t *testing.T) {
-	cfg := cli.Config{DaemonAddr: "127.0.0.1:1"}
+	cfg := config.Config{DaemonAddr: "127.0.0.1:1"}
 	var out bytes.Buffer
 	if running := cli.Status(cfg, &out); running {
 		t.Fatal("Status = true with no daemon")
@@ -174,7 +175,7 @@ func TestStatusReportsDownDaemon(t *testing.T) {
 }
 
 func TestEmitLocalWritesDirectly(t *testing.T) {
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 	}
@@ -199,7 +200,7 @@ func TestDaemonEmitDoesNotProxyToItself(t *testing.T) {
 	addr := l.Addr().String()
 	l.Close()
 
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  addr, // the daemon's own address
@@ -231,7 +232,7 @@ func TestDaemonEmitDoesNotProxyToItself(t *testing.T) {
 }
 
 func TestServeAndShutdown(t *testing.T) {
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 	}
@@ -242,7 +243,7 @@ func TestServeAndShutdown(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 	var out bytes.Buffer
-	if running := cli.Status(cli.Config{DaemonAddr: addr}, &out); !running {
+	if running := cli.Status(config.Config{DaemonAddr: addr}, &out); !running {
 		t.Fatalf("daemon not reachable at %s: %s", addr, out.String())
 	}
 	// An open live stream must not wedge shutdown. Its own context stays
@@ -269,7 +270,7 @@ func TestServeAndShutdown(t *testing.T) {
 
 func TestHookForwardAntigravityThreadsEventNameThroughDaemonEmit(t *testing.T) {
 	daemonAddr, daemonSpool := startDaemon(t)
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "local-spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  daemonAddr,

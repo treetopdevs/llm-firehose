@@ -16,8 +16,10 @@ import (
 
 	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/host"
+	"agentfirehose/internal/install"
 	"agentfirehose/internal/livesubscription"
 	"agentfirehose/internal/tui"
 )
@@ -53,7 +55,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	cfg, err := cli.LoadConfig(home)
+	cfg, err := config.Load(home)
 	if err != nil {
 		fatal(err)
 	}
@@ -117,18 +119,18 @@ func main() {
 		}
 		switch args[0] {
 		case "claude-code":
-			fatalIf(cli.InstallClaudeCode(home, bin))
+			fatalIf(install.InstallClaudeCode(home, bin))
 			fmt.Println("✓ hooks merged into ~/.claude/settings.json (backup: settings.json.bak)")
 			fmt.Println("  restart running Claude Code sessions to pick them up")
 		case "claude-otel":
 			addr := cfg.DaemonAddr
 			if addr == "" {
-				addr = cli.DefaultDaemonAddr
+				addr = config.DefaultDaemonAddr
 			}
-			backup, err := cli.InstallClaudeOTelWith(home, addr, os.Environ(), cli.ClaudeOTelOptions{Replace: replace, Forward: forward})
+			backup, err := install.InstallClaudeOTelWith(home, addr, os.Environ(), install.ClaudeOTelOptions{Replace: replace, Forward: forward})
 			fatalIf(err)
 			fmt.Println("✓ supplemental Claude OTLP/HTTP JSON enabled for the local daemon")
-			if kept, err := cli.LoadOTelForward(home); forward && err == nil && (kept.Logs != "" || kept.Metrics != "") {
+			if kept, err := install.LoadOTelForward(home); forward && err == nil && (kept.Logs != "" || kept.Metrics != "") {
 				fmt.Println("  your existing collector keeps receiving telemetry through Firehose (undo: firehose uninstall claude-otel)")
 			}
 			if backup != "" {
@@ -136,16 +138,16 @@ func main() {
 			}
 			fmt.Println("  restart running Claude Code sessions to pick it up")
 		case "opencode":
-			path, err := cli.InstallOpenCode(home, bin)
+			path, err := install.InstallOpenCode(home, bin)
 			fatalIf(err)
 			fmt.Printf("✓ plugin written to %s\n", path)
 			fmt.Println("  restart OpenCode to load it")
 		case "codex":
-			fatalIf(cli.InstallCodex(home, bin))
+			fatalIf(install.InstallCodex(home, bin))
 			fmt.Println("✓ Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak)")
 			fmt.Println("  open /hooks in Codex to review and trust them, then start a fresh task")
 		case "antigravity":
-			fatalIf(cli.InstallAntigravity(home, bin))
+			fatalIf(install.InstallAntigravity(home, bin))
 			fmt.Println("✓ Antigravity hooks merged into ~/.gemini/config/hooks.json (backup: hooks.json.bak)")
 			fmt.Println("  post-only events (PostToolUse, PostInvocation, Stop); start a fresh agy conversation")
 		default:
@@ -157,14 +159,14 @@ func main() {
 		}
 		addr := cfg.DaemonAddr
 		if addr == "" {
-			addr = cli.DefaultDaemonAddr
+			addr = config.DefaultDaemonAddr
 		}
-		fatalIf(cli.UninstallClaudeOTel(home, addr))
+		fatalIf(install.UninstallClaudeOTel(home, addr))
 		fmt.Println("✓ Firehose's Claude OTLP settings removed (any forwarded collector restored)")
 		fmt.Println("  restart running Claude Code sessions to pick it up")
 	case "doctor":
 		bad := 0
-		for _, c := range cli.Doctor(cfg, home) {
+		for _, c := range install.Doctor(cfg, home) {
 			mark := "✓"
 			if !c.OK {
 				mark = "✗"
@@ -237,7 +239,7 @@ func runView(cfg cfgType, home string) error {
 // viewFeed prefers the daemon API; without one it opens the same host-composed
 // Capture Engine locally. Both paths preload durable history and Projection
 // state, then reconcile bounded live-stream interruptions.
-func viewFeed(ctx context.Context, cfg cfgType, home string, openLocal func(context.Context, cli.Config, string) (host.Feed, error)) (<-chan event.Event, []event.Event, []tui.SessionAttention, tui.WorktreeSource, error) {
+func viewFeed(ctx context.Context, cfg cfgType, home string, openLocal func(context.Context, config.Config, string) (host.Feed, error)) (<-chan event.Event, []event.Event, []tui.SessionAttention, tui.WorktreeSource, error) {
 	if cfg.DaemonAddr != "" {
 		c := client.New("http://" + cfg.DaemonAddr)
 		if h, err := c.Health(ctx); err == nil {
@@ -279,7 +281,7 @@ func sessionAttention(sessions []livesubscription.Session) []tui.SessionAttentio
 	return attention
 }
 
-type cfgType = cli.Config
+type cfgType = config.Config
 
 func jsonLine(ev event.Event) ([]byte, error) {
 	data, err := json.Marshal(ev)

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/testsupport/capturehistory"
 )
@@ -91,7 +91,7 @@ func fixtureEventsFrom(t *testing.T, path string) []event.Event {
 	return out
 }
 
-func fullConfig(t *testing.T) cli.Config {
+func fullConfig(t *testing.T) config.Config {
 	cfg := testConfig(t)
 	cfg.PrivacyMode = "full"
 	cfg.DaemonAddr = "127.0.0.1:0"

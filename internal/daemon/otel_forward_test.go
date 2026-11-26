@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/install"
 )
 
 type forwarded struct {
@@ -38,7 +38,7 @@ func collector(t *testing.T, block <-chan struct{}) (*httptest.Server, <-chan fo
 
 func writeForwardFile(t *testing.T, home, body string) {
 	t.Helper()
-	path := cli.OTelForwardPath(home)
+	path := install.OTelForwardPath(home)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestInstallEndpointClaudeOTelForwardBody(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("forward install status = %d", resp.StatusCode)
 	}
-	targets, err := cli.LoadOTelForward(home)
+	targets, err := install.LoadOTelForward(home)
 	if err != nil || targets.Logs != "http://127.0.0.1:1738/v1/logs" {
 		t.Fatalf("forward targets = %+v, %v", targets, err)
 	}

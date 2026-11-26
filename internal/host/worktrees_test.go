@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/tui"
@@ -161,7 +161,7 @@ func TestEngineWorktreesHonorsCanceledContext(t *testing.T) {
 }
 
 func TestOpenFeedForEngineExposesWorktreeSource(t *testing.T) {
-	cfg := cli.Config{SpoolDir: t.TempDir(), PrivacyMode: "full"}
+	cfg := config.Config{SpoolDir: t.TempDir(), PrivacyMode: "full"}
 	e, err := NewEngineWithSources(cfg, t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)

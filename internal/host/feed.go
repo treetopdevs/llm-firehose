@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/livesubscription"
 	"agentfirehose/internal/tui"
@@ -21,7 +21,7 @@ type Feed struct {
 
 // OpenLocalFeed composes the same production Capture Engine used by the
 // daemon, preloads its durable Projections, and starts its Sources.
-func OpenLocalFeed(ctx context.Context, cfg cli.Config, home string) (Feed, error) {
+func OpenLocalFeed(ctx context.Context, cfg config.Config, home string) (Feed, error) {
 	engine, err := NewEngine(cfg, home)
 	if err != nil {
 		return Feed{}, err

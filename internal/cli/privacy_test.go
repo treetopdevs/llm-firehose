@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"agentfirehose/internal/config"
 )
 
 func TestPrivacyShowsCurrentModeAndHowToChangeIt(t *testing.T) {
@@ -41,7 +43,7 @@ func TestPrivacySetWithoutDaemonWritesConfig(t *testing.T) {
 	if err := Privacy(cfg, home, []string{"full"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	got, err := LoadConfig(home)
+	got, err := config.Load(home)
 	if err != nil || got.PrivacyMode != "full" {
 		t.Fatalf("config %+v %v", got, err)
 	}
