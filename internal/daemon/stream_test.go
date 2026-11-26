@@ -15,7 +15,7 @@ import (
 
 	"agentfirehose/internal/adapters/codex"
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 )
 
@@ -64,7 +64,7 @@ func (s *codexOnlyTestSource) waitReady(t *testing.T) {
 }
 
 // startedServer runs a daemon with capture started against fast pollers.
-func startedServer(t *testing.T, cfg cli.Config) *httptest.Server {
+func startedServer(t *testing.T, cfg config.Config) *httptest.Server {
 	t.Helper()
 	home := t.TempDir()
 	var sources []capture.Source

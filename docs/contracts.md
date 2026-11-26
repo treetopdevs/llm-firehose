@@ -128,7 +128,7 @@ bump.
 
 ## Export format (`export_version`)
 
-`export_version` **1** (`cli.ExportVersion`) is NDJSON of schema-versioned
+`export_version` **1** (`capture.ExportVersion`) is NDJSON of schema-versioned
 event envelopes, one per line, oldest first — the spool format, concatenated
 across days. Produced by `firehose export` and `POST /export` (which sets
 `X-Firehose-Export-Version: 1`).

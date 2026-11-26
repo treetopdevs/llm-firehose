@@ -20,7 +20,7 @@ import (
 	"agentfirehose/internal/adapters/generic"
 	"agentfirehose/internal/adapters/push"
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/workspacegraph"
@@ -37,7 +37,7 @@ type Server struct {
 	worktrees       worktreeStates
 	graphResponseMu sync.RWMutex
 	mu              sync.RWMutex // guards cfg
-	cfg             cli.Config
+	cfg             config.Config
 	home            string
 	version         string
 	engine          *capture.Engine
@@ -51,7 +51,7 @@ type Server struct {
 	Environ []string
 }
 
-func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
+func New(engine *capture.Engine, cfg config.Config, home, version string) *Server {
 	server := &Server{
 		graph:     graphHost{service: workspacegraph.New(engine.Policy())},
 		cfg:       cfg,
@@ -66,7 +66,7 @@ func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
 		if addr := server.config().DaemonAddr; addr != "" {
 			return addr
 		}
-		return cli.DefaultDaemonAddr
+		return config.DefaultDaemonAddr
 	}, server.shutdown, server.warnForwardFailure)
 	server.loadGraphRoots()
 	server.loadWorktreeStates()
@@ -222,7 +222,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // config returns a snapshot of the effective runtime configuration.
-func (s *Server) config() cli.Config {
+func (s *Server) config() config.Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cfg
@@ -236,7 +236,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // applied to the running engine; other fields take effect on restart.
 func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxOTLPBodyBytes)
-	var patch cli.Config
+	var patch config.Config
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -268,7 +268,7 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		merged.DaemonAddr = patch.DaemonAddr
 		restart = append(restart, "daemon_addr")
 	}
-	if err := cli.SaveConfig(s.home, merged); err != nil {
+	if err := config.Save(s.home, merged); err != nil {
 		s.mu.Unlock()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

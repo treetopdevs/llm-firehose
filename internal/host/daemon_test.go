@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 )
 
 func TestRunDaemonComposesEngineAndHTTPUntilCancellation(t *testing.T) {
 	home := t.TempDir()
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(home, ".agentfirehose", "spool"),
 		PrivacyMode: "balanced",
 		DaemonAddr:  "127.0.0.1:0",

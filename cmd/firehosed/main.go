@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/host"
 )
 
@@ -29,7 +30,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	cfg, err := cli.LoadConfig(home)
+	cfg, err := config.Load(home)
 	if err != nil {
 		fatal(err)
 	}

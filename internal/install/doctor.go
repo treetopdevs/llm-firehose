@@ -1,4 +1,4 @@
-package cli
+package install
 
 import (
 	"fmt"
@@ -14,6 +14,7 @@ import (
 	"agentfirehose/internal/adapters/codex"
 	"agentfirehose/internal/adapters/opencode"
 	"agentfirehose/internal/capturemeta"
+	"agentfirehose/internal/config"
 )
 
 // Check is one doctor validation result.
@@ -28,7 +29,7 @@ type Check struct {
 }
 
 // Doctor validates that capture paths are wired correctly.
-func Doctor(cfg Config, home string) []Check {
+func Doctor(cfg config.Config, home string) []Check {
 	var checks []Check
 
 	// spool writable
@@ -63,7 +64,7 @@ func Doctor(cfg Config, home string) []Check {
 
 	otelAddr := cfg.DaemonAddr
 	if otelAddr == "" {
-		otelAddr = DefaultDaemonAddr
+		otelAddr = config.DefaultDaemonAddr
 	}
 	otelOK := ClaudeOTelConfigured(home, otelAddr)
 	checks = append(checks, Check{

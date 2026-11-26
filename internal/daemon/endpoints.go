@@ -12,7 +12,8 @@ import (
 	"strings"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
+	"agentfirehose/internal/install"
 )
 
 // Session, FileArtifact and ErrorSignature are served straight from the derived index; the
@@ -87,7 +88,7 @@ func (s *Server) handleArtifactFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, cli.Doctor(s.config(), s.home))
+	writeJSON(w, install.Doctor(s.config(), s.home))
 }
 
 // handleInstall wires an adapter the same way `firehose install` does, so
@@ -101,7 +102,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	switch adapter {
 	case "claude-code":
-		if err := cli.InstallClaudeCode(s.home, bin); err != nil {
+		if err := install.InstallClaudeCode(s.home, bin); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -109,7 +110,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	case "claude-otel":
 		addr := s.config().DaemonAddr
 		if addr == "" {
-			addr = cli.DefaultDaemonAddr
+			addr = config.DefaultDaemonAddr
 		}
 		var opts struct {
 			Replace bool `json:"replace"`
@@ -123,37 +124,37 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "replace and forward are mutually exclusive", http.StatusBadRequest)
 			return
 		}
-		backup, err := cli.InstallClaudeOTelWith(s.home, addr, s.Environ, cli.ClaudeOTelOptions{Replace: opts.Replace, Forward: opts.Forward})
+		backup, err := install.InstallClaudeOTelWith(s.home, addr, s.Environ, install.ClaudeOTelOptions{Replace: opts.Replace, Forward: opts.Forward})
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, cli.ErrClaudeOTelConflict) {
+			if errors.Is(err, install.ErrClaudeOTelConflict) {
 				status = http.StatusConflict
 			}
 			http.Error(w, err.Error(), status)
 			return
 		}
 		detail = "supplemental Claude OTLP/HTTP JSON enabled for the local daemon; restart running Claude Code sessions"
-		if kept, err := cli.LoadOTelForward(s.home); opts.Forward && err == nil && (kept.Logs != "" || kept.Metrics != "") {
+		if kept, err := install.LoadOTelForward(s.home); opts.Forward && err == nil && (kept.Logs != "" || kept.Metrics != "") {
 			detail += "; your existing collector keeps receiving telemetry through Firehose"
 		}
 		if backup != "" {
 			detail += " (backup: " + backup + ")"
 		}
 	case "opencode":
-		path, err := cli.InstallOpenCode(s.home, bin)
+		path, err := install.InstallOpenCode(s.home, bin)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		detail = "plugin written to " + path + "; restart OpenCode to load it"
 	case "codex":
-		if err := cli.InstallCodex(s.home, bin); err != nil {
+		if err := install.InstallCodex(s.home, bin); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		detail = "Codex hooks configured in ~/.codex/hooks.json (backup: hooks.json.bak); review and trust them in Codex /hooks, then start a fresh task"
 	case "antigravity":
-		if err := cli.InstallAntigravity(s.home, bin); err != nil {
+		if err := install.InstallAntigravity(s.home, bin); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -167,7 +168,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("X-Firehose-Export-Version", fmt.Sprint(cli.ExportVersion))
+	w.Header().Set("X-Firehose-Export-Version", fmt.Sprint(capture.ExportVersion))
 	if _, err := s.engine.Export(w); err != nil {
 		// Headers are already sent; the truncated body is the best signal left.
 		return

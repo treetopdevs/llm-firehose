@@ -6,14 +6,15 @@ import (
 	"io"
 
 	"agentfirehose/internal/client"
+	"agentfirehose/internal/config"
 )
 
 // Status probes the configured daemon, writes a one-line report, and returns
 // whether it is running.
-func Status(cfg Config, w io.Writer) bool {
+func Status(cfg config.Config, w io.Writer) bool {
 	addr := cfg.DaemonAddr
 	if addr == "" {
-		addr = DefaultDaemonAddr
+		addr = config.DefaultDaemonAddr
 	}
 	h, err := client.New("http://" + addr).Health(context.Background())
 	if err != nil {

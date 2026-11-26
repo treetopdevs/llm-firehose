@@ -145,6 +145,10 @@ func (e *Engine) history(ctx context.Context, days []string, id string, keep fun
 	return out, nil
 }
 
+// ExportVersion identifies the export format: NDJSON of schema-versioned
+// event envelopes, one per line, oldest first.
+const ExportVersion = 1
+
 // Export writes every physical spool observation oldest first. Unlike
 // presentation queries, it intentionally retains stable-ID duplicates.
 func (e *Engine) Export(w io.Writer) (int, error) {

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/testsupport/capturehistory"
@@ -41,22 +41,22 @@ func testPOST(t *testing.T, rawURL, contentType string, body io.Reader) (*http.R
 	return http.DefaultClient.Do(req)
 }
 
-func testConfig(t *testing.T) cli.Config {
+func testConfig(t *testing.T) config.Config {
 	t.Helper()
-	return cli.Config{
+	return config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 	}
 }
 
-func testServer(t *testing.T, cfg cli.Config) *httptest.Server {
+func testServer(t *testing.T, cfg config.Config) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(New(testEngine(t, cfg), cfg, t.TempDir(), "test-version").Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
 
-func testEngine(t *testing.T, cfg cli.Config, sources ...capture.Source) *capture.Engine {
+func testEngine(t *testing.T, cfg config.Config, sources ...capture.Source) *capture.Engine {
 	t.Helper()
 	policy, err := privacy.ParseMode(cfg.PrivacyMode)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestConfigEndpoint(t *testing.T) {
 		t.Fatalf("GET /config: %v", err)
 	}
 	defer resp.Body.Close()
-	var got cli.Config
+	var got config.Config
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestConfigUpdateEndpoint(t *testing.T) {
 		t.Fatalf("GET /config: %v", err)
 	}
 	defer get.Body.Close()
-	var live cli.Config
+	var live config.Config
 	if err := json.NewDecoder(get.Body).Decode(&live); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestConfigUpdateEndpoint(t *testing.T) {
 	}
 
 	// persisted: config.json under the daemon's home carries the change
-	saved, err := cli.LoadConfig(home)
+	saved, err := config.Load(home)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -273,12 +273,12 @@ func TestConfigUpdateRestartRequiredFields(t *testing.T) {
 		t.Fatalf("GET /config: %v", err)
 	}
 	defer get.Body.Close()
-	var live cli.Config
+	var live config.Config
 	json.NewDecoder(get.Body).Decode(&live)
 	if live.SpoolDir != cfg.SpoolDir {
 		t.Errorf("runtime spool dir changed without restart: %q", live.SpoolDir)
 	}
-	saved, _ := cli.LoadConfig(home)
+	saved, _ := config.Load(home)
 	if saved.SpoolDir != newSpool {
 		t.Errorf("saved spool dir = %q, want %q", saved.SpoolDir, newSpool)
 	}
@@ -351,7 +351,7 @@ func TestConcurrentConfigUpdatesKeepPersistedAndActivePolicyOrdered(t *testing.T
 		}
 		got.resp.Body.Close()
 	}
-	saved, err := cli.LoadConfig(home)
+	saved, err := config.Load(home)
 	if err != nil || saved.PrivacyMode != "minimal" {
 		t.Fatalf("saved policy = %q, %v", saved.PrivacyMode, err)
 	}

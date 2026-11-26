@@ -15,13 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/event"
+	"agentfirehose/internal/install"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/testsupport/capturehistory"
 )
 
-func httptestNewServerWithHome(t *testing.T, cfg cli.Config, home string) *httptest.Server {
+func httptestNewServerWithHome(t *testing.T, cfg config.Config, home string) *httptest.Server {
 	t.Helper()
 	srv := New(testEngine(t, cfg), cfg, home, "test-version")
 	// Hermetic: the host running the tests may itself export Claude
@@ -388,7 +389,7 @@ func TestInstallEndpoint(t *testing.T) {
 	if otel.StatusCode != http.StatusOK {
 		t.Fatalf("Claude OTel install status = %d, want 200", otel.StatusCode)
 	}
-	if !cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+	if !install.ClaudeOTelConfigured(home, config.DefaultDaemonAddr) {
 		t.Fatal("desktop Claude OTel install did not configure the local receiver")
 	}
 
@@ -418,7 +419,7 @@ func TestInstallEndpointClaudeOTelRefusesEnvironmentTelemetry(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 when the environment already configures telemetry", resp.StatusCode)
 	}
-	if cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+	if install.ClaudeOTelConfigured(home, config.DefaultDaemonAddr) {
 		t.Fatal("refused install still configured the local receiver")
 	}
 }
@@ -461,7 +462,7 @@ func TestInstallEndpointClaudeOTelReplaceBody(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !out.OK || !strings.Contains(out.Detail, "backup") {
 		t.Fatalf("replace install = %d %+v, want 200 mentioning the backup", resp.StatusCode, out)
 	}
-	if !cli.ClaudeOTelConfigured(home, cli.DefaultDaemonAddr) {
+	if !install.ClaudeOTelConfigured(home, config.DefaultDaemonAddr) {
 		t.Fatal("replace did not configure the local receiver")
 	}
 }

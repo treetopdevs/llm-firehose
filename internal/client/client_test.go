@@ -15,17 +15,17 @@ import (
 	"time"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
 	"agentfirehose/internal/client"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/testsupport/capturehistory"
 )
 
-func testDaemon(t *testing.T) (*httptest.Server, cli.Config) {
+func testDaemon(t *testing.T) (*httptest.Server, config.Config) {
 	t.Helper()
-	cfg := cli.Config{
+	cfg := config.Config{
 		SpoolDir:    filepath.Join(t.TempDir(), "spool"),
 		PrivacyMode: "balanced",
 	}

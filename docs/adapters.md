@@ -283,5 +283,5 @@ echo '{"source":"my-agent","category":"shell","summary":"ran make"}' \
    captured payloads.
 2. Wire it into `Emit` in `internal/cli/cli.go` (push model) or add a watcher
    goroutine in `cmd/firehose/main.go` (tail model).
-3. Add a `doctor` check in `internal/cli/doctor.go` and, if setup is needed,
-   an `install` step in `internal/cli/install.go`.
+3. Add a `doctor` check in `internal/install/doctor.go` and, if setup is needed,
+   an `install` step in `internal/install/install.go`.

@@ -1,4 +1,5 @@
-package cli
+// Package install writes and checks agent hook/OTel configuration and reports doctor checks.
+package install
 
 import (
 	"encoding/json"

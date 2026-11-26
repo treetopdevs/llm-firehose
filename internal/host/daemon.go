@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/privacy"
 )
 
 // NewEngine constructs the shared local Capture Engine used by both hosts.
-func NewEngine(cfg cli.Config, home string) (*capture.Engine, error) {
+func NewEngine(cfg config.Config, home string) (*capture.Engine, error) {
 	sources := capture.LocalSources(capture.LocalSourceOptions{
 		CodexDir:       cfg.CodexDir,
 		CodexStatePath: filepath.Join(home, ".agentfirehose", "state", "codex-cursors.json"),
@@ -23,13 +23,13 @@ func NewEngine(cfg cli.Config, home string) (*capture.Engine, error) {
 
 // NewEngineWithSources is NewEngine with an explicit Source set, so tests and
 // embedders can avoid the production Sources.
-func NewEngineWithSources(cfg cli.Config, _ string, sources []capture.Source) (*capture.Engine, error) {
+func NewEngineWithSources(cfg config.Config, _ string, sources []capture.Source) (*capture.Engine, error) {
 	return capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: privacy.ModeOrDefault(cfg.PrivacyMode), Sources: sources})
 }
 
 // RunDaemon runs one Capture Engine and its local HTTP adapter until
 // cancellation. Neither binary reconstructs lifecycle ordering itself.
-func RunDaemon(ctx context.Context, cfg cli.Config, home, version, addr string, onReady func(string)) error {
+func RunDaemon(ctx context.Context, cfg config.Config, home, version, addr string, onReady func(string)) error {
 	engine, err := NewEngine(cfg, home)
 	if err != nil {
 		return err

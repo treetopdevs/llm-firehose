@@ -13,7 +13,7 @@ import (
 
 	"agentfirehose/internal/adapters/generic"
 	"agentfirehose/internal/capture"
-	"agentfirehose/internal/cli"
+	"agentfirehose/internal/config"
 	"agentfirehose/internal/daemon"
 	"agentfirehose/internal/event"
 	"agentfirehose/internal/privacy"
@@ -218,7 +218,7 @@ func TestDaemonAndDaemonlessAdmissionPersistEquivalentCapturedEvents(t *testing.
 		t.Fatal(err)
 	}
 
-	cfg := cli.Config{SpoolDir: t.TempDir(), PrivacyMode: "balanced"}
+	cfg := config.Config{SpoolDir: t.TempDir(), PrivacyMode: "balanced"}
 	daemonEngine, err := capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: privacy.ModeBalanced})
 	if err != nil {
 		t.Fatal(err)

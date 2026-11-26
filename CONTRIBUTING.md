@@ -36,7 +36,9 @@ Package layout:
 - `internal/adapters/*` — one package per source
 - `internal/store` — ring buffer, filters, coalescing
 - `internal/tui` — Bubble Tea model/view
-- `internal/cli` — testable subcommand implementations
+- `internal/cli` — testable subcommand implementations (status, emit, ingest, export, privacy, hook forwarding)
+- `internal/install` — adapter hook/OTel installers, doctor checks, OTel forward targets
+- `internal/config` — load/save of `~/.agentfirehose/config.json` and defaults
 - `internal/daemon` — local HTTP adapter over an injected Capture Engine
 - `internal/host` — shared daemon and daemonless composition
 - `cmd/firehose` — flag parsing and wiring only
