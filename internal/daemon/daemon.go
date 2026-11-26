@@ -52,12 +52,8 @@ type Server struct {
 }
 
 func New(engine *capture.Engine, cfg cli.Config, home, version string) *Server {
-	mode, err := privacy.ParseMode(cfg.PrivacyMode)
-	if err != nil {
-		mode = privacy.ModeBalanced
-	}
 	server := &Server{
-		graph:     graphHost{service: workspacegraph.New(mode)},
+		graph:     graphHost{service: workspacegraph.New(engine.Policy())},
 		cfg:       cfg,
 		home:      home,
 		version:   version,

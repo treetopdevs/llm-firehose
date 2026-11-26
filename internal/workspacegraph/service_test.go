@@ -115,7 +115,7 @@ func TestGraphIdentitiesFollowModeWhileDisplayDataIsReadable(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		wantRepoID, wantOtherID := digest(identityRaw(t, root)), digest(canonicalOther)
+		wantRepoID, wantOtherID := privacy.HashIdentity(identityRaw(t, root)), privacy.HashIdentity(canonicalOther)
 		if mode == privacy.ModeFull {
 			wantRepoID, wantOtherID = identityRaw(t, root), canonicalOther
 		}
@@ -146,7 +146,7 @@ func TestGraphIdentitiesFollowModeWhileDisplayDataIsReadable(t *testing.T) {
 					t.Errorf("%s: long path must be raw and untruncated: %+v %q", mode, w.Changes, w.ChangedFiles)
 				}
 				repoAliases, wsAliases, e := s.EventScope(r.ID, w.ID)
-				if e != nil || repoAliases[0] != identityRaw(t, root) || repoAliases[1] != digest(identityRaw(t, root)) || wsAliases[0] != canonicalOther || wsAliases[1] != digest(canonicalOther) {
+				if e != nil || repoAliases[0] != identityRaw(t, root) || repoAliases[1] != privacy.HashIdentity(identityRaw(t, root)) || wsAliases[0] != canonicalOther || wsAliases[1] != privacy.HashIdentity(canonicalOther) {
 					t.Errorf("%s: event aliases changed: %v %v %v", mode, repoAliases, wsAliases, e)
 				}
 			}

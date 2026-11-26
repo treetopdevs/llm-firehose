@@ -90,11 +90,7 @@ type worktreeRow struct {
 }
 
 func (s *Server) currentPrivacyMode() privacy.Mode {
-	mode, err := privacy.ParseMode(s.config().PrivacyMode)
-	if err != nil {
-		return privacy.ModeBalanced
-	}
-	return mode
+	return s.engine.Policy()
 }
 
 // attributeCommit joins a commit time to the session whose window covers it:
@@ -137,9 +133,9 @@ func resolveWorktree(lt capture.WorktreeLifetime, obs *worktreeObservation) (key
 	}
 	wtKey := lt.WorktreeID
 	if rawWt != "" {
-		wtKey = digestString(rawWt)
+		wtKey = privacy.HashIdentity(rawWt)
 	}
-	return "r\x00" + digestString(repo.raw) + "\x00" + wtKey, repo.raw, rawWt, rec
+	return "r\x00" + privacy.HashIdentity(repo.raw) + "\x00" + wtKey, repo.raw, rawWt, rec
 }
 
 func sessionKeyLess(a, b capture.WorktreeSession) bool {
@@ -318,15 +314,15 @@ func (s *Server) worktreeRows() []worktreeRow {
 			if full {
 				repoID = g.rawRepo
 			} else {
-				repoID = digestString(g.rawRepo)
+				repoID = privacy.HashIdentity(g.rawRepo)
 			}
 			if g.rawWt != "" {
 				if full {
 					wtID = g.rawWt
 				} else {
-					wtID = digestString(g.rawWt)
+					wtID = privacy.HashIdentity(g.rawWt)
 				}
-				aliases[g.rawWt], aliases[digestString(g.rawWt)] = true, true
+				aliases[g.rawWt], aliases[privacy.HashIdentity(g.rawWt)] = true, true
 			}
 		}
 		aliases[wtID] = true
@@ -423,7 +419,7 @@ func (s *Server) worktreeCommits(ctx context.Context, row worktreeRow) []worktre
 	defer cancel()
 	svcID := row.rawRepo
 	if s.currentPrivacyMode() != privacy.ModeFull {
-		svcID = digestString(row.rawRepo)
+		svcID = privacy.HashIdentity(row.rawRepo)
 	}
 	s.worktrees.detailCompares.Add(1)
 	cmp, err := s.graph.service.Compare(ctx, svcID, row.rec.Head, row.rec.Target)
