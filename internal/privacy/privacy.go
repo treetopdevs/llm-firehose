@@ -68,12 +68,39 @@ func Redact(ev event.Event, mode Mode) event.Event {
 	return out
 }
 
+// HashIdentity is the SHA-256 hex digest Capture stores for a path-valued
+// identity outside full mode. It hashes every input, including "", because
+// workspace-graph and worktree identities have always done so.
+func HashIdentity(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// Identity returns a path-valued identity as Capture stores it under mode m:
+// raw in full mode, HashIdentity otherwise. Graph and worktree IDs must use this
+// so they keep matching the identities on Captured Events.
+func Identity(s string, m Mode) string {
+	if m == ModeFull {
+		return s
+	}
+	return HashIdentity(s)
+}
+
+// ModeOrDefault parses s, returning ModeBalanced (the default mode) when s is
+// empty or unknown. Use it where a stored config value must not stop a host;
+// validate user input with ParseMode instead.
+func ModeOrDefault(s string) Mode {
+	if m, err := ParseMode(s); err == nil {
+		return m
+	}
+	return ModeBalanced
+}
+
 func digestPath(s string) string {
 	if s == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
+	return HashIdentity(s)
 }
 
 func truncateValue(v any) any {

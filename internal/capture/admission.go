@@ -28,7 +28,7 @@ func (e *Engine) Admit(ctx context.Context, observation event.Event) (event.Even
 		return event.Event{}, err
 	}
 	enriched, root := workspace.EnrichWithRoot(observation)
-	stored, err := e.writer.Append(privacy.Redact(enriched, e.activePolicy()))
+	stored, err := e.writer.Append(privacy.Redact(enriched, e.Policy()))
 	if err != nil {
 		return event.Event{}, err
 	}

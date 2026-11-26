@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	"agentfirehose/internal/capture"
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/workspacegraph"
 )
 
@@ -76,11 +75,6 @@ type worktreeStatesFile struct {
 }
 
 func recordKey(repo, worktree string) string { return repo + "\x00" + worktree }
-
-func digestString(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
-}
 
 type worktreeCompare struct{ ahead, behind int }
 
@@ -394,7 +388,7 @@ func (s *Server) observeWorktrees(ctx context.Context) {
 	obs := &worktreeObservation{repos: map[string]*observedRepo{}}
 	for raw, reason := range reasons {
 		or := &observedRepo{raw: raw, reason: reason, worktrees: map[string]*worktreeRecord{}}
-		obs.repos[raw], obs.repos[digestString(raw)] = or, or
+		obs.repos[raw], obs.repos[privacy.HashIdentity(raw)] = or, or
 	}
 	for _, r := range w.records {
 		or := obs.repos[r.Repo]
@@ -402,7 +396,7 @@ func (s *Server) observeWorktrees(ctx context.Context) {
 			continue
 		}
 		rec := r
-		or.worktrees[r.Worktree], or.worktrees[digestString(r.Worktree)] = &rec, &rec
+		or.worktrees[r.Worktree], or.worktrees[privacy.HashIdentity(r.Worktree)] = &rec, &rec
 	}
 	w.mu.Lock()
 	w.latest = obs

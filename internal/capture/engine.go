@@ -162,7 +162,8 @@ func (e *Engine) SetPolicy(policy privacy.Mode) {
 	e.policyMu.Unlock()
 }
 
-func (e *Engine) activePolicy() privacy.Mode {
+// Policy returns the active Capture Policy.
+func (e *Engine) Policy() privacy.Mode {
 	e.policyMu.RLock()
 	defer e.policyMu.RUnlock()
 	return e.policy

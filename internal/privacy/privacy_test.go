@@ -192,3 +192,30 @@ func TestRedactBalancedDropsOverlongRootAlias(t *testing.T) {
 		t.Fatalf("full mode has no limit: %d runes", len(got.RootAlias))
 	}
 }
+
+func TestIdentityMatchesRedactedIdentityFields(t *testing.T) {
+	for _, mode := range []Mode{ModeMinimal, ModeBalanced, ModeFull} {
+		for _, p := range []string{"/work/proj", "/work/proj/.git", "jj:/work/ws"} {
+			got := Redact(event.Event{ID: "x", Source: "s", RepoID: p, WorktreeID: p, CWD: p}, mode)
+			if want := Identity(p, mode); got.RepoID != want || got.WorktreeID != want || got.CWD != want {
+				t.Errorf("mode %s path %q: Redact = %q/%q/%q, Identity = %q", mode, p, got.RepoID, got.WorktreeID, got.CWD, want)
+			}
+		}
+	}
+}
+
+func TestHashIdentityHashesEmptyString(t *testing.T) {
+	// Graph and worktree IDs historically hash "" too; preserve that exactly.
+	if got := HashIdentity(""); got != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Fatalf("HashIdentity(\"\") = %q", got)
+	}
+}
+
+func TestModeOrDefault(t *testing.T) {
+	cases := map[string]Mode{"full": ModeFull, "": ModeBalanced, "bogus": ModeBalanced}
+	for in, want := range cases {
+		if got := ModeOrDefault(in); got != want {
+			t.Errorf("ModeOrDefault(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

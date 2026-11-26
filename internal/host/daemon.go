@@ -24,11 +24,7 @@ func NewEngine(cfg cli.Config, home string) (*capture.Engine, error) {
 // NewEngineWithSources is NewEngine with an explicit Source set, so tests and
 // embedders can avoid the production Sources.
 func NewEngineWithSources(cfg cli.Config, _ string, sources []capture.Source) (*capture.Engine, error) {
-	policy, err := privacy.ParseMode(cfg.PrivacyMode)
-	if err != nil {
-		policy = privacy.ModeBalanced
-	}
-	return capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: policy, Sources: sources})
+	return capture.New(capture.Options{SpoolDir: cfg.SpoolDir, Policy: privacy.ModeOrDefault(cfg.PrivacyMode), Sources: sources})
 }
 
 // RunDaemon runs one Capture Engine and its local HTTP adapter until

@@ -4,8 +4,6 @@ import (
 	"agentfirehose/internal/privacy"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -78,18 +76,12 @@ func canonical(p string) (string, error) {
 	}
 	return filepath.EvalSymlinks(a)
 }
-func digest(p string) string { h := sha256.Sum256([]byte(p)); return hex.EncodeToString(h[:]) }
 
 // identity is the only mode-dependent value in a graph response. Repository.ID
 // and Workspace.ID must equal the privacy-processed identities Capture stamps on
 // events (a digest outside full mode), or session association would stop
 // matching. Every display value (labels, refs, descriptions, paths) is raw.
-func identity(p string, m privacy.Mode) string {
-	if m == privacy.ModeFull {
-		return p
-	}
-	return digest(p)
-}
+func identity(p string, m privacy.Mode) string { return privacy.Identity(p, m) }
 
 // Register makes a repository known by any directory inside it. The repository
 // is located by reading files only and anchored on its main checkout (Git) or
@@ -532,14 +524,14 @@ func (s *Service) EventScope(repoID, workspaceID string) ([]string, []string, er
 	if r == nil {
 		return nil, nil, ErrNotFound
 	}
-	repo := []string{r.identity, digest(r.identity)}
+	repo := []string{r.identity, privacy.HashIdentity(r.identity)}
 	if workspaceID == "" {
 		return repo, nil, nil
 	}
 	if r.snapshot != nil {
 		for _, w := range r.snapshot.Workspaces {
 			if w.ID == workspaceID {
-				return repo, []string{w.rawIdentity, digest(w.rawIdentity)}, nil
+				return repo, []string{w.rawIdentity, privacy.HashIdentity(w.rawIdentity)}, nil
 			}
 		}
 	}
@@ -557,10 +549,10 @@ func (s *Service) WorkspaceAliases(repoID string) ([]string, map[string][]string
 	if r == nil || r.snapshot == nil {
 		return nil, nil, false
 	}
-	repo := []string{r.identity, digest(r.identity)}
+	repo := []string{r.identity, privacy.HashIdentity(r.identity)}
 	ws := make(map[string][]string, len(r.snapshot.Workspaces))
 	for _, w := range r.snapshot.Workspaces {
-		ws[w.ID] = []string{w.rawIdentity, digest(w.rawIdentity)}
+		ws[w.ID] = []string{w.rawIdentity, privacy.HashIdentity(w.rawIdentity)}
 	}
 	return repo, ws, true
 }

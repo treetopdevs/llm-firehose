@@ -155,7 +155,7 @@ func TestGitRepositoryIdentityFollowsMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.ID != digest(filepath.Join(root, ".git")) || r.ProjectID != r.ID || r.ProjectLabel != root {
+	if r.ID != privacy.HashIdentity(filepath.Join(root, ".git")) || r.ProjectID != r.ID || r.ProjectLabel != root {
 		t.Fatalf("%+v", r)
 	}
 }

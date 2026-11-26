@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"agentfirehose/internal/privacy"
 	"agentfirehose/internal/workspacegraph"
 )
 
@@ -150,7 +151,7 @@ func TestUnreadableRepositoryIsOneUnavailableProject(t *testing.T) {
 	if len(repos) != 1 || repos[0].Status != "unavailable" || repos[0].Label != root || repos[0].VCS != "git" {
 		t.Fatalf("one unavailable project: %+v", repos)
 	}
-	if want := digestString(filepath.Join(root, ".git")); repos[0].ProjectID != want || repos[0].ProjectLabel != root {
+	if want := privacy.HashIdentity(filepath.Join(root, ".git")); repos[0].ProjectID != want || repos[0].ProjectLabel != root {
 		t.Fatalf("project identity: %+v want %s", repos[0], want)
 	}
 	var _ workspacegraph.Repository = repos[0]

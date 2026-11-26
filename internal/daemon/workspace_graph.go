@@ -304,7 +304,7 @@ func (s *Server) handleGraphRepos(w http.ResponseWriter, r *http.Request) {
 			if resolved == "git" {
 				row.ProjectID = id
 				if !full {
-					row.ProjectID = digestString(id)
+					row.ProjectID = privacy.HashIdentity(id)
 				}
 			}
 		}
@@ -544,7 +544,7 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 		// keep answering under the raw path or its digest.
 		if repoScope, _, repoErr := s.graph.service.EventScope(repoID, ""); repoErr == nil {
 			if _, rec := s.worktrees.observation().lookup(repoScope[0], workspaceID); rec != nil {
-				repoAliases, workspaceAliases, err = repoScope, []string{rec.Worktree, digestString(rec.Worktree)}, nil
+				repoAliases, workspaceAliases, err = repoScope, []string{rec.Worktree, privacy.HashIdentity(rec.Worktree)}, nil
 			}
 		}
 	}
@@ -571,9 +571,7 @@ func (s *Server) handleGraphActivity(w http.ResponseWriter, r *http.Request) {
 		TruncatedTotal    int                         `json:"truncated_total"`
 		CaptureGap        bool                        `json:"capture_gap"`
 	}{RepoID: repoID, WorkspaceID: workspaceID, From: floored, To: to, BucketSeconds: bucket, Buckets: buckets, Paths: []capture.ActivityPath{}, ErrorPaths: []capture.ActivityErrorPath{}, Groups: []activityGroup{}}
-	s.mu.RLock()
-	minimal := s.cfg.PrivacyMode == string(privacy.ModeMinimal)
-	s.mu.RUnlock()
+	minimal := s.currentPrivacyMode() == privacy.ModeMinimal
 	w.Header().Set("Cache-Control", "no-store")
 	if minimal {
 		resp.UnavailableReason = "minimal"

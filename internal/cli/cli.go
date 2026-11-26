@@ -88,11 +88,7 @@ func SaveConfig(home string, cfg Config) error {
 }
 
 func (c Config) mode() privacy.Mode {
-	m, err := privacy.ParseMode(c.PrivacyMode)
-	if err != nil {
-		return privacy.ModeBalanced
-	}
-	return m
+	return privacy.ModeOrDefault(c.PrivacyMode)
 }
 
 // Emit reads one raw payload from r and hands it to the running daemon so the

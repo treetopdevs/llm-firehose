@@ -102,6 +102,20 @@ func TestSetPolicyAppliesAtomicallyToLaterAdmissions(t *testing.T) {
 	}
 }
 
+func TestPolicyReflectsActiveCapturePolicy(t *testing.T) {
+	engine, err := capture.New(capture.Options{SpoolDir: t.TempDir(), Policy: privacy.ModeBalanced})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.Policy(); got != privacy.ModeBalanced {
+		t.Fatalf("Policy() = %q, want %q", got, privacy.ModeBalanced)
+	}
+	engine.SetPolicy(privacy.ModeFull)
+	if got := engine.Policy(); got != privacy.ModeFull {
+		t.Fatalf("Policy() after SetPolicy = %q, want %q", got, privacy.ModeFull)
+	}
+}
+
 func TestAdmissionEnrichesWorkspaceBeforeCapturePolicy(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
