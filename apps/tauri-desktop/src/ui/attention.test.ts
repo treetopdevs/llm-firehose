@@ -645,6 +645,29 @@ test("read rejects when the snapshot cannot be loaded, and asks directly while t
   await expect(p.read()).rejects.toBeDefined();
 });
 
+test("read honours its signal while the stream is connected", async () => {
+  const p = mount();
+  const pre = new AbortController();
+  pre.abort();
+  await expect(p.read(pre.signal)).rejects.toMatchObject({ name: "AbortError" });
+
+  // A request that stays open: the readers queue behind it.
+  let release = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  fetcher.mockImplementationOnce(async () => {
+    await gate;
+    return new Response(JSON.stringify(snapshot), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  const ctl = new AbortController();
+  const aborted = p.read(ctl.signal);
+  const other = p.read();
+  const assertion = expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+  ctl.abort();
+  await assertion;
+  release();
+  await expect(other).resolves.toMatchObject({ sessions: expect.any(Array) });
+});
+
 test("read does not wait for a slow notification permission check", async () => {
   let release = () => {};
   const granted = new Promise<boolean>((r) => { release = () => r(true); });
@@ -699,4 +722,52 @@ test("a direct read that lands as the stream connects still updates the count, u
   answerDirect(ok({ sessions: [session("x"), session("y"), session("z")], warnings: [] }));
   await late;
   expect(p.count()).toBe(settled);
+});
+
+test("concurrent reads while the stream is down share one request and one snapshot", async () => {
+  const p = mount();
+  await p.refresh();
+  p.setConnected(false);
+  fetcher.mockClear();
+  const [a, b] = await Promise.all([p.read(), p.read()]);
+  expect(fetcher.mock.calls.filter(([u]) => u.endsWith("/attention"))).toHaveLength(1);
+  expect(a).toBe(b);
+  expect(a.sessions.filter((s) => s.pending)).toHaveLength(p.count());
+});
+
+test("an offline read that a newer snapshot outran resolves to the accepted snapshot", async () => {
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  const p = mount();
+  await p.refresh();
+  p.setConnected(false);
+  let answerOffline = (_: Response) => {};
+  fetcher.mockImplementationOnce(() => new Promise((r) => { answerOffline = r; }));
+  const late = p.read();
+  snapshot = { sessions: [session("n1"), session("n2")], warnings: [] };
+  p.setConnected(true);
+  await p.refresh();
+  expect(p.count()).toBe(2);
+  answerOffline(ok({ sessions: [session("old")], warnings: [] }));
+  const got = await late;
+  expect(got.sessions.filter((s) => s.pending)).toHaveLength(p.count());
+});
+
+test("an offline read still honours its own signal without cancelling other readers", async () => {
+  const p = mount();
+  await p.refresh();
+  p.setConnected(false);
+  let release = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  fetcher.mockImplementationOnce(async () => {
+    await gate;
+    return new Response(JSON.stringify(snapshot), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  const ctl = new AbortController();
+  const aborted = p.read(ctl.signal);
+  const other = p.read();
+  const assertion = expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+  ctl.abort();
+  await assertion;
+  release();
+  await expect(other).resolves.toMatchObject({ sessions: expect.any(Array) });
 });

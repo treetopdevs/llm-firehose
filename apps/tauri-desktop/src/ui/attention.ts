@@ -162,6 +162,38 @@ export function createAttention(options: AttentionOptions) {
     }
   };
 
+  /** One request for every reader while the stream is down: they all get the snapshot the strip accepted. */
+  let direct: Promise<AttentionSnapshot> | null = null;
+  function readDirect(): Promise<AttentionSnapshot> {
+    if (direct) return direct;
+    // The stream may connect while this is in flight, so only a newer snapshot outranks it.
+    const seen = applied;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), READ_DEADLINE_MS);
+    const task: Promise<AttentionSnapshot> = attention(controller.signal)
+      .then((result) => {
+        if (disposed) return result;
+        if (seen === applied) { applied++; snapshot = result; options.onSessions?.(result.sessions); render(); }
+        return snapshot;
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        if (direct === task) direct = null;
+      });
+    direct = task;
+    return task;
+  }
+  /** A caller's signal bounds its own wait only. */
+  function withSignal<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return p;
+    if (signal.aborted) { void p.catch(() => {}); return Promise.reject(new DOMException("needs-you read aborted", "AbortError")); }
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(new DOMException("needs-you read aborted", "AbortError"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
+  }
+
   /** Pending episodes that are not snoozed: the number the strip shows. */
   let needing = 0;
   const countListeners = new Set<() => void>();
@@ -484,16 +516,19 @@ export function createAttention(options: AttentionOptions) {
     read(signal?: AbortSignal): Promise<AttentionSnapshot> {
       if (disposed) return Promise.reject(new Error("needs-you snapshot unavailable"));
       // The live stream being down does not mean the daemon is: a view may still ask it directly.
-      if (!connected) {
-        // The stream may connect while this is in flight, so only a newer snapshot outranks it.
-        const seen = applied;
-        return attention(signal).then((result) => {
-          if (!disposed && seen === applied) { applied++; snapshot = result; options.onSessions?.(result.sessions); render(); }
-          return result;
-        });
-      }
+      if (!connected) return withSignal(readDirect(), signal);
+      if (signal?.aborted) return Promise.reject(new DOMException("needs-you read aborted", "AbortError"));
       return new Promise((resolve, reject) => {
-        readers.add({ resolve, reject });
+        const reader = {
+          resolve: (v: AttentionSnapshot) => { signal?.removeEventListener("abort", onAbort); resolve(v); },
+          reject: (e: unknown) => { signal?.removeEventListener("abort", onAbort); reject(e); },
+        };
+        // A caller's deadline bounds its own wait only: other readers keep theirs.
+        function onAbort() {
+          if (readers.delete(reader)) reject(new DOMException("needs-you read aborted", "AbortError"));
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+        readers.add(reader);
         void refresh();
       });
     },

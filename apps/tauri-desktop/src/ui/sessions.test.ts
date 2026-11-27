@@ -115,6 +115,20 @@ describe("sessions band", () => {
     expect(rows[1].querySelector(".state.needs")).toBeNull();
   });
 
+  test("Live with a chosen span is open-ended: a session that starts slightly after now is listed", async () => {
+    sessions.mockResolvedValue([
+      summary({ id: "ahead", first_time: new Date(Date.now() + 60_000).toISOString(), last_time: new Date(Date.now() + 90_000).toISOString() }),
+      summary({ id: "stale", first_time: new Date(now - 3 * 3_600_000).toISOString(), last_time: new Date(now - 2 * 3_600_000).toISOString() }),
+    ]);
+    attentionSays([inbox({ id: "ahead" }), inbox({ id: "stale" })]);
+    const store = createScope();
+    store.narrow({ window: "live", liveSpanMs: 3_600_000 });
+    const panel = createSessions(() => {}, () => [], undefined, undefined, store);
+    await panel.refresh();
+    const names = [...panel.root.querySelectorAll(".band-row .name")].map((n) => n.textContent);
+    expect(names).toEqual(["claude · ahead"]);
+  });
+
   test("a bare notification that /sessions calls needs_input does not say NEEDS YOU, matching the strip", async () => {
     sessions.mockResolvedValue([summary({ id: "n", state: "needs_input", state_reason: "notification", last_summary: "notification" })]);
     attentionSays([inbox({ id: "n", state: "unknown", uncertainty: "Notification captured; whether input is required is unknown." })]);
@@ -1152,5 +1166,18 @@ describe("Worktree rung uses the shared event policy", () => {
     const row = panel.root.querySelector<HTMLElement>(".session-events-list .feed-row")!;
     row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shared attention reader", () => {
+  test("reads the needs-you snapshot through the inbox reader, not the API", async () => {
+    sessions.mockResolvedValue([summary({ id: "s1" })]);
+    const read = vi.fn(async () => ({ gaps: [], sessions: [inbox({ id: "s1" })], warnings: [] }));
+    const panel = createSessions(() => {}, () => [], undefined, undefined, undefined, undefined, undefined, {
+      inbox: { root: document.createElement("div"), refresh: () => {}, read },
+    });
+    await panel.refresh();
+    expect(read).toHaveBeenCalledWith(expect.any(AbortSignal));
+    expect(attention).not.toHaveBeenCalled();
   });
 });

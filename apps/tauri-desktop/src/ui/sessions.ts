@@ -1,5 +1,5 @@
 import { attention, sessionEvents, sessions } from "../api";
-import type { AttentionSession, FirehoseEvent, SessionSummary, WorktreeLifetimeView, WorktreeSessionRef } from "../api";
+import type { AttentionSession, AttentionSnapshot, FirehoseEvent, SessionSummary, WorktreeLifetimeView, WorktreeSessionRef } from "../api";
 import { clear, el } from "../dom";
 import { onSelectOpen } from "../select-open";
 import { claimEscape, isEscapeEligible } from "../escape";
@@ -17,7 +17,7 @@ import { bucketCountsByKey, formatAge, sessionHue, sparkline } from "../spark";
 import { renderEventRows } from "./events";
 import { scopeEvents } from "./events/model";
 import type { CellScope } from "./workspace/model";
-import { createScope, membership, sameSession, sessionRefKey } from "../scope";
+import { createScope, membership, sameSession, scopeRange, sessionRefKey, touchesRange } from "../scope";
 import type { Scope, ScopeStore, SessionRef } from "../scope";
 import { describeWorktree, orderWorktrees } from "./worktree-list";
 import type { WorktreeRow } from "./worktree-list";
@@ -52,7 +52,7 @@ export const SESSION_PAGE = 200;
 
 export interface WorktreeOptions {
   /** The Needs you inbox (the strip's source), shown in place of the list while the toggle is on. */
-  inbox?: { root: HTMLElement; refresh(): unknown; count?(): number; onCount?(fn: () => void): void };
+  inbox?: { root: HTMLElement; refresh(): unknown; count?(): number; onCount?(fn: () => void): void; /** The one shared /attention snapshot; absent, the API is asked directly. */ read?(signal?: AbortSignal): Promise<AttentionSnapshot> };
   /** A selection fills the inspector (null clears it). Selecting never navigates. */
   inspect?: (s: Inspected | null) => void;
 }
@@ -61,17 +61,6 @@ const REFRESH_MS = 5000;
 /** A refresh request that has not settled by now is abandoned, so the periodic poll is never starved by a hung one. */
 const REQUEST_DEADLINE_MS = 15_000;
 const RANGE_REDRAW_MS = 120;
-
-/** Whether a session's lifetime touches the range. Unreadable times stay: unknown is not out of range. */
-function overlapsRange(s: { first_time: string; last_time: string }, sc: Pick<Scope, "window" | "liveSpanMs">, now: number): boolean {
-  // Plain Live has no range to apply; Live with a chosen span looks back that far.
-  if (sc.window === "live" && sc.liveSpanMs === undefined) return true;
-  const { from, to } = sc.window === "live" ? { from: now - sc.liveSpanMs!, to: now } : sc.window;
-  const first = Date.parse(s.first_time);
-  const last = Date.parse(s.last_time);
-  if (Number.isNaN(first) || Number.isNaN(last)) return true;
-  return last >= from && first <= to;
-}
 
 /** Settles with p, or with undefined once the deadline signal aborts (or the same deadline elapses on the clock): a consumer must not outlive its deadline on a collaborator that ignores the signal. */
 function bounded<T>(p: Promise<T> | undefined, signal: AbortSignal): Promise<T | undefined> | undefined {
@@ -127,6 +116,7 @@ export function createSessions(
   onSelectSession: (ref: SessionRef) => void = () => {},
   opts: WorktreeOptions = {},
 ): SessionsPanel {
+  const readAttention = (signal?: AbortSignal): Promise<AttentionSnapshot> => (opts.inbox?.read ? opts.inbox.read(signal) : attention(signal));
   const listBox = el("div", { class: "sessions-list", tabindex: "-1", "aria-label": "Sessions" });
   const eventsBox = el("div", { class: "sessions-events" });
   const scopeLine = el("p", { class: "sessions-scope" });
@@ -677,7 +667,7 @@ export function createSessions(
     try {
       const scoped = !!(store.get().worktree || store.get().project);
       const signal = AbortSignal.timeout(REQUEST_DEADLINE_MS);
-      const [list, inbox] = await Promise.allSettled([sessions(signal), attention(signal), scoped ? bounded(store.resolver()?.refresh?.(signal), signal) : undefined]);
+      const [list, inbox] = await Promise.allSettled([sessions(signal), readAttention(signal), scoped ? bounded(store.resolver()?.refresh?.(signal), signal) : undefined]);
       // A newer refresh started while these requests were in flight: it owns the DOM and the maps.
       if (gen !== refreshGen) return;
       // Read after the requests: ages, freshness and a live span are all judged as of this answer.
@@ -713,8 +703,9 @@ export function createSessions(
       // A session waiting on you is never hidden by the range.
       // Outside a worktree a row stands for every source of its native id, so any of them waiting keeps it.
       const waitingIds = new Set(sc.worktree ? [] : [...attended.values()].filter((a) => statusOf(a, now).needs).map((a) => a.id));
+      const range = scopeRange(sc, now, { defaultSpan: false });
       const all = scopedAll
-        .filter(({ s, status }) => status.needs || waitingIds.has(s.id) || overlapsRange(s, sc, now))
+        .filter(({ s, status }) => status.needs || waitingIds.has(s.id) || touchesRange(Date.parse(s.first_time), Date.parse(s.last_time), range))
         .sort((a, b) => {
           if (a.status.needs !== b.status.needs) return a.status.needs ? -1 : 1;
           // Longest wait first, then most recent activity, then id.

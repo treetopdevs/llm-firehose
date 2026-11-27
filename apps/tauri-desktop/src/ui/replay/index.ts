@@ -1,5 +1,5 @@
 import { attention, sessionEvents, capturedEvent } from "../../api";
-import type { FirehoseEvent } from "../../api";
+import type { AttentionSnapshot, FirehoseEvent } from "../../api";
 import { clear, el, keepControlFocus } from "../../dom";
 import { buildReplayRoute, replayTimeLabel } from "./model";
 import { readReplayBook, saveReplayBook } from "./notebook";
@@ -9,7 +9,7 @@ import { sessionRefLabel } from "../../format";
 import type { SessionDirectory } from "../../session-directory";
 import { activeRange, inWindow, sessionKey } from "../session/context";
 import type { Range, SessionTabContext } from "../session/context";
-export function createReplay(openScore: (id: string, source: string) => void = () => { }, directory?: SessionDirectory) {
+export function createReplay(openScore: (id: string, source: string) => void = () => { }, directory?: SessionDirectory, deps: { readAttention?: (signal?: AbortSignal) => Promise<AttentionSnapshot> } = {}) {
     let unsubscribe: (() => void) | undefined;
     // The loaded route is one session; its name replaces the id in labels, and event ids stay event ids.
     const routeName = () => { const ref = { id: loadedSession, source: loadedSource }; return sessionRefLabel(ref, directory?.lookup(ref)).label; };
@@ -127,7 +127,7 @@ export function createReplay(openScore: (id: string, source: string) => void = (
         routeStatus.textContent = `Route unavailable: ${error instanceof Error ? error.message : String(error)}. No prior route shown as new scope.`;
     } }
     async function refresh() { follow(); cancelReceipt(); refreshNotebook(); const current = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choicesStatus.textContent = "Loading session choices…"; try {
-        const result = await attention(ctl.signal);
+        const result = await (deps.readAttention ?? attention)(ctl.signal);
         if (ctl.signal.aborted || current !== choiceVersion)
             return;
         clear(choices);

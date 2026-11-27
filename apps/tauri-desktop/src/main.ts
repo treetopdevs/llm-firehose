@@ -169,7 +169,7 @@ function openSessionAltitude(id: string, source?: string, tab: SessionTab = "sco
   else go("session", { session: ref }, true, tab);
 }
 
-const workspacePanel = createWorkspaceGraph(openSession, scope, { hosted: true });
+const workspacePanel = createWorkspaceGraph(openSession, scope, { hosted: true, readAttention: (s) => attentionPanel.read(s) });
 
 // One roots store and one actions controller for the whole shell, independent of
 // the Graph panel: Fleet and Project read raw repo labels from here, so Register
@@ -225,7 +225,7 @@ const projectPanel = createProject({
 projectPanel.setConnected(false);
 // The lens panels Fleet hosts as its Strata and Patches encodings.
 const strataPanel = createStrata(openLoops, openScore, sessionDirectory);
-const ecosystemPanel = createEcosystem(openScore);
+const ecosystemPanel = createEcosystem(openScore, { readAttention: (s) => attentionPanel.read(s) });
 // Fleet Events honours a retained historical window like Project Events does; live follows the whole ring.
 const feedPanel = createEventList(liveSource(feedState, { renderLimit: 1000 }), {
   onSelect: showDetail,
@@ -285,8 +285,8 @@ const sessionPanel = createSession({
     // Factories: each lens is built on first entry (or via sessionPanel.lens), not at boot.
     score: makeScore,
     loops: () => createLoops(scope, sessionDirectory),
-    loom: () => createLoom(openScore),
-    replay: () => createReplay(openScore, sessionDirectory),
+    loom: () => createLoom(openScore, { readAttention: (s) => attentionPanel.read(s) }),
+    replay: () => createReplay(openScore, sessionDirectory, { readAttention: (s) => attentionPanel.read(s) }),
     handoffs: () => adapt(createHandoffs(openScore, () => feedState.events(), undefined, sessionDirectory)),
     court: () => {
       const court = createCourt(openScore);

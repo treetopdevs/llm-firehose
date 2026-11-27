@@ -259,3 +259,10 @@ test("names the loaded session late, keeps the route page and receipt, and stops
     dir.remember([{ id: event.session_id!, source: event.source, title: "Renamed later" }]);
     expect(label()).toContain("Fix login bug");
 });
+test("choices come from the injected attention reader, not the API", async () => {
+    const read = vi.fn(async () => ({ sessions: [{ source: event.source, id: event.session_id }], warnings: [] }));
+    const panel = createReplay(() => {}, undefined, { readAttention: read });
+    await panel.refresh();
+    expect(read).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
+    expect(api.attention).not.toHaveBeenCalled();
+});
