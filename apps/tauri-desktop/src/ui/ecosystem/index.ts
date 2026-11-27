@@ -1,10 +1,10 @@
 import { attention, sessionEvents, capturedEvent } from "../../api";
-import type { FirehoseEvent } from "../../api";
+import type { AttentionSnapshot, FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
 import { buildEcosystem, replayBeds, patchPhase } from "./model";
 import type { PatchBed } from "./model";
 import { renderEcosystemMap } from "./map";
-export function createEcosystem(openScore: (id: string, source: string) => void = () => { }) {
+export function createEcosystem(openScore: (id: string, source: string) => void = () => { }, deps: { readAttention?: (signal?: AbortSignal) => Promise<AttentionSnapshot> } = {}) {
     const choice = el("select", { "aria-label": "Known session" }), source = el("input", { "aria-label": "Source" }), session = el("input", { "aria-label": "Session ID" }), filter = el("input", { type: "search", "aria-label": "Filter file beds" }), slider = el("input", { type: "range", min: "0", max: "0", value: "0", step: "1", "aria-label": "Replay observation cursor" });
     const choiceStatus = el("p", { role: "status" }), status = el("p", { role: "status" }), replayStatus = el("p", { role: "status" }), board = el("section"), selected = el("section", { "aria-label": "Selected file bed", tabindex: "-1" }), evidence = el("section", { class: "ecosystem-evidence" }), other = el("section");
     const play = button("Play", togglePlay);
@@ -103,7 +103,7 @@ export function createEcosystem(openScore: (id: string, source: string) => void 
         status.textContent = `File history unavailable: ${error instanceof Error ? error.message : String(error)}. Load again to retry.`;
     } }
     async function refresh() { const token = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choiceStatus.textContent = "Loading session choices…"; try {
-        const result = await attention(ctl.signal);
+        const result = await (deps.readAttention ?? attention)(ctl.signal);
         if (ctl.signal.aborted || token !== choiceVersion)
             return;
         clear(choice);

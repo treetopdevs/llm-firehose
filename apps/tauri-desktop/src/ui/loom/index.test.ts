@@ -309,3 +309,10 @@ test("a manually loaded session survives window changes when no session is in sc
     expect(api.sessionEvents).toHaveBeenCalledTimes(1);
     expect(subscribe).not.toHaveBeenCalled();
 });
+test("choices come from the injected attention reader, not the API", async () => {
+    const read = vi.fn(async () => ({ sessions: [{ source: event.source, id: event.session_id }], warnings: [] }));
+    const panel = createLoom(() => {}, { readAttention: read });
+    await panel.refresh();
+    expect(read).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
+    expect(api.attention).not.toHaveBeenCalled();
+});

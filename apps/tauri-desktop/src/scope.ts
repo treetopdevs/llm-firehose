@@ -8,7 +8,8 @@
 //   ahead of the pair being delivered when a subscriber re-entrantly narrows;
 //   those changes are queued and delivered in order.
 // - liveSpanMs is a user PREFERENCE for how far 'live' looks back at Project and
-//   (when set) Fleet Lanes. Direct session selection resets window to live (the whole
+//   (when set) the Sessions list and Fleet Lanes; the Graph and the Sessions list
+//   both turn the window into a range through scopeRange. Direct session selection resets window to live (the whole
 //   session) but keeps the preference, and leaving the session restores the range that
 //   was in force before it (MS-7); navigations that pass an explicit window (Fleet) carry it. The
 //   Session altitude treats live as the whole session and ignores the span.
@@ -360,6 +361,28 @@ export function selectSession(store: ScopeStore, ref: SessionRef): void {
 
 export const liveSpanOf = (s: Pick<Scope, 'liveSpanMs'>): number =>
   validSpan(s.liveSpanMs) ? s.liveSpanMs : DEFAULT_LIVE_SPAN_MS;
+
+/** A time range in epoch ms; a missing bound is open. */
+export interface TimeRange { readonly from?: number; readonly to?: number }
+
+/**
+ * The range a view applies under the shared window. A chosen range is closed.
+ * Live is open-ended and looks back the chosen span; with no chosen span it looks
+ * back the default span only when the view asks for it (Project altitude), else
+ * it has no range at all (undefined: everything is in).
+ */
+export function scopeRange(sc: Pick<Scope, 'window' | 'liveSpanMs'>, now: number, opts: { defaultSpan: boolean }): TimeRange | undefined {
+  if (sc.window !== 'live') return { from: sc.window.from, to: sc.window.to };
+  if (validSpan(sc.liveSpanMs)) return { from: now - sc.liveSpanMs };
+  return opts.defaultSpan ? { from: now - DEFAULT_LIVE_SPAN_MS } : undefined;
+}
+
+/** Whether [first, last] touches the range. An unreadable (NaN) time is kept: unknown is not out of range. */
+export function touchesRange(first: number, last: number, range: TimeRange | undefined): boolean {
+  if (!range) return true;
+  if (Number.isNaN(first) || Number.isNaN(last)) return true;
+  return (range.from === undefined || last >= range.from) && (range.to === undefined || first <= range.to);
+}
 
 export const isLive = (w: ScopeWindow): w is 'live' => w === 'live';
 

@@ -579,6 +579,19 @@ test("the halo reads the window: only sessions active inside it are counted", as
   expect(aria(root, "w1")).not.toMatch(/\d agents?/);
 });
 
+test("the halo keeps a session whose last activity time is unreadable", async () => {
+  const noTime: AttentionSession = { ...session("s-notime", 0), last_observed_at: "", last: undefined };
+  mocks({ sessions: [S_OLD, S_NEW, noTime] });
+  const store = createScope({ project: "r", worktree: undefined });
+  const graph = createWorkspaceGraph(() => {}, store, { hosted: true, now: () => NOW });
+  document.body.append(graph.root);
+  graph.show("graph");
+  await graph.refresh();
+  await flush();
+  store.narrow({ window: { from: NOW - H, to: NOW } });
+  expect(aria(graph.root, "w1")).toContain("2 agents");
+});
+
 test("standalone (not hosted) counts every session regardless of the window", async () => {
   mocks();
   const store = createScope({ window: { from: NOW - H, to: NOW } });
@@ -915,4 +928,21 @@ test("REVIEW: search typed inside the debounce survives leaving and returning to
   await flush();
   expect((q(root, "input[type=search]") as HTMLInputElement).value).toBe("err");
   expect(timelineCalls().at(-1)![0]).toMatchObject({ search: "err" });
+});
+
+test("A16: the resolver refresh and the activity poll read the injected attention reader, not the API", async () => {
+  mocks();
+  const read = vi.fn(async () => ({ sessions: [S_NEW], warnings: [] }));
+  const store = createScope({ project: "r" });
+  const graph = createWorkspaceGraph(() => {}, store, { hosted: true, now: () => NOW, readAttention: read });
+  document.body.append(graph.root);
+  graph.show("graph");
+  await flush();
+  expect(read).toHaveBeenCalled();
+  const before = read.mock.calls.length;
+  const ctl = new AbortController();
+  await store.resolver()!.refresh?.(ctl.signal);
+  expect(read).toHaveBeenCalledTimes(before + 1);
+  expect(read).toHaveBeenLastCalledWith(ctl.signal);
+  expect(vi.mocked(attention)).not.toHaveBeenCalled();
 });

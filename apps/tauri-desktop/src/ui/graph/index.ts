@@ -3,6 +3,7 @@ import {
   attention,
   getConfig,
   type AttentionSession,
+  type AttentionSnapshot,
   type FirehoseEvent,
 } from "../../api";
 import { el, clear, keepFocus } from "../../dom";
@@ -46,7 +47,7 @@ import {
 } from "./names";
 import { createToolbar, type SearchResult, type WorkspaceTab } from "./toolbar";
 import { createActivityMap } from "../activity";
-import { createScope, formatRange, formatSpan, liveSpanOf, sessionRefKey, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
+import { createScope, formatRange, formatSpan, liveSpanOf, scopeRange, sessionRefKey, touchesRange, type Scope, type ScopePatch, type ScopeStore } from "../../scope";
 import { claimEscape, isEscapeEligible } from "../../escape";
 import { LOCAL, registerKeys } from "../../keys";
 
@@ -86,6 +87,8 @@ export interface WorkspaceGraphOptions {
   now?: () => number;
   /** Events timeline bound (D110); defaults to TIMELINE_CAP. */
   timelineCap?: number;
+  /** The shared needs-you snapshot reader; defaults to asking the API directly. */
+  readAttention?: (signal?: AbortSignal) => Promise<AttentionSnapshot>;
 }
 export type GraphView = "graph" | "events";
 
@@ -97,6 +100,7 @@ export function createWorkspaceGraph(
   opts: WorkspaceGraphOptions = {},
 ) {
   const hosted = !!opts.hosted;
+  const readAttention = (signal?: AbortSignal): Promise<AttentionSnapshot> => (opts.readAttention ?? attention)(signal);
   const nowMs = (): number => (opts.now ?? Date.now)();
   /** Hosted and not currently shown: nothing is fetched, polled or claimed. */
   let shown = !hosted;
@@ -253,17 +257,12 @@ export function createWorkspaceGraph(
     snapshot?.workspaces.find((w) => w.id === workspace);
   /** Hosted: the shared scope.window as a closed-or-open range. Live is open-ended so fresh arrivals count. */
   function windowRange(): { from?: number; to?: number } | undefined {
-    if (!hosted) return undefined;
-    const sc = store.get();
-    if (sc.window === "live") return { from: nowMs() - liveSpanOf(sc) };
-    return { from: sc.window.from, to: sc.window.to };
+    return hosted ? scopeRange(store.get(), nowMs(), { defaultSpan: true }) : undefined;
   }
   /** Hosted: whether the session's last activity falls in the window (halo, counts). Standalone: always. */
   function inWindow(s: AttentionSession, range = windowRange()): boolean {
-    if (!range) return true;
     const t = Date.parse(s.last?.source_time ?? s.last?.time ?? s.last_observed_at ?? "");
-    if (Number.isNaN(t)) return false;
-    return (range.from === undefined || t >= range.from) && (range.to === undefined || t <= range.to);
+    return touchesRange(t, t, range);
   }
   /** Snapshot workspaces in the host's shared order. Canvas tip order is NOT shared: its layout sorts by id. */
   const orderedWorkspaces = (): Workspace[] =>
@@ -779,7 +778,7 @@ export function createWorkspaceGraph(
     async refresh(signal?: AbortSignal) {
       if (hidden()) return;
       try {
-        sessions = (await attention(signal)).sessions ?? sessions;
+        sessions = (await readAttention(signal)).sessions ?? sessions;
       } catch {
         /* keep the last membership */
       }
@@ -1440,7 +1439,7 @@ export function createWorkspaceGraph(
   }
   async function loadSessions() {
     try {
-      sessions = (await attention()).sessions ?? [];
+      sessions = (await readAttention()).sessions ?? [];
     } catch {
       /* Existing shared attention strip shows connectivity. */
     }
@@ -1448,7 +1447,7 @@ export function createWorkspaceGraph(
   async function refreshActivity() {
     if (hidden()) return;
     try {
-      const a = await attention();
+      const a = await readAttention();
       if (hidden()) return;
       sessions = a.sessions ?? [];
       if (initialFitPending) {

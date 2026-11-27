@@ -1,12 +1,12 @@
 import { attention, sessionEvents, capturedEvent } from "../../api";
-import type { FirehoseEvent } from "../../api";
+import type { AttentionSnapshot, FirehoseEvent } from "../../api";
 import { clear, el } from "../../dom";
 import { buildLoom, loomTraversal } from "./model";
 import type { LoomModel, LoomGroup, LoomDirection } from "./model";
 import { renderLoomMap } from "./map";
 import { activeRange, inWindow, sessionKey } from "../session/context";
 import type { Range, SessionTabContext } from "../session/context";
-export function createLoom(openScore: (id: string, source: string) => void = () => { }) {
+export function createLoom(openScore: (id: string, source: string) => void = () => { }, deps: { readAttention?: (signal?: AbortSignal) => Promise<AttentionSnapshot> } = {}) {
     const choices = el("select", { "aria-label": "Known session" }), source = el("input", { "aria-label": "Source", placeholder: "Exact source" }), session = el("input", { "aria-label": "Session ID", placeholder: "Exact session ID" }), search = el("input", { "aria-label": "Search observations", type: "search" }), errors = el("input", { "aria-label": "Errors only", type: "checkbox" });
     const direction = el("select", {"aria-label": "Reference direction"}, ...["both", "upstream", "downstream"].map(value => el("option", {value}, value === "both" ? "Both directions" : value === "upstream" ? "Upstream (parents)" : "Downstream (children)")));
     const depth = el("select", {"aria-label": "Reference depth"}, ...[1, 2, 3, 4].map(value => el("option", {value: String(value)}, String(value))));
@@ -110,7 +110,7 @@ export function createLoom(openScore: (id: string, source: string) => void = () 
         status.textContent = `Relationships unavailable: ${error instanceof Error ? error.message : String(error)}. An older daemon may not support correlation view. Update/restart and retry; no full-payload fallback was requested.`;
     } }
     async function refresh() { cancelReceipt(); const token = ++choiceVersion; choiceAbort?.abort(); const ctl = new AbortController(); choiceAbort = ctl; choiceStatus.textContent = "Loading session choices…"; try {
-        const snapshot = await attention(ctl.signal);
+        const snapshot = await (deps.readAttention ?? attention)(ctl.signal);
         if (ctl.signal.aborted || token !== choiceVersion)
             return;
         clear(choices);

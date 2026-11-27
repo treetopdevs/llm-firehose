@@ -10,6 +10,8 @@ import {
   presetWindow,
   sessionRefKey,
   resolveRange,
+  scopeRange,
+  touchesRange,
   shiftWindow,
   spanOf,
   createScope, sameSession, selectSession, scope, type Scope, type ScopeResolver } from './scope';
@@ -610,5 +612,51 @@ describe('sessionRefKey', () => {
   test('the id after the first NUL round-trips', () => {
     const k = sessionRefKey('src', 'id\u0000x');
     expect(k.slice(k.indexOf('\0') + 1)).toBe('id\u0000x');
+  });
+});
+
+describe('scopeRange', () => {
+  const now = 1_000_000_000;
+  test('a chosen window is a closed range', () => {
+    expect(scopeRange({ window: { from: 10, to: 20 } }, now, { defaultSpan: true })).toEqual({ from: 10, to: 20 });
+  });
+  test('Live with a chosen span looks back that far and is open-ended', () => {
+    const r = scopeRange({ window: 'live', liveSpanMs: 3_600_000 }, now, { defaultSpan: false });
+    expect(r).toEqual({ from: now - 3_600_000 });
+    expect(r && 'to' in r).toBe(false);
+  });
+  test('plain Live applies the default span only when the view asks', () => {
+    expect(scopeRange({ window: 'live' }, now, { defaultSpan: true })).toEqual({ from: now - DEFAULT_LIVE_SPAN_MS });
+    expect(scopeRange({ window: 'live' }, now, { defaultSpan: false })).toBeUndefined();
+  });
+  test('an invalid liveSpanMs falls back like an absent one', () => {
+    for (const bad of [0, -5, NaN, Infinity]) {
+      expect(scopeRange({ window: 'live', liveSpanMs: bad }, now, { defaultSpan: true })).toEqual({ from: now - DEFAULT_LIVE_SPAN_MS });
+      expect(scopeRange({ window: 'live', liveSpanMs: bad }, now, { defaultSpan: false })).toBeUndefined();
+    }
+  });
+});
+
+describe('touchesRange', () => {
+  const r = { from: 100, to: 200 };
+  test('overlap is inclusive at both edges', () => {
+    expect(touchesRange(50, 100, r)).toBe(true);
+    expect(touchesRange(200, 250, r)).toBe(true);
+    expect(touchesRange(120, 130, r)).toBe(true);
+    expect(touchesRange(50, 250, r)).toBe(true);
+  });
+  test('entirely before or after is out', () => {
+    expect(touchesRange(10, 99, r)).toBe(false);
+    expect(touchesRange(201, 300, r)).toBe(false);
+  });
+  test('an open end never excludes', () => {
+    expect(touchesRange(500, 600, { from: 100 })).toBe(true);
+    expect(touchesRange(1, 50, { from: 100 })).toBe(false);
+    expect(touchesRange(1, 50, { to: 100 })).toBe(true);
+  });
+  test('unreadable times are kept; no range keeps everything', () => {
+    expect(touchesRange(NaN, 50, r)).toBe(true);
+    expect(touchesRange(50, NaN, r)).toBe(true);
+    expect(touchesRange(1, 2, undefined)).toBe(true);
   });
 });

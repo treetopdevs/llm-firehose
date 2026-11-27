@@ -111,3 +111,10 @@ test("opens with an h2 equal to the nav label", () => {
     expect(panel.root.firstElementChild?.tagName).toBe("H2");
     expect(panel.root.firstElementChild?.textContent).toBe("Patch ecosystem");
 });
+test("choices come from the injected attention reader, not the API", async () => {
+    const read = vi.fn(async () => ({ sessions: [{ source: event.source, id: event.session_id }], warnings: [] }));
+    const panel = createEcosystem(() => {}, { readAttention: read });
+    await panel.refresh();
+    expect(read).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
+    expect(api.attention).not.toHaveBeenCalled();
+});
